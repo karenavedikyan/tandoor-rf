@@ -1,9 +1,10 @@
+import { parseTelegramGetMeResult, parseTelegramWebhookInfoResult } from "./validate";
 import type {
   TanbotTelegramConfig,
   TelegramGetMeResult,
   TelegramTransportCall,
-  TelegramWebhookInfoResult,
 } from "./types";
+import type { ValidatedWebhookInfo } from "./validate";
 
 export async function telegramGetMe(
   config: TanbotTelegramConfig,
@@ -21,18 +22,18 @@ export async function telegramGetMe(
   if (!result.ok) {
     return { ok: false, code: result.code, message: result.message };
   }
-  const me = result.result as TelegramGetMeResult;
-  if (!me || typeof me.id !== "number" || me.is_bot !== true) {
-    return { ok: false, code: "API_ERROR", message: "Telegram getMe response is invalid." };
+  const parsed = parseTelegramGetMeResult(result.result);
+  if (!parsed.ok) {
+    return { ok: false, code: "API_ERROR", message: parsed.message };
   }
-  return { ok: true, me };
+  return { ok: true, me: parsed.me };
 }
 
 export async function telegramGetWebhookInfo(
   config: TanbotTelegramConfig,
   transport: TelegramTransportCall,
 ): Promise<
-  | { ok: true; info: TelegramWebhookInfoResult }
+  | { ok: true; info: ValidatedWebhookInfo }
   | { ok: false; code: string; message: string }
 > {
   const result = await transport({
@@ -44,8 +45,11 @@ export async function telegramGetWebhookInfo(
   if (!result.ok) {
     return { ok: false, code: result.code, message: result.message };
   }
-  const info = (result.result ?? {}) as TelegramWebhookInfoResult;
-  return { ok: true, info };
+  const parsed = parseTelegramWebhookInfoResult(result.result);
+  if (!parsed.ok) {
+    return { ok: false, code: "API_ERROR", message: parsed.message };
+  }
+  return { ok: true, info: parsed.info };
 }
 
 export function usernamesMatch(expected: string, actual: string | undefined): boolean {

@@ -46,7 +46,7 @@ Copy names and empty placeholders from `.env.example` only. Never commit real to
 
 6. Review JSON: username match, webhook present/empty, pending update count, last webhook error (sanitized). **Do not** paste full JSON into public tickets if it might contain webhook host hints you consider sensitive.
 
-7. To roll back: set `TANBOT_TELEGRAM_ENABLED=false`, remove or rotate token in secret store, restart. No webhook changes are performed by this stage.
+7. To roll back integration only: set `TANBOT_TELEGRAM_ENABLED=false` and restart. **Token rotation is not required** for ordinary disable of the new flag. Rotate the bot token in BotFather only if compromise is suspected or confirmed, with owner approval — that is separate from turning off `TANBOT_TELEGRAM_ENABLED`.
 
 ## Log hygiene
 

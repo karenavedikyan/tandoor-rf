@@ -5,7 +5,11 @@ import {
   isTanbotTelegramEnabled,
   loadTanbotTelegramConfig,
 } from "./config";
-import { sanitizeDiagnosticReport } from "./sanitize";
+import {
+  GENERIC_WEBHOOK_ERROR_MESSAGE,
+  publicExpectedUsername,
+  sanitizeDiagnosticReport,
+} from "./sanitize";
 import { createDefaultTelegramTransport } from "./transport";
 import type {
   TanbotTelegramDiagnosticReport,
@@ -77,9 +81,7 @@ export async function runTanbotTelegramProbe(
   const env = options.env ?? process.env;
   const checkedAt = formatCheckedAt(options.now?.() ?? new Date());
   const presence = describeTanbotTelegramConfigPresence(env);
-  const expectedUsername =
-    env.TANBOT_TELEGRAM_EXPECTED_USERNAME?.trim().replace(/^@+/, "") ||
-    DEFAULT_EXPECTED_BOT_USERNAME;
+  const expectedUsernameLabel = publicExpectedUsername(DEFAULT_EXPECTED_BOT_USERNAME);
   const checks: string[] = [];
 
   if (!isTanbotTelegramEnabled(env)) {
@@ -88,7 +90,7 @@ export async function runTanbotTelegramProbe(
       configured: presence.tokenPresent,
       enabled: false,
       stage: "local",
-      expectedUsername,
+      expectedUsername: expectedUsernameLabel,
       botUsernameMatches: null,
       verifiedBotId: null,
       verifiedBotUsername: null,
@@ -111,7 +113,7 @@ export async function runTanbotTelegramProbe(
       configured: presence.tokenPresent,
       enabled: true,
       stage: "local",
-      expectedUsername,
+      expectedUsername: expectedUsernameLabel,
       botUsernameMatches: null,
       verifiedBotId: null,
       verifiedBotUsername: null,
@@ -138,7 +140,7 @@ export async function runTanbotTelegramProbe(
         configured: true,
         enabled: true,
         stage: "local",
-        expectedUsername: config.expectedUsername,
+        expectedUsername: publicExpectedUsername(config.expectedUsername),
         botUsernameMatches: null,
         verifiedBotId: null,
         verifiedBotUsername: null,
@@ -169,7 +171,7 @@ export async function runTanbotTelegramProbe(
         configured: true,
         enabled: true,
         stage: "live_get_me",
-        expectedUsername: config.expectedUsername,
+        expectedUsername: publicExpectedUsername(config.expectedUsername),
         botUsernameMatches: null,
         verifiedBotId: null,
         verifiedBotUsername: null,
@@ -197,7 +199,7 @@ export async function runTanbotTelegramProbe(
         configured: true,
         enabled: true,
         stage: "live_get_me",
-        expectedUsername: config.expectedUsername,
+        expectedUsername: publicExpectedUsername(config.expectedUsername),
         botUsernameMatches: false,
         verifiedBotId: getMe.me.id,
         verifiedBotUsername,
@@ -226,7 +228,7 @@ export async function runTanbotTelegramProbe(
         configured: true,
         enabled: true,
         stage: "live_webhook_info",
-        expectedUsername: config.expectedUsername,
+        expectedUsername: publicExpectedUsername(config.expectedUsername),
         botUsernameMatches: true,
         verifiedBotId: getMe.me.id,
         verifiedBotUsername,
@@ -246,19 +248,7 @@ export async function runTanbotTelegramProbe(
 
   checks.push("live_webhook_info_ok");
   const info = webhook.info;
-  const webhookUrl = typeof info.url === "string" ? info.url.trim() : "";
-  const pending =
-    typeof info.pending_update_count === "number" && Number.isFinite(info.pending_update_count)
-      ? info.pending_update_count
-      : null;
-  const lastErrorAt =
-    typeof info.last_error_date === "number" && info.last_error_date > 0
-      ? new Date(info.last_error_date * 1000).toISOString()
-      : null;
-  const lastErrorMessage =
-    typeof info.last_error_message === "string" && info.last_error_message.trim()
-      ? info.last_error_message.trim().slice(0, 200)
-      : null;
+  const webhookUrl = info.url;
 
   return sanitizeDiagnosticReport(
     {
@@ -266,14 +256,14 @@ export async function runTanbotTelegramProbe(
       configured: true,
       enabled: true,
       stage: "complete",
-      expectedUsername: config.expectedUsername,
+      expectedUsername: publicExpectedUsername(config.expectedUsername),
       botUsernameMatches: true,
       verifiedBotId: getMe.me.id,
       verifiedBotUsername,
       webhookConfigured: webhookUrl.length > 0,
-      pendingUpdateCount: pending,
-      lastWebhookErrorAt: lastErrorAt,
-      lastWebhookErrorMessage: lastErrorMessage,
+      pendingUpdateCount: info.pendingUpdateCount,
+      lastWebhookErrorAt: info.lastErrorAt,
+      lastWebhookErrorMessage: info.lastErrorReported ? GENERIC_WEBHOOK_ERROR_MESSAGE : null,
       message:
         webhookUrl.length > 0
           ? "Live read-only Telegram checks succeeded. A webhook URL is currently set."
