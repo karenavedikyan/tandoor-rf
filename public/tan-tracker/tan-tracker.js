@@ -3817,6 +3817,7 @@
   }
 
   function renderTracker(opts = {}) {
+    if (window.__TT_MESSENGER_PORTAL_ONLY__) return;
     if (current !== ROUTE) return;
     applyBodyClasses();
     const main = document.querySelector("#tt-root-host");

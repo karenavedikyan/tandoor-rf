@@ -8,6 +8,7 @@ import {
   stopBrowserHttpFixture,
   type BrowserHttpFixture,
 } from "./helpers/http-integration-browser";
+import { tanTrackerLkDetailPath } from "./helpers/tan-tracker-routes";
 
 describe("tan-tracker edit before first handoff (browser)", { concurrency: false }, () => {
   let fixture: BrowserHttpFixture;
@@ -39,6 +40,7 @@ describe("tan-tracker edit before first handoff (browser)", { concurrency: false
   it("create → code → edit recipient/title → same id, old code fails", async () => {
     const { chromium } = await import("playwright");
     const browser = await chromium.launch();
+    try {
     const page = await browser.newPage();
 
     await login(page, "tt-browser-admin@test.local");
@@ -62,7 +64,7 @@ describe("tan-tracker edit before first handoff (browser)", { concurrency: false
 
     await page.context().request.post(`${fixture.baseUrl}/api/auth/logout`, { headers: { Origin: fixture.baseUrl } });
     await login(page, "tt-browser-fresh@test.local");
-    await page.goto(`${fixture.baseUrl}/tan-tracker?tt_order=${encodeURIComponent(transferId)}`);
+    await page.goto(`${fixture.baseUrl}${tanTrackerLkDetailPath(transferId)}`);
     await page.waitForSelector('[data-tt="detail"]', { timeout: 20000 });
     await page.click('[data-tt="gen-code"]');
     await page.waitForSelector('[data-tt="shown-code"]', { timeout: 15000 });
@@ -71,15 +73,27 @@ describe("tan-tracker edit before first handoff (browser)", { concurrency: false
 
     await page.context().request.post(`${fixture.baseUrl}/api/auth/logout`, { headers: { Origin: fixture.baseUrl } });
     await login(page, "tt-browser-admin@test.local");
-    await page.goto(`${fixture.baseUrl}/tan-tracker?tt_order=${encodeURIComponent(transferId)}`);
-    await page.waitForSelector('[data-tt="edit-draft"], [data-tt="handoff-panel"]', { timeout: 20000 });
-    await page.click('[data-tt="edit-draft"]');
+    await page.goto(`${fixture.baseUrl}${tanTrackerLkDetailPath(transferId)}`);
+    await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
+    await page.waitForSelector('[data-tt="detail"]', { timeout: 25000 });
+    const altEdit = page.locator(".tt-detail-alt-action[data-tt=\"edit-draft\"]");
+    if (await altEdit.isVisible()) {
+      await altEdit.click();
+    } else {
+      await page.locator('details[data-tt="detail-overflow"] summary').click();
+      await page.locator(".tt-detail-overflow-action[data-tt=\"edit-draft\"]").click();
+    }
     await page.waitForSelector('[data-create-phase="review"]', { timeout: 15000 });
     await page.click('[data-tt="create-edit-item"]');
     await page.fill('[data-tt-field="item"]', "Edit-before-handoff REVISED");
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-edit-recipient"]');
-    await page.click('[data-tt="create-recipient-browse"]');
+    await page.waitForSelector('[data-create-phase="recipient"]', { timeout: 15000 });
+    if (await page.locator('[data-tt="create-recipient-change"]').isVisible()) {
+      await page.click('[data-tt="create-recipient-change"]');
+    } else {
+      await page.click('[data-tt="create-recipient-browse"]');
+    }
     await page.locator('[data-tt-pick]').filter({ hasText: "Browser Manager Peer" }).first().click();
     await page.click('[data-tt="create-wizard-next"]');
 
@@ -103,7 +117,8 @@ describe("tan-tracker edit before first handoff (browser)", { concurrency: false
       },
     );
     assert.notEqual(staleVerify.status(), 200);
-
-    await browser.close();
+    } finally {
+      await browser.close();
+    }
   });
 });

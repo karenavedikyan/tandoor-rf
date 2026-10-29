@@ -9,6 +9,19 @@
     statePanel.textContent = message;
   }
 
+  function parseMstFromLocation() {
+    var searchParams = new URLSearchParams(location.search || "");
+    var fromSearch = searchParams.get("mst");
+    if (fromSearch && fromSearch.trim()) return fromSearch.trim();
+    var hash = location.hash || "";
+    var q = hash.indexOf("?");
+    if (q >= 0) {
+      var fromHash = new URLSearchParams(hash.slice(q + 1)).get("mst");
+      if (fromHash && fromHash.trim()) return fromHash.trim();
+    }
+    return "";
+  }
+
   function parseInvitationFromLocation() {
     var hash = location.hash || "";
     var q = hash.indexOf("?");
@@ -174,8 +187,105 @@
     }
   }
 
+  function channelLabel(channel) {
+    return channel === "max" ? "MAX" : "Telegram";
+  }
+
+  function renderMessengerPortal(root, data) {
+    var html = '<div class="tt-messenger-portal" data-tt="messenger-portal">';
+    if (data.itemTitle) {
+      html += '<h1 class="tt-messenger-portal-title">' + escapeHtml(data.itemTitle) + "</h1>";
+    }
+    if (data.transferPublicCode) {
+      html +=
+        '<p class="tt-messenger-portal-code">Передача ' + escapeHtml(data.transferPublicCode) + "</p>";
+    }
+    html += '<p class="tt-messenger-portal-lead">Выберите мессенджер для подтверждения номера:</p>';
+    html += '<div class="tt-messenger-portal-channels">';
+    var channels = data.channels || [];
+    for (var i = 0; i < channels.length; i++) {
+      var ch = channels[i];
+      var label = channelLabel(ch.channel);
+      if (ch.available && ch.deepLink) {
+        html +=
+          '<a class="tt-messenger-portal-channel tt-primary tt-btn-block" data-tt="messenger-channel-open" data-channel="' +
+          escapeHtml(ch.channel) +
+          '" href="' +
+          escapeHtml(ch.deepLink) +
+          '" target="_blank" rel="noopener noreferrer">Открыть ' +
+          escapeHtml(label) +
+          "</a>";
+      } else {
+        html +=
+          '<div class="tt-messenger-portal-channel tt-messenger-portal-channel--off" data-tt="messenger-channel-unavailable" data-channel="' +
+          escapeHtml(ch.channel) +
+          '"><strong>' +
+          escapeHtml(label) +
+          "</strong>";
+        if (ch.reason) {
+          html +=
+            '<span class="tt-messenger-portal-reason" data-tt="messenger-unavailable-reason">' +
+            escapeHtml(ch.reason) +
+            "</span>";
+        }
+        html += "</div>";
+      }
+    }
+    html += "</div>";
+    if (data.smsAlternative) {
+      html +=
+        '<p class="tt-messenger-portal-sms" data-tt="messenger-sms-hint">Можно также подтвердить номер по SMS, если отправитель прислал QR или ссылку с кодом.</p>';
+    }
+    html += "</div>";
+    root.innerHTML = html;
+  }
+
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function bootMessengerPortal(mst) {
+    window.__TT_MESSENGER_PORTAL_ONLY__ = true;
+    document.body.classList.add("tt-messenger-portal-page");
+    var root = document.getElementById("tt-root");
+    if (!root) {
+      showError("Не удалось открыть страницу получателя.");
+      return;
+    }
+    root.innerHTML = '<p data-tt="messenger-portal-loading">Загрузка…</p>';
+    var url =
+      "/api/tan-tracker/public/recipient/messenger?mst=" + encodeURIComponent(mst);
+    fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function (response) {
+        return response.json().then(function (data) {
+          if (!response.ok) {
+            throw new Error(
+              (data && data.error && data.error.message) || "Приглашение недоступно.",
+            );
+          }
+          return data;
+        });
+      })
+      .then(function (data) {
+        renderMessengerPortal(root, data);
+      })
+      .catch(function (err) {
+        root.innerHTML = "";
+        showError(err && err.message ? err.message : "Не удалось открыть страницу получателя.");
+      });
+  }
+
   function boot() {
     document.body.classList.add("tt-lk-mode", "tt-active");
+    var mst = parseMstFromLocation();
+    if (mst) {
+      bootMessengerPortal(mst);
+      return;
+    }
     var inv = parseInvitationFromLocation();
     if (inv.holderAccessToken) {
       void loadPublicHolderContext(inv.holderAccessToken)
