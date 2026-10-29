@@ -4,6 +4,21 @@ import type { TelegramDeliveryTransport, TelegramDeliveryResult } from "./delive
 import type { WebhookReply } from "./webhook-handler";
 import { markTelegramReplyDelivered } from "./webhook-inbox";
 
+export function buildTelegramSendMessagePayload(input: {
+  chatId: bigint;
+  text: string;
+  replyMarkup?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    chat_id: input.chatId.toString(),
+    text: input.text,
+  };
+  if (input.replyMarkup) {
+    body.reply_markup = input.replyMarkup;
+  }
+  return body;
+}
+
 export async function deliverTelegramWebhookReply(
   db: Pool | PoolClient,
   config: TanbotTelegramStage2Config,
@@ -21,10 +36,11 @@ export async function deliverTelegramWebhookReply(
       maxResponseBytes: config.maxResponseBytes,
     });
   }
-  const body: Record<string, unknown> = { chat_id: reply.chatId.toString(), text: reply.text };
-  if (reply.replyMarkup) {
-    body.reply_markup = reply.replyMarkup;
-  }
+  const body = buildTelegramSendMessagePayload({
+    chatId: reply.chatId,
+    text: reply.text,
+    replyMarkup: reply.replyMarkup,
+  });
   const result = await transport({
     method: "sendMessage",
     token: config.botToken,

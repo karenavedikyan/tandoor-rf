@@ -1,7 +1,7 @@
 import type { MaxInlineButton } from "../tanbot-max/delivery-transport";
 
 export type TelegramReplyExtra = {
-  replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+  replyMarkup?: Record<string, unknown>;
   answerCallbackQueryId?: string;
 };
 

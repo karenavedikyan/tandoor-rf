@@ -11,6 +11,8 @@ import {
 import type { MaxDeliveryTransport, MaxDeliveryResult, MaxInlineButton } from "./delivery-transport";
 import { buildHandoffCodeBotReply } from "../tanbot/handoff-code-bot-flow";
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
+import { handleExternalRecipientStart } from "../tanbot/external-recipient/bot-flow";
+import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
 import {
   claimMaxUpdate,
   commitMaxUpdateReply,
@@ -86,7 +88,27 @@ async function processUpdateInTransaction(
             text: "MAX не подключён к личному кабинету. Подключение выполняется в разделе «Мой профиль».",
           };
     } else if (update.updateType === "bot_started") {
-      if (!update.startPayload) {
+      if (update.startPayload && isExternalMessengerStartToken(update.startPayload)) {
+        const ext = await handleExternalRecipientStart(client, {
+          channel: "max",
+          startPayload: update.startPayload,
+          chatId: update.chatId,
+        });
+        reply = ext
+          ? {
+              userId: update.maxUserId,
+              chatId: update.chatId,
+              text: ext.text,
+              inlineButtons: ext.requestContact
+                ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
+                : undefined,
+            }
+          : {
+              userId: update.maxUserId,
+              chatId: update.chatId,
+              text: "Приглашение недоступно.",
+            };
+      } else if (!update.startPayload) {
         reply = {
           userId: update.maxUserId,
           chatId: update.chatId,

@@ -475,7 +475,10 @@ describe("tanbot handoff code pilot", { concurrency: false }, () => {
     if (!maxLoaded.ok) return;
     await runTanbotMaxOutboxWorkerOnce(pool, maxLoaded.config, transport);
     assert.ok(sink.calls[0]?.inlineButtons);
-    const buttons = sink.calls[0]!.inlineButtons as Array<Array<{ payload?: string }>>;
+    const buttons = sink.calls[0]!.inlineButtons as Array<
+      Array<{ type?: string; payload?: string }>
+    >;
+    assert.equal(buttons[0]?.[0]?.type, "callback");
     assert.equal(buttons[0]?.[0]?.payload, buildHandoffGenCallback("P-MAX-MENU"));
 
     const codesBefore = await pool.query(

@@ -20,10 +20,29 @@ describe("tanbot webhook reply extra", () => {
   });
 
   it("round-trips max inline buttons", () => {
-    const buttons = [[{ text: "Получить код: Y", payload: "hc:gen:Y" }]];
+    const buttons = [[{ type: "callback" as const, text: "Получить код: Y", payload: "hc:gen:Y" }]];
     const extra = maxReplyExtraFromReply({ inlineButtons: buttons });
     assert.ok(extra);
     const parsed = parseMaxReplyExtra(extra);
     assert.deepEqual(parsed.inlineButtons, buttons);
+  });
+
+  it("round-trips max request_contact button", () => {
+    const buttons = [[{ type: "request_contact" as const, text: "Отправить мой номер" }]];
+    const extra = maxReplyExtraFromReply({ inlineButtons: buttons });
+    assert.ok(extra);
+    const parsed = parseMaxReplyExtra(extra);
+    assert.deepEqual(parsed.inlineButtons, buttons);
+  });
+
+  it("round-trips telegram request_contact reply keyboard", () => {
+    const markup = {
+      keyboard: [[{ text: "Отправить мой номер", request_contact: true }]],
+      one_time_keyboard: true,
+      resize_keyboard: true,
+    };
+    const extra = telegramReplyExtraFromReply({ replyMarkup: markup });
+    const parsed = parseTelegramReplyExtra(extra);
+    assert.deepEqual(parsed.replyMarkup, markup);
   });
 });

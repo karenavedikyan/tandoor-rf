@@ -35,6 +35,7 @@ function buildTransferKeyboard(
   }
   return rows.map((row) =>
     row.map((cell) => ({
+      type: "callback" as const,
       text: cell.text,
       payload: (cell as { payload: string }).payload,
     })),

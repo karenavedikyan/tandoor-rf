@@ -4,7 +4,9 @@ import { safeTransportFailure } from "./safe-errors";
 import { redactMaxSecrets } from "./sanitize";
 import { createMaxDispatcher, isLikelyTlsError, readMaxTlsCaBundle, wrapFetchWithMaxTls } from "./tls-fetch";
 
-export type MaxInlineButton = { text: string; payload: string };
+export type MaxCallbackButton = { type: "callback"; text: string; payload: string };
+export type MaxRequestContactButton = { type: "request_contact"; text: string };
+export type MaxInlineButton = MaxCallbackButton | MaxRequestContactButton;
 
 export type MaxDeliveryResult =
   | { ok: true; result: unknown }
@@ -53,15 +55,31 @@ export function parseMaxSendResult(bodyText: string, httpStatus: number): MaxDel
   return { ok: false, code: "API_ERROR", message: "MAX API error.", httpStatus };
 }
 
-function buildInlineKeyboard(buttons: MaxInlineButton[][]) {
+function maxButtonToWire(b: MaxInlineButton): Record<string, string> {
+  if (b.type === "request_contact") {
+    return { type: "request_contact", text: b.text };
+  }
+  return { type: "callback", text: b.text, payload: b.payload };
+}
+
+export function buildMaxInlineKeyboardAttachment(buttons: MaxInlineButton[][]) {
   return {
     type: "inline_keyboard",
     payload: {
-      buttons: buttons.map((row) =>
-        row.map((b) => ({ type: "callback", text: b.text, payload: b.payload })),
-      ),
+      buttons: buttons.map((row) => row.map((b) => maxButtonToWire(b))),
     },
   };
+}
+
+export function buildMaxSendMessagePayload(input: {
+  text: string;
+  inlineButtons?: MaxInlineButton[][];
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = { text: input.text };
+  if (input.inlineButtons?.length) {
+    body.attachments = [buildMaxInlineKeyboardAttachment(input.inlineButtons)];
+  }
+  return body;
 }
 
 export function createDefaultMaxDeliveryTransport(
@@ -77,7 +95,7 @@ export function createDefaultMaxDeliveryTransport(
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const body: Record<string, unknown> = { text };
     if (inlineButtons?.length) {
-      body.attachments = [buildInlineKeyboard(inlineButtons)];
+      body.attachments = [buildMaxInlineKeyboardAttachment(inlineButtons)];
     }
     try {
       const response = await fetchWithTls(url, {
