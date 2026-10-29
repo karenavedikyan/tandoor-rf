@@ -1,0 +1,145 @@
+import type { Pool, PoolClient } from "pg";
+import type { TanbotTelegramStage2Config } from "./stage2-config";
+import type { TelegramDeliveryTransport } from "./delivery-transport";
+import { findAccountByUserId } from "./link-repository";
+import { canUserViewTransfer } from "./tan-tracker-access";
+
+const MAX_ATTEMPTS = 8;
+
+export type OutboxProcessResult = {
+  processed: number;
+  sent: number;
+  failed: number;
+  cancelled: number;
+};
+
+async function loadPending(client: PoolClient, limit: number) {
+  return client.query<{
+    id: string;
+    user_id: string;
+    event_type: string;
+    payload: Record<string, unknown>;
+    attempt_count: number;
+  }>(
+    `SELECT id::text, user_id::text, event_type, payload, attempt_count
+     FROM tanbot_notification_outbox
+     WHERE status = 'pending' AND next_attempt_at <= NOW()
+     ORDER BY created_at
+     LIMIT $1
+     FOR UPDATE SKIP LOCKED`,
+    [limit],
+  );
+}
+
+function buildAssignmentMessage(config: TanbotTelegramStage2Config, payload: Record<string, unknown>): string {
+  const code = String(payload.publicCode ?? "");
+  const title = String(payload.itemTitle ?? "Передача");
+  const url = `${config.appOrigin}/tan-tracker`;
+  return `Тан-трекер: вам назначена передача «${title}» (${code}).\nОткрыть в личном кабинете: ${url}`;
+}
+
+export async function processTanbotNotificationOutbox(
+  pool: Pool,
+  config: TanbotTelegramStage2Config,
+  transport: TelegramDeliveryTransport,
+  options: { limit?: number; deliveryEnabled?: boolean } = {},
+): Promise<OutboxProcessResult> {
+  const limit = options.limit ?? 20;
+  const deliveryEnabled = options.deliveryEnabled ?? config.deliveryEnabled;
+  const result: OutboxProcessResult = { processed: 0, sent: 0, failed: 0, cancelled: 0 };
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const batch = await loadPending(client, limit);
+    for (const row of batch.rows) {
+      result.processed += 1;
+      await client.query(`UPDATE tanbot_notification_outbox SET status = 'processing' WHERE id = $1::uuid`, [
+        row.id,
+      ]);
+
+      if (!deliveryEnabled) {
+        await client.query(
+          `UPDATE tanbot_notification_outbox SET status = 'pending', next_attempt_at = NOW() + interval '1 minute'
+           WHERE id = $1::uuid`,
+          [row.id],
+        );
+        continue;
+      }
+
+      const account = await findAccountByUserId(client, row.user_id);
+      if (!account || account.stopped_at || !account.notifications_enabled) {
+        await client.query(
+          `UPDATE tanbot_notification_outbox SET status = 'cancelled', last_error_code = 'NO_SUBSCRIPTION' WHERE id = $1::uuid`,
+          [row.id],
+        );
+        result.cancelled += 1;
+        continue;
+      }
+
+      if (row.event_type === "tan_tracker.assignment") {
+        const transferId = String(row.payload.transferId ?? "");
+        const allowed = await canUserViewTransfer(client, row.user_id, transferId);
+        if (!allowed) {
+          await client.query(
+            `UPDATE tanbot_notification_outbox SET status = 'cancelled', last_error_code = 'NO_ACCESS' WHERE id = $1::uuid`,
+            [row.id],
+          );
+          result.cancelled += 1;
+          continue;
+        }
+      }
+
+      const text =
+        row.event_type === "tan_tracker.assignment"
+          ? buildAssignmentMessage(config, row.payload)
+          : "Уведомление Тандор.";
+
+      const send = await transport({
+        method: "sendMessage",
+        token: config.botToken,
+        body: {
+          chat_id: account.telegram_user_id,
+          text,
+          disable_web_page_preview: true,
+        },
+        timeoutMs: config.requestTimeoutMs,
+        maxResponseBytes: config.maxResponseBytes,
+      });
+
+      if (send.ok) {
+        await client.query(
+          `UPDATE tanbot_notification_outbox SET status = 'sent', sent_at = NOW(), attempt_count = attempt_count + 1 WHERE id = $1::uuid`,
+          [row.id],
+        );
+        result.sent += 1;
+        continue;
+      }
+
+      const attempts = row.attempt_count + 1;
+      const retryable = send.retryable === true && attempts < MAX_ATTEMPTS;
+      const retryAfter = send.retryAfterSeconds ?? 30;
+      if (!retryable || send.code === "FORBIDDEN") {
+        await client.query(
+          `UPDATE tanbot_notification_outbox SET status = 'failed', attempt_count = $2, last_error_code = $3 WHERE id = $1::uuid`,
+          [row.id, attempts, send.code],
+        );
+        result.failed += 1;
+      } else {
+        await client.query(
+          `UPDATE tanbot_notification_outbox SET status = 'pending', attempt_count = $2, last_error_code = $3,
+           next_attempt_at = NOW() + ($4::int * interval '1 second') WHERE id = $1::uuid`,
+          [row.id, attempts, send.code, retryAfter],
+        );
+        result.failed += 1;
+      }
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  return result;
+}

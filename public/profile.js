@@ -12,6 +12,12 @@
   var saveButton = document.getElementById("save-button");
   var statusEl = document.getElementById("status-message");
   var saving = false;
+  var tanbotSection = document.getElementById("tanbot-telegram-section");
+  var tanbotStatus = document.getElementById("tanbot-telegram-status");
+  var tanbotPending = document.getElementById("tanbot-telegram-pending");
+  var tanbotActions = document.getElementById("tanbot-telegram-actions");
+  var tanbotNotifWrap = document.getElementById("tanbot-notifications-toggle-wrap");
+  var tanbotNotifToggle = document.getElementById("tanbot-notifications-toggle");
 
   var ROLE_LABELS = {
     admin: "Администратор",
@@ -70,7 +76,122 @@
       }
       fillForm(result.data.user);
       api.setStatus(statusEl, "", "");
+      loadTanbotTelegram();
       return result.data.user;
+    });
+  }
+
+  function loadTanbotTelegram() {
+    if (!tanbotSection || !api.apiRequest) return;
+    return api.apiRequest("/api/profile/tanbot/telegram").then(function (result) {
+      if (result.response.status !== 200 || !result.data) {
+        tanbotSection.hidden = true;
+        return;
+      }
+      var d = result.data;
+      if (!d.integrationEnabled) {
+        tanbotSection.hidden = true;
+        return;
+      }
+      tanbotSection.hidden = false;
+      if (d.linked) {
+        tanbotStatus.textContent =
+          "Telegram подключён" + (d.telegramUsername ? " (@" + d.telegramUsername + ")" : "") + ".";
+        tanbotNotifWrap.hidden = false;
+        tanbotNotifToggle.checked = !!d.notificationsEnabled;
+      } else {
+        tanbotStatus.textContent = "Telegram не подключён.";
+        tanbotNotifWrap.hidden = true;
+      }
+      if (d.pendingConfirmation) {
+        tanbotPending.hidden = false;
+        var p = d.pendingConfirmation;
+        tanbotPending.textContent =
+          "Подтвердите привязку Telegram" +
+          (p.telegramUsername ? " @" + p.telegramUsername : p.telegramFirstName ? " (" + p.telegramFirstName + ")" : "") +
+          ".";
+      } else {
+        tanbotPending.hidden = true;
+      }
+      tanbotActions.innerHTML = "";
+      if (!d.linked) {
+        var startBtn = document.createElement("button");
+        startBtn.type = "button";
+        startBtn.className = "secondary-button";
+        startBtn.textContent = "Подключить Telegram";
+        startBtn.addEventListener("click", startTanbotLink);
+        tanbotActions.appendChild(startBtn);
+      }
+      if (d.pendingConfirmation) {
+        var confirmBtn = document.createElement("button");
+        confirmBtn.type = "button";
+        confirmBtn.className = "primary-button";
+        confirmBtn.textContent = "Подтвердить привязку";
+        confirmBtn.addEventListener("click", function () {
+          confirmTanbotLink(d.pendingConfirmation.attemptId);
+        });
+        tanbotActions.appendChild(confirmBtn);
+      }
+      if (d.linked) {
+        var discBtn = document.createElement("button");
+        discBtn.type = "button";
+        discBtn.className = "secondary-button";
+        discBtn.textContent = "Отключить Telegram";
+        discBtn.addEventListener("click", disconnectTanbot);
+        tanbotActions.appendChild(discBtn);
+      }
+    });
+  }
+
+  function startTanbotLink() {
+    api
+      .apiRequest("/api/profile/tanbot/telegram/link/start", { method: "POST", body: {} })
+      .then(function (result) {
+        if (result.response.status === 200 && result.data && result.data.deepLink) {
+          window.open(result.data.deepLink, "_blank", "noopener,noreferrer");
+          api.setStatus(statusEl, "Откройте Telegram и вернитесь для подтверждения.", "success");
+          loadTanbotTelegram();
+        } else {
+          api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось начать привязку."), "error");
+        }
+      });
+  }
+
+  function confirmTanbotLink(attemptId) {
+    api
+      .apiRequest("/api/profile/tanbot/telegram/link/confirm", { method: "POST", body: { attemptId: attemptId } })
+      .then(function (result) {
+        if (result.response.status === 200) {
+          api.setStatus(statusEl, "Telegram подключён.", "success");
+          loadTanbotTelegram();
+        } else {
+          api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось подтвердить."), "error");
+        }
+      });
+  }
+
+  function disconnectTanbot() {
+    api.apiRequest("/api/profile/tanbot/telegram/disconnect", { method: "POST", body: {} }).then(function (result) {
+      if (result.response.status === 200) {
+        api.setStatus(statusEl, "Telegram отключён.", "success");
+        loadTanbotTelegram();
+      }
+    });
+  }
+
+  if (tanbotNotifToggle) {
+    tanbotNotifToggle.addEventListener("change", function () {
+      api
+        .apiRequest("/api/profile/tanbot/telegram/notifications", {
+          method: "POST",
+          body: { enabled: tanbotNotifToggle.checked },
+        })
+        .then(function (result) {
+          if (result.response.status !== 200) {
+            tanbotNotifToggle.checked = !tanbotNotifToggle.checked;
+            api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось сохранить настройку."), "error");
+          }
+        });
     });
   }
 

@@ -18,6 +18,8 @@ import { createClientsRouter } from "./clients/router";
 import { createWorkRouter } from "./work/router";
 import { createTanTrackerRouter } from "./tan-tracker/router";
 import { createTanbotTelegramAdminRouter } from "./tanbot-telegram/admin-router";
+import { createTanbotTelegramProfileRouter } from "./tanbot-telegram/profile-router";
+import { createTanbotTelegramWebhookRouter } from "./tanbot-telegram/webhook-router";
 import { stageAttachmentHandler } from "./tan-tracker/attachments";
 import { publicHolderStageAttachmentHandler } from "./tan-tracker/public-holder";
 import { attachAccessContext, blockPreviewWrites } from "./access/middleware";
@@ -237,6 +239,8 @@ export function createApp(): express.Application {
 
   app.use("/api/auth", authRouter);
   app.use("/api/profile", profileRouter);
+  app.use("/api/profile/tanbot", createTanbotTelegramProfileRouter());
+  app.use("/api/tanbot-telegram/webhook", createTanbotTelegramWebhookRouter());
   app.use("/api/clients", createClientsRouter());
   app.use("/api/admin/access", createAccessAdminRouter());
   app.use("/api/admin/clients", createAdminClientsRouter());
