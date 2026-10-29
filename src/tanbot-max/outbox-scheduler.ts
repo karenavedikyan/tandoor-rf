@@ -4,6 +4,7 @@ import type { MaxDeliveryTransport } from "./delivery-transport";
 import { createDefaultMaxDeliveryTransport } from "./delivery-transport";
 import { processTanbotMaxNotificationOutbox } from "./outbox-worker";
 import { isTanbotMaxDeliveryEnabled } from "./stage2-config";
+import { processUndeliveredMaxWebhookReplies } from "./reply-retry";
 
 const DEFAULT_INTERVAL_MS = 15_000;
 
@@ -18,9 +19,11 @@ export async function runTanbotMaxOutboxWorkerOnce(
   transport?: MaxDeliveryTransport,
 ): Promise<void> {
   const deliveryTransport = transport ?? createDefaultMaxDeliveryTransport();
+  const deliveryEnabled = isTanbotMaxDeliveryEnabled();
   await processTanbotMaxNotificationOutbox(pool, config, deliveryTransport, {
-    deliveryEnabled: isTanbotMaxDeliveryEnabled(),
+    deliveryEnabled,
   });
+  await processUndeliveredMaxWebhookReplies(pool, config, deliveryTransport, { deliveryEnabled });
 }
 
 export function startTanbotMaxOutboxWorker(

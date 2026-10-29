@@ -1,4 +1,4 @@
-import { getPool } from "../db/pool";
+import { closePool, getPool } from "../db/pool";
 import { loadTanbotMaxStage2Config } from "../tanbot-max/stage2-config";
 import { runTanbotMaxOutboxWorkerOnce } from "../tanbot-max/outbox-scheduler";
 
@@ -14,6 +14,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   await runTanbotMaxOutboxWorkerOnce(pool, loaded.config);
+  await closePool();
 }
 
 void main().catch((err) => {

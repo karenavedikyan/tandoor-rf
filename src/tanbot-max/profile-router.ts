@@ -175,6 +175,10 @@ export function createTanbotMaxProfileRouter(): Router {
     handle(async (req, res) => {
       setNoStore(res);
       const enabled = (req.body as { enabled?: boolean })?.enabled === true;
+      if (enabled && !isTanbotMaxEnabled()) {
+        res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Интеграция MAX отключена."));
+        return;
+      }
       const pool = getPool();
       if (!pool) {
         res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "База данных недоступна."));

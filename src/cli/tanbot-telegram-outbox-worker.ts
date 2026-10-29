@@ -1,4 +1,4 @@
-import { getPool } from "../db/pool";
+import { closePool, getPool } from "../db/pool";
 import { loadTanbotTelegramStage2Config } from "../tanbot-telegram/stage2-config";
 import { runTanbotOutboxWorkerOnce } from "../tanbot-telegram/outbox-scheduler";
 
@@ -16,6 +16,7 @@ async function main(): Promise<void> {
   }
   if (once) {
     await runTanbotOutboxWorkerOnce(pool, loaded.config);
+    await closePool();
     process.exit(0);
   }
   process.stderr.write("Use --once for a single outbox tick (worker loop is started by the HTTP server when enabled).\n");
