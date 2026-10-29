@@ -16,9 +16,14 @@ import {
   setIntegrationEnv,
 } from "../helpers/test-db";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
+import { buildHandoffGenCallback } from "../../src/tanbot/handoff-code-bot-service";
+import type { TelegramDeliveryTransport } from "../../src/tanbot-telegram/delivery-transport";
+import type { MaxDeliveryTransport } from "../../src/tanbot-max/delivery-transport";
+
 const ORIGIN = "http://127.0.0.1:3000";
 const PASSWORD = "StrongPass123!";
 const databaseUrl = getIntegrationDatabaseUrl();
+const repoRoot = process.cwd();
 
 function setPilotEnv(): void {
   setIntegrationEnv(databaseUrl, ORIGIN);
@@ -159,8 +164,9 @@ describe("tanbot handoff code pilot", { concurrency: false }, () => {
     if (!tgLoaded.ok) return;
     await runTanbotOutboxWorkerOnce(pool, tgLoaded.config, recording);
 
-    assert.equal(sink.calls.length, 1);
-    const text = String(sink.calls[0]!.body.text);
+    const sendMessages = sink.calls.filter((c) => c.method === "sendMessage");
+    assert.equal(sendMessages.length, 1);
+    const text = String(sendMessages[0]!.body.text);
     const match = text.match(/\b(\d{6})\b/);
     assert.ok(match, text);
     const code = match![1]!;
@@ -179,7 +185,7 @@ describe("tanbot handoff code pilot", { concurrency: false }, () => {
       });
     assert.equal(outsiderWh.status, 200);
     await runTanbotOutboxWorkerOnce(pool, tgLoaded.config, recording);
-    const outsiderText = sink.calls.at(-1)?.body.text;
+    const outsiderText = sink.calls.filter((c) => c.method === "sendMessage").at(-1)?.body.text;
     assert.match(String(outsiderText), /не подключён|недоступ|ожидающий/i);
 
     const dup = await request(app)
@@ -308,10 +314,196 @@ describe("tanbot handoff code pilot", { concurrency: false }, () => {
     process.env.TANBOT_MAX_ENABLED = "true";
   });
 
+  it("telegram: menu worker retry and dedup resend keep inline keyboard", async () => {
+    const holder = await createTestUser({
+      databaseUrl,
+      email: "hc-menu-tg-holder@test.local",
+      password: PASSWORD,
+      fullName: "Menu Holder",
+      role: "manager",
+    });
+    const pending = await createTestUser({
+      databaseUrl,
+      email: "hc-menu-tg-pending@test.local",
+      password: PASSWORD,
+      fullName: "Menu Pending",
+      role: "manager",
+    });
+    const seeded = await seedTransfer(holder.id, pending.id, "P-TG-MENU", { max: false });
+    const app = await loadApp();
+    const pool = getPool();
+    assert.ok(pool);
+    const updateId = 13101;
+    await request(app)
+      .post("/api/tanbot-telegram/webhook")
+      .set("X-Telegram-Bot-Api-Secret-Token", process.env.TANBOT_TELEGRAM_WEBHOOK_SECRET!)
+      .send({
+        update_id: updateId,
+        message: {
+          message_id: 1,
+          from: { id: seeded.telegramUserId, is_bot: false, first_name: "B" },
+          chat: { id: seeded.telegramUserId, type: "private" },
+          date: 1,
+          text: "/code",
+        },
+      });
+
+    const stored = await pool.query<{ reply_extra: unknown }>(
+      `SELECT reply_extra FROM tanbot_telegram_update_dedup WHERE update_id = $1`,
+      [updateId],
+    );
+    assert.ok(stored.rows[0]?.reply_extra);
+
+    let failOnce = true;
+    const sink = { calls: [] as Array<{ method: string; body: Record<string, unknown> }> };
+    const transport: TelegramDeliveryTransport = async (input) => {
+      sink.calls.push({ method: input.method, body: input.body });
+      if (input.method === "sendMessage" && failOnce) {
+        failOnce = false;
+        return { ok: false, code: "NETWORK_ERROR", message: "fail", retryable: true };
+      }
+      if (input.method === "sendMessage") {
+        return { ok: true, result: {} };
+      }
+      return { ok: true, result: true };
+    };
+
+    const tgLoaded = loadTanbotTelegramStage2Config();
+    assert.equal(tgLoaded.ok, true);
+    if (!tgLoaded.ok) return;
+    await runTanbotOutboxWorkerOnce(pool, tgLoaded.config, transport);
+    const send = sink.calls.find((c) => c.method === "sendMessage");
+    assert.ok(send, sink.calls.map((c) => c.method).join(","));
+    const markup = send!.body.reply_markup as {
+      inline_keyboard?: Array<Array<{ callback_data?: string }>>;
+    };
+    assert.equal(markup.inline_keyboard?.[0]?.[0]?.callback_data, buildHandoffGenCallback("P-TG-MENU"));
+
+    const codesBefore = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM tt_handoff_codes WHERE transfer_id = 'tt-P-TG-MENU'`,
+    );
+    await request(app)
+      .post("/api/tanbot-telegram/webhook")
+      .set("X-Telegram-Bot-Api-Secret-Token", process.env.TANBOT_TELEGRAM_WEBHOOK_SECRET!)
+      .send({
+        update_id: updateId,
+        message: {
+          message_id: 1,
+          from: { id: seeded.telegramUserId, is_bot: false },
+          chat: { id: seeded.telegramUserId, type: "private" },
+          date: 1,
+          text: "/code",
+        },
+      });
+    const codesAfterResend = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM tt_handoff_codes WHERE transfer_id = 'tt-P-TG-MENU'`,
+    );
+    assert.equal(codesBefore.rows[0]!.c, codesAfterResend.rows[0]!.c);
+
+    sink.calls.length = 0;
+    await request(app)
+      .post("/api/tanbot-telegram/webhook")
+      .set("X-Telegram-Bot-Api-Secret-Token", process.env.TANBOT_TELEGRAM_WEBHOOK_SECRET!)
+      .send({
+        update_id: 13102,
+        callback_query: {
+          id: "cq-menu-gen",
+          from: { id: seeded.telegramUserId, is_bot: false },
+          message: { chat: { id: seeded.telegramUserId, type: "private" } },
+          data: buildHandoffGenCallback("P-TG-MENU"),
+        },
+      });
+    await runTanbotOutboxWorkerOnce(pool, tgLoaded.config, transport);
+    const codesAfterGen = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM tt_handoff_codes WHERE transfer_id = 'tt-P-TG-MENU'`,
+    );
+    assert.equal(codesAfterResend.rows[0]!.c + 1, codesAfterGen.rows[0]!.c);
+  });
+
+  it("max: menu worker retry and dedup resend keep inline buttons", async () => {
+    const holder = await createTestUser({
+      databaseUrl,
+      email: "hc-menu-max-holder@test.local",
+      password: PASSWORD,
+      fullName: "Menu MAX Holder",
+      role: "manager",
+    });
+    const pending = await createTestUser({
+      databaseUrl,
+      email: "hc-menu-max-pending@test.local",
+      password: PASSWORD,
+      fullName: "Menu MAX Pending",
+      role: "manager",
+    });
+    const seeded = await seedTransfer(holder.id, pending.id, "P-MAX-MENU", { telegram: false });
+    const app = await loadApp();
+    const pool = getPool();
+    assert.ok(pool);
+
+    await request(app)
+      .post("/api/tanbot-max/webhook")
+      .set("X-Max-Bot-Api-Secret", process.env.TANBOT_MAX_WEBHOOK_SECRET!)
+      .send({
+        update_type: "message_callback",
+        timestamp: 501,
+        callback: {
+          callback_id: "cb-menu",
+          payload: "hc:menu",
+          user: { user_id: seeded.maxUserId, is_bot: false },
+        },
+        message: { recipient: { chat_id: seeded.maxUserId } },
+      });
+
+    const dedup = await pool.query<{ reply_extra: unknown }>(
+      `SELECT reply_extra FROM tanbot_max_update_dedup WHERE reply_text IS NOT NULL ORDER BY received_at DESC LIMIT 1`,
+    );
+    assert.ok(dedup.rows[0]?.reply_extra);
+
+    let failOnce = true;
+    const sink = { calls: [] as Array<{ inlineButtons?: unknown }> };
+    const transport: MaxDeliveryTransport = async (input) => {
+      sink.calls.push({ inlineButtons: input.inlineButtons });
+      if (failOnce) {
+        failOnce = false;
+        return { ok: false, code: "NETWORK_ERROR", message: "fail", retryable: true };
+      }
+      return { ok: true, result: { message: { mid: "m-retry" } } };
+    };
+
+    const maxLoaded = loadTanbotMaxStage2Config();
+    assert.equal(maxLoaded.ok, true);
+    if (!maxLoaded.ok) return;
+    await runTanbotMaxOutboxWorkerOnce(pool, maxLoaded.config, transport);
+    assert.ok(sink.calls[0]?.inlineButtons);
+    const buttons = sink.calls[0]!.inlineButtons as Array<Array<{ payload?: string }>>;
+    assert.equal(buttons[0]?.[0]?.payload, buildHandoffGenCallback("P-MAX-MENU"));
+
+    const codesBefore = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM tt_handoff_codes WHERE transfer_id = 'tt-P-MAX-MENU'`,
+    );
+    await request(app)
+      .post("/api/tanbot-max/webhook")
+      .set("X-Max-Bot-Api-Secret", process.env.TANBOT_MAX_WEBHOOK_SECRET!)
+      .send({
+        update_type: "message_callback",
+        timestamp: 501,
+        callback: {
+          callback_id: "cb-menu",
+          payload: "hc:menu",
+          user: { user_id: seeded.maxUserId, is_bot: false },
+        },
+        message: { recipient: { chat_id: seeded.maxUserId } },
+      });
+    const codesAfterResend = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM tt_handoff_codes WHERE transfer_id = 'tt-P-MAX-MENU'`,
+    );
+    assert.equal(codesBefore.rows[0]!.c, codesAfterResend.rows[0]!.c);
+  });
+
   it("runtime worker entrypoint starts", () => {
     setPilotEnv();
     const worker = spawnSync(process.execPath, ["dist/cli/tanbot-max-outbox-worker.js"], {
-      cwd: "/workspace",
+      cwd: repoRoot,
       env: {
         ...process.env,
         DATABASE_URL: databaseUrl,

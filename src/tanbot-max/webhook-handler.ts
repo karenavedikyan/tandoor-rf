@@ -14,9 +14,9 @@ import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-co
 import {
   claimMaxUpdate,
   commitMaxUpdateReply,
-  markMaxReplyDelivered,
   markMaxUpdateFailed,
 } from "./webhook-inbox";
+import { deliverMaxWebhookReply } from "./webhook-reply-delivery";
 
 export type WebhookReply = {
   userId: bigint;
@@ -183,16 +183,5 @@ export async function maybeSendMaxWebhookReply(
   reply: WebhookReply,
 ): Promise<MaxDeliveryResult | null> {
   if (!reply || !transport || !config.deliveryEnabled || dedupKey == null) return null;
-  const result = await transport({
-    token: config.botToken,
-    userId: reply.userId,
-    text: reply.text,
-    timeoutMs: config.requestTimeoutMs,
-    maxResponseBytes: config.maxResponseBytes,
-    inlineButtons: reply.inlineButtons,
-  });
-  if (result.ok) {
-    await markMaxReplyDelivered(pool, dedupKey);
-  }
-  return result;
+  return deliverMaxWebhookReply(pool, config, transport, dedupKey, reply);
 }

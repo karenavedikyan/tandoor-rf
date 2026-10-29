@@ -24,7 +24,7 @@
 |----------|---------|---------|
 | `TANBOT_HANDOFF_CODE_PILOT_ENABLED` | `false` | Сценарий «Получить код» в ботах |
 | `TANBOT_TELEGRAM_*` / `TANBOT_MAX_*` | см. `.env.example` | Каналы независимы; master-off блокирует выдачу и **включение** MAX-уведомлений |
-| `TT_HANDOFF_OTP_PEPPER` | server secret | Канонические коды (`tt_handoff_codes`) |
+| `TT_OTP_PEPPER` | server secret | Канонические коды (`tt_handoff_codes`) |
 
 Пилот не включает внешних получателей, новый дизайн tt56, отчёты, 1С/Bitrix.
 

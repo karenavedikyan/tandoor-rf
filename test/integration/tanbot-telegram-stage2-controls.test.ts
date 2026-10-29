@@ -294,8 +294,13 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
       encoding: "utf8",
     });
     assert.equal(worker.status, 0, worker.stderr || worker.stdout);
-    const row = await pool.query(`SELECT status, last_error_code FROM tanbot_notification_outbox LIMIT 1`);
+    const idempotencyKey = `tt-assignment:${transferId}:hv:2:telegram:${recipient.id}`;
+    const row = await pool.query(
+      `SELECT status, last_error_code FROM tanbot_notification_outbox WHERE idempotency_key = $1`,
+      [idempotencyKey],
+    );
     assert.equal(row.rows[0]?.status, "cancelled");
+    assert.equal(row.rows[0]?.last_error_code, "NO_ACCESS");
     process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = "false";
   });
 

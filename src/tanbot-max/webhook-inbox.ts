@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { maxReplyExtraFromReply, parseMaxReplyExtra } from "../tanbot/webhook-reply-extra";
 import type { WebhookReply } from "./webhook-handler";
 
 export type UpdateClaim =
@@ -23,9 +24,10 @@ export async function claimMaxUpdate(client: PoolClient, dedupKey: string): Prom
     reply_chat_id: string | null;
     reply_user_id: string | null;
     reply_text: string | null;
+    reply_extra: unknown;
     reply_delivered_at: Date | null;
   }>(
-    `SELECT status, reply_chat_id::text, reply_user_id::text, reply_text, reply_delivered_at
+    `SELECT status, reply_chat_id::text, reply_user_id::text, reply_text, reply_extra, reply_delivered_at
      FROM tanbot_max_update_dedup WHERE dedup_key = $1 FOR UPDATE`,
     [dedupKey],
   );
@@ -44,12 +46,14 @@ export async function claimMaxUpdate(client: PoolClient, dedupKey: string): Prom
     return { kind: "ignore" };
   }
   if (row.reply_user_id && row.reply_text) {
+    const extra = parseMaxReplyExtra(row.reply_extra);
     return {
       kind: "resend",
       reply: {
         userId: BigInt(row.reply_user_id),
         chatId: row.reply_chat_id ? BigInt(row.reply_chat_id) : BigInt(row.reply_user_id),
         text: row.reply_text,
+        inlineButtons: extra.inlineButtons,
       },
     };
   }
@@ -68,11 +72,18 @@ export async function commitMaxUpdateReply(
     );
     return;
   }
+  const extra = maxReplyExtraFromReply(reply);
   await client.query(
     `UPDATE tanbot_max_update_dedup
-     SET status = 'committed', reply_chat_id = $2, reply_user_id = $3, reply_text = $4
+     SET status = 'committed', reply_chat_id = $2, reply_user_id = $3, reply_text = $4, reply_extra = $5::jsonb
      WHERE dedup_key = $1`,
-    [dedupKey, reply.chatId.toString(), reply.userId.toString(), reply.text],
+    [
+      dedupKey,
+      reply.chatId.toString(),
+      reply.userId.toString(),
+      reply.text,
+      extra ? JSON.stringify(extra) : null,
+    ],
   );
 }
 
@@ -80,6 +91,6 @@ export async function markMaxUpdateFailed(client: PoolClient, dedupKey: string):
   await client.query(`UPDATE tanbot_max_update_dedup SET status = 'failed' WHERE dedup_key = $1`, [dedupKey]);
 }
 
-export async function markMaxReplyDelivered(pool: Pool, dedupKey: string): Promise<void> {
-  await pool.query(`UPDATE tanbot_max_update_dedup SET reply_delivered_at = NOW() WHERE dedup_key = $1`, [dedupKey]);
+export async function markMaxReplyDelivered(db: Pool | PoolClient, dedupKey: string): Promise<void> {
+  await db.query(`UPDATE tanbot_max_update_dedup SET reply_delivered_at = NOW() WHERE dedup_key = $1`, [dedupKey]);
 }

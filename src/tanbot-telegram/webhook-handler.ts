@@ -9,9 +9,9 @@ import type { TelegramDeliveryTransport, TelegramDeliveryResult } from "./delive
 import {
   claimTelegramUpdate,
   commitTelegramUpdateReply,
-  markTelegramReplyDelivered,
   markTelegramUpdateFailed,
 } from "./webhook-inbox";
+import { deliverTelegramWebhookReply } from "./webhook-reply-delivery";
 import { buildHandoffCodeBotReply } from "../tanbot/handoff-code-bot-flow";
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
 
@@ -188,28 +188,5 @@ export async function maybeSendWebhookReply(
   reply: WebhookReply,
 ): Promise<TelegramDeliveryResult | null> {
   if (!reply || !transport || !config.deliveryEnabled || updateId == null) return null;
-  if (reply.answerCallbackQueryId) {
-    await transport({
-      method: "answerCallbackQuery",
-      token: config.botToken,
-      body: { callback_query_id: reply.answerCallbackQueryId },
-      timeoutMs: config.requestTimeoutMs,
-      maxResponseBytes: config.maxResponseBytes,
-    });
-  }
-  const body: Record<string, unknown> = { chat_id: reply.chatId.toString(), text: reply.text };
-  if (reply.replyMarkup) {
-    body.reply_markup = reply.replyMarkup;
-  }
-  const result = await transport({
-    method: "sendMessage",
-    token: config.botToken,
-    body,
-    timeoutMs: config.requestTimeoutMs,
-    maxResponseBytes: config.maxResponseBytes,
-  });
-  if (result.ok) {
-    await markTelegramReplyDelivered(pool, updateId);
-  }
-  return result;
+  return deliverTelegramWebhookReply(pool, config, transport, updateId, reply);
 }

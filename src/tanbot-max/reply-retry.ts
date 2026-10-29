@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 import type { TanbotMaxStage2Config } from "./stage2-config";
 import type { MaxDeliveryTransport } from "./delivery-transport";
+import { parseMaxReplyExtra } from "../tanbot/webhook-reply-extra";
+import { deliverMaxWebhookReply } from "./webhook-reply-delivery";
 
 export type MaxReplyRetryResult = { attempted: number; delivered: number };
 
@@ -21,9 +23,11 @@ export async function processUndeliveredMaxWebhookReplies(
     const batch = await client.query<{
       dedup_key: string;
       reply_user_id: string;
+      reply_chat_id: string | null;
       reply_text: string;
+      reply_extra: unknown;
     }>(
-      `SELECT dedup_key, reply_user_id::text, reply_text
+      `SELECT dedup_key, reply_user_id::text, reply_chat_id::text, reply_text, reply_extra
        FROM tanbot_max_update_dedup
        WHERE status = 'committed'
          AND reply_text IS NOT NULL
@@ -35,18 +39,15 @@ export async function processUndeliveredMaxWebhookReplies(
     );
     for (const row of batch.rows) {
       result.attempted += 1;
-      const send = await transport({
-        token: config.botToken,
+      const extra = parseMaxReplyExtra(row.reply_extra);
+      const chatId = row.reply_chat_id ? BigInt(row.reply_chat_id) : BigInt(row.reply_user_id);
+      const send = await deliverMaxWebhookReply(client, config, transport, row.dedup_key, {
         userId: BigInt(row.reply_user_id),
+        chatId,
         text: row.reply_text,
-        timeoutMs: config.requestTimeoutMs,
-        maxResponseBytes: config.maxResponseBytes,
+        inlineButtons: extra.inlineButtons,
       });
-      if (send.ok) {
-        await client.query(
-          `UPDATE tanbot_max_update_dedup SET reply_delivered_at = NOW() WHERE dedup_key = $1`,
-          [row.dedup_key],
-        );
+      if (send?.ok) {
         result.delivered += 1;
       }
     }

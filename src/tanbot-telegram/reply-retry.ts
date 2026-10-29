@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 import type { TanbotTelegramStage2Config } from "./stage2-config";
 import type { TelegramDeliveryTransport } from "./delivery-transport";
+import { parseTelegramReplyExtra } from "../tanbot/webhook-reply-extra";
+import { deliverTelegramWebhookReply } from "./webhook-reply-delivery";
 
 export type TelegramReplyRetryResult = { attempted: number; delivered: number };
 
@@ -22,8 +24,9 @@ export async function processUndeliveredTelegramWebhookReplies(
       update_id: string;
       reply_chat_id: string;
       reply_text: string;
+      reply_extra: unknown;
     }>(
-      `SELECT update_id::text, reply_chat_id::text, reply_text
+      `SELECT update_id::text, reply_chat_id::text, reply_text, reply_extra
        FROM tanbot_telegram_update_dedup
        WHERE status = 'committed'
          AND reply_text IS NOT NULL
@@ -35,18 +38,14 @@ export async function processUndeliveredTelegramWebhookReplies(
     );
     for (const row of batch.rows) {
       result.attempted += 1;
-      const send = await transport({
-        method: "sendMessage",
-        token: config.botToken,
-        body: { chat_id: row.reply_chat_id, text: row.reply_text },
-        timeoutMs: config.requestTimeoutMs,
-        maxResponseBytes: config.maxResponseBytes,
+      const extra = parseTelegramReplyExtra(row.reply_extra);
+      const send = await deliverTelegramWebhookReply(client, config, transport, Number(row.update_id), {
+        chatId: BigInt(row.reply_chat_id),
+        text: row.reply_text,
+        replyMarkup: extra.replyMarkup,
+        answerCallbackQueryId: extra.answerCallbackQueryId,
       });
-      if (send.ok) {
-        await client.query(
-          `UPDATE tanbot_telegram_update_dedup SET reply_delivered_at = NOW() WHERE update_id = $1`,
-          [Number(row.update_id)],
-        );
+      if (send?.ok) {
         result.delivered += 1;
       }
     }
