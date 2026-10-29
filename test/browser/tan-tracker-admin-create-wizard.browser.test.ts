@@ -100,7 +100,7 @@ describe("tan-tracker admin full create wizard (browser + real PG)", { concurren
       await page.click('[data-tt="create-retry-refresh"]');
       await page.waitForSelector('[data-tt="detail"]', { timeout: 20000 }).catch(() => undefined);
     }
-    await page.waitForSelector('[data-tt="detail"], [data-tt-open]', { timeout: 15000 });
+    await page.waitForSelector('[data-tt="detail"]', { timeout: 20000 });
     assert.match(await page.content(), /Browser admin коробка|admin коробка/i);
 
     const boot = await page.request.get(`${fixture.baseUrl}/api/tan-tracker/bootstrap`);
