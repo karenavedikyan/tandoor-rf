@@ -47,6 +47,36 @@ var NOTIFICATION_CENTER_QA = await (async () => {
 
   await page.locator("#af-profile-btn").click();
   await page.locator("#af-profile-dialog").waitFor({ state: "visible" });
+  const ttPref = page.locator('#af-profile-dialog [data-af="pref"][data-id="tt"]');
+  const ttStart = await ttPref.isChecked();
+  const putWait = page.waitForResponse(
+    (r) => r.url().includes("demo-notification-state") && r.request().method() === "PUT" && r.ok()
+  );
+  await ttPref.click();
+  ok((await page.evaluate(() => window.NotificationDemoStore.getSaveStatus())) === "saving", "pref toggle saving status immediate");
+  await putWait;
+  await page.waitForFunction(() => window.NotificationDemoStore.getSaveStatus() === "saved");
+  ok((await page.locator("#af-profile-store-status").textContent()).includes("сохранены"), "profile footer shows saved after PUT");
+  ok((await page.locator("#af-save-status").count()) === 0, "header quiet while saved");
+  await closeProfile();
+  await page.reload();
+  await page.locator("#af-profile-btn").click();
+  ok((await ttPref.isChecked()) === !ttStart, "pref persists after reload without flush");
+  const putBack = page.waitForResponse(
+    (r) => r.url().includes("demo-notification-state") && r.request().method() === "PUT" && r.ok()
+  );
+  await ttPref.click();
+  ok((await page.evaluate(() => window.NotificationDemoStore.getSaveStatus())) === "saving", "second pref toggle saving immediate");
+  await putBack;
+  await page.waitForFunction(() => window.NotificationDemoStore.getSaveStatus() === "saved");
+  await closeProfile();
+  await page.reload();
+  await page.locator("#af-profile-btn").click();
+  ok(await ttPref.isChecked() === ttStart, "pref restored after second reload without flush");
+  await closeProfile();
+
+  await page.locator("#af-profile-btn").click();
+  await page.locator("#af-profile-dialog").waitFor({ state: "visible" });
   await page.locator('[data-af="connect-telegram"]').click();
   await page.locator('[data-af="connect-max"]').click();
   await page.evaluate(() => window.AssistantFeedback.flushDemoStore());

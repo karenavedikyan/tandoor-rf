@@ -102,7 +102,12 @@
     scheduleWrite();
   }
 
+  function markSavedIfIdle() {
+    if (!writeTimer) setStatus("saved");
+  }
+
   function scheduleWrite() {
+    setStatus("saving");
     clearTimeout(writeTimer);
     writeTimer = setTimeout(() => {
       writeTimer = null;
@@ -111,7 +116,6 @@
   }
 
   function enqueueWrite() {
-    setStatus("saving");
     writeChain = writeChain
       .then(async () => {
         const body = JSON.stringify(memory);
@@ -121,8 +125,8 @@
           body,
         });
         if (!res.ok) throw new Error(String(res.status));
-        setStatus("saved");
       })
+      .then(() => markSavedIfIdle())
       .catch(() => setStatus("failed"));
     return writeChain;
   }
@@ -131,6 +135,7 @@
     if (writeTimer) {
       clearTimeout(writeTimer);
       writeTimer = null;
+      setStatus("saving");
       enqueueWrite();
     }
     return writeChain;
