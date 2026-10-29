@@ -126,9 +126,15 @@ var NOTIFICATION_CENTER_QA = await (async () => {
   await page.locator("#af-profile-btn").click();
   await page.locator('#af-profile-dialog [data-af="pref"][data-id="tt"]').click();
   await page.evaluate(() => window.AssistantFeedback.flushDemoStore());
-  const failState = await page.locator("#af-save-status").getAttribute("data-state");
-  ok(failState === "failed", "backend failure surfaces failed save state not success");
+  ok((await page.locator("#af-profile-store-status").textContent()).includes("не удалось сохранить"), "backend failure message visible near profile preferences");
+  ok((await page.locator("#af-save-status").getAttribute("data-state")) === "failed", "compact header failure indicator only");
+  ok(await page.locator("#af-save-status").evaluate((el) => getComputedStyle(el).whiteSpace === "nowrap"), "header failure indicator does not wrap");
   await page.locator('#af-profile-dialog [data-af="profile-close"]').click();
+  await page.setViewportSize({ width: 375, height: 812 });
+  ok(await page.locator(".head .logo").isVisible(), "375px header logo preserved");
+  ok((await page.locator(".head .right").evaluate((el) => el.scrollWidth <= el.clientWidth + 2)), "375px header right cluster no overflow");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  ok(await page.locator(".head .brand").isVisible(), "1440px header brand visible");
   await page.unroute("http://127.0.0.1:34113/**");
 
   await page.goto(`${base}/#exchange?role=manager`);

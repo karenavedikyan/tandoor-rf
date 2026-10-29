@@ -20,7 +20,8 @@
   function storedRead(user,key){return !!loadStore().users[user]?.read?.[key];}
   function storedNoteDelivery(user,key){return loadStore().users[user]?.deliveryStatus?.[key]||"";}
   function persistNoteDelivery(user,key,state){const store=loadStore();ensureUser(store,user).deliveryStatus[key]=state;saveStore(store);}
-  const saveStatusLabel=()=>{const st=DS.getSaveStatus();if(st==="idle"||st==="saved")return "";return{saving:"Демо: сохранение…",failed:"Демо: не удалось сохранить — изменения только в памяти вкладки",unavailable:"Демо: preview-сервер недоступен — только память вкладки"}[st]||"";};
+  const saveStatusFullMessage=()=>{const st=DS.getSaveStatus();return{idle:"",saved:"Демо: настройки и прочитанность сохранены на preview-сервере.",saving:"Демо: сохранение…",failed:"Демо: не удалось сохранить — изменения только в памяти вкладки.",unavailable:"Демо: preview-сервер недоступен — только память вкладки."}[st]||"";};
+  const saveStatusHeaderAlert=()=>{const st=DS.getSaveStatus();if(st!=="failed"&&st!=="unavailable")return null;return{short:st==="unavailable"?"Нет сервера":"Сбой сохран.",full:saveStatusFullMessage()};};
   function isNoteDeliveryFailed(user,n){const st=storedNoteDelivery(user,n.key);if(st==="sent")return false;if(st==="failed")return true;return !!n.deliveryFailSeed;}
   function markFailedDeliveriesRetried(user){notes.filter(n=>n.user===user&&isNoteDeliveryFailed(user,n)).forEach(n=>persistNoteDelivery(user,n.key,"sent"));}
   function noteCategory(n){if(n.kind==="tt-track")return "tt";if(n.kind==="info")return "system";return "assign";}
@@ -219,12 +220,18 @@
       if(live){profileBtn.textContent=live.textContent;profileBtn.title=live.title||profileBtn.title;live.remove();}
     }
     let saveChip=document.getElementById("af-save-status");
-    const saveText=saveStatusLabel();
-    if(saveText){
-      if(!saveChip){saveChip=document.createElement("span");saveChip.id="af-save-status";saveChip.className="af-save-status";saveChip.setAttribute("role","status");head.insertBefore(saveChip,document.getElementById("af-bell")||head.querySelector("[data-theme]"));}
-      saveChip.textContent=saveText;
+    const alert=saveStatusHeaderAlert();
+    if(alert){
+      if(!saveChip){saveChip=document.createElement("span");saveChip.id="af-save-status";saveChip.className="af-save-alert";head.insertBefore(saveChip,document.getElementById("af-bell")||head.querySelector("[data-theme]"));}
+      saveChip.textContent=alert.short;
+      saveChip.title=alert.full;
+      saveChip.setAttribute("aria-label",alert.full);
+      saveChip.setAttribute("role","status");
       saveChip.dataset.state=DS.getSaveStatus();
     }else saveChip?.remove();
+    const storeLine=saveStatusFullMessage();
+    const profileStore=document.getElementById("af-profile-store-status");
+    if(profileStore){profileStore.textContent=storeLine;profileStore.hidden=!storeLine;}
     let bell=document.getElementById("af-bell");
     if(!bell){bell=document.createElement("button");bell.id="af-bell";bell.dataset.af="inbox";head.insertBefore(bell,head.querySelector("[data-theme]")||head.lastChild);}
     const unread=mine().filter(n=>!n.read).length;
@@ -274,7 +281,8 @@
       <div class="af-inbox-tools">${action("all","Все","",!unreadOnly?"af-selected":"")}${action("unread","Непрочитанные","",unreadOnly?"af-selected":"")}${action("read-all","Прочитать все")}${action("delivery-settings","Настройки доставки")}</div>
       <div class="af-inbox-cats" role="group" aria-label="Категории">${catTools}</div>
       <div class="af-inbox-list">${rows.map(n=>`<article class="af-note ${n.read?"":"af-unread"}"><div class="af-line"><strong>${E(n.title)}</strong><span class="af-cat">${E(categoryLabels[noteCategory(n)])}</span><small>${n.read?"Прочитано":"Новое"}</small></div><p>${E(n.text)}</p><p class="af-muted">${fmt(n.at)} МСК · ${E(deliveryStatusLine(n,user))}</p><div class="af-actions">${n.kind!=="info"?action("open-note",n.kind==="rate"?"Оценить":n.kind==="rating"?"Посмотреть оценку":n.kind==="clients"?"Открыть клиентов":n.kind==="tt-track"?"Открыть трек":"Открыть назначение",n.key):""}${!n.read?action("read","Прочитано",n.key):""}</div></article>`).join("")||`<div class="af-empty"><h3>${unreadOnly?"Непрочитанных нет":"По этому фильтру пусто"}</h3><p>Смените категорию или откройте «Все». События Tan-трекера, назначений и системные уведомления используют один центр.</p></div>`}</div>
-      <p class="af-inbox-foot">Демо прототипа: без реальных ботов, SMS и учётных записей. Статус доставки не удаляет событие из ЛК.</p>`;
+      <p class="af-inbox-foot">Демо прототипа: без реальных ботов, SMS и учётных записей. Статус доставки не удаляет событие из ЛК.</p>
+      ${saveStatusFullMessage()?`<p id="af-inbox-store-status" class="af-inbox-store-status" role="status">${E(saveStatusFullMessage())}</p>`:""}`;
     document.body.append(el);
     el.querySelector(".af-inbox-list").scrollTop=scroll;
     if(focus)([...el.querySelectorAll("button")].find(b=>b.dataset.af===focus.key&&b.dataset.id===focus.id)||el.querySelector("button")).focus();
@@ -290,6 +298,7 @@
     el.innerHTML=`<div class="af-line"><div><span class="af-eyebrow">Профиль · демо</span><h2 id="af-profile-title">Уведомления и доставка</h2></div>${action("profile-close","Закрыть")}</div>
       <p class="af-required-copy"><strong>Единый центр ЛК.</strong> Tan-трекер, назначения и другие события используют одни настройки. История остаётся в личном кабинете, даже если Telegram и MAX отключены или доставка не удалась.</p>
       <p class="af-muted">${E(P.person(c.id))} · ${E(c.label||names[c.role]||c.role)} · настройки демо-сотрудника сохраняются на изолированном preview-сервере (не в браузере).</p>
+      <p id="af-profile-store-status" class="af-store-status" role="status"${saveStatusFullMessage()?"":' hidden'}>${E(saveStatusFullMessage())}</p>
       <fieldset class="af-delivery-prefs"><legend>Какие события дублировать в мессенджеры (демо)</legend>
         ${[["tt","Tan-трекер: передачи и сроки"],["assign","Назначения и доступ"],["system","Системные и служебные"]].map(([k,t])=>`<label class="af-pref"><input type="checkbox" data-af="pref" data-id="${k}" ${d.prefs[k]?"checked":""}> ${E(t)}</label>`).join("")}
       </fieldset>
