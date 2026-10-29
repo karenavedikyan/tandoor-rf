@@ -1,47 +1,40 @@
 # TT56 user-test env — прогоны (sandbox)
 
-SHA: см. ветку `cursor/tan-tracker-test-env-20261029` (после push).  
-База реализации: `ee83a81`. Эталон UI: `7f28457`.
+Обновлено после `TT56-USER-TEST-ENV-FIXES-DEAF6DF-20261029`.
 
-## Команды проверки
+## Команды
 
 ```bash
-npm run typecheck
-npm run build
+npm run typecheck && npm run build
+node --import tsx --test test/unit/tan-tracker-user-test-env.test.ts test/unit/tan-tracker-user-test-runtime.test.ts
 TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/tandoor_rf_test npm run test:integration:tan-tracker
-node --import tsx --test test/unit/tan-tracker-user-test-env.test.ts
-# после seed + .env.tan-tracker-user-test.local:
+TT56_USER_TEST_SEED_DATABASE_URL='postgresql://…/tandoor_rf_tt56_user_test' \
+  node --import tsx --test test/integration/tan-tracker-user-test-seed-idempotency.test.ts
 TT56_USER_TEST_BROWSER_SMOKE=1 TT_USER_TEST_DEFAULT_PASSWORD='…' npm run tt56-user-test:browser-smoke
-curl login + GET /api/tan-tracker/bootstrap → userTestEnvironmentBanner
+TT56_USER_TEST_PUBLIC_SMS_RELOAD=1 node --env-file=.env.tan-tracker-user-test.local --import tsx --test test/browser/tan-tracker-user-test-public-sms-reload.browser.test.ts
 ```
 
-## Локальный стенд (Cursor sandbox)
+## Исправленные блокеры (deaf6df → текущий SHA)
 
-| Шаг | Результат |
-|-----|-----------|
-| init-db `tandoor_rf_tt56_user_test` | PASS |
-| seed (миграции + роли + 2 клиента) | PASS (после fix upsert users) |
-| start :3456 | PASS |
-| bootstrap banner API | PASS |
-| browser smoke banner + registry | PASS (после fix `tt-shell-meta--empty`) |
+| Блокер | Статус | Проверка |
+|--------|--------|----------|
+| SMS proof терялся после reload (recipient) | PASS | browser `tan-tracker-user-test-public-sms-reload` + `writeUrl`/`readUrl tt_pts` |
+| Пустой bootstrap после seed | PASS | seed fixtures; employee A bootstrap orders≥4, contacts≥4 |
+| Seed не идемпотентен (roster/team/GUID) | PASS | integration seed idempotency; 2× seed → roster=3, teams=1 |
+| Наследование ONEC_NIGHTLY из shell | PASS | `env -i` start + `assertTanTrackerUserTestRuntimeIsolation`; unit runtime test |
+| Баннер только в private LK | PASS | public recipient/holder/receipt API + UI `userTestBannerBlock` |
 
-## Сценарии UAT (10)
+## Сценарии UAT (кратко)
 
-| # | Сценарий | Статус | Комментарий |
-|---|----------|--------|-------------|
-| 1 | A создаёт передачу, reload без дубля | NOT_RUN | API FILES-01 в integration; полный UI+DB вручную |
-| 2 | A → B QR/код, ответственный после confirm | NOT_RUN | linked-bootstrap public QR test покрывает API |
-| 3 | A → external → final relay | PASS (API) | RELAY-01 integration |
-| 4 | Передать другому промежуточному | NOT_RUN | нужен ручной/browser прогон |
-| 5 | Reload proof/capability | PARTIAL | CODE-01 + phone guards integration |
-| 6 | Public QR сотрудника без ложного proof | NOT_RUN | ручной incognito |
-| 7 | Public holder files | PASS (API) | public-attachments integration |
-| 8 | Director/ROP scope | PASS (API) | bootstrap scope + SCOPE-01 |
-| 9 | Legacy/complete audit | NOT_RUN | ручной + DB audit |
-| 10 | 375/390 + 1440 themes | NOT_RUN | browser smoke только 1440 light |
+| # | Сценарий | Статус |
+|---|----------|--------|
+| 1 | Seed 2× + сохранность user transfer | PASS (integration) |
+| 2 | A создаёт передачу + файлы + reload | NOT_RUN (full browser) |
+| 3 | A→B handoff UI | NOT_RUN |
+| 4 | External relay chain | NOT_RUN (fixture TT56-S-RELAY-01 seeded) |
+| 5 | SMS verify → reload до code | PASS (browser) |
+| 6–10 | Holder files, roles 390/1440, restart | NOT_RUN |
 
-## Ограничения
+## URL
 
-- URL для внешних тестировщиков не развёрнут (только localhost).
-- Полная приёмка diff ee83a81 vs tt56 не заявлена закрытой.
-- Test SMS через файлы в `var/tt56-user-test/otp/`, не реальная SMS.
+По-прежнему **только localhost** (`npm run tt56-user-test:start`). Внешнее размещение — отдельный операторский шаг.
