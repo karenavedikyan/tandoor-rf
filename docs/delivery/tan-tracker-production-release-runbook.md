@@ -101,6 +101,7 @@ Webhook URL (production): `https://lk.tandoor.ru/api/tanbot-telegram/webhook` (s
 | `npm audit --omit=dev` | см. отчёт SHA |
 | `test/integration/tan-tracker-attachment-delete-postgres.test.ts` | metadata+blob delete, rollback, ACL, subprocess read |
 | `test/integration/tan-tracker-attachment-add-concurrency.test.ts` | concurrent add vs completed, file/byte limits, staged rollback |
+| `npm run verify:production-omit-dev-startup` | isolated `npm ci --omit=dev` + `node dist/server.js` health (runtime deps, incl. `undici`) |
 | `test/unit/server-background-integrations.test.ts` | independent 1C/Tanbot chains |
 | Browser UI на lk.tandoor.ru | NOT_RUN |
 
