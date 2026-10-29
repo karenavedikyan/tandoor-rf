@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import type { PoolClient } from "pg";
 import { setNoStore } from "../http/no-store";
 import type { AccessRequest } from "../access/middleware";
 import { apiError, ERROR_CODES } from "../shared/errors";
@@ -21,9 +22,21 @@ import {
   mapTransferToOrderDto,
 } from "./repository";
 import type { AccessContext } from "../access/types";
-import type { TanTrackerScopeContext } from "./types";
+import type { TanTrackerScopeContext, TanTrackerTransferRow } from "./types";
 
 type AddBody = { stagingAttachmentIds?: string[] };
+
+type DbLike = Pick<PoolClient, "query">;
+
+async function loadOrderDtoFromRow(client: DbLike, row: TanTrackerTransferRow) {
+  const id = row.id;
+  const timeline = await listTimelineForTransfer(client as PoolClient, id);
+  const revoked = await listRevokedParties(client as PoolClient, id);
+  const attMap = await listAttachmentsForTransfers(client as PoolClient, [id]);
+  return mapTransferToOrderDto(row, timeline, revoked, {
+    attachments: attMap.get(id) ?? [],
+  });
+}
 
 async function loadOrderDto(transferId: string) {
   const pool = getPool();
@@ -38,12 +51,56 @@ async function loadOrderDto(transferId: string) {
     )
   ).rows[0];
   if (!row) return null;
-  const timeline = await listTimelineForTransfer(pool, row.id);
-  const revoked = await listRevokedParties(pool, row.id);
-  const attMap = await listAttachmentsForTransfers(pool, [row.id]);
-  return mapTransferToOrderDto(row, timeline, revoked, {
-    attachments: attMap.get(row.id) ?? [],
-  });
+  return loadOrderDtoFromRow(pool, row);
+}
+
+/** Atomic metadata + blob delete (postgres); used by API and integration tests. */
+export async function deleteTransferAttachmentInTransaction(
+  client: PoolClient,
+  input: {
+    transferId: string;
+    attId: string;
+    actorPartyId: string;
+    scopeCtx: TanTrackerScopeContext;
+    teamGuids: Set<string> | null;
+    partyMap: Awaited<ReturnType<typeof loadPartyEmployeeMap>>;
+  },
+): Promise<void> {
+  const locked = await client.query(
+    `SELECT id, public_code, item_title, qty_label, comment_text, status,
+            creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
+            due_at, holder_since, handoff_version, allow_legacy_complete, completed_at, row_version
+     FROM tt_transfers
+     WHERE id = $1 OR public_code = $1
+     LIMIT 1
+     FOR UPDATE`,
+    [input.transferId],
+  );
+  const row = locked.rows[0];
+  if (!row) {
+    throw Object.assign(new Error("Передача не найдена."), { http: 404 });
+  }
+  const dto = await loadOrderDtoFromRow(client, row);
+  if (
+    !canViewOrder(dto, input.scopeCtx, [], input.teamGuids, false, input.partyMap) ||
+    dto.holderId !== input.actorPartyId ||
+    dto.status === "completed"
+  ) {
+    throw Object.assign(new Error("Нельзя удалить вложение."), { http: 403 });
+  }
+
+  const deleted = (
+    await client.query<{ storage_key: string }>(
+      `DELETE FROM tt_transfer_attachments
+       WHERE id = $1::uuid AND transfer_id = $2
+       RETURNING storage_key`,
+      [input.attId, dto.id],
+    )
+  ).rows[0];
+  if (!deleted) {
+    throw Object.assign(new Error("Вложение не найдено."), { http: 404 });
+  }
+  await deleteAttachmentBytes(deleted.storage_key, client);
 }
 
 async function holderScope(
@@ -168,21 +225,31 @@ export async function deleteTransferAttachmentHandler(req: AccessRequest, res: R
     return;
   }
 
-  const row = (
-    await pool.query<{ storage_key: string }>(
-      `DELETE FROM tt_transfer_attachments
-       WHERE id = $1::uuid AND transfer_id = $2
-       RETURNING storage_key`,
-      [attId, dto.id],
-    )
-  ).rows[0];
-  if (!row) {
+  try {
+    await withTransaction(async (client) => {
+      await deleteTransferAttachmentInTransaction(client, {
+        transferId,
+        attId,
+        actorPartyId: scope.ctx.actorPartyId!,
+        scopeCtx: scope.ctx,
+        teamGuids: scope.teamGuids,
+        partyMap,
+      });
+    });
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http ?? 503;
+    const message = err instanceof Error ? err.message : "Не удалось удалить вложение.";
     setNoStore(res);
-    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Вложение не найдено."));
+    res
+      .status(http)
+      .json(
+        apiError(
+          http === 404 ? ERROR_CODES.NOT_FOUND : http === 403 ? ERROR_CODES.FORBIDDEN : ERROR_CODES.SERVICE_UNAVAILABLE,
+          message,
+        ),
+      );
     return;
   }
-
-  await deleteAttachmentBytes(row.storage_key, pool);
 
   const bootstrap = await buildTanTrackerBootstrap(req.authUser!, access);
   setNoStore(res);

@@ -383,6 +383,52 @@ export function createApp(): express.Application {
 let stopTanbotOutboxWorker: (() => void) | null = null;
 let stopTanbotMaxOutboxWorker: (() => void) | null = null;
 
+/** 1C / Bitrix background chain (isolated from Tanbot workers). */
+export async function runOneCBackgroundIntegrationStartup(
+  pool: NonNullable<ReturnType<typeof getPool>>,
+): Promise<void> {
+  const diagnosticStatus = await runOneDiagnosticJob(pool);
+  if (diagnosticStatus !== "idle") console.log(`1C diagnostic job: ${diagnosticStatus}`);
+  await drainPendingImportJobs();
+  startNightlyExchangeScheduler(process.env);
+}
+
+/** Telegram / MAX outbox workers (isolated from 1C init). */
+export async function runTanbotBackgroundIntegrationStartup(
+  pool: NonNullable<ReturnType<typeof getPool>>,
+): Promise<void> {
+  if (isTanbotTelegramEnabled() && isTanbotTelegramOutboxWorkerEnabled()) {
+    const loaded = loadTanbotTelegramStage2Config();
+    if (loaded.ok) {
+      stopTanbotOutboxWorker = startTanbotTelegramOutboxWorker(pool, loaded.config).stop;
+      console.log("Tanbot Telegram outbox worker enabled");
+    }
+  }
+  if (isTanbotMaxEnabled() && isTanbotMaxOutboxWorkerEnabled()) {
+    const loadedMax = loadTanbotMaxStage2Config();
+    if (loadedMax.ok) {
+      stopTanbotMaxOutboxWorker = startTanbotMaxOutboxWorker(pool, loadedMax.config).stop;
+      console.log("Tanbot MAX outbox worker enabled");
+    }
+  }
+}
+
+export function scheduleBackgroundIntegrationsAfterListen(): void {
+  if (shouldSkipBackgroundIntegrations()) {
+    console.log("tt56 user-test: background 1C/Bitrix workers skipped");
+    return;
+  }
+  const pool = getPool();
+  if (!pool) return;
+
+  void runOneCBackgroundIntegrationStartup(pool).catch(() =>
+    console.error("1C background workers unavailable"),
+  );
+  void runTanbotBackgroundIntegrationStartup(pool).catch(() =>
+    console.error("Tanbot background workers unavailable"),
+  );
+}
+
 export function startServer(): ReturnType<express.Application["listen"]> {
   assertTanTrackerUserTestStartup();
   assertTanTrackerAttachmentsProductionBackend();
@@ -391,32 +437,7 @@ export function startServer(): ReturnType<express.Application["listen"]> {
 
   const server = app.listen(port, "0.0.0.0", () => {
     console.log(`Server listening on 0.0.0.0:${port}`);
-    if (shouldSkipBackgroundIntegrations()) {
-      console.log("tt56 user-test: background 1C/Bitrix workers skipped");
-      return;
-    }
-    void Promise.resolve().then(async () => {
-      const pool = getPool();
-      if (!pool) return;
-      const diagnosticStatus = await runOneDiagnosticJob(pool);
-      if (diagnosticStatus !== "idle") console.log(`1C diagnostic job: ${diagnosticStatus}`);
-      await drainPendingImportJobs();
-      startNightlyExchangeScheduler(process.env);
-      if (isTanbotTelegramEnabled() && isTanbotTelegramOutboxWorkerEnabled()) {
-        const loaded = loadTanbotTelegramStage2Config();
-        if (loaded.ok) {
-          stopTanbotOutboxWorker = startTanbotTelegramOutboxWorker(pool, loaded.config).stop;
-          console.log("Tanbot Telegram outbox worker enabled");
-        }
-      }
-      if (isTanbotMaxEnabled() && isTanbotMaxOutboxWorkerEnabled()) {
-        const loadedMax = loadTanbotMaxStage2Config();
-        if (loadedMax.ok) {
-          stopTanbotMaxOutboxWorker = startTanbotMaxOutboxWorker(pool, loadedMax.config).stop;
-          console.log("Tanbot MAX outbox worker enabled");
-        }
-      }
-    }).catch(() => console.error("1C background workers unavailable"));
+    scheduleBackgroundIntegrationsAfterListen();
   });
 
   process.on("SIGTERM", () => {

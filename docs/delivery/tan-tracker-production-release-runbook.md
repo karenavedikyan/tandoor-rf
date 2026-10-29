@@ -38,21 +38,45 @@
 
 ## Новые / обязательные переменные окружения
 
-Существующие ключи **не перезаписывать**. Секреты задаёт только оператор в App Platform UI.
+Существующие ключи **не перезаписывать**. Значения `hidden-by-api-key-policy` из API **не** подставлять в DATABASE_URL или секреты. Добавлять только новые ключи вручную в UI, пока не подтверждена аддитивная семантика API.
 
-| Переменная | Обязательность | Назначение |
-|------------|----------------|------------|
-| `TT_ATTACHMENTS_BACKEND` | **production:** `postgres` | Хранение байт вложений в БД (переживает redeploy без volume). |
-| `TT_OTP_PEPPER` | **production:** обязателен для SMS/handoff | Секрет ≥16 символов; **без default в коде**. |
-| `TANBOT_TELEGRAM_ENABLED` | opt-in (`false` default) | Включение Telegram-бота. |
-| `TANBOT_TELEGRAM_BOT_TOKEN` | при enabled | Токен бота (secret). |
-| `TANBOT_TELEGRAM_WEBHOOK_SECRET` | при webhook | Secret path/header. |
-| `TANBOT_TELEGRAM_OUTBOX_WORKER_ENABLED` | opt-in | In-process outbox tick на web dyno **или** отдельный worker job. |
-| `TANBOT_MAX_ENABLED` | opt-in | MAX бот. |
-| `TANBOT_MAX_BOT_TOKEN` | при enabled | Токен MAX (secret). |
-| `TANBOT_MAX_OUTBOX_WORKER_ENABLED` | opt-in | Аналогично Telegram. |
+### Tan-Tracker / attachments
 
-Рекомендуется для App Platform: **отдельный scheduled/worker component** `node dist/cli/tanbot-telegram-outbox-worker.js --once` (и MAX аналог) с интервалом 1–2 мин, чтобы retry не терялись при рестарте web-процесса. In-process worker — допустим, если включён ровно один экземпляр.
+| Переменная | Secret | Default | Когда нужна |
+|------------|--------|---------|-------------|
+| `TT_ATTACHMENTS_BACKEND` | no | `postgres` в production | **Обязательно** `postgres` на App Platform. |
+| `TT_OTP_PEPPER` | **yes** | нет | Handoff/SMS hashing в production (≥16 символов). |
+| `TT_ATTACHMENTS_ALLOW_EPHEMERAL_FS` | no | off | Только отладка; не для lk.tandoor.ru. |
+
+### Telegram-only rollout (MAX выключен)
+
+**Порядок:** migrate → deploy → readonly smoke → `getMe` / `getWebhookInfo` (read-only) → при необходимости `setWebhook` (без `drop_pending_updates`) → включить флаги по таблице снизу → проверить in-process worker на **единственном** web-экземпляре.
+
+| Переменная | Secret | Default | Порядок / требование |
+|------------|--------|---------|----------------------|
+| `TANBOT_TELEGRAM_ENABLED` | no | off | **1.** Master switch. |
+| `TANBOT_TELEGRAM_BOT_TOKEN` | **yes** | — | **2.** При enabled. |
+| `TANBOT_TELEGRAM_LINK_TOKEN_PEPPER` | **yes** | — | **3.** ≥16 символов при enabled (`stage2-config`). |
+| `APP_ORIGIN` | no | — | Уже на стенде; нужен для deep-link привязки. |
+| `TANBOT_TELEGRAM_EXPECTED_USERNAME` | no | `TANDOOR_IBOT` | Username sanity check. |
+| `TANBOT_TELEGRAM_BOT_USERNAME` | no | = expected | Опционально override отображения. |
+| `TANBOT_TELEGRAM_LINK_TOKEN_TTL_MINUTES` | no | `15` | 5–60. |
+| `TANBOT_TELEGRAM_WEBHOOK_ENABLED` | no | off | **4.** После согласования URL. |
+| `TANBOT_TELEGRAM_WEBHOOK_SECRET` | **yes** | — | ≥16 символов при webhook enabled. |
+| `TANBOT_TELEGRAM_DELIVERY_ENABLED` | no | off | **5.** Исходящая доставка outbox/webhook-reply. |
+| `TANBOT_TELEGRAM_OUTBOX_WORKER_ENABLED` | no | off | **6.** In-process worker (один dyno) или CLI worker. |
+| `TANBOT_TELEGRAM_OUTBOX_INTERVAL_MS` | no | `15000` | Tick in-process worker. |
+| `TANBOT_HANDOFF_CODE_PILOT_ENABLED` | no | off | **7.** Канонический код в боте; только после opt-in привязки пользователя в LK, не legacy/test SMS. |
+| `TANBOT_TELEGRAM_REQUEST_TIMEOUT_MS` | no | `15000` | 1000–60000. |
+| `TANBOT_TELEGRAM_MAX_RESPONSE_BYTES` | no | `65536` | 4096–262144. |
+
+Webhook URL (production): `https://lk.tandoor.ru/api/tanbot-telegram/webhook` (secret token в заголовке/path по текущей реализации router).
+
+**MAX (сейчас off):** не задавать / явно `false`: `TANBOT_MAX_ENABLED`, `TANBOT_MAX_*`, webhook, delivery, outbox worker.
+
+**Runtime:** после listen запускаются **две независимые** цепочки — 1C/Bitrix (`runOneCBackgroundIntegrationStartup`) и Tanbot (`runTanbotBackgroundIntegrationStartup`). Сбой или зависание 1C **не блокирует** старт Telegram outbox worker.
+
+**Webhook hygiene (оператор):** перед `setWebhook` — `getMe`, `getWebhookInfo`; не заменять чужой активный webhook без отдельного согласования; не использовать `drop_pending_updates`; без массовых сообщений.
 
 ### Запрещено / fail-closed
 
@@ -66,15 +90,16 @@
 - Байты в `BYTEA`: рост ≈ сумма загруженных файлов минус явные delete. **Мониторинг:** `pg_database_size`, `pg_total_relation_size('tt_attachment_blobs')`, периодический отчёт; при необходимости — политика retention для `tt_staged_attachments` с `consumed_at` и orphan blobs (оператор, не в этом релизе).
 - Учебный стенд: `TT_ATTACHMENTS_DIR` + backend `filesystem` (default при `TT_USER_TEST_ENV` / `NODE_ENV=test`).
 
-## Проверки Cursor (sandbox)
+## Проверки Cursor (sandbox, follow-up SHA)
 
 | Команда | Результат |
 |---------|-----------|
-| `npm run typecheck` | PASS |
-| `npm run build` | PASS |
-| `npm test` | PASS (969 unit) |
-| `test/integration/tan-tracker-durable-attachments.test.ts` | PASS |
-| `test/integration/tan-tracker*.test.ts` + `tanbot-handoff-code-pilot.test.ts` | PASS |
+| `npm run typecheck` | см. отчёт SHA |
+| `npm run build` | см. отчёт SHA |
+| `npm test` | см. отчёт SHA |
+| `npm audit --omit=dev` | см. отчёт SHA |
+| `test/integration/tan-tracker-attachment-delete-postgres.test.ts` | metadata+blob delete, rollback, ACL, subprocess read |
+| `test/unit/server-background-integrations.test.ts` | independent 1C/Tanbot chains |
 | Browser UI на lk.tandoor.ru | NOT_RUN |
 
 ## Не выполнялось из Cursor
