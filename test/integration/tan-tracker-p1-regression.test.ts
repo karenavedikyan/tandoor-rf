@@ -147,7 +147,9 @@ describe("tan-tracker P1 regression", { concurrency: false }, () => {
     assert.equal(confirmRes.body.receipt.transferStatus, "active");
     assert.ok(confirmRes.body.receipt.holderAccessToken);
 
-    const afterRelay = await pool!.query(
+    const db = getPool();
+    assert.ok(db);
+    const afterRelay = await db.query(
       `SELECT status, holder_party_id::text, pending_party_id, completed_at
        FROM tt_transfers WHERE public_code = $1`,
       [publicCode],
@@ -177,6 +179,11 @@ describe("tan-tracker P1 regression", { concurrency: false }, () => {
     assert.equal(sendFinal.status, 200, sendFinal.text);
     assert.equal(sendFinal.body.orders[0].status, "waiting");
     assert.ok(sendFinal.body.orders[0].activeInvitation?.invitationToken);
+    assert.ok(sendFinal.body.holderAccessToken);
+    const reloadCtx = await request(app)
+      .get("/api/tan-tracker/public/holder/context")
+      .query({ holderAccessToken: sendFinal.body.holderAccessToken });
+    assert.equal(reloadCtx.status, 200, reloadCtx.text);
 
     const finalToken = sendFinal.body.orders[0].activeInvitation.invitationToken as string;
     const finalPhone = await publicPhoneFlow(app, publicCode, finalPartyId, finalToken);
@@ -188,7 +195,7 @@ describe("tan-tracker P1 regression", { concurrency: false }, () => {
     assert.equal(finalConfirm.body.receipt.routeComplete, true);
     assert.equal(finalConfirm.body.receipt.transferStatus, "completed");
 
-    const done = await pool!.query(
+    const done = await db.query(
       `SELECT status, holder_party_id::text, completed_at IS NOT NULL AS done FROM tt_transfers WHERE public_code = $1`,
       [publicCode],
     );
@@ -297,7 +304,8 @@ describe("tan-tracker P1 regression", { concurrency: false }, () => {
     const pool = getPool();
     assert.ok(pool);
     const client = await pool.connect();
-    let extPartyId = "";
+    let extPartyB = "";
+    let extPartyOut = "";
     let memberPublicCode = "";
     let outsiderPublicCode = "";
     try {
@@ -330,11 +338,18 @@ describe("tan-tracker P1 regression", { concurrency: false }, () => {
       });
       const bParty = await ensurePartyForUserOnWrite(client, memberB.id, "Member B", "+79998881001");
       const outParty = await ensurePartyForUserOnWrite(client, outsider.id, "Outsider M", "+79998882001");
-      extPartyId = (
+      extPartyB = (
         await client.query<{ id: string }>(
           `INSERT INTO tt_parties (kind, display_name, phone_e164, created_by_user_id)
-           VALUES ('external', 'Ext client', '+79998883001', $1::uuid) RETURNING id::text`,
+           VALUES ('external', 'Ext client B', '+79998883001', $1::uuid) RETURNING id::text`,
           [memberB.id],
+        )
+      ).rows[0].id;
+      extPartyOut = (
+        await client.query<{ id: string }>(
+          `INSERT INTO tt_parties (kind, display_name, phone_e164, created_by_user_id)
+           VALUES ('external', 'Ext client Out', '+79998883099', $1::uuid) RETURNING id::text`,
+          [outsider.id],
         )
       ).rows[0].id;
       memberPublicCode = (
@@ -344,7 +359,7 @@ describe("tan-tracker P1 regression", { concurrency: false }, () => {
             final_recipient_party_id, handoff_version
           ) VALUES ($1,$1,'B transfer','waiting',$2,$2,$3,$3,1)
           RETURNING public_code`,
-          [`TT-T-B-${randomUUID().slice(0, 8)}`, bParty.id, extPartyId],
+          [`TT-T-B-${randomUUID().slice(0, 8)}`, bParty.id, extPartyB],
         )
       ).rows[0].public_code;
       outsiderPublicCode = (
@@ -354,7 +369,7 @@ describe("tan-tracker P1 regression", { concurrency: false }, () => {
             final_recipient_party_id, handoff_version
           ) VALUES ($1,$1,'Out transfer','waiting',$2,$2,$3,$3,1)
           RETURNING public_code`,
-          [`TT-T-O-${randomUUID().slice(0, 8)}`, outParty.id, extPartyId],
+          [`TT-T-O-${randomUUID().slice(0, 8)}`, outParty.id, extPartyOut],
         )
       ).rows[0].public_code;
     } finally {
@@ -420,7 +435,9 @@ describe("tan-tracker P1 regression", { concurrency: false }, () => {
         stagingAttachmentIds: stagingIds,
       });
     assert.equal(createRes.status, 400, createRes.text);
-    const count = await pool!.query(
+    const dbAfter = getPool();
+    assert.ok(dbAfter);
+    const count = await dbAfter.query(
       `SELECT COUNT(*)::int AS n FROM tt_transfers WHERE item_title = 'Too many files'`,
     );
     assert.equal(count.rows[0].n, 0);

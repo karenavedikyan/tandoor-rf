@@ -140,6 +140,8 @@ export async function publicRecipientReceiptHandler(req: Request, res: Response)
       publicCode: row.public_code,
       item: row.item_title,
       status: row.status,
+      routeComplete: true,
+      transferStatus: row.status,
       completedAt: row.completed_at ? new Date(row.completed_at).getTime() : null,
       recipientPartyId: invite.pendingPartyId,
     },

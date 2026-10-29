@@ -1,10 +1,16 @@
 import type { Request, Response } from "express";
+import fs from "fs/promises";
 import { withTransaction } from "../access/db";
 import { getPool } from "../db/pool";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { getAppOrigin } from "../config";
 import { holderAccessTtlMs, signHolderAccess, verifyHolderAccess } from "./holder-access";
+import { applyPendingReceiptHandoff } from "./handoff-complete";
+import { requireHandoffOtpPepper } from "./otp-config";
+import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS } from "./otp-config";
+import { hashOtp } from "./phone-verification";
+import { attachmentAbsolutePath, contentDispositionFilename } from "./attachments";
 import {
   listRevokedParties,
   listTimelineForTransfer,
@@ -154,7 +160,8 @@ export async function publicHolderSendToFinalHandler(req: Request, res: Response
       }
       const nextVer = row.handoff_version + 1;
       await client.query(
-        `UPDATE tt_transfers SET pending_party_id = $2, status = 'waiting', handoff_version = $3 WHERE id = $1`,
+        `UPDATE tt_transfers SET pending_party_id = $2, status = 'waiting', handoff_version = $3,
+                row_version = row_version + 1 WHERE id = $1`,
         [row.id, row.final_recipient_party_id, nextVer],
       );
       await client.query(
@@ -170,6 +177,11 @@ export async function publicHolderSendToFinalHandler(req: Request, res: Response
         `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
          VALUES ($1,$2,$3,$4,NULL)`,
         [row.id, row.holder_party_id, row.final_recipient_party_id, "Назначен конечный получатель"],
+      );
+      await client.query(
+        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+         VALUES ($1,NULL,$2::uuid,'holder_send_to_final','{}'::jsonb)`,
+        [row.id, row.holder_party_id],
       );
       return row.id as string;
     });
@@ -196,4 +208,167 @@ export async function publicHolderSendToFinalHandler(req: Request, res: Response
   const payload = await buildPublicHolderJson(pool, transferId);
   setNoStore(res);
   res.status(200).json(payload ?? { ok: true });
+}
+
+export async function publicHolderVerifyCodeHandler(req: Request, res: Response): Promise<void> {
+  const body = req.body as { holderAccessToken?: string; code?: string };
+  const access = body.holderAccessToken ? verifyHolderAccess(body.holderAccessToken) : null;
+  const rawCode = String(body.code ?? "").replace(/\D/g, "");
+  if (!access || rawCode.length !== 6) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректные данные."));
+    return;
+  }
+  let pepper: string;
+  try {
+    pepper = requireHandoffOtpPepper();
+  } catch {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис кодов временно недоступен."));
+    return;
+  }
+  type VerifyResult = { ok: true } | { ok: false; http: number; message: string };
+  let result: VerifyResult;
+  try {
+    result = await withTransaction(async (client) => {
+      const row = await loadHolderTransfer(client, access.transferId, access.partyId, access.hv);
+      if (!row || !row.pending_party_id) {
+        return { ok: false, http: 404, message: "Передача недоступна." };
+      }
+      const codeRes = await client.query<{
+        id: string;
+        code_hash: string;
+        expires_at: Date;
+        verify_attempt_count: number;
+      }>(
+        `SELECT id, code_hash, expires_at, verify_attempt_count FROM tt_handoff_codes
+         WHERE transfer_id = $1 AND handoff_version = $2 AND pending_party_id = $3 AND consumed_at IS NULL
+         ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+        [row.id, row.handoff_version, row.pending_party_id],
+      );
+      const codeRow = codeRes.rows[0];
+      if (!codeRow) {
+        return { ok: false, http: 409, message: "Код не выпущен или истёк." };
+      }
+      if (codeRow.expires_at.getTime() <= Date.now()) {
+        await client.query(`UPDATE tt_handoff_codes SET consumed_at = NOW() WHERE id = $1`, [codeRow.id]);
+        return { ok: false, http: 409, message: "Срок кода истёк." };
+      }
+      if (codeRow.verify_attempt_count >= HANDOFF_CODE_MAX_VERIFY_ATTEMPTS) {
+        await client.query(`UPDATE tt_handoff_codes SET consumed_at = NOW() WHERE id = $1`, [codeRow.id]);
+        return { ok: false, http: 409, message: "Превышено число попыток." };
+      }
+      const hash = hashOtp(rawCode, pepper);
+      if (hash !== codeRow.code_hash) {
+        const attempts = codeRow.verify_attempt_count + 1;
+        await client.query(`UPDATE tt_handoff_codes SET verify_attempt_count = $2 WHERE id = $1`, [
+          codeRow.id,
+          attempts,
+        ]);
+        return { ok: false, http: 400, message: "Неверный код." };
+      }
+      await client.query(`UPDATE tt_handoff_codes SET consumed_at = NOW() WHERE id = $1`, [codeRow.id]);
+      const fullRow = (
+        await client.query(
+          `SELECT id, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version, row_version
+           FROM tt_transfers WHERE id = $1 FOR UPDATE`,
+          [row.id],
+        )
+      ).rows[0];
+      await applyPendingReceiptHandoff(
+        client,
+        fullRow,
+        null,
+        access.partyId,
+        "Подтверждено одноразовым кодом",
+      );
+      await client.query(
+        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+         VALUES ($1,NULL,$2::uuid,'holder_code_verify_ok','{}'::jsonb)`,
+        [row.id, access.partyId],
+      );
+      return { ok: true };
+    });
+  } catch {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Не удалось подтвердить код."));
+    return;
+  }
+  if (!result.ok) {
+    setNoStore(res);
+    res
+      .status(result.http)
+      .json(
+        apiError(
+          result.http === 404 ? ERROR_CODES.NOT_FOUND : ERROR_CODES.VALIDATION_ERROR,
+          result.message,
+        ),
+      );
+    return;
+  }
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
+    return;
+  }
+  const payload = await buildPublicHolderJson(pool, access.transferId);
+  setNoStore(res);
+  res.status(200).json(payload ?? { ok: true });
+}
+
+export async function publicHolderAttachmentHandler(req: Request, res: Response): Promise<void> {
+  const attId = String(req.params.attId ?? "").trim();
+  const holderAccessToken = String(req.query.holderAccessToken ?? "").trim();
+  const access = holderAccessToken ? verifyHolderAccess(holderAccessToken) : null;
+  if (!access || !attId) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Доступ недоступен."));
+    return;
+  }
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
+    return;
+  }
+  const transfer = (
+    await pool.query<{ id: string }>(
+      `SELECT id FROM tt_transfers WHERE id = $1 AND holder_party_id = $2::uuid AND handoff_version = $3`,
+      [access.transferId, access.partyId, access.hv],
+    )
+  ).rows[0];
+  if (!transfer) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Передача недоступна."));
+    return;
+  }
+  const fileRow = (
+    await pool.query<{ storage_key: string; original_name: string; mime_type: string }>(
+      `SELECT storage_key, original_name, mime_type FROM tt_transfer_attachments
+       WHERE id = $1::uuid AND transfer_id = $2 LIMIT 1`,
+      [attId, transfer.id],
+    )
+  ).rows[0];
+  if (!fileRow) {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Файл не найден."));
+    return;
+  }
+  const abs = attachmentAbsolutePath(fileRow.storage_key);
+  let buf: Buffer;
+  try {
+    buf = await fs.readFile(abs);
+  } catch {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Файл недоступен."));
+    return;
+  }
+  setNoStore(res);
+  res.setHeader("Content-Type", fileRow.mime_type || "application/octet-stream");
+  res.setHeader(
+    "Content-Disposition",
+    contentDispositionFilename(fileRow.original_name, "attachment"),
+  );
+  res.status(200).send(buf);
 }

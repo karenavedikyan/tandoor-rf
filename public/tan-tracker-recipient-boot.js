@@ -118,12 +118,17 @@
     window.__TT_PUBLIC_HOLDER__ = true;
     window.__TT_LK_BOOTSTRAP__ = data;
     var p = inv.params;
-    p.set("tt_screen", "public-holder");
-    if (inv.holderAccessToken) p.set("tt_hat", inv.holderAccessToken);
+    p.set("tt_screen", "detail");
+    var hat = data.holderAccessToken || inv.holderAccessToken;
+    if (hat) p.set("tt_hat", hat);
     if (data.orders && data.orders[0]) p.set("tt_order", data.orders[0].id);
     location.hash = "tan-tracker?" + p.toString();
     whenTanTrackerReady(function () {
       window.TanTrackerPrototype.hydrateFromServer(data);
+      if (window.TanTrackerPrototype.state) {
+        window.TanTrackerPrototype.state.view = "detail";
+        window.TanTrackerPrototype.state.publicHolderAccessToken = hat || "";
+      }
       if (typeof window.__ttLkRenderTracker === "function") {
         window.__ttLkRenderTracker();
       }
@@ -167,6 +172,31 @@
         })
         .catch(function (err) {
           showError(err && err.message ? err.message : "Не удалось открыть передачу.");
+        });
+      return;
+    }
+    var screen = inv.params.get("tt_screen") || new URLSearchParams(location.search || "").get("tt_screen");
+    if (inv.token && (inv.orderId || screen === "detail" || screen === "code")) {
+      void loadPublicContext(inv.token)
+        .then(function (data) {
+          whenTanTrackerReady(function () {
+            finishBoot(data, inv);
+            if (screen === "detail" || screen === "code") {
+              window.TanTrackerPrototype.state.view = screen;
+              window.TanTrackerPrototype.state.orderId = inv.orderId || data.orders?.[0]?.id;
+              if (typeof window.__ttLkRenderTracker === "function") window.__ttLkRenderTracker();
+            }
+          });
+        })
+        .catch(function () {
+          return loadPublicReceipt(inv.token).then(function (data) {
+            whenTanTrackerReady(function () {
+              finishBoot(data, inv);
+            });
+          });
+        })
+        .catch(function (err) {
+          showError(err && err.message ? err.message : "Не удалось открыть приглашение.");
         });
       return;
     }

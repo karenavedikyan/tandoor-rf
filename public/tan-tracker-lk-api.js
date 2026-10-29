@@ -189,6 +189,20 @@
         return result.data;
       });
     },
+    publicHolderVerifyCode: function (holderAccessToken, code) {
+      return jsonFetch("/api/tan-tracker/public/holder/code/verify", {
+        method: "POST",
+        body: { holderAccessToken: holderAccessToken, code: code },
+      }).then(function (result) {
+        if (result.response.status !== 200 || !result.data) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось подтвердить код."));
+        }
+        if (result.data.orders && window.TanTrackerPrototype.hydrateFromServer) {
+          window.TanTrackerPrototype.hydrateFromServer(result.data);
+        }
+        return result.data;
+      });
+    },
     loadPublicHolderContext: function (holderAccessToken) {
       var url =
         "/api/tan-tracker/public/holder/context?holderAccessToken=" + encodeURIComponent(holderAccessToken);

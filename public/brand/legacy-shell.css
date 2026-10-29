@@ -303,6 +303,11 @@ body.legacy-body {
   color: inherit;
 }
 
+[data-theme="dark"] img.legacy-topbar__logo,
+[data-theme="dark"] img[data-legacy-logo-full] {
+  filter: brightness(0) invert(1);
+}
+
 .legacy-topbar__logo {
   display: block;
   flex-shrink: 0;

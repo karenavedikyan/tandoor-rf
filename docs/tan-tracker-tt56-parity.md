@@ -53,7 +53,9 @@
 
 | ID | Статус в ветке `cursor/tan-tracker-lk-tt56-20261028` |
 |----|--------------------------------------------------------|
-| RELAY-01 | **Исправлено в коде:** qr-confirm не завершает маршрут у посредника; `holderAccessToken`, `GET/POST public/holder/*`, UI `public-holder`, boot по `tt_hat`. **Нужна независимая browser E2E + PG.** |
+| RELAY-01 | **Доработано (8885f16→):** holder detail UI tt56, `tt_hat` обновляется после send-to-final, holder file download + code verify, hydrate после qr-confirm. Browser E2E — приёмка. |
+| ACTOR-01 | **Исправлено:** `actorContactId()` в detail/complete/mobile; LK holder actions (pending, files, legacy-complete). |
+| CODE-01 | **Доработано:** `writeUrl` сохраняет `tt_tok`/`tt_pts`/`tt_hat` на public detail; boot reload detail/code. |
 | CODE-01 | **Исправлено:** `POST /public/recipient/code/generate` с `phoneSessionToken`. Integration-тест. Browser E2E — приёмка. |
 | SCOPE-01 | **Исправлено:** ROP union legacy + 1С команды в `team-scope.ts`. Integration-тест с двумя командами. |
 | PICKER-01 | **Исправлено:** единый `transferPickAllowed` для initial render и `patchContactPick`; LK не подставляет `actingContactId` сотрудника. |

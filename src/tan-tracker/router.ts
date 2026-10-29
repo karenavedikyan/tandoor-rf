@@ -15,7 +15,12 @@ import {
   publicSendPhoneCodeHandler,
   publicVerifyPhoneCodeHandler,
 } from "./public-recipient";
-import { publicHolderContextHandler, publicHolderSendToFinalHandler } from "./public-holder";
+import {
+  publicHolderAttachmentHandler,
+  publicHolderContextHandler,
+  publicHolderSendToFinalHandler,
+  publicHolderVerifyCodeHandler,
+} from "./public-holder";
 import { legacyCompleteHandler } from "./legacy-complete-mutation";
 import {
   publicRecipientAttachmentHandler,
@@ -51,6 +56,14 @@ export function createTanTrackerRouter(): express.Router {
 
   router.post("/public/holder/send-to-final", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
     void publicHolderSendToFinalHandler(req, res).catch(next);
+  });
+
+  router.post("/public/holder/code/verify", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void publicHolderVerifyCodeHandler(req, res).catch(next);
+  });
+
+  router.get("/public/holder/attachments/:attId", requireDatabaseReady, (req, res, next) => {
+    void publicHolderAttachmentHandler(req, res).catch(next);
   });
 
   router.get("/public/recipient/context", requireDatabaseReady, (req, res, next) => {

@@ -19,9 +19,10 @@
   };
   const Sc = () => window.TanTrackerScope;
   const fmtPhone = (digits) => {
-    const d = String(digits).replace(/\D/g, "");
-    if (d.length < 11) return "+7 (900) 000-00-XX · демо";
-    return `+7 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9, 11)} · демо`;
+    const core = fmtPhoneCore(digits);
+    const lkRuntime = (typeof TT_LK !== "undefined" && TT_LK) || window.__TT_PUBLIC_RECIPIENT__;
+    if (lkRuntime) return core;
+    return `${core} · демо`;
   };
   const fmtPhoneCore = (digits) => {
     const d = String(digits).replace(/\D/g, "");
@@ -119,6 +120,7 @@
 
   function orderVisible(o) {
     if (!o) return false;
+    if (isPublicGuestPage()) return orders.some((x) => x.id === o.id);
     if (TT_LK) return orders.some((x) => x.id === o.id);
     if (!Sc()) return true;
     return Sc().canViewOrder(o, scopeCtx());
@@ -509,6 +511,37 @@
     return !!window.__TT_PUBLIC_RECIPIENT__;
   }
 
+  function isPublicHolderSession() {
+    return !!(window.__TT_PUBLIC_HOLDER__ && state.publicHolderAccessToken);
+  }
+
+  function applyPublicHolderPayload(data) {
+    if (!data) return;
+    window.__TT_PUBLIC_HOLDER__ = true;
+    state.publicHolderAccessToken = data.holderAccessToken || state.publicHolderAccessToken || "";
+    if (data.orders?.[0]) {
+      state.orderId = data.orders[0].id;
+      const inv = data.orders[0].activeInvitation;
+      if (inv?.invitationToken) state.publicInvitationToken = inv.invitationToken;
+    }
+    if (window.TanTrackerPrototype?.hydrateFromServer) {
+      window.TanTrackerPrototype.hydrateFromServer(data);
+    }
+    if (data.orders?.[0]?.status === "completed") {
+      state.publicReceipt = {
+        publicCode: data.orders[0].id,
+        item: data.orders[0].item,
+        routeComplete: true,
+        transferStatus: "completed",
+        completedAt: Date.now(),
+      };
+      state.view = "public-receipt";
+    } else {
+      state.view = "detail";
+    }
+    writeUrl();
+  }
+
   const Att = () => window.TanTrackerAttachments;
 
   function detailActorKey() {
@@ -652,6 +685,14 @@
   }
 
   function buildPublicAttachmentDownloadUrl(attId, o) {
+    if (isPublicHolderSession() && state.publicHolderAccessToken) {
+      return (
+        "/api/tan-tracker/public/holder/attachments/" +
+        encodeURIComponent(attId) +
+        "?holderAccessToken=" +
+        encodeURIComponent(state.publicHolderAccessToken)
+      );
+    }
     const invTok = publicInvitationTokenForOrder(o);
     const session = state.lkPhoneSessionToken;
     if (!attId || !invTok || !session) return "";
@@ -665,7 +706,7 @@
 
   function applyPublicAttachmentUrls(o) {
     if (!window.__TT_PUBLIC_RECIPIENT__ || !o?.attachments?.length) return;
-    const verified = identityVerified(o);
+    const verified = isPublicHolderSession() || identityVerified(o);
     for (const a of o.attachments) {
       a.url = verified ? buildPublicAttachmentDownloadUrl(a.id, o) : "";
     }
@@ -1381,7 +1422,7 @@
     return `<div class="tt-wizard-recipient-choose" data-tt="recipient-choose">
       <button type="button" class="tt-wizard-choice-card" data-tt="create-recipient-browse">
         <span class="tt-wizard-choice-title">Выбрать из списка</span>
-        <span class="tt-wizard-choice-hint">Контакты компании и клиенты демо-каталога</span>
+        <span class="tt-wizard-choice-hint">${TT_LK ? "Контакты из вашего рабочего списка" : "Контакты компании и клиенты демо-каталога"}</span>
       </button>
       <button type="button" class="tt-wizard-choice-card" data-tt="create-new-recipient" aria-label="Добавить нового получателя">
         <span class="tt-wizard-choice-title">Добавить нового</span>
@@ -1808,21 +1849,33 @@
   }
 
   function afterPublicQrReceive(receipt) {
-    state.publicInvitationToken =
-      state.recipientTicket?.tok ||
-      state.publicInvitationToken ||
-      publicInvitationTokenForOrder(orders.find((x) => x.id === state.orderId));
-    state.publicHolderAccessToken = receipt?.holderAccessToken || "";
     state.recipientMode = false;
     state.recipientTicket = null;
     state.codeInput = "";
-    state.lkPhoneSessionToken = "";
     state.lkPhoneSessionKey = "";
     state.handoffReceipt = null;
-    state.publicReceipt = receipt;
+    state.publicReceipt = receipt?.routeComplete ? receipt : null;
     state.orderId = receipt?.publicCode || state.orderId;
-    state.view = receipt?.routeComplete ? "public-receipt" : "public-holder";
     ttShellMounted = false;
+    if (receipt?.routeComplete) {
+      state.view = "public-receipt";
+      state.lkPhoneSessionToken = "";
+      return;
+    }
+    const hat = receipt?.holderAccessToken || "";
+    if (hat && window.TanTrackerLk?.loadPublicHolderContext) {
+      state.publicHolderAccessToken = hat;
+      window.__TT_PUBLIC_HOLDER__ = true;
+      void window.TanTrackerLk.loadPublicHolderContext(hat)
+        .then((data) => applyPublicHolderPayload(data))
+        .catch((err) => {
+          state.error = err?.message || "Не удалось открыть передачу.";
+          state.view = "detail";
+          renderTracker();
+        });
+      return;
+    }
+    state.view = "detail";
   }
 
   function afterCodeSend(o, senderContactId) {
@@ -1862,7 +1915,10 @@
   function publicReceiptView() {
     const r = state.publicReceipt;
     if (!r) return deniedView();
-    const title = r.routeComplete ? "Передача завершена" : "Получение подтверждено";
+    const title =
+      r.routeComplete || r.transferStatus === "completed" || r.status === "completed"
+        ? "Передача завершена"
+        : "Получение подтверждено";
     return `<div class="tt-panel tt-handoff-receipt" data-tt="public-receipt">
       <h2>${E(title)}</h2>
       <p class="tt-success">${E(r.item || "Передача")}</p>
@@ -1998,6 +2054,24 @@
 
   function tryConfirmCode(o, input) {
     state.error = "";
+    if (isPublicHolderSession() && window.TanTrackerLk?.publicHolderVerifyCode) {
+      if (o._codeBusy) return false;
+      o._codeBusy = true;
+      window.TanTrackerLk.publicHolderVerifyCode(state.publicHolderAccessToken, input)
+        .then((data) => {
+          o._codeBusy = false;
+          state.codeInput = "";
+          applyPublicHolderPayload(data);
+          state.toast = "Передача подтверждена.";
+          renderTracker();
+        })
+        .catch((err) => {
+          o._codeBusy = false;
+          state.error = err?.message || "Неверный код.";
+          renderTracker();
+        });
+      return false;
+    }
     if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.verifyHandoffCode) {
       if (o._codeBusy) return false;
       o._codeBusy = true;
@@ -2142,7 +2216,7 @@
       state.error = "Сначала отмените ожидание или подтвердите передачу.";
       return;
     }
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = actorContactId();
     if (!actor || o.holderId !== actor) {
       state.error = "Завершить может только текущий держатель.";
       return;
@@ -2386,6 +2460,19 @@
       const tok = state.publicInvitationToken || state.recipientTicket?.tok;
       if (tok) p.set("tt_tok", tok);
       else p.delete("tt_tok");
+    } else if (isPublicGuestPage() && state.orderId && !state.recipientMode) {
+      p.delete("tt_view");
+      p.delete("tt_hv");
+      p.delete("tt_rcv");
+      p.delete("tt_via");
+      p.set("tt_order", state.orderId);
+      if (state.publicHolderAccessToken) p.set("tt_hat", state.publicHolderAccessToken);
+      else p.delete("tt_hat");
+      const tok = state.publicInvitationToken || state.recipientTicket?.tok;
+      if (tok) p.set("tt_tok", tok);
+      else p.delete("tt_tok");
+      if (state.lkPhoneSessionToken) p.set("tt_pts", state.lkPhoneSessionToken);
+      else p.delete("tt_pts");
     } else {
       p.delete("tt_view");
       p.delete("tt_order");
@@ -2393,6 +2480,8 @@
       p.delete("tt_rcv");
       p.delete("tt_via");
       p.delete("tt_tok");
+      p.delete("tt_hat");
+      p.delete("tt_pts");
     }
     if (state.actingContactId) p.set("tt_act", state.actingContactId);
     else p.delete("tt_act");
@@ -2447,7 +2536,17 @@
       state.actingContactId = act && contactById(act)?.kind === "external" ? act : null;
     } else state.actingContactId = p.get("tt_act") || null;
     const hat = p.get("tt_hat");
-    if (hat && isPublicGuestPage()) state.publicHolderAccessToken = hat;
+    if (hat && isPublicGuestPage()) {
+      state.publicHolderAccessToken = hat;
+      window.__TT_PUBLIC_HOLDER__ = true;
+    }
+    const pts = p.get("tt_pts");
+    if (pts && isPublicGuestPage()) {
+      state.lkPhoneSessionToken = pts;
+      state.lkPhoneSessionKey = state.orderId && state.recipientTicket?.rcv
+        ? `${state.orderId}|${state.recipientTicket.rcv}`
+        : state.lkPhoneSessionKey;
+    }
     const urlExternalActing = state.actingContactId && contactById(state.actingContactId)?.kind === "external";
     const ttEmp = p.get("tt_emp");
     if (!resolved.unsupported && ttEmp && employees[ttEmp] && !urlExternalActing) {
@@ -2730,7 +2829,9 @@
       return wizardShell(
         phase,
         "Телефон нового получателя",
-        "Шаг 3 из 4 · демо-номер для связи в прототипе (без реальной СМС).",
+        TT_LK
+          ? "Шаг 3 из 4 · номер для SMS-подтверждения получателем."
+          : "Шаг 3 из 4 · демо-номер для связи в прототипе (без реальной СМС).",
         `<label class="tt-wizard-field">Телефон<input inputmode="tel" data-tt-field="newPhone" value="${E(f.newPhone)}" placeholder="+7 900 000 00 00"></label>`,
         `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
       );
@@ -2908,7 +3009,7 @@
   }
 
   function detailMobilePrimaryDock(o) {
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = actorContactId();
     const isHolder = o.holderId === actor;
     const heroAttr = 'data-tt-detail-hero-primary=""';
     if (o.status === "completed" || !isHolder) return "";
@@ -3204,7 +3305,7 @@
 
   function detailView(o) {
     const p = o.pendingId ? contactById(o.pendingId) : null;
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = actorContactId();
     const isHolder = o.holderId === actor;
     const canComplete =
       isHolder &&
@@ -3483,12 +3584,11 @@
       lastViewKey = viewKey;
     }
 
-    if ((state.view === "public-receipt" || state.view === "public-holder") && isPublicGuestPage()) {
+    if (state.view === "public-receipt" && isPublicGuestPage()) {
       ttShellMounted = false;
-      const body = state.view === "public-holder" ? publicHolderView() : publicReceiptView();
+      const body = publicReceiptView();
       main.innerHTML = `<div class="tt-work tt-work-recipient" data-testid="tan-tracker-public-guest">${body}${Att() ? Att().lightboxHtml() : ""}</div>`;
-      document.title =
-        state.view === "public-holder" ? "Tandoor RF · Передача у вас" : "Tandoor RF · Получение подтверждено";
+      document.title = "Tandoor RF · Получение подтверждено";
       lucide.createIcons();
       paintQrHosts();
       return;
@@ -3915,6 +4015,19 @@
       return;
     }
     if (action === "transfer-final" && o) {
+      if (isPublicHolderSession() && window.TanTrackerLk?.publicHolderSendToFinal) {
+        void window.TanTrackerLk.publicHolderSendToFinal(state.publicHolderAccessToken)
+          .then((data) => {
+            applyPublicHolderPayload(data);
+            state.toast = "Конечный получатель назначен.";
+            renderTracker();
+          })
+          .catch((err) => {
+            state.error = err?.message || "Не удалось назначить получателя.";
+            renderTracker();
+          });
+        return;
+      }
       startPending(o, o.finalRecipientId);
       state.view = "detail";
       writeUrl();
@@ -4127,7 +4240,7 @@
     }
     if (action === "complete" && o) {
       state.error = "";
-      const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+      const actor = actorContactId();
       if (o.status === "completed") state.error = "Передача уже завершена.";
       else if (o.pendingId) state.error = "Сначала отмените ожидание или подтвердите передачу.";
       else if (!actor || o.holderId !== actor) state.error = "Завершить может только текущий держатель.";
@@ -4319,9 +4432,9 @@
         renderTracker();
         return;
       }
-      window.TanTrackerLk.publicHolderSendToFinal(token)
+      void window.TanTrackerLk.publicHolderSendToFinal(token)
         .then((data) => {
-          state.publicHolderAccessToken = data.holderAccessToken || token;
+          applyPublicHolderPayload(data);
           state.toast = "Конечный получатель назначен.";
           renderTracker();
         })
@@ -4614,7 +4727,7 @@
     if (data.publicHolder) {
       state.publicHolderAccessToken = data.holderAccessToken || state.publicHolderAccessToken || "";
       state.orderId = data.orders?.[0]?.id || state.orderId;
-      state.view = "public-holder";
+      window.__TT_PUBLIC_HOLDER__ = true;
     }
     if (window.__TT_PUBLIC_RECIPIENT__) {
       readUrl();

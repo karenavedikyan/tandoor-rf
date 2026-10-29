@@ -15,9 +15,9 @@ body.legacy-body #tt-root-host .tt-work {
 
 [data-theme="dark"] body.legacy-body .legacy-content .tt-work,
 [data-theme="dark"] body.legacy-body #tt-root-host .tt-work {
-  --text: #232c35;
-  --muted: #697683;
-  --green: #507f22;
+  --text: #ecf0e9;
+  --muted: #a7b2a9;
+  --green: #a8cb78;
 }
 
 [data-theme="dark"] body.legacy-body .legacy-content .tt-work,
