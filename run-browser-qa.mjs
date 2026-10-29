@@ -3,9 +3,38 @@ import { createServer } from "http";
 import { readFile } from "fs/promises";
 import { join, extname } from "path";
 import { fileURLToPath } from "url";
+import { spawn } from "child_process";
+import net from "net";
 
 const root = join(fileURLToPath(import.meta.url), "..", "site");
 const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".ttf": "font/ttf" };
+
+function waitForPort(port, host = "127.0.0.1", attempts = 60) {
+  return new Promise((resolve, reject) => {
+    let n = 0;
+    const tryOnce = () => {
+      const socket = net.connect(port, host, () => {
+        socket.end();
+        resolve();
+      });
+      socket.on("error", () => {
+        if (++n >= attempts) reject(new Error(`port ${port} not ready`));
+        else setTimeout(tryOnce, 100);
+      });
+    };
+    tryOnce();
+  });
+}
+
+const demoProc = spawn("node", ["prototype/notification-demo-server.mjs"], {
+  cwd: join(fileURLToPath(import.meta.url), ".."),
+  stdio: ["ignore", "pipe", "pipe"],
+});
+demoProc.on("exit", (code) => {
+  if (code && code !== 0) console.error("notification demo backend exited", code);
+});
+process.on("exit", () => demoProc.kill("SIGTERM"));
+await waitForPort(34113);
 
 const server = createServer(async (req, res) => {
   try {
@@ -23,7 +52,7 @@ await new Promise((r) => server.listen(4317, "127.0.0.1", r));
 const browser = await chromium.launch();
 const page = await browser.newPage();
 await page.setViewportSize({ width: 1440, height: 900 });
-page.setDefaultTimeout(5000);
+page.setDefaultTimeout(8000);
 page.on("pageerror", (e) => console.error("PAGEERROR:", e.message));
 globalThis.page = page;
 globalThis.ttOpenDemoSettings = async () => {
@@ -127,3 +156,4 @@ try {
 
 await browser.close();
 server.close();
+demoProc.kill("SIGTERM");

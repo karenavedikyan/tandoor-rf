@@ -62,11 +62,11 @@
 
 - **Entry:** global header `#af-bell` (same bell as assignments feedback); profile `#af-profile-btn` (avatar) → dialog «Уведомления и доставка». Not a separate Tan-tracker settings page.
 - **Center:** title «Центр уведомлений»; filters **Все / Непрочитанные**, **Прочитать все**, category chips **Все · Tan-трекер · Назначения · Система**; timestamps; read/unread; deep links (`tt-track`, assignment, clients, rate/rating). Demo Tan-tracker handoff row with delivery-fail copy; assignment and system fixtures unchanged in spirit.
-- **Persistence:** read/unread and delivery prefs per demo employee in `localStorage` (`tandoor-lk-notifications-demo-v1`); survives reload; «Сбросить демо» in handover clears store via `AssistantFeedback.resetDemo()`.
+- **Persistence:** read/unread and delivery prefs per demo employee on isolated preview backend (`node prototype/notification-demo-server.mjs`, `:34113`, visitor `X-Visitor-Id`); client `site/notification-demo-store.js` + `window.__NOTIFICATION_DEMO_API__` in `site/index.html`; survives reload when backend running; «Сбросить демо» → `AssistantFeedback.resetDemo()` (`DELETE` visitor state). No browser `localStorage`.
 - **Delivery (demo):** Telegram + MAX connect/disconnect without codes/bots; shared prefs for all event types; status line under each item; LK history when channels off or delivery fails; profile «Повторить отправку (демо)» clears last error.
 - **A11y / layout:** `role="dialog"`, Escape, focus return; 375px inbox width; theme toggle; no duplicate bell.
 - **Doc:** `docs/prototype/unified-notification-center.md` (decision, privacy, LK vs delivery).
-- QA: `notification-center-qa.js` (20 checks: categories incl. system for m1, read-all→unread empty + reload, delivery fail→retry line sync, disconnect preserves count, module links, 375↔1440 + light/dark, pageerror from start). Regression: `assistant-feedback-qa.js`.
+- QA: `notification-demo-api-qa.mjs` (visitor isolation, validation); `notification-center-qa.js` (22 checks incl. backend flush/reload, failed save state); `run-browser-qa.mjs` starts demo backend + static `:4317`. Regression: `assistant-feedback-qa.js`, `tan-tracker-inbox-route-qa.js`.
 
 ## Notifications and completed-assignment feedback
 - Preserve manager picker, coordinator-only decisions, director audit and assistant

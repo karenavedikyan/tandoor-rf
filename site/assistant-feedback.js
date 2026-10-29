@@ -1,15 +1,17 @@
-(function(){
+(async function(){
   "use strict";
+  const DS=window.NotificationDemoStore;
+  await DS.ready;
   const P=window.AssistantPrototype,S=P.state,E=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const names={manager:"Менеджер",coordinator:"РОА",director:"Директор",assistant:"Ассистент",rop:"РОП",admin:"Администратор"};
   let source,notes=[],reviews=[],seen=new Set(),previous=new Map(),seq=0,inbox=false,unreadOnly=false,dialog=null;
   let filters={q:"",assistant:"",manager:"",score:"",status:""};
   let categoryFilter="all",profileDialog=null;
-  const STORE_KEY="tandoor-lk-notifications-demo-v1";
   const categoryLabels={all:"Все",tt:"Тан-трекер",assign:"Назначения",system:"Система"};
   const defaults={manager:"m1",coordinator:"c1",director:"d1",assistant:"a1",rop:"r1",admin:"admin"};
-  function loadStore(){try{return JSON.parse(localStorage.getItem(STORE_KEY))||{users:{}};}catch{return {users:{}};}}
-  function saveStore(store){try{localStorage.setItem(STORE_KEY,JSON.stringify(store));}catch{}}
+  const cloneStore=s=>JSON.parse(JSON.stringify(s));
+  function loadStore(){return cloneStore(DS.loadStore());}
+  function saveStore(store){DS.saveStore(cloneStore(store));}
   function defaultDelivery(){return {telegram:{connected:false,label:""},max:{connected:false,label:""},prefs:{tt:true,assign:true,system:true},lastError:"",lastErrorAt:0};}
   function ensureUser(store,user){if(!store.users[user])store.users[user]={read:{},delivery:defaultDelivery(),deliveryStatus:{}};const u=store.users[user];if(!u.delivery)u.delivery=defaultDelivery();if(!u.deliveryStatus)u.deliveryStatus={};return u;}
   function deliveryFor(user){return ensureUser(loadStore(),user).delivery;}
@@ -18,6 +20,7 @@
   function storedRead(user,key){return !!loadStore().users[user]?.read?.[key];}
   function storedNoteDelivery(user,key){return loadStore().users[user]?.deliveryStatus?.[key]||"";}
   function persistNoteDelivery(user,key,state){const store=loadStore();ensureUser(store,user).deliveryStatus[key]=state;saveStore(store);}
+  const saveStatusLabel=()=>({idle:"",saving:"Демо: сохранение…",saved:"Демо: сохранено на preview-сервере",failed:"Демо: не удалось сохранить — изменения только в памяти вкладки",unavailable:"Демо: preview-сервер недоступен — только память вкладки"}[DS.getSaveStatus()]||"");
   function isNoteDeliveryFailed(user,n){const st=storedNoteDelivery(user,n.key);if(st==="sent")return false;if(st==="failed")return true;return !!n.deliveryFailSeed;}
   function markFailedDeliveriesRetried(user){notes.filter(n=>n.user===user&&isNoteDeliveryFailed(user,n)).forEach(n=>persistNoteDelivery(user,n.key,"sent"));}
   function noteCategory(n){if(n.kind==="tt-track")return "tt";if(n.kind==="info")return "system";return "assign";}
@@ -133,13 +136,13 @@
       `${P.person(r.assistant)} · ${r.score}/5 · ${r.assignment}. Оценка доступна РОА и директору.`,r.assignment,"rating",Math.min(r.at,S.clock-1000-i))));
     ["r1","r2"].forEach(id=>add(id,"team-info","Доступ ассистенту согласован РОА","Информация о временном доступе в вашей территории. Ваше согласование не требуется.",id==="r1"?"Н-102":"Н-107","detail",S.clock-7200000));
     add("m1","lk-account","Настройки учётной записи ЛК","Демо: напоминание о безопасности входа. История уведомлений персональна; доступ к клиентам и назначениям от этого не меняется.",null,"info",S.clock-5400000);
-    add("admin","system","Служебные события доступны в ЛК","Уведомления персональные. Администратор не заменяет РОА при согласовании.",null,"info",S.clock-3600000);
+    add("admin","system","Служебные события доступны в ЛК","Уведомления персональны. Настройки доставки и прочитанность не меняют права доступа к разделам ЛК.",null,"info",S.clock-3600000);
     notes.forEach(n=>{if(storedRead(n.user,n.key))n.read=true;});
     ensureDemoDeliveryNote("m1");
     const dm=deliveryFor("m1");if(!dm.lastError){dm.lastError="Демо: Telegram не доставил push (502). Событие сохранено в центре ЛК.";dm.lastErrorAt=S.clock-900000;persistDelivery("m1",dm);}
     remember();
   }
-  function resetDemo(){try{localStorage.removeItem(STORE_KEY);}catch{}categoryFilter="all";closeProfile();init();paint();}
+  async function resetDemo(){await DS.resetRemote();categoryFilter="all";closeProfile();init();paint();}
   function signature(a){return {status:a.status,effective:P.effective(a),assistant:a.assistant,end:a.end,change:!!a.change,n:a.history.length};}
   function remember(){source.forEach(a=>previous.set(a.id,signature(a)));}
   function sync(){
@@ -215,6 +218,13 @@
       const live=document.querySelector(".head span.avatar");
       if(live){profileBtn.textContent=live.textContent;profileBtn.title=live.title||profileBtn.title;live.remove();}
     }
+    let saveChip=document.getElementById("af-save-status");
+    const saveText=saveStatusLabel();
+    if(saveText){
+      if(!saveChip){saveChip=document.createElement("span");saveChip.id="af-save-status";saveChip.className="af-save-status";saveChip.setAttribute("role","status");head.insertBefore(saveChip,document.getElementById("af-bell")||head.querySelector("[data-theme]"));}
+      saveChip.textContent=saveText;
+      saveChip.dataset.state=DS.getSaveStatus();
+    }else saveChip?.remove();
     let bell=document.getElementById("af-bell");
     if(!bell){bell=document.createElement("button");bell.id="af-bell";bell.dataset.af="inbox";head.insertBefore(bell,head.querySelector("[data-theme]")||head.lastChild);}
     const unread=mine().filter(n=>!n.read).length;
@@ -279,7 +289,7 @@
       <div class="af-actions">${ch.connected?action("disconnect-"+kind,"Отключить (демо)"):action("connect-"+kind,"Подключить (демо)")}</div></article>`;};
     el.innerHTML=`<div class="af-line"><div><span class="af-eyebrow">Профиль · демо</span><h2 id="af-profile-title">Уведомления и доставка</h2></div>${action("profile-close","Закрыть")}</div>
       <p class="af-required-copy"><strong>Единый центр ЛК.</strong> Tan-трекер, назначения и другие события используют одни настройки. История остаётся в личном кабинете, даже если Telegram и MAX отключены или доставка не удалась.</p>
-      <p class="af-muted">${E(P.person(c.id))} · ${E(c.label||names[c.role]||c.role)} · настройки сохраняются локально в браузере для этого демо-сотрудника.</p>
+      <p class="af-muted">${E(P.person(c.id))} · ${E(c.label||names[c.role]||c.role)} · настройки демо-сотрудника сохраняются на изолированном preview-сервере (не в браузере).</p>
       <fieldset class="af-delivery-prefs"><legend>Какие события дублировать в мессенджеры (демо)</legend>
         ${[["tt","Tan-трекер: передачи и сроки"],["assign","Назначения и доступ"],["system","Системные и служебные"]].map(([k,t])=>`<label class="af-pref"><input type="checkbox" data-af="pref" data-id="${k}" ${d.prefs[k]?"checked":""}> ${E(t)}</label>`).join("")}
       </fieldset>
@@ -397,6 +407,7 @@
   });
   document.addEventListener("assistant:paint",()=>{const person=noticeUserId();if(person!==paint.person){inbox=false;unreadOnly=false;categoryFilter="all";filters={q:"",assistant:"",manager:"",score:"",status:""};closeDialog();closeProfile();paint.person=person;}paint();});
   const beforeRender=render;render=function(){beforeRender();paint();};
-  window.AssistantFeedback={view,closure,resetDemo};
+  DS.onStatusChange(()=>paint());
+  window.AssistantFeedback={view,closure,resetDemo,flushDemoStore:()=>DS.flush()};
   init();P.render();paint();
 })();
