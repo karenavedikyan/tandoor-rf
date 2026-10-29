@@ -25,6 +25,7 @@ import {
   listTanTrackerRecipientCatalog,
   mergeTanTrackerContactLists,
 } from "./recipient-catalog";
+import { isExternalMessengerFeatureEnabled } from "./external-messenger/config";
 
 function mapRoleToPrototype(role: string): string {
   if (role === "regional_manager") return "regional";
@@ -75,6 +76,7 @@ export async function buildTanTrackerBootstrap(
   contacts: TanTrackerContactDto[];
   orders: TanTrackerOrderDto[];
   capabilities: { canWrite: boolean };
+  externalMessengerEnabled: boolean;
   userTestEnvironmentBanner: string | null;
 }> {
   const pool = getPool();
@@ -181,6 +183,7 @@ export async function buildTanTrackerBootstrap(
     contacts,
     orders,
     capabilities: { canWrite: tanTrackerCanWrite(user, access) },
+    externalMessengerEnabled: isExternalMessengerFeatureEnabled(),
     ...tanTrackerUserTestBannerForApi(),
   };
 }

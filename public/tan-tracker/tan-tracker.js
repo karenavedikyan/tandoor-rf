@@ -511,6 +511,10 @@
     publicReceipt: null,
     publicInvitationToken: "",
     publicHolderAccessToken: "",
+    externalMessengerEnabled: false,
+    messengerInviteBusy: false,
+    messengerInviteOrderId: null,
+    messengerInviteError: "",
   };
 
   function isPublicGuestPage() {
@@ -533,6 +537,42 @@
     }
     state.lkCanWrite = data.capabilities?.canWrite === true;
     state.lkPreviewReadOnly = !!data.previewReadOnly;
+    state.externalMessengerEnabled = !!data.externalMessengerEnabled;
+  }
+
+  function externalMessengerUiEnabled() {
+    return !!(TT_LK && state.externalMessengerEnabled && lkMutationAllowed());
+  }
+
+  function pendingContactIsExternal(pendingId) {
+    const c = pendingId && contactById(pendingId);
+    return !!(c && c.kind === "external");
+  }
+
+  function messengerInviteBlockHtml(o) {
+    if (!externalMessengerUiEnabled() || !pendingContactIsExternal(o.pendingId)) return "";
+    const err =
+      state.messengerInviteError && state.messengerInviteOrderId === o.id
+        ? `<p class="tt-error" data-tt="messenger-invite-error">${E(state.messengerInviteError)}</p>`
+        : "";
+    const busy = state.messengerInviteBusy && state.messengerInviteOrderId === o.id;
+    if (o.messengerPortalUrl) {
+      return `<div class="tt-messenger-invite" data-tt="messenger-invite-block">
+        <p class="tt-muted">Ссылка для получателя (Telegram / MAX):</p>
+        <input class="tt-messenger-invite-url" type="text" readonly data-tt="messenger-invite-url" value="${E(o.messengerPortalUrl)}" />
+        <div class="tt-messenger-invite-actions">
+          ${btn("Копировать ссылку", 'data-tt="messenger-invite-copy"', "tt-detail-alt-action")}
+          ${typeof navigator !== "undefined" && navigator.share ? btn("Поделиться", 'data-tt="messenger-invite-share"', "tt-detail-alt-action") : ""}
+          ${btn("Обновить ссылку", busy ? 'data-tt="messenger-invite-create" disabled' : 'data-tt="messenger-invite-create"', "tt-btn-ghost")}
+        </div>
+        ${err}
+      </div>`;
+    }
+    return `<div class="tt-messenger-invite" data-tt="messenger-invite-block">
+      <p class="tt-muted">Отправьте внешнему получателю ссылку для подтверждения номера в мессенджере.</p>
+      ${btn(busy ? "Создание ссылки…" : "Ссылка для мессенджера", busy ? 'data-tt="messenger-invite-create" disabled' : 'data-tt="messenger-invite-create"', "tt-detail-alt-action")}
+      ${err}
+    </div>`;
   }
 
   function lkMutationAllowed() {
@@ -3453,6 +3493,7 @@
         </div>
         ${qrBlock}
       </div>
+      ${messengerInviteBlockHtml(o)}
       ${
         o.finalRecipientId && o.holderId !== o.finalRecipientId
           ? shortRelayReminder(o, p, true, true)
@@ -4422,6 +4463,56 @@
       renderTracker();
       return;
     }
+    if (action === "messenger-invite-create") {
+      const o = orders.find((x) => x.id === state.orderId);
+      if (!o || state.messengerInviteBusy || !window.TanTrackerLk?.createExternalMessengerInvite) {
+        renderTracker();
+        return;
+      }
+      if (!lkMutationAllowed()) {
+        state.error = lkMutationBlockedMessage();
+        renderTracker();
+        return;
+      }
+      state.messengerInviteBusy = true;
+      state.messengerInviteOrderId = o.id;
+      state.messengerInviteError = "";
+      renderTracker({ soft: true });
+      void window.TanTrackerLk.createExternalMessengerInvite(o.id)
+        .then(function (data) {
+          o.messengerPortalUrl = data.portalUrl || data.portalPath || "";
+          o.messengerStartToken = data.startToken || "";
+          state.toast = "Ссылка для мессенджера создана.";
+          state.messengerInviteError = "";
+        })
+        .catch(function (err) {
+          state.messengerInviteError = (err && err.message) || "Не удалось создать ссылку.";
+        })
+        .finally(function () {
+          state.messengerInviteBusy = false;
+          renderTracker();
+        });
+      return;
+    }
+    if (action === "messenger-invite-copy") {
+      const o = orders.find((x) => x.id === state.orderId);
+      const url = o?.messengerPortalUrl;
+      if (url && navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(url).catch(() => {});
+        state.toast = "Ссылка скопирована";
+      }
+      renderTracker();
+      return;
+    }
+    if (action === "messenger-invite-share") {
+      const o = orders.find((x) => x.id === state.orderId);
+      const url = o?.messengerPortalUrl;
+      if (url && navigator.share) {
+        void navigator.share({ title: "Получение передачи", url }).catch(() => {});
+      }
+      renderTracker();
+      return;
+    }
     if (action === "create-edit-comment") {
       state.createReturnPhase = "review";
       state.createPhase = "edit-comment";
@@ -5064,6 +5155,7 @@
     state.ttRoleUnsupported = false;
     state.lkActorPartyId = data.actorPartyId || null;
     state.lkLinkedEmployeeId = data.linkedEmployeeId || null;
+    state.externalMessengerEnabled = !!data.externalMessengerEnabled;
     if (data.publicHolder || data.publicRecipient) {
       state.actingContactId = data.actorContact?.id || data.actorPartyId || null;
     } else if (data.lkMode) {

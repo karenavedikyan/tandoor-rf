@@ -164,4 +164,110 @@ describe("tan-tracker draft edit before first custody", { concurrency: false }, 
       });
     assert.equal(denied.status, 403, denied.text);
   });
+
+  it("denies draft edit after first custody when item returns to creator", async () => {
+    const app = await loadApp();
+    const create = await request(app)
+      .post("/api/tan-tracker/transfers")
+      .set(headers(adminCookie))
+      .send({
+        item: "Return to creator",
+        finalRecipientPartyId: `${TT_PENDING_USER_PARTY_PREFIX}${freshAId}`,
+      });
+    assert.equal(create.status, 201, create.text);
+    const transferId = create.body.publicCode as string;
+    const creatorPartyId = create.body.bootstrap.orders.find((o: { id: string }) => o.id === transferId)
+      ?.holderId;
+    assert.ok(creatorPartyId);
+
+    const gen1 = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/code/generate`)
+      .set(headers(recipientACookie))
+      .send({});
+    assert.equal(gen1.status, 200, gen1.text);
+    const code1 = gen1.body.code as string;
+    const verify1 = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/code/verify`)
+      .set(headers(adminCookie))
+      .send({ code: code1 });
+    assert.equal(verify1.status, 200, verify1.text);
+
+    const pool = getPool();
+    assert.ok(pool);
+    const custodyRow = await pool.query<{ first_custody_at: Date | null; creator_party_id: string }>(
+      `SELECT first_custody_at, creator_party_id FROM tt_transfers WHERE public_code = $1`,
+      [transferId],
+    );
+    assert.ok(custodyRow.rows[0]?.first_custody_at, "first_custody_at must be set on verify");
+
+    await pool.query(
+      `UPDATE tt_transfers
+       SET holder_party_id = creator_party_id, pending_party_id = NULL, status = 'active'
+       WHERE public_code = $1 AND first_custody_at IS NOT NULL`,
+      [transferId],
+    );
+
+    const boot = await request(app).get("/api/tan-tracker/bootstrap").set(headers(adminCookie));
+    const order = boot.body.orders.find((o: { id: string }) => o.id === transferId);
+    assert.equal(order?.holderId, creatorPartyId);
+    assert.notEqual(order?.canEditDraft, true);
+
+    const denied = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/draft-edit`)
+      .set(headers(adminCookie))
+      .send({
+        item: "Too late after return",
+        finalRecipientPartyId: `${TT_PENDING_USER_PARTY_PREFIX}${freshBId}`,
+        rowVersion: order?.rowVersion,
+      });
+    assert.equal(denied.status, 403, denied.text);
+  });
+
+  it("edit-vs-confirm race: draft edit and code verify cannot both succeed on same code", async () => {
+    const app = await loadApp();
+    const create = await request(app)
+      .post("/api/tan-tracker/transfers")
+      .set(headers(adminCookie))
+      .send({
+        item: "Race box",
+        finalRecipientPartyId: `${TT_PENDING_USER_PARTY_PREFIX}${freshAId}`,
+      });
+    assert.equal(create.status, 201, create.text);
+    const transferId = create.body.publicCode as string;
+    const rowVersion = create.body.bootstrap.orders.find((o: { id: string }) => o.id === transferId)
+      ?.rowVersion;
+    assert.ok(rowVersion);
+
+    const gen = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/code/generate`)
+      .set(headers(recipientACookie))
+      .send({});
+    assert.equal(gen.status, 200, gen.text);
+    const code = gen.body.code as string;
+
+    const [editRes, verifyRes] = await Promise.all([
+      request(app)
+        .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/draft-edit`)
+        .set(headers(adminCookie))
+        .send({
+          item: "Race revised title",
+          finalRecipientPartyId: `${TT_PENDING_USER_PARTY_PREFIX}${freshAId}`,
+          rowVersion,
+        }),
+      request(app)
+        .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/code/verify`)
+        .set(headers(adminCookie))
+        .send({ code }),
+    ]);
+
+    const bothOk = editRes.status === 200 && verifyRes.status === 200;
+    assert.equal(bothOk, false, "draft-edit and verify must not both succeed concurrently");
+    if (editRes.status === 200) {
+      const stale = await request(app)
+        .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/code/verify`)
+        .set(headers(adminCookie))
+        .send({ code });
+      assert.notEqual(stale.status, 200);
+    }
+  });
 });

@@ -402,6 +402,21 @@
           throw new Error(api.extractErrorMessage(result.data, "Не удалось прикрепить файлы."));
         });
     },
+    createExternalMessengerInvite: function (transferId) {
+      return api
+        .apiRequest(
+          "/api/tan-tracker/transfers/" + encodeURIComponent(transferId) + "/messenger-invite",
+          { method: "POST", body: {} },
+        )
+        .then(function (result) {
+          if (result.response.status === 201 && result.data && result.data.portalUrl) {
+            return result.data;
+          }
+          throw new Error(
+            api.extractErrorMessage(result.data, "Не удалось создать ссылку для мессенджера."),
+          );
+        });
+    },
     deleteTransferAttachment: function (transferId, attachmentId) {
       return api
         .apiRequest(
