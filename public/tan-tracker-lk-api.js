@@ -99,6 +99,20 @@
         });
       });
     },
+    updateTransferDraft: function (transferId, payload) {
+      return api
+        .apiRequest("/api/tan-tracker/transfers/" + encodeURIComponent(transferId) + "/draft-edit", {
+          method: "POST",
+          body: payload,
+        })
+        .then(function (result) {
+          if (result.response.status === 200 && result.data && result.data.bootstrap) {
+            window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
+            return { transferId: transferId, refreshFailed: false };
+          }
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось сохранить изменения."));
+        });
+    },
     createTransfer: function (payload) {
       return api
         .apiRequest("/api/tan-tracker/transfers", { method: "POST", body: payload })

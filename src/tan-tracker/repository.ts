@@ -191,6 +191,7 @@ export function mapTransferToOrderDto(
     revokedParticipants: revoked,
     activeInvitation,
     attachments: extras?.attachments ?? [],
+    rowVersion: row.row_version,
   };
 }
 

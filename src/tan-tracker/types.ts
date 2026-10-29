@@ -82,6 +82,9 @@ export type TanTrackerOrderDto = {
   revokedParticipants?: string[];
   activeInvitation?: TanTrackerActiveInvitationDto | null;
   attachments?: TanTrackerAttachmentDto[];
+  /** Holder may edit all creation fields before the first confirmed custody handoff. */
+  canEditDraft?: boolean;
+  rowVersion?: number;
 };
 
 export type TanTrackerContactDto = {

@@ -504,6 +504,9 @@
     lkCanWrite: true,
     lkPreviewReadOnly: false,
     createSubmitting: false,
+    editDraftOrderId: null,
+    editDraftRowVersion: null,
+    editDraftRemovedAttachmentIds: [],
     createSavedReceipt: null,
     publicReceipt: null,
     publicInvitationToken: "",
@@ -576,6 +579,7 @@
     "confirm-complete",
     "change-pending",
     "cancel-pending",
+    "edit-draft",
     "gen-code",
     "confirm-code",
     "confirm-qr-receive",
@@ -1374,6 +1378,53 @@
     });
   }
 
+  function formFromOrderForDraftEdit(o) {
+    const relayIsPending =
+      o.finalRecipientId && o.pendingId && o.pendingId !== o.finalRecipientId;
+    const due =
+      o.dueAt != null && !Number.isNaN(Number(o.dueAt))
+        ? new Date(o.dueAt).toISOString().slice(0, 10)
+        : "";
+    return {
+      item: o.item || "",
+      qty: o.qty || "",
+      finalRecipientId: o.finalRecipientId || o.pendingId || "",
+      relayId: relayIsPending ? o.pendingId : "",
+      recipientId: o.finalRecipientId || o.pendingId || "",
+      comment: o.comment || "",
+      due,
+      pickQ: "",
+      newName: "",
+      newPhone: "",
+      mode: "list",
+      pickTarget: "final",
+      recipientStep: "confirmed",
+    };
+  }
+
+  function beginEditDraft(o) {
+    if (!o?.canEditDraft) return;
+    state.editDraftOrderId = o.id;
+    state.editDraftRowVersion = o.rowVersion ?? null;
+    state.editDraftRemovedAttachmentIds = [];
+    state.form = formFromOrderForDraftEdit(o);
+    state.createPhase = "review";
+    state.createReturnPhase = null;
+    state.attachStaging = (o.attachments || []).map((a) => ({
+      id: a.id,
+      name: a.name,
+      mime: a.mimeType || a.mime || "application/octet-stream",
+      size: a.byteSize ?? a.size ?? 0,
+      addedAt: a.addedAt ?? Date.now(),
+      serverAttachmentId: a.id,
+    }));
+    state.attachError = "";
+    state.error = state.toast = "";
+    state.view = "create";
+    clearCompleteConfirm();
+    writeUrl();
+  }
+
   function createAttachmentsSection() {
     if (!Att()) return "";
     const staged = [...state.attachStaging];
@@ -1400,6 +1451,7 @@
   function defaultCreateForm() {
     return {
       item: "",
+      qty: "",
       finalRecipientId: "",
       relayId: "",
       recipientId: "",
@@ -3072,12 +3124,15 @@
         </div>
       </section>
     </div>`;
+    const editing = !!state.editDraftOrderId;
     return wizardShell(
       "review",
-      "Проверить и создать",
-      "Убедитесь, что всё верно, затем нажмите «Создать передачу».",
+      editing ? "Проверить и сохранить" : "Проверить и создать",
+      editing
+        ? "Исправьте данные до физической передачи. Сохранится та же передача."
+        : "Убедитесь, что всё верно, затем нажмите «Создать передачу».",
       reviewBody,
-      `${wizardBtn("Создать передачу", "create-wizard-submit", true)}${wizardBtn("Назад", "create-wizard-back", false, "tt-wizard-btn-quiet")}`
+      `${wizardBtn(editing ? "Сохранить изменения" : "Создать передачу", "create-wizard-submit", true)}${wizardBtn("Назад", "create-wizard-back", false, "tt-wizard-btn-quiet")}`
     );
   }
 
@@ -3394,6 +3449,7 @@
         <div class="tt-handoff-actions">
           ${btn("Ввести код", `data-tt="enter-code" ${heroAttr}`, "tt-primary tt-btn-block")}
           ${tab === "qr" ? "" : btn("QR-код", 'data-tt="tab-qr"', "tt-detail-alt-action")}
+          ${o.canEditDraft ? btn("Изменить передачу", 'data-tt="edit-draft"', "tt-detail-alt-action") : ""}
         </div>
         ${qrBlock}
       </div>
@@ -3510,8 +3566,10 @@
 
     const otherActionBtns =
       isHolder && o.status !== "completed" && o.pendingId
-        ? `${overflowActionBtn("Выбрать другого получателя", "change-pending", "user-round-cog")}${overflowActionBtn("Отменить ожидание", "cancel-pending", "ban")}`
-        : "";
+        ? `${o.canEditDraft ? overflowActionBtn("Изменить передачу", "edit-draft", "pencil") : ""}${overflowActionBtn("Выбрать другого получателя", "change-pending", "user-round-cog")}${overflowActionBtn("Отменить ожидание", "cancel-pending", "ban")}`
+        : isHolder && o.canEditDraft
+          ? overflowActionBtn("Изменить передачу", "edit-draft", "pencil")
+          : "";
 
     const demoBtns = [];
     if (showActHolder) demoBtns.push(overflowActionBtn("Смотреть как текущий держатель (демо)", "act-holder", "eye"));
@@ -3967,6 +4025,47 @@
           .map((s) => s.serverStagingId)
           .filter(Boolean),
       };
+      const editingId = state.editDraftOrderId;
+      if (editingId) {
+        const order = orders.find((x) => x.id === editingId);
+        const kept = new Set(
+          state.attachStaging.filter((s) => s.serverAttachmentId).map((s) => s.serverAttachmentId),
+        );
+        const removeAttachmentIds = (order?.attachments || [])
+          .map((a) => a.id)
+          .filter((id) => !kept.has(id));
+        payload.rowVersion = state.editDraftRowVersion ?? order?.rowVersion;
+        payload.removeAttachmentIds = removeAttachmentIds;
+        if (!payload.rowVersion) {
+          state.error = "Не удалось определить версию передачи. Обновите страницу.";
+          return;
+        }
+        state.createSubmitting = true;
+        renderTracker();
+        window.TanTrackerLk.updateTransferDraft(editingId, payload)
+          .then(() => {
+            state.createSubmitting = false;
+            state.orderId = editingId;
+            state.view = "detail";
+            state.form = null;
+            state.editDraftOrderId = null;
+            state.editDraftRowVersion = null;
+            state.editDraftRemovedAttachmentIds = [];
+            state.createPhase = "item";
+            state.createReturnPhase = null;
+            state.attachStaging = [];
+            state.toast = "Изменения сохранены.";
+            state.error = "";
+            writeUrl();
+            renderTracker();
+          })
+          .catch((err) => {
+            state.createSubmitting = false;
+            state.error = err?.message || "Не удалось сохранить изменения.";
+            renderTracker();
+          });
+        return;
+      }
       state.createSubmitting = true;
       renderTracker();
       window.TanTrackerLk.createTransfer(payload)
@@ -4101,7 +4200,14 @@
       renderTracker();
       return;
     }
+    if (action === "edit-draft" && o?.canEditDraft) {
+      beginEditDraft(o);
+      renderTracker();
+      return;
+    }
     if (action === "create" || action === "create-fab") {
+      state.editDraftOrderId = null;
+      state.editDraftRowVersion = null;
       state.view = "create";
       state.createPhase = "item";
       state.createReturnPhase = null;
@@ -4132,11 +4238,18 @@
       }
       const r = wizardBack();
       if (r === "cancel") {
-        state.view = "list";
-        state.orderId = null;
-        state.form = null;
-        state.createPhase = "item";
-        state.createReturnPhase = null;
+        if (state.editDraftOrderId) {
+          state.view = "detail";
+          state.form = null;
+          state.editDraftOrderId = null;
+          state.editDraftRowVersion = null;
+        } else {
+          state.view = "list";
+          state.orderId = null;
+          state.form = null;
+          state.createPhase = "item";
+          state.createReturnPhase = null;
+        }
         state.error = state.toast = "";
         clearCompleteConfirm();
         clearAttachStaging();
@@ -4687,6 +4800,10 @@
       const sid = b.getAttribute("data-staging-id");
       const i = state.attachStaging.findIndex((x) => x.id === sid);
       if (i >= 0 && Att()) {
+        const removed = state.attachStaging[i];
+        if (removed.serverAttachmentId) {
+          state.editDraftRemovedAttachmentIds.push(removed.serverAttachmentId);
+        }
         Att().untrackUrl(state.attachStaging[i].url);
         state.attachStaging.splice(i, 1);
       }

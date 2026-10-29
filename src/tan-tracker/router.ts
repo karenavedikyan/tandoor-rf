@@ -7,6 +7,7 @@ import { getTanTrackerBootstrapHandler } from "./handlers";
 import { generateHandoffCodeHandler, verifyHandoffCodeHandler } from "./handoff-mutations";
 import { createTransferHandler } from "./mutations";
 import { cancelPendingHandler, changePendingHandler } from "./pending-mutations";
+import { editTransferDraftHandler } from "./draft-edit-mutations";
 import { downloadAttachmentHandler } from "./attachments";
 import { addTransferAttachmentsHandler, deleteTransferAttachmentHandler } from "./attachment-mutations";
 import {
@@ -30,6 +31,8 @@ import {
   publicRecipientContextHandler,
   publicRecipientReceiptHandler,
 } from "./public-recipient-context";
+import { publicExternalMessengerPortalHandler } from "./external-messenger/public-handlers";
+import { createExternalMessengerInviteHandler } from "./external-messenger/lk-handlers";
 export function createTanTrackerRouter(): express.Router {
   const router = express.Router();
   const readChain = [
@@ -81,6 +84,10 @@ export function createTanTrackerRouter(): express.Router {
     void publicHolderDeleteAttachmentHandler(req, res).catch(next);
   });
 
+  router.get("/public/recipient/messenger", requireDatabaseReady, (req, res, next) => {
+    void publicExternalMessengerPortalHandler(req, res).catch(next);
+  });
+
   router.get("/public/recipient/context", requireDatabaseReady, (req, res, next) => {
     void publicRecipientContextHandler(req, res).catch(next);
   });
@@ -106,6 +113,10 @@ export function createTanTrackerRouter(): express.Router {
     void createTransferHandler(req, res).catch(next);
   });
 
+  router.post("/transfers/:id/messenger-invite", csrfProtection, ...writeChain, (req, res, next) => {
+    void createExternalMessengerInviteHandler(req, res).catch(next);
+  });
+
   router.post("/transfers/:id/code/generate", csrfProtection, ...writeChain, (req, res, next) => {
     void generateHandoffCodeHandler(req, res).catch(next);
   });
@@ -120,6 +131,10 @@ export function createTanTrackerRouter(): express.Router {
 
   router.post("/transfers/:id/pending/change", csrfProtection, ...writeChain, (req, res, next) => {
     void changePendingHandler(req, res).catch(next);
+  });
+
+  router.post("/transfers/:id/draft-edit", csrfProtection, ...writeChain, (req, res, next) => {
+    void editTransferDraftHandler(req, res).catch(next);
   });
 
   router.post("/transfers/:id/legacy-complete", csrfProtection, ...writeChain, (req, res, next) => {

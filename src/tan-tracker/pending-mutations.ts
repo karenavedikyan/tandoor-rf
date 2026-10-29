@@ -8,6 +8,7 @@ import { ensurePartyForUserOnWrite } from "./repository";
 import { buildTanTrackerBootstrap } from "./service";
 import { requireTanTrackerMutationAccess } from "./guards";
 import { assertPartyEligibleAsRecipient } from "./party-eligibility";
+import { invalidateOpenHandoffArtifacts } from "./handoff-invalidation";
 
 async function loadTransfer(client: { query: Function }, id: string) {
   const res = await client.query(
@@ -46,11 +47,7 @@ export async function cancelPendingHandler(req: AccessRequest, res: Response): P
               handoff_version = handoff_version + 1, row_version = row_version + 1 WHERE id = $1`,
       [row.id],
     );
-    await client.query(
-      `UPDATE tt_handoff_codes SET consumed_at = NOW()
-       WHERE transfer_id = $1 AND consumed_at IS NULL`,
-      [row.id],
-    );
+    await invalidateOpenHandoffArtifacts(client, row.id);
     await client.query(
       `INSERT INTO tt_transfer_revoked_parties (transfer_id, party_id) VALUES ($1,$2)
        ON CONFLICT DO NOTHING`,
@@ -60,10 +57,6 @@ export async function cancelPendingHandler(req: AccessRequest, res: Response): P
       `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
        VALUES ($1,$2,$3,$4,$5::uuid)`,
       [row.id, row.holder_party_id, revoked, "Ожидание передачи отменено", auditUserId],
-    );
-    await client.query(
-      `UPDATE tt_transfer_invitations SET superseded_at = NOW() WHERE transfer_id = $1 AND superseded_at IS NULL`,
-      [row.id],
     );
     return { ok: true as const };
   });
@@ -110,14 +103,12 @@ export async function changePendingHandler(req: AccessRequest, res: Response): P
         [row.id, prev],
       );
     }
+    await invalidateOpenHandoffArtifacts(client, row.id);
     const nextVer = row.handoff_version + 1;
     await client.query(
-      `UPDATE tt_transfers SET pending_party_id = $2, status = 'waiting', handoff_version = $3 WHERE id = $1`,
+      `UPDATE tt_transfers SET pending_party_id = $2, status = 'waiting', handoff_version = $3,
+              row_version = row_version + 1 WHERE id = $1`,
       [row.id, pendingPartyId, nextVer],
-    );
-    await client.query(
-      `UPDATE tt_transfer_invitations SET superseded_at = NOW() WHERE transfer_id = $1 AND superseded_at IS NULL`,
-      [row.id],
     );
     await client.query(
       `INSERT INTO tt_transfer_invitations (transfer_id, handoff_version, holder_party_id, pending_party_id, item_snapshot)

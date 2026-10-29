@@ -13,6 +13,7 @@ import {
   partyToContact,
 } from "./repository";
 import { canViewOrder, tanTrackerNavAllowed } from "./scope";
+import { isBeforeFirstConfirmedCustody } from "./custody-state";
 import { loadTanTrackerTeamEmployeeGuids } from "./team-scope";
 import type { TanTrackerContactDto, TanTrackerOrderDto, TanTrackerScopeContext } from "./types";
 import { loadPartyEmployeeMap } from "./party-employee-map";
@@ -145,6 +146,14 @@ export async function buildTanTrackerBootstrap(
       attachments: attachmentMap.get(row.id) ?? [],
     });
     if (canViewOrder(dto, ctx, contacts, teamEmployeeGuids, false, partyEmployeeMap)) {
+      if (
+        actorPartyId &&
+        !ctx.previewReadOnly &&
+        row.holder_party_id === actorPartyId &&
+        isBeforeFirstConfirmedCustody(row)
+      ) {
+        dto.canEditDraft = true;
+      }
       orders.push(dto);
     }
   }
