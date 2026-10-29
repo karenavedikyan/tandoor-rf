@@ -23,7 +23,7 @@ async function loadPending(client: PoolClient, limit: number) {
   }>(
     `SELECT id::text, user_id::text, event_type, payload, attempt_count
      FROM tanbot_notification_outbox
-     WHERE status = 'pending' AND next_attempt_at <= NOW()
+     WHERE channel = 'telegram' AND status = 'pending' AND next_attempt_at <= NOW()
      ORDER BY created_at
      LIMIT $1
      FOR UPDATE SKIP LOCKED`,

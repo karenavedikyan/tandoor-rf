@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 
-export type OutboxChannel = "telegram";
+export type OutboxChannel = "telegram" | "max";
 
 export type TanTrackerAssignmentPayload = {
   transferId: string;
@@ -42,6 +42,31 @@ export async function enqueueTanTrackerAssignmentTelegram(
     idempotencyKey,
     userId: input.holderUserId,
     channel: "telegram",
+    eventType: "tan_tracker.assignment",
+    payload: {
+      transferId: input.transferId,
+      publicCode: input.publicCode,
+      itemTitle: input.itemTitle,
+      handoffVersion: input.handoffVersion,
+    },
+  });
+}
+
+export async function enqueueTanTrackerAssignmentMax(
+  client: PoolClient,
+  input: {
+    transferId: string;
+    publicCode: string;
+    itemTitle: string;
+    handoffVersion: number;
+    holderUserId: string;
+  },
+): Promise<void> {
+  const idempotencyKey = `tt-assignment:${input.transferId}:hv:${input.handoffVersion}:max:${input.holderUserId}`;
+  await enqueueNotificationOutbox(client, {
+    idempotencyKey,
+    userId: input.holderUserId,
+    channel: "max",
     eventType: "tan_tracker.assignment",
     payload: {
       transferId: input.transferId,

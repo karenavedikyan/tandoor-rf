@@ -21,6 +21,14 @@
   var tanbotConfirmNotifWrap = document.getElementById("tanbot-confirm-notifications-wrap");
   var tanbotConfirmNotifToggle = document.getElementById("tanbot-confirm-notifications");
   var tanbotRefreshTimer = null;
+  var tanbotMaxSection = document.getElementById("tanbot-max-section");
+  var tanbotMaxStatus = document.getElementById("tanbot-max-status");
+  var tanbotMaxPending = document.getElementById("tanbot-max-pending");
+  var tanbotMaxActions = document.getElementById("tanbot-max-actions");
+  var tanbotMaxNotifWrap = document.getElementById("tanbot-max-notifications-toggle-wrap");
+  var tanbotMaxNotifToggle = document.getElementById("tanbot-max-notifications-toggle");
+  var tanbotMaxConfirmNotifWrap = document.getElementById("tanbot-max-confirm-notifications-wrap");
+  var tanbotMaxConfirmNotifToggle = document.getElementById("tanbot-max-confirm-notifications");
 
   var ROLE_LABELS = {
     admin: "Администратор",
@@ -80,6 +88,7 @@
       fillForm(result.data.user);
       api.setStatus(statusEl, "", "");
       loadTanbotTelegram();
+      loadTanbotMax();
       return result.data.user;
     });
   }
@@ -163,11 +172,134 @@
       });
   }
 
+  function loadTanbotMax() {
+    if (!tanbotMaxSection || !api.apiRequest) return;
+    return api.apiRequest("/api/profile/tanbot/max").then(function (result) {
+      if (result.response.status !== 200 || !result.data) {
+        tanbotMaxSection.hidden = true;
+        return;
+      }
+      var d = result.data;
+      if (!d.integrationEnabled) {
+        tanbotMaxSection.hidden = true;
+        return;
+      }
+      tanbotMaxSection.hidden = false;
+      if (d.linked) {
+        tanbotMaxStatus.textContent =
+          "MAX подключён" + (d.maxUsername ? " (@" + d.maxUsername + ")" : "") + ".";
+        tanbotMaxNotifWrap.hidden = false;
+        tanbotMaxNotifToggle.checked = !!d.notificationsEnabled;
+      } else {
+        tanbotMaxStatus.textContent = "MAX не подключён.";
+        tanbotMaxNotifWrap.hidden = true;
+      }
+      if (d.pendingConfirmation) {
+        tanbotMaxPending.hidden = false;
+        if (tanbotMaxConfirmNotifWrap) tanbotMaxConfirmNotifWrap.hidden = false;
+        var p = d.pendingConfirmation;
+        tanbotMaxPending.textContent =
+          "Подтвердите привязку MAX" +
+          (p.maxUsername ? " @" + p.maxUsername : p.maxFirstName ? " (" + p.maxFirstName + ")" : "") +
+          ".";
+      } else {
+        tanbotMaxPending.hidden = true;
+        if (tanbotMaxConfirmNotifWrap) tanbotMaxConfirmNotifWrap.hidden = true;
+      }
+      tanbotMaxActions.innerHTML = "";
+      if (!d.linked) {
+        var startBtn = document.createElement("button");
+        startBtn.type = "button";
+        startBtn.className = "secondary-button";
+        startBtn.textContent = "Подключить MAX";
+        startBtn.addEventListener("click", startTanbotMaxLink);
+        tanbotMaxActions.appendChild(startBtn);
+      }
+      if (d.pendingConfirmation) {
+        var confirmBtn = document.createElement("button");
+        confirmBtn.type = "button";
+        confirmBtn.className = "primary-button";
+        confirmBtn.textContent = "Подтвердить привязку";
+        confirmBtn.addEventListener("click", function () {
+          confirmTanbotMaxLink(d.pendingConfirmation.attemptId);
+        });
+        tanbotMaxActions.appendChild(confirmBtn);
+      }
+      if (d.linked) {
+        var discBtn = document.createElement("button");
+        discBtn.type = "button";
+        discBtn.className = "secondary-button";
+        discBtn.textContent = "Отключить MAX";
+        discBtn.addEventListener("click", disconnectTanbotMax);
+        tanbotMaxActions.appendChild(discBtn);
+      }
+    });
+  }
+
+  function startTanbotMaxLink() {
+    api
+      .apiRequest("/api/profile/tanbot/max/link/start", { method: "POST", body: {} })
+      .then(function (result) {
+        if (result.response.status === 200 && result.data && result.data.deepLink) {
+          window.open(result.data.deepLink, "_blank", "noopener,noreferrer");
+          api.setStatus(statusEl, "Откройте MAX и вернитесь — страница обновит статус автоматически.", "success");
+          loadTanbotMax();
+          scheduleTanbotRefresh();
+        } else {
+          api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось начать привязку."), "error");
+        }
+      });
+  }
+
   function scheduleTanbotRefresh() {
     if (tanbotRefreshTimer) window.clearTimeout(tanbotRefreshTimer);
     tanbotRefreshTimer = window.setTimeout(function () {
       loadTanbotTelegram();
+      loadTanbotMax();
     }, 400);
+  }
+
+  function confirmTanbotMaxLink(attemptId) {
+    var enableNotifications =
+      tanbotMaxConfirmNotifToggle && !tanbotMaxConfirmNotifToggle.hidden && tanbotMaxConfirmNotifToggle.checked;
+    api
+      .apiRequest("/api/profile/tanbot/max/link/confirm", {
+        method: "POST",
+        body: { attemptId: attemptId, enableNotifications: !!enableNotifications },
+      })
+      .then(function (result) {
+        if (result.response.status === 200) {
+          api.setStatus(statusEl, "MAX подключён.", "success");
+          loadTanbotMax();
+        } else {
+          api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось подтвердить."), "error");
+        }
+      });
+  }
+
+  function disconnectTanbotMax() {
+    api.apiRequest("/api/profile/tanbot/max/disconnect", { method: "POST", body: {} }).then(function (result) {
+      if (result.response.status === 200) {
+        api.setStatus(statusEl, "MAX отключён.", "success");
+        loadTanbotMax();
+      }
+    });
+  }
+
+  if (tanbotMaxNotifToggle) {
+    tanbotMaxNotifToggle.addEventListener("change", function () {
+      api
+        .apiRequest("/api/profile/tanbot/max/notifications", {
+          method: "POST",
+          body: { enabled: tanbotMaxNotifToggle.checked },
+        })
+        .then(function (result) {
+          if (result.response.status !== 200) {
+            tanbotMaxNotifToggle.checked = !tanbotMaxNotifToggle.checked;
+            api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось сохранить настройку."), "error");
+          }
+        });
+    });
   }
 
   function confirmTanbotLink(attemptId) {

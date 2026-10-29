@@ -26,6 +26,15 @@ import { createTanTrackerRouter } from "./tan-tracker/router";
 import { createTanbotTelegramAdminRouter } from "./tanbot-telegram/admin-router";
 import { createTanbotTelegramProfileRouter } from "./tanbot-telegram/profile-router";
 import { createTanbotTelegramWebhookRouter } from "./tanbot-telegram/webhook-router";
+import { isTanbotMaxEnabled } from "./tanbot-max/config";
+import {
+  isTanbotMaxOutboxWorkerEnabled,
+  startTanbotMaxOutboxWorker,
+} from "./tanbot-max/outbox-scheduler";
+import { loadTanbotMaxStage2Config } from "./tanbot-max/stage2-config";
+import { createTanbotMaxAdminRouter } from "./tanbot-max/admin-router";
+import { createTanbotMaxProfileRouter } from "./tanbot-max/profile-router";
+import { createTanbotMaxWebhookRouter } from "./tanbot-max/webhook-router";
 import { stageAttachmentHandler } from "./tan-tracker/attachments";
 import { publicHolderStageAttachmentHandler } from "./tan-tracker/public-holder";
 import { attachAccessContext, blockPreviewWrites } from "./access/middleware";
@@ -246,11 +255,14 @@ export function createApp(): express.Application {
   app.use("/api/auth", authRouter);
   app.use("/api/profile", profileRouter);
   app.use("/api/profile/tanbot", createTanbotTelegramProfileRouter());
+  app.use("/api/profile/tanbot", createTanbotMaxProfileRouter());
   app.use("/api/tanbot-telegram/webhook", createTanbotTelegramWebhookRouter());
+  app.use("/api/tanbot-max/webhook", createTanbotMaxWebhookRouter());
   app.use("/api/clients", createClientsRouter());
   app.use("/api/admin/access", createAccessAdminRouter());
   app.use("/api/admin/clients", createAdminClientsRouter());
   app.use("/api/admin/tanbot-telegram", createTanbotTelegramAdminRouter());
+  app.use("/api/admin/tanbot-max", createTanbotMaxAdminRouter());
   app.use("/api/access", createAccessRouter());
   app.use("/api/work", createWorkRouter());
   app.use("/api/tan-tracker", createTanTrackerRouter());
@@ -364,6 +376,7 @@ export function createApp(): express.Application {
 }
 
 let stopTanbotOutboxWorker: (() => void) | null = null;
+let stopTanbotMaxOutboxWorker: (() => void) | null = null;
 
 export function startServer(): ReturnType<express.Application["listen"]> {
   const port = parsePort(process.env.PORT);
@@ -385,12 +398,20 @@ export function startServer(): ReturnType<express.Application["listen"]> {
           console.log("Tanbot Telegram outbox worker enabled");
         }
       }
+      if (isTanbotMaxEnabled() && isTanbotMaxOutboxWorkerEnabled()) {
+        const loadedMax = loadTanbotMaxStage2Config();
+        if (loadedMax.ok) {
+          stopTanbotMaxOutboxWorker = startTanbotMaxOutboxWorker(pool, loadedMax.config).stop;
+          console.log("Tanbot MAX outbox worker enabled");
+        }
+      }
     }).catch(() => console.error("1C background workers unavailable"));
   });
 
   process.on("SIGTERM", () => {
     console.log("SIGTERM received, shutting down gracefully...");
     stopTanbotOutboxWorker?.();
+    stopTanbotMaxOutboxWorker?.();
     server.close(() => {
       void closePool()
         .catch(() => undefined)

@@ -1,5 +1,9 @@
 import type { PoolClient } from "pg";
-import { enqueueTanTrackerAssignmentTelegram, resolveUserIdForParty } from "../tanbot-telegram/outbox";
+import {
+  enqueueTanTrackerAssignmentMax,
+  enqueueTanTrackerAssignmentTelegram,
+  resolveUserIdForParty,
+} from "../tanbot-telegram/outbox";
 
 type TransferRow = {
   id: string;
@@ -62,6 +66,13 @@ export async function applyPendingReceiptHandoff(
       const m = meta.rows[0];
       if (m) {
         await enqueueTanTrackerAssignmentTelegram(client, {
+          transferId: row.id,
+          publicCode: m.public_code,
+          itemTitle: m.item_title,
+          handoffVersion: newHandoffVersion,
+          holderUserId,
+        });
+        await enqueueTanTrackerAssignmentMax(client, {
           transferId: row.id,
           publicCode: m.public_code,
           itemTitle: m.item_title,
