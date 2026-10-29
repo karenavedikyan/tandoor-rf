@@ -146,6 +146,7 @@ async function processParsedUpdate(
         channel: "telegram",
         startPayload: update.startPayload,
         chatId: update.chatId,
+        messengerUserId: update.telegramUserId,
       });
       reply = ext
         ? {

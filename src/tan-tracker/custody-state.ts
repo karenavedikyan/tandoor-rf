@@ -5,12 +5,20 @@ export type TransferCustodyRow = {
   status: string;
   creator_party_id: string;
   holder_party_id: string;
+  first_custody_at?: Date | null;
 };
 
-/** True while the creating holder still physically holds the item (no confirmed receipt yet). */
+/** Confirmed custody handoff audit actions (canonical, not timeline text). */
+export const FIRST_CUSTODY_AUDIT_ACTIONS = [
+  "code_verify_ok",
+  "holder_code_verify_ok",
+  "qr_confirm",
+] as const;
+
 export function isBeforeFirstConfirmedCustody(row: TransferCustodyRow): boolean {
   if (row.status === "completed") return false;
-  return row.creator_party_id === row.holder_party_id;
+  if (row.first_custody_at != null) return false;
+  return true;
 }
 
 export async function loadTransferForCustodyCheck(
@@ -19,11 +27,34 @@ export async function loadTransferForCustodyCheck(
   forUpdate = false,
 ): Promise<TransferCustodyRow | undefined> {
   const res = await client.query<TransferCustodyRow>(
-    `SELECT id, status, creator_party_id, holder_party_id
+    `SELECT id, status, creator_party_id, holder_party_id, first_custody_at
      FROM tt_transfers
      WHERE id = $1 OR public_code = $1
      LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
     [transferId],
   );
   return res.rows[0];
+}
+
+export async function transferHasConfirmedFirstCustody(
+  client: PoolClient,
+  transferId: string,
+): Promise<boolean> {
+  const row = await loadTransferForCustodyCheck(client, transferId);
+  if (!row) return true;
+  if (row.first_custody_at != null) return true;
+  const audit = await client.query<{ n: number }>(
+    `SELECT 1 AS n FROM tt_audit_log
+     WHERE transfer_id = $1 AND action = ANY($2::text[])
+     LIMIT 1`,
+    [transferId, FIRST_CUSTODY_AUDIT_ACTIONS],
+  );
+  return (audit.rowCount ?? 0) > 0;
+}
+
+export async function markFirstCustodyIfUnset(client: PoolClient, transferId: string): Promise<void> {
+  await client.query(
+    `UPDATE tt_transfers SET first_custody_at = COALESCE(first_custody_at, NOW()) WHERE id = $1`,
+    [transferId],
+  );
 }

@@ -1,5 +1,6 @@
 import { MAX_START_PAYLOAD_MAX_LEN } from "./stage2-config";
 import { computeMaxUpdateDedupKey } from "./update-dedup-key";
+import { parseMaxContactFromMessage } from "../tanbot/external-recipient/max-contact-verify";
 
 const MAX_MESSAGE_TEXT_LEN = 4096;
 
@@ -13,6 +14,15 @@ export type ParsedMaxWebhookUpdate = {
   startPayload: string | null;
   commandText: string | null;
   callbackPayload: string | null;
+};
+
+export type ParsedMaxContactWebhookUpdate = {
+  dedupKey: string;
+  updateType: string;
+  chatId: bigint;
+  maxUserId: bigint;
+  contact: NonNullable<ReturnType<typeof parseMaxContactFromMessage>>;
+  isForwarded: boolean;
 };
 
 function normalizeUsername(raw: unknown): string | null {
@@ -31,8 +41,10 @@ function readUserIdFromRow(row: Record<string, unknown>): number | null {
   return null;
 }
 
+export type ParsedMaxWebhookUpdateUnion = ParsedMaxWebhookUpdate | ParsedMaxContactWebhookUpdate;
+
 export function parseMaxWebhookUpdate(raw: unknown):
-  | { ok: true; update: ParsedMaxWebhookUpdate }
+  | { ok: true; update: ParsedMaxWebhookUpdateUnion }
   | { ok: false; reason: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, reason: "invalid_envelope" };
@@ -184,6 +196,41 @@ export function parseMaxWebhookUpdate(raw: unknown):
     }
     if (!chatId && typeof row.chat_id === "number") chatId = row.chat_id;
     if (!chatId) chatId = userId;
+
+    const contact = parseMaxContactFromMessage(msg);
+    if (contact) {
+      let mid: string | null = null;
+      const body = msg.body;
+      if (typeof body === "object" && body && !Array.isArray(body)) {
+        const bodyMid = (body as Record<string, unknown>).mid;
+        if (typeof bodyMid === "string") mid = bodyMid;
+      }
+      if (!mid && typeof msg.mid === "string") mid = msg.mid;
+      const isForwarded =
+        msg.link != null ||
+        (typeof body === "object" &&
+          body &&
+          !Array.isArray(body) &&
+          (body as Record<string, unknown>).link != null);
+      const dedupKey = computeMaxUpdateDedupKey({
+        updateType,
+        timestamp,
+        chatId,
+        userId,
+        messageMid: mid,
+      });
+      return {
+        ok: true,
+        update: {
+          dedupKey,
+          updateType,
+          chatId: BigInt(chatId),
+          maxUserId: BigInt(userId),
+          contact,
+          isForwarded: Boolean(isForwarded),
+        },
+      };
+    }
 
     const body = msg.body;
     const textRaw =

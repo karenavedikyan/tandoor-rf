@@ -25,6 +25,8 @@ export type ExternalMessengerSessionRow = {
   code_issued_at: Date | null;
   telegram_chat_id: string | null;
   max_chat_id: string | null;
+  bound_telegram_user_id: string | null;
+  bound_max_user_id: string | null;
 };
 
 export async function supersedeActiveSessionsForTransfer(
@@ -100,7 +102,8 @@ export async function lockSessionByStartToken(
   const res = await client.query<ExternalMessengerSessionRow>(
     `SELECT id::text, transfer_id, pending_party_id::text, handoff_version, channel,
             expires_at, contact_attempt_count, code_issue_count, phone_verified_at, code_issued_at,
-            telegram_chat_id::text, max_chat_id::text
+            telegram_chat_id::text, max_chat_id::text,
+            bound_telegram_user_id::text, bound_max_user_id::text
      FROM tt_external_messenger_sessions
      WHERE token_hash = $1 AND superseded_at IS NULL
      FOR UPDATE`,
@@ -139,19 +142,22 @@ export async function bindSessionMessengerChat(
   sessionId: string,
   channel: "telegram" | "max",
   chatId: bigint,
+  messengerUserId: bigint,
 ): Promise<void> {
   if (channel === "telegram") {
     await client.query(
-      `UPDATE tt_external_messenger_sessions SET telegram_chat_id = $2, channel = 'telegram'
+      `UPDATE tt_external_messenger_sessions SET telegram_chat_id = $2, channel = 'telegram',
+              bound_telegram_user_id = $3
        WHERE id = $1::uuid`,
-      [sessionId, chatId.toString()],
+      [sessionId, chatId.toString(), messengerUserId.toString()],
     );
     return;
   }
   await client.query(
-    `UPDATE tt_external_messenger_sessions SET max_chat_id = $2, channel = 'max'
+    `UPDATE tt_external_messenger_sessions SET max_chat_id = $2, channel = 'max',
+            bound_max_user_id = $3
      WHERE id = $1::uuid`,
-    [sessionId, chatId.toString()],
+    [sessionId, chatId.toString(), messengerUserId.toString()],
   );
 }
 
@@ -162,9 +168,27 @@ export async function lockSessionByTelegramChat(
   const res = await client.query<ExternalMessengerSessionRow>(
     `SELECT id::text, transfer_id, pending_party_id::text, handoff_version, channel,
             expires_at, contact_attempt_count, code_issue_count, phone_verified_at, code_issued_at,
-            telegram_chat_id::text, max_chat_id::text
+            telegram_chat_id::text, max_chat_id::text,
+            bound_telegram_user_id::text, bound_max_user_id::text
      FROM tt_external_messenger_sessions
      WHERE telegram_chat_id = $1 AND superseded_at IS NULL AND expires_at > NOW()
+     ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+    [chatId.toString()],
+  );
+  return res.rows[0] ?? null;
+}
+
+export async function lockSessionByMaxChat(
+  client: PoolClient,
+  chatId: bigint,
+): Promise<ExternalMessengerSessionRow | null> {
+  const res = await client.query<ExternalMessengerSessionRow>(
+    `SELECT id::text, transfer_id, pending_party_id::text, handoff_version, channel,
+            expires_at, contact_attempt_count, code_issue_count, phone_verified_at, code_issued_at,
+            telegram_chat_id::text, max_chat_id::text,
+            bound_telegram_user_id::text, bound_max_user_id::text
+     FROM tt_external_messenger_sessions
+     WHERE max_chat_id = $1 AND superseded_at IS NULL AND expires_at > NOW()
      ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
     [chatId.toString()],
   );

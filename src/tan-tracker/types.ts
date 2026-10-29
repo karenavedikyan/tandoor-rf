@@ -27,6 +27,7 @@ export type TanTrackerTransferRow = {
   allow_legacy_complete: boolean;
   completed_at: Date | null;
   row_version: number;
+  first_custody_at?: Date | null;
 };
 
 export type TanTrackerTimelineRow = {

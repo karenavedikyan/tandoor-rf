@@ -9,7 +9,7 @@ import { buildTanTrackerBootstrap } from "./service";
 import { requireTanTrackerMutationAccess } from "./guards";
 import { resolveRecipientPartyId, type ExternalRecipientInput } from "./party-eligibility";
 import { linkStagedAttachmentsToTransfer } from "./attachments";
-import { isBeforeFirstConfirmedCustody } from "./custody-state";
+import { isBeforeFirstConfirmedCustody, transferHasConfirmedFirstCustody } from "./custody-state";
 import { invalidateOpenHandoffArtifacts } from "./handoff-invalidation";
 import {
   addTransferAttachmentsInTransaction,
@@ -83,10 +83,11 @@ export async function editTransferDraftHandler(req: AccessRequest, res: Response
         handoff_version: number;
         row_version: number;
         due_at: Date | null;
+        first_custody_at: Date | null;
       }>(
         `SELECT id, public_code, item_title, qty_label, comment_text, status,
                 creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
-                handoff_version, row_version, due_at
+                handoff_version, row_version, due_at, first_custody_at
          FROM tt_transfers
          WHERE id = $1 OR public_code = $1
          LIMIT 1
@@ -105,7 +106,10 @@ export async function editTransferDraftHandler(req: AccessRequest, res: Response
       if (row.holder_party_id !== party.id) {
         return { ok: false as const, code: 403, message: "Редактировать может только текущий держатель." };
       }
-      if (!isBeforeFirstConfirmedCustody(row)) {
+      if (
+        !isBeforeFirstConfirmedCustody(row) ||
+        (await transferHasConfirmedFirstCustody(client, row.id))
+      ) {
         return {
           ok: false as const,
           code: 403,

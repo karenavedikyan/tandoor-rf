@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { markFirstCustodyIfUnset } from "./custody-state";
 import {
   enqueueTanTrackerAssignmentMax,
   enqueueTanTrackerAssignmentTelegram,
@@ -54,6 +55,7 @@ export async function applyPendingReceiptHandoff(
      WHERE transfer_id = $1 AND superseded_at IS NULL`,
     [row.id],
   );
+  await markFirstCustodyIfUnset(client, row.id);
 
   const newHandoffVersion = row.handoff_version + 1;
   if (newStatus === "active") {

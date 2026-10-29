@@ -11,7 +11,7 @@ import {
 import type { MaxDeliveryTransport, MaxDeliveryResult, MaxInlineButton } from "./delivery-transport";
 import { buildHandoffCodeBotReply } from "../tanbot/handoff-code-bot-flow";
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
-import { handleExternalRecipientStart } from "../tanbot/external-recipient/bot-flow";
+import { handleExternalRecipientMaxContact, handleExternalRecipientStart } from "../tanbot/external-recipient/bot-flow";
 import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
 import {
   claimMaxUpdate,
@@ -40,18 +40,22 @@ async function processUpdateInTransaction(
   client: PoolClient,
   pool: Pool,
   config: TanbotMaxStage2Config,
-  update: {
+  update: Record<string, unknown> & {
     dedupKey: string;
     updateType: string;
     maxUserId: bigint;
     chatId: bigint;
-    startPayload: string | null;
-    commandText: string | null;
-    callbackPayload: string | null;
-    username: string | null;
-    firstName: string | null;
   },
 ): Promise<WebhookReply> {
+  const startPayload = (update.startPayload as string | null) ?? null;
+  const commandText = (update.commandText as string | null) ?? null;
+  const callbackPayload = (update.callbackPayload as string | null) ?? null;
+  const username = (update.username as string | null) ?? null;
+  const firstName = (update.firstName as string | null) ?? null;
+  const contact = update.contact as
+    | { vcfInfo: string; contactUserId: number | null; contactHash: string | null }
+    | undefined;
+  const isForwarded = Boolean(update.isForwarded);
   const claim = await claimMaxUpdate(client, update.dedupKey);
   if (claim.kind === "ignore") {
     return null;
@@ -64,7 +68,24 @@ async function processUpdateInTransaction(
   const lkUrl = `${config.appOrigin}/profile`;
 
   try {
-    if (update.updateType === "bot_stopped" || update.commandText?.split(/\s+/)[0]?.toLowerCase() === "/stop") {
+    if (contact) {
+      const ext = await handleExternalRecipientMaxContact(client, {
+        maxChatId: update.chatId,
+        maxUserId: update.maxUserId,
+        contact,
+        isForwarded,
+      });
+      reply = ext
+        ? {
+            userId: update.maxUserId,
+            chatId: update.chatId,
+            text: ext.text,
+            inlineButtons: ext.requestContact
+              ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
+              : undefined,
+          }
+        : { userId: update.maxUserId, chatId: update.chatId, text: "Контакт не принят." };
+    } else if (update.updateType === "bot_stopped" || commandText?.split(/\s+/)[0]?.toLowerCase() === "/stop") {
       const account = await findAccountByMaxUserId(client, update.maxUserId);
       if (account) {
         await disconnectMaxAccountOnClient(client, account.user_id);
@@ -74,7 +95,7 @@ async function processUpdateInTransaction(
         chatId: update.chatId,
         text: "Уведомления MAX отключены. Включить снова можно в личном кабинете.",
       };
-    } else if (update.commandText?.split(/\s+/)[0]?.toLowerCase() === "/status") {
+    } else if (commandText?.split(/\s+/)[0]?.toLowerCase() === "/status") {
       const account = await findAccountByMaxUserId(client, update.maxUserId);
       reply = account
         ? {
@@ -88,11 +109,12 @@ async function processUpdateInTransaction(
             text: "MAX не подключён к личному кабинету. Подключение выполняется в разделе «Мой профиль».",
           };
     } else if (update.updateType === "bot_started") {
-      if (update.startPayload && isExternalMessengerStartToken(update.startPayload)) {
+      if (startPayload && isExternalMessengerStartToken(startPayload)) {
         const ext = await handleExternalRecipientStart(client, {
           channel: "max",
-          startPayload: update.startPayload,
+          startPayload,
           chatId: update.chatId,
+          messengerUserId: update.maxUserId,
         });
         reply = ext
           ? {
@@ -108,7 +130,7 @@ async function processUpdateInTransaction(
               chatId: update.chatId,
               text: "Приглашение недоступно.",
             };
-      } else if (!update.startPayload) {
+      } else if (!startPayload) {
         reply = {
           userId: update.maxUserId,
           chatId: update.chatId,
@@ -119,11 +141,11 @@ async function processUpdateInTransaction(
           pool,
           config,
           {
-            startToken: update.startPayload,
+            startToken: startPayload,
             maxUserId: update.maxUserId,
             maxChatId: update.chatId,
-            maxUsername: update.username,
-            maxFirstName: update.firstName,
+            maxUsername: username,
+            maxFirstName: firstName,
           },
           client,
         );
@@ -150,14 +172,15 @@ async function processUpdateInTransaction(
     } else if (
       isTanbotHandoffCodePilotEnabled() &&
       (update.updateType === "message_callback" ||
-        update.callbackPayload ||
-        update.commandText?.trim().toLowerCase() === "/code" ||
-        update.commandText?.trim().toLowerCase() === "код")
+        callbackPayload ||
+        commandText?.trim().toLowerCase() === "/code" ||
+        commandText?.trim().toLowerCase() === "кod" ||
+        commandText?.trim().toLowerCase() === "код")
     ) {
       const handoff = await buildHandoffCodeBotReply(client, "max", {
         externalUserId: update.maxUserId,
-        callbackPayload: update.callbackPayload,
-        commandText: update.commandText,
+        callbackPayload,
+        commandText,
       });
       if (handoff.text) {
         reply = {
@@ -167,7 +190,7 @@ async function processUpdateInTransaction(
           inlineButtons: handoff.maxInlineButtons,
         };
       }
-    } else if (update.commandText) {
+    } else if (commandText) {
       reply = {
         userId: update.maxUserId,
         chatId: update.chatId,

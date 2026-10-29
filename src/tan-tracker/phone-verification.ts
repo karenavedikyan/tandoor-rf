@@ -35,10 +35,10 @@ export function testPhoneCodeKey(transferId: string, partyId: string): string {
   return `${transferId}|${partyId}`;
 }
 
-function testPhoneProviderAllowed(): boolean {
-  if (process.env.TT_PHONE_VERIFICATION_PROVIDER !== "test") return false;
-  if (process.env.NODE_ENV === "test") return true;
-  return isTanTrackerUserTestEnv();
+function testPhoneProviderAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.TT_PHONE_VERIFICATION_PROVIDER !== "test") return false;
+  if (env.NODE_ENV === "test") return true;
+  return isTanTrackerUserTestEnv(env);
 }
 
 function userTestOtpDir(): string {
@@ -83,9 +83,21 @@ export function storeTestPhoneVerificationCode(transferId: string, partyId: stri
   });
 }
 
+/** True when public SMS phone verification can actually send codes. */
+export function isPhoneSmsVerificationAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    resolvePhoneVerificationProvider(env);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Production must wire a real provider; tests use TestPhoneVerificationProvider. */
-export function resolvePhoneVerificationProvider(): PhoneVerificationProvider {
-  if (testPhoneProviderAllowed()) {
+export function resolvePhoneVerificationProvider(
+  env: NodeJS.ProcessEnv = process.env,
+): PhoneVerificationProvider {
+  if (testPhoneProviderAllowed(env)) {
     return {
       async sendCode() {
         return { deliveryId: "test" };
