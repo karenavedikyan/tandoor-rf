@@ -1,0 +1,79 @@
+[
+  {
+    "guid_client": "a0000000-0000-4000-8000-000000000031",
+    "name_client": "SYNTH Holding Group Network Root",
+    "guid_holding": "",
+    "name_holding": "",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "SYNTH Manager",
+    "address": "",
+    "telephone": [],
+    "holding": true,
+    "retail_outlets": [],
+    "Код": "",
+    "Контрагент": null,
+    "НаименованиеПолное": null,
+    "ЮрФизЛицо": null,
+    "Оптовик_ОГРН": null,
+    "Discount": "",
+    "DiscountAmount": 0,
+    "Markups": []
+  },
+  {
+    "guid_client": "a0000000-0000-4000-8000-000000000032",
+    "name_client": "SYNTH Legal Entity A",
+    "guid_holding": "a0000000-0000-4000-8000-000000000031",
+    "name_holding": "SYNTH Group Network Holding",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "SYNTH Manager",
+    "address": "SYNTH address A",
+    "telephone": [],
+    "holding": false,
+    "retail_outlets": [
+      {
+        "guid_store": "b0000000-0000-4000-8000-000000000031",
+        "name_store": "SYNTH Store A1",
+        "closed": false
+      },
+      {
+        "guid_store": "b0000000-0000-4000-8000-000000000032",
+        "name_store": "SYNTH Store A2",
+        "closed": false
+      }
+    ],
+    "Код": "SYNTH-031A",
+    "Контрагент": "SYNTH Counterparty A",
+    "НаименованиеПолное": "SYNTH Full Name A",
+    "ЮрФизЛицо": "Юрлицо",
+    "Оптовик_ОГРН": "0000000000031",
+    "Discount": "",
+    "DiscountAmount": 0,
+    "Markups": []
+  },
+  {
+    "guid_client": "a0000000-0000-4000-8000-000000000033",
+    "name_client": "SYNTH Legal Entity B",
+    "guid_holding": "a0000000-0000-4000-8000-000000000031",
+    "name_holding": "SYNTH Group Network Holding",
+    "guid_manager": "22222222-2222-4222-8222-222222222222",
+    "name_manager": "SYNTH Manager",
+    "address": "SYNTH address B",
+    "telephone": [],
+    "holding": false,
+    "retail_outlets": [
+      {
+        "guid_store": "b0000000-0000-4000-8000-000000000033",
+        "name_store": "SYNTH Store B1",
+        "closed": false
+      }
+    ],
+    "Код": "SYNTH-031B",
+    "Контрагент": "SYNTH Counterparty B",
+    "НаименованиеПолное": "SYNTH Full Name B",
+    "ЮрФизЛицо": "Юрлицо",
+    "Оптовик_ОГРН": "0000000000032",
+    "Discount": "",
+    "DiscountAmount": 0,
+    "Markups": []
+  }
+]
