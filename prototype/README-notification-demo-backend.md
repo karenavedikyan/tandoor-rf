@@ -12,7 +12,7 @@ Listens on `0.0.0.0:34113`. Data file: `prototype/.data/notification-demo-state.
 
 ## Static prototype
 
-Deploy `site/` only. `site/index.html` sets `window.__NOTIFICATION_DEMO_API__="__PORT_34113__"`; the preview platform rewrites this to the proxied API base. On local origins (`127.0.0.1` / `localhost`) the client uses `http://127.0.0.1:34113`.
+Deploy `site/` only. `site/index.html` sets `window.__NOTIFICATION_DEMO_API__="__PORT_34113__"`; the preview platform rewrites this to a relative base such as `port/34113`. The client resolves it with `new URL(cfg, document.baseURI)` (http/https only). Unresolved `__PORT_34113__` on hosted stays disabled; on `127.0.0.1` / `localhost` the client uses `http://127.0.0.1:34113`.
 
 ## Visitor scope
 

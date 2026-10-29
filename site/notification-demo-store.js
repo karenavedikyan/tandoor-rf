@@ -15,15 +15,32 @@
     return /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
   }
 
-  function resolveApiBase() {
-    const cfg = String(window.__NOTIFICATION_DEMO_API__ ?? "").trim();
+  function resolveApiBaseFromConfig(cfg, baseURI, hostname) {
+    cfg = String(cfg ?? "").trim();
     if (!cfg || cfg === "off" || cfg === "disabled") return null;
     if (cfg.includes("__PORT_34113__")) {
-      if (isLocalOrigin()) return "http://127.0.0.1:34113";
+      if (/^(localhost|127\.0\.0\.1)$/i.test(hostname || "")) return "http://127.0.0.1:34113";
       return null;
     }
-    if (/^https?:\/\//i.test(cfg)) return cfg.replace(/\/$/, "");
-    return null;
+    let href;
+    try {
+      href = new URL(cfg, baseURI || "http://127.0.0.1/").href;
+    } catch {
+      return null;
+    }
+    let u;
+    try {
+      u = new URL(href);
+    } catch {
+      return null;
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    const base = (u.origin + u.pathname).replace(/\/$/, "");
+    return base || u.origin;
+  }
+
+  function resolveApiBase() {
+    return resolveApiBaseFromConfig(window.__NOTIFICATION_DEMO_API__, document.baseURI, location.hostname);
   }
 
   function visitorHeader() {
@@ -150,5 +167,6 @@
         statusListeners = statusListeners.filter((x) => x !== fn);
       };
     },
+    testResolveApiBase: (cfg, baseURI, hostname) => resolveApiBaseFromConfig(cfg, baseURI, hostname),
   };
 })();
