@@ -23,6 +23,8 @@
 .af-delivery-prefs{margin:16px 0}.af-delivery-prefs legend{font-weight:600;margin-bottom:8px}
 .af-pref{display:flex;gap:10px;align-items:flex-start;margin:8px 0;min-height:44px}
 .af-pref input{width:20px;height:20px;margin-top:2px}
+.af-profile-dialog label.af-pref{flex-direction:row;align-items:center;gap:12px;min-height:44px;padding:4px 0;margin:6px 0;cursor:pointer}
+.af-profile-dialog label.af-pref input[type=checkbox]{width:22px;height:22px;min-height:22px;margin:0;flex:0 0 auto;accent-color:var(--green)}
 .af-delivery-error{border-left:4px solid #b37b20;background:color-mix(in srgb,#b37b20 8%,var(--surface,#fff));padding:12px 14px;border-radius:8px;margin:12px 0}
 .af-inbox-list{overflow:auto;min-height:0;flex:1;overscroll-behavior:contain}
 .af-note{padding:18px 20px;border-bottom:1px solid var(--line);border-left:4px solid transparent}.af-note p{margin:8px 0}.af-note .af-line{gap:8px}.af-note .af-line small{white-space:nowrap}

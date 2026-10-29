@@ -1,5 +1,7 @@
 var NOTIFICATION_CENTER_QA = await (async () => {
   const checks = [];
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
   const ok = (v, s) => {
     if (!v) throw Error("Notification center QA: " + s);
     checks.push(s);
@@ -7,55 +9,109 @@ var NOTIFICATION_CENTER_QA = await (async () => {
   const base = "http://127.0.0.1:4317";
   const bell = () => page.locator("#af-bell").click();
   const closeInbox = () => page.locator('#af-inbox [data-af="close-inbox"]').click();
+  const closeProfile = () => page.locator('#af-profile-dialog [data-af="profile-close"]').click();
+  const demoNoteLine = () =>
+    page.locator(".af-note").filter({ hasText: "срок передачи сегодня" }).locator(".af-muted").last();
 
   await page.goto(`${base}/#handover?as_role=manager`);
+  await page.evaluate(() => localStorage.removeItem("tandoor-lk-notifications-demo-v1"));
   await page.reload();
+
   ok(await page.locator("#af-bell").count() === 1, "single header bell");
   await bell();
   ok((await page.locator("#af-inbox h2").textContent()).includes("Центр уведомлений"), "inbox title unified center");
-  ok((await page.locator(".af-inbox-cats").textContent()).includes("Тан-трекер"), "category filters visible");
-  const beforeRead = await page.locator(".af-note.af-unread").count();
-  ok(beforeRead >= 1, "unread styling present");
-  await page.locator('[data-af="read"]').first().click();
+  await page.locator('[data-af="cat-system"]').click();
+  ok((await page.locator(".af-note").count()) >= 1, "manager has synthetic system category item");
+  await page.locator('[data-af="cat-all"]').click();
+
+  await page.locator('[data-af="read-all"]').click();
+  ok((await page.locator("#af-bell").getAttribute("aria-label")).includes("0 непрочитанных"), "read all clears unread count");
+  await page.locator('[data-af="unread"]').click();
+  ok((await page.locator(".af-note").count()) === 0, "unread filter empty after read all");
+  ok((await page.locator("#af-inbox .af-empty").textContent()).includes("Непрочитанных"), "unread empty state copy");
+  await closeInbox();
   await page.reload();
   await bell();
-  ok((await page.locator(".af-note.af-unread").count()) <= beforeRead - 1, "read state persists after reload");
+  await page.locator('[data-af="unread"]').click();
+  ok((await page.locator(".af-note").count()) === 0, "unread empty persists after reload");
   await closeInbox();
 
   await page.locator("#af-profile-btn").click();
   await page.locator("#af-profile-dialog").waitFor({ state: "visible" });
-  ok((await page.locator("#af-profile-dialog").textContent()).includes("Telegram"), "profile delivery settings");
-  ok((await page.locator("#af-profile-dialog").textContent()).includes("MAX"), "MAX channel in profile");
   await page.locator('[data-af="connect-telegram"]').click();
-  ok((await page.locator("#af-profile-dialog").textContent()).includes("Подключено (демо)"), "demo telegram connect");
-  await page.locator('[data-af="delivery-retry"]').click();
-  await page.locator("#af-profile-dialog").waitFor({ state: "hidden" });
+  await page.locator('[data-af="connect-max"]').click();
+  await closeProfile();
+
   await bell();
-  ok((await page.locator("#af-inbox").textContent()).includes("Telegram"), "inbox shows delivery line when connected");
+  await page.locator('[data-af="all"]').click();
   await page.locator('[data-af="cat-tt"]').click();
-  ok((await page.locator(".af-note").count()) >= 1, "tan-tracker category filter");
+  ok((await demoNoteLine().textContent()).includes("ошибка доставки"), "demo TT item shows failed delivery before retry");
   await closeInbox();
 
-  await page.goto(`${base}/#tan-tracker?role=manager`);
-  await page.locator("#tt-root").waitFor({ state: "visible" });
+  await page.locator("#af-profile-btn").click();
+  await page.locator('[data-af="delivery-retry"]').click();
+  await page.locator("#af-profile-dialog").waitFor({ state: "hidden" });
+
   await bell();
-  ok((await page.locator("#af-inbox").getByRole("button", { name: "Открыть трек", exact: true }).count()) >= 1, "TT events share same center");
+  await page.locator('[data-af="all"]').click();
+  await page.locator('[data-af="cat-tt"]').click();
+  const afterRetry = await demoNoteLine().textContent();
+  ok(afterRetry.includes("демо-отправка"), "retry clears failed delivery status on same event");
+  ok(!afterRetry.includes("ошибка доставки"), "retry removes error wording from center line");
   await closeInbox();
+
+  await bell();
+  await page.locator('[data-af="cat-all"]').click();
+  await page.locator('[data-af="all"]').click();
+  const noteCount = await page.locator(".af-note").count();
+  ok(noteCount >= 3, "manager inbox has TT, assignment and system items");
+  await closeInbox();
+  await page.locator("#af-profile-btn").click();
+  await page.locator('[data-af="disconnect-telegram"]').click();
+  await page.locator('[data-af="disconnect-max"]').click();
+  await closeProfile();
+  await bell();
+  await page.locator('[data-af="cat-all"]').click();
+  await page.locator('[data-af="all"]').click();
+  ok((await page.locator(".af-note").count()) === noteCount, "disconnect channels keeps LK history count");
+  ok((await page.locator(".af-note").first().locator(".af-muted").last().textContent()).includes("Только в ЛК"), "disconnect shows LK-only delivery line");
+  await page.locator(".af-note").filter({ hasText: "Назначение согласовано" }).getByRole("button", { name: "Открыть назначение", exact: true }).first().click();
+  await page.locator("#as-content .as-panel, #as-content .as-detail").first().waitFor({ state: "visible", timeout: 8000 });
+  ok((await page.evaluate(() => location.hash)).includes("handover"), "assignment notification opens handover module");
+  await bell();
+  await page.locator('[data-af="cat-tt"]').click();
+  await page.getByRole("button", { name: "Открыть трек", exact: true }).first().click();
+  await page.locator("#tt-root").waitFor({ state: "visible" });
+  ok((await page.evaluate(() => location.hash)).includes("tan-tracker"), "TT notification opens tracker");
+  if (await page.locator("#af-inbox").count()) await closeInbox();
 
   await page.setViewportSize({ width: 375, height: 812 });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.getByRole("button", { name: "Переключить тему", exact: true }).click();
   await bell();
-  ok(await page.locator("#af-inbox").evaluate((e) => e.getBoundingClientRect().right <= innerWidth), "375px dark inbox fits");
+  const box = await page.locator("#af-inbox").evaluate((e) => {
+    const r = e.getBoundingClientRect();
+    return { left: r.left, right: r.right, w: innerWidth };
+  });
+  ok(box.left >= 8 && box.right <= box.w - 8, "375px dark inbox fits viewport");
   await page.keyboard.press("Escape");
-  ok(await page.locator("#af-inbox").count() === 0, "Escape closes inbox");
+  ok(await page.locator("#af-inbox").count() === 0, "Escape closes inbox on mobile");
 
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.getByRole("button", { name: "Переключить тему", exact: true }).click();
+  await bell();
+  ok(await page.locator("#af-inbox").isVisible(), "desktop light inbox after resize up");
+  await closeInbox();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await bell();
+  ok(await page.locator("#af-inbox").isVisible(), "mobile inbox after resize down");
+  await closeInbox();
+
   await page.goto(`${base}/#exchange?role=manager`);
-  await page.waitForTimeout(400);
-  ok(errors.length === 0, "no console page errors on clients route");
+  await page.waitForTimeout(300);
+  ok(errors.length === 0, "no page errors from start through flows");
 
-  return { passed: checks.length, checks };
+  return { passed: checks.length, checks, pageErrors: errors };
 })();
 console.log(JSON.stringify(NOTIFICATION_CENTER_QA, null, 2));

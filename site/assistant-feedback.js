@@ -11,10 +11,15 @@
   function loadStore(){try{return JSON.parse(localStorage.getItem(STORE_KEY))||{users:{}};}catch{return {users:{}};}}
   function saveStore(store){try{localStorage.setItem(STORE_KEY,JSON.stringify(store));}catch{}}
   function defaultDelivery(){return {telegram:{connected:false,label:""},max:{connected:false,label:""},prefs:{tt:true,assign:true,system:true},lastError:"",lastErrorAt:0};}
-  function deliveryFor(user){const store=loadStore();if(!store.users[user])store.users[user]={read:{},delivery:defaultDelivery()};if(!store.users[user].delivery)store.users[user].delivery=defaultDelivery();return store.users[user].delivery;}
-  function persistDelivery(user,delivery){const store=loadStore();if(!store.users[user])store.users[user]={read:{},delivery:defaultDelivery()};store.users[user].delivery=delivery;saveStore(store);}
-  function persistReadFlag(user,key,read){const store=loadStore();if(!store.users[user])store.users[user]={read:{},delivery:defaultDelivery()};store.users[user].read[key]=read;saveStore(store);}
+  function ensureUser(store,user){if(!store.users[user])store.users[user]={read:{},delivery:defaultDelivery(),deliveryStatus:{}};const u=store.users[user];if(!u.delivery)u.delivery=defaultDelivery();if(!u.deliveryStatus)u.deliveryStatus={};return u;}
+  function deliveryFor(user){return ensureUser(loadStore(),user).delivery;}
+  function persistDelivery(user,delivery){const store=loadStore();ensureUser(store,user).delivery=delivery;saveStore(store);}
+  function persistReadFlag(user,key,read){const store=loadStore();ensureUser(store,user).read[key]=read;saveStore(store);}
   function storedRead(user,key){return !!loadStore().users[user]?.read?.[key];}
+  function storedNoteDelivery(user,key){return loadStore().users[user]?.deliveryStatus?.[key]||"";}
+  function persistNoteDelivery(user,key,state){const store=loadStore();ensureUser(store,user).deliveryStatus[key]=state;saveStore(store);}
+  function isNoteDeliveryFailed(user,n){const st=storedNoteDelivery(user,n.key);if(st==="sent")return false;if(st==="failed")return true;return !!n.deliveryFailSeed;}
+  function markFailedDeliveriesRetried(user){notes.filter(n=>n.user===user&&isNoteDeliveryFailed(user,n)).forEach(n=>persistNoteDelivery(user,n.key,"sent"));}
   function noteCategory(n){if(n.kind==="tt-track")return "tt";if(n.kind==="info")return "system";return "assign";}
   function categoryWanted(n){return categoryFilter==="all"||noteCategory(n)===categoryFilter;}
   function deliveryStatusLine(n,user){
@@ -22,7 +27,7 @@
     if(!d.prefs[prefKey])return "Только в ЛК · тип отключён в настройках";
     const channels=[];if(d.telegram.connected)channels.push("Telegram");if(d.max.connected)channels.push("MAX");
     if(!channels.length)return "Только в ЛК · мессенджеры не подключены";
-    if(n.deliveryFail)return `В ЛК сохранено · ${channels.join(", ")}: ошибка доставки (демо)`;
+    if(isNoteDeliveryFailed(user,n))return `В ЛК сохранено · ${channels.join(", ")}: ошибка доставки (демо)`;
     return `В ЛК · ${channels.join(" + ")} (демо-отправка)`;
   }
   const ctx=()=>P.routeActive()?{role:S.role,id:S.person}:typeof prototypeRole==="string"&&prototypeRole==="regional"?{role:"rop",id:"r1",label:"Региональный менеджер"}:{role:typeof prototypeRole==="string"?prototypeRole:"manager",id:defaults[typeof prototypeRole==="string"?prototypeRole:"manager"]||"m1"};
@@ -55,7 +60,7 @@
   function add(user,key,title,text,id,kind="detail",at=S.clock,extra={}){
     const uid=user+":"+key;if(seen.has(uid))return;seen.add(uid);
     const read=storedRead(user,uid);
-    notes.push({key:uid,user,title,text,id,kind,at,read,seq:++seq,deliveryFail:!!extra.deliveryFail});
+    notes.push({key:uid,user,title,text,id,kind,at,read,seq:++seq,deliveryFailSeed:!!extra.deliveryFailSeed});
     if(read)persistReadFlag(user,uid,true);
   }
   function upsert(user,key,title,text,id,kind,at){
@@ -70,7 +75,7 @@
   function ensureDemoDeliveryNote(user){
     if(user!=="m1")return;
     const n=upsert(user,"delivery-demo-fail","Напоминание: срок передачи сегодня","Демо-событие Tan-трекера для проверки ошибки доставки в мессенджер. История остаётся в ЛК.","TT-2026-001","tt-track",S.clock-1800000);
-    n.deliveryFail=true;if(storedRead(user,n.key))n.read=true;
+    n.deliveryFailSeed=true;if(storedRead(user,n.key))n.read=true;
   }
   function syncTrackerInbox(){
     const TN=window.TanTrackerNotifications;
@@ -127,6 +132,7 @@
     reviews.forEach((r,i)=>["c1","d1"].forEach(id=>add(id,"review:"+r.assignment,r.score<=3?"Низкая оценка: зона внимания":"Получена оценка работы ассистента",
       `${P.person(r.assistant)} · ${r.score}/5 · ${r.assignment}. Оценка доступна РОА и директору.`,r.assignment,"rating",Math.min(r.at,S.clock-1000-i))));
     ["r1","r2"].forEach(id=>add(id,"team-info","Доступ ассистенту согласован РОА","Информация о временном доступе в вашей территории. Ваше согласование не требуется.",id==="r1"?"Н-102":"Н-107","detail",S.clock-7200000));
+    add("m1","lk-account","Настройки учётной записи ЛК","Демо: напоминание о безопасности входа. История уведомлений персональна; доступ к клиентам и назначениям от этого не меняется.",null,"info",S.clock-5400000);
     add("admin","system","Служебные события доступны в ЛК","Уведомления персональные. Администратор не заменяет РОА при согласовании.",null,"info",S.clock-3600000);
     notes.forEach(n=>{if(storedRead(n.user,n.key))n.read=true;});
     ensureDemoDeliveryNote("m1");
@@ -344,7 +350,7 @@
     if(k==="profile-close"){closeProfile();document.getElementById("af-profile-btn")?.focus();paint();}
     if(k==="connect-telegram"||k==="connect-max"){const user=inboxUserId(),d=deliveryFor(user),kind=k.split("-")[1];d[kind].connected=true;d[kind].label=kind==="telegram"?"@demo_"+user+"_tg":"MAX · demo "+user.toUpperCase();persistDelivery(user,d);openProfile(false);}
     if(k==="disconnect-telegram"||k==="disconnect-max"){const user=inboxUserId(),d=deliveryFor(user),kind=k.split("-")[1];d[kind].connected=false;d[kind].label="";persistDelivery(user,d);openProfile(false);}
-    if(k==="delivery-retry"){const user=inboxUserId(),d=deliveryFor(user);d.lastError="";d.lastErrorAt=0;persistDelivery(user,d);if(P.routeActive()){S.toast="Демо: повторная отправка выполнена. События в ЛК не изменились.";P.render();}closeProfile();paint();}
+    if(k==="delivery-retry"){const user=inboxUserId(),d=deliveryFor(user);d.lastError="";d.lastErrorAt=0;persistDelivery(user,d);markFailedDeliveriesRetried(user);if(P.routeActive()){S.toast="Демо: повторная отправка выполнена. События в ЛК не изменились.";P.render();}closeProfile();paint();}
     if(b.matches("[data-af=pref]")){const user=inboxUserId(),d=deliveryFor(user);d.prefs[b.dataset.id]=b.checked;persistDelivery(user,d);}
     if(k==="open-note"){const n=mine().find(n=>n.key===id);if(n)openNote(n);}
     if(k==="ratings")refreshRatings();
