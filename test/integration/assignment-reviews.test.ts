@@ -76,14 +76,22 @@ describe("reviews: mandatory closure, scope and private notifications",()=>{
     const rop=await get("rop","/delegations/"+id);
     assert.ok(!JSON.stringify(rop.body).includes(feedback.comment));assert.ok(!rop.body.delegation?.review);
   });
-  it("hides other authors and refuses assistant/ROP/admin reads and leader writes",async()=>{
+  it("scopes reads: admin and ROA/director see review; assistant/ROP forbidden; only manager may submit",async()=>{
     const id=await finished(),path="/delegations/"+id+"/review";assert.equal((await post("manager",path,feedback)).status,201);
     assert.equal((await get("manager2",path)).status,404);
     assert.equal((await get("manager2","/assignments/reviews")).body.total,0);
-    for(const who of ["assistant","rop","admin"]){
-      assert.equal((await get(who,"/assignments/reviews")).status,403);assert.equal((await get(who,path)).status,403);
+    for(const who of ["assistant","rop"]){
+      assert.equal((await get(who,"/assignments/reviews")).status,403,who+" list");
+      assert.equal((await get(who,path)).status,403,who+" detail");
     }
-    for(const who of ["assistant","coordinator","director","admin","rop"])assert.equal((await post(who,path,feedback)).status,403);
+    const adminList=await get("admin","/assignments/reviews");
+    assert.equal(adminList.status,200,JSON.stringify(adminList.body));
+    assert.ok(adminList.body.total>=1);
+    const adminDetail=await get("admin",path);
+    assert.equal(adminDetail.status,200,JSON.stringify(adminDetail.body));
+    assert.equal(adminDetail.body.review.score,feedback.score);
+    assert.equal(adminDetail.body.review.comment,feedback.comment);
+    for(const who of ["assistant","coordinator","director","admin","rop"])assert.equal((await post(who,path,feedback)).status,403,who+" write");
   });
   it("serializes competing submissions: one review and private audit record",async()=>{
     const id=await finished(),path="/delegations/"+id+"/review";
