@@ -6,11 +6,8 @@ import { query } from "../db/pool";
 export async function loadTanTrackerTeamEmployeeGuids(
   access: AccessContext,
 ): Promise<Set<string> | null> {
-  if (access.role === "director") {
+  if (access.role === "director" || access.role === "admin") {
     return null;
-  }
-  if (access.role === "admin") {
-    return new Set();
   }
   const employeeId = access.employeeId;
   if (!employeeId) {

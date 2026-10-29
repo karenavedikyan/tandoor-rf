@@ -17,15 +17,15 @@ const baseOrder: TanTrackerOrderDto = {
 };
 
 describe("tan-tracker scope", () => {
-  it("admin does not see orders by default", () => {
+  it("admin sees any order (director-level read scope)", () => {
     const ctx: TanTrackerScopeContext = {
       userId: "u0",
       role: "admin",
       employeeId: null,
-      actorPartyId: "x",
+      actorPartyId: null,
       previewReadOnly: false,
     };
-    assert.equal(canViewOrder(baseOrder, ctx, [], null, false), false);
+    assert.equal(canViewOrder(baseOrder, ctx, [], null, false), true);
   });
 
   it("director sees any order", () => {

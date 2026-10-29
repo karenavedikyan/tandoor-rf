@@ -56,7 +56,7 @@ describe("tan-tracker LK write capability (HTTP)", { concurrency: false }, () =>
     delete process.env.TT_ATTACHMENTS_BACKEND;
   });
 
-  it("technical admin bootstrap exposes canWrite=false", async () => {
+  it("technical admin bootstrap exposes canWrite=true without employee link", async () => {
     await createTestUser({
       databaseUrl,
       email: "tt-admin-cap@test.local",
@@ -68,9 +68,9 @@ describe("tan-tracker LK write capability (HTTP)", { concurrency: false }, () =>
     const cookie = await login("tt-admin-cap@test.local", app);
     const res = await request(app).get("/api/tan-tracker/bootstrap").set(headers(cookie));
     assert.equal(res.status, 200, res.text);
-    assert.equal(res.body.capabilities?.canWrite, false);
+    assert.equal(res.body.capabilities?.canWrite, true);
     assert.equal(res.body.previewReadOnly, false);
-    assert.equal(res.body.actorPartyId, null);
+    assert.equal(res.body.linkedEmployeeId, null);
   });
 
   it("linked manager bootstrap exposes canWrite=true", async () => {
@@ -113,9 +113,18 @@ describe("tan-tracker LK write capability (HTTP)", { concurrency: false }, () =>
     assert.ok(res.body.actorPartyId);
   });
 
-  it("admin POST create is rejected without weakening server guard", async () => {
+  it("marketer POST create remains forbidden", async () => {
+    await createTestUser({
+      databaseUrl,
+      email: "tt-marketer-cap@test.local",
+      password: PASSWORD,
+      fullName: "TT Marketer",
+      role: "marketer",
+    });
     const app = await loadApp();
-    const cookie = await login("tt-admin-cap@test.local", app);
+    const cookie = await login("tt-marketer-cap@test.local", app);
+    const boot = await request(app).get("/api/tan-tracker/bootstrap").set(headers(cookie));
+    if (boot.status === 403) return;
     const res = await request(app)
       .post("/api/tan-tracker/transfers")
       .set(headers(cookie, { "Content-Type": "application/json" }))

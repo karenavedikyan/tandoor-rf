@@ -4,6 +4,11 @@ import { normalizeRuPhoneE164, isUuid } from "./phone-normalize";
 import { createExternalParty, findExternalPartyByPhone } from "./repository";
 import { loadTanTrackerTeamEmployeeGuids } from "./team-scope";
 import { query } from "../db/pool";
+import {
+  isPendingUserPartyRef,
+  resolveAdminRecipientRef,
+  assertAdminSelectablePartyId,
+} from "./recipient-catalog";
 
 type Db = Pool | PoolClient;
 
@@ -30,6 +35,10 @@ export async function assertPartyEligibleAsRecipient(
   if (access.role === "director") {
     const row = await client.query(`SELECT id FROM tt_parties WHERE id = $1::uuid`, [partyId]);
     if (!row.rowCount) throw Object.assign(new Error("Получатель не найден."), { http: 404 });
+    return;
+  }
+  if (access.role === "admin") {
+    await assertAdminSelectablePartyId(client, userId, partyId);
     return;
   }
   const teamGuids = await loadTanTrackerTeamEmployeeGuids({ ...access, userId, role: access.role });
@@ -110,6 +119,14 @@ export async function resolveRecipientPartyId(
   const resolved = String(partyId ?? "").trim();
   if (!resolved) {
     throw Object.assign(new Error("Выберите конечного получателя."), { http: 400 });
+  }
+  if (access.role === "admin") {
+    return resolveAdminRecipientRef(client, access, userId, resolved);
+  }
+  if (isPendingUserPartyRef(resolved)) {
+    throw Object.assign(new Error("Выберите получателя из каталога или добавьте новый контакт."), {
+      http: 400,
+    });
   }
   if (!isUuid(resolved)) {
     throw Object.assign(new Error("Выберите получателя из каталога или добавьте новый контакт."), {

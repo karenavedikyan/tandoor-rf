@@ -20,6 +20,10 @@ import { tanTrackerCanWrite } from "./guards";
 import { loadWholesalePeerUserIds } from "./team-peers";
 import { listAttachmentsForTransfers } from "./attachments";
 import { tanTrackerUserTestBannerForApi } from "../shared/tan-tracker-user-test-env";
+import {
+  listTanTrackerRecipientCatalog,
+  mergeTanTrackerContactLists,
+} from "./recipient-catalog";
 
 function mapRoleToPrototype(role: string): string {
   if (role === "regional_manager") return "regional";
@@ -128,7 +132,11 @@ export async function buildTanTrackerBootstrap(
     visibleTransferIds: visiblePublicCodes,
     teamUserIds: pickerUserIds,
   });
-  const contacts = partyRows.map(partyToContact);
+  let contacts = partyRows.map(partyToContact);
+  if (user.role === "admin") {
+    const catalog = await listTanTrackerRecipientCatalog(pool, user.id);
+    contacts = mergeTanTrackerContactLists(contacts, catalog);
+  }
 
   const orders: TanTrackerOrderDto[] = [];
   for (const { row, timeline, revoked } of transferBundles) {

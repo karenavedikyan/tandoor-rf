@@ -40,6 +40,13 @@ describe("tan-tracker LK write capability browser", { concurrency: false }, () =
       fullName: "Browser Admin",
       role: "admin",
     });
+    await createTestUser({
+      databaseUrl,
+      email: "tt-browser-fresh@test.local",
+      password: PASSWORD,
+      fullName: "Browser Fresh Recipient",
+      role: "manager",
+    });
 
     const emp = randomUUID();
     await createTestUser({
@@ -100,7 +107,7 @@ describe("tan-tracker LK write capability browser", { concurrency: false }, () =
     await page.waitForURL(/\/(clients|profile|work|access|admin)(\/|\?|$)/, { timeout: 20000 });
   }
 
-  it("technical admin sees read-only banner and no create entry (desktop + mobile)", async () => {
+  it("technical admin sees create entry and no read-only banner (desktop + mobile)", async () => {
     for (const viewport of [
       { width: 1280, height: 800, label: "desktop" },
       { width: 375, height: 740, label: "mobile375" },
@@ -110,12 +117,12 @@ describe("tan-tracker LK write capability browser", { concurrency: false }, () =
       await login(page, "tt-browser-admin@test.local");
       await page.goto("/tan-tracker");
       await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 20000 });
-      await page.waitForSelector('[data-tt="lk-readonly-banner"]', { timeout: 15000 });
-      assert.equal(await page.locator('[data-tt="create-fab"]').count(), 0);
-      assert.equal(await page.locator('[data-tt="create"]').count(), 0);
-      await page.goto("/tan-tracker#tan-tracker?tt_screen=create");
-      await page.waitForTimeout(300);
-      assert.equal(await page.locator('[data-tt="create-wizard"]').count(), 0);
+      assert.equal(await page.locator('[data-tt="lk-readonly-banner"]').count(), 0);
+      if (viewport.width >= 1280) {
+        await page.waitForSelector('[data-tt="create"]', { timeout: 15000 });
+      } else {
+        await page.waitForSelector('[data-tt="create-fab"]', { timeout: 15000, state: "visible" });
+      }
       await context.close();
     }
   });
@@ -139,7 +146,19 @@ describe("tan-tracker LK write capability browser", { concurrency: false }, () =
     await mobile.close();
   });
 
-  it("read-only banner visible in dark theme at 375px", async () => {
+  it("admin opens create wizard from CTA (real HTTP bootstrap)", async () => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, baseURL: baseUrl });
+    const page = await context.newPage();
+    await login(page, "tt-browser-admin@test.local");
+    await page.goto("/tan-tracker");
+    await page.waitForSelector('[data-tt="create"]', { timeout: 20000 });
+    await page.click('[data-tt="create"]');
+    await page.waitForSelector('[data-tt="create-wizard"]', { timeout: 10000 });
+    await page.waitForSelector('[data-tt-field="item"]', { timeout: 5000 });
+    await context.close();
+  });
+
+  it("admin registry renders in dark theme at 375px", async () => {
     const context = await browser.newContext({
       viewport: { width: 375, height: 740 },
       baseURL: baseUrl,
@@ -149,7 +168,7 @@ describe("tan-tracker LK write capability browser", { concurrency: false }, () =
     await login(page, "tt-browser-admin@test.local");
     await page.goto("/tan-tracker");
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-    await page.waitForSelector('[data-tt="lk-readonly-banner"]', { timeout: 15000 });
+    await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 15000 });
     await context.close();
   });
 });

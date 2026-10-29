@@ -15,7 +15,6 @@ export async function canDeliverAssignmentNotification(
   const user = userRow.rows[0];
   if (!user || user.status !== "active") return false;
   if (!tanTrackerNavAllowed(user.role)) return false;
-  if (user.role === "admin") return false;
 
   const party = await client.query<{ id: string }>(
     `SELECT id::text FROM tt_parties WHERE user_id = $1::uuid AND kind = 'user' LIMIT 1`,

@@ -103,7 +103,7 @@ export function assignmentRouter(): express.Router {
     res.json({ managers: await assignments.assignmentManagers(actor(req)) });
   }));
   router.get("/assignments/assistants", ...auth, handle(async (req, res) => {
-    if (!["manager", "coordinator"].includes(actor(req).role)) {
+    if (!["manager", "coordinator", "admin"].includes(actor(req).role)) {
       res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Недостаточно прав.")); return;
     }
     res.json({ users: await searchAssistants(str(req.query.q), 100) });

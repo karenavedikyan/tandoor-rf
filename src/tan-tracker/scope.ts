@@ -38,7 +38,7 @@ export function canViewOrder(
   partyEmployeeMap?: Map<string, string | null>,
 ): boolean {
   if (!o) return false;
-  if (ctx.role === "director") return true;
+  if (ctx.role === "director" || ctx.role === "admin") return true;
   if (!ctx.actorPartyId) {
     if (ctx.role !== "rop" && ctx.role !== "regional_manager") return false;
   } else {
@@ -46,7 +46,6 @@ export function canViewOrder(
       const allowed = [o.holderId, o.pendingId, o.finalRecipientId].filter(Boolean) as string[];
       return allowed.includes(ctx.actorPartyId);
     }
-    if (ctx.role === "admin") return false;
     const actor = ctx.actorPartyId;
     if ([o.holderId, o.pendingId, o.finalRecipientId].includes(actor)) return true;
     const participants = orderParticipantIds(o);

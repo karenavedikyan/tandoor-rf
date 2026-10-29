@@ -9,7 +9,6 @@ import { tanTrackerNavAllowed } from "./scope";
 
 export function tanTrackerCanWrite(user: UserDto, access: AccessContext): boolean {
   if (access.preview?.readOnly) return false;
-  if (user.role === "admin") return false;
   return tanTrackerNavAllowed(user.role);
 }
 
