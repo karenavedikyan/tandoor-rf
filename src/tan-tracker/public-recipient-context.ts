@@ -4,6 +4,7 @@ import { getPool } from "../db/pool";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { verifyInvitationToken } from "./invitation-token";
+import { verifyPhoneSession } from "./phone-session";
 import {
   listRevokedParties,
   listTimelineForTransfer,
@@ -59,10 +60,9 @@ export async function publicRecipientContextHandler(req: Request, res: Response)
   const dto = mapTransferToOrderDto(row, timeline, revoked, {
     attachments: attMap.get(row.id) ?? [],
   });
-  const tokenQ = encodeURIComponent(token);
   dto.attachments = (dto.attachments ?? []).map((a) => ({
     ...a,
-    url: `/api/tan-tracker/public/recipient/attachments/${encodeURIComponent(a.id)}?invitationToken=${tokenQ}`,
+    url: undefined,
   }));
 
   const parties = await pool.query(
@@ -149,10 +149,22 @@ export async function publicRecipientReceiptHandler(req: Request, res: Response)
 export async function publicRecipientAttachmentHandler(req: Request, res: Response): Promise<void> {
   const attId = String(req.params.attId ?? "").trim();
   const token = String(req.query.invitationToken ?? "").trim();
+  const phoneSessionToken = String(req.query.phoneSessionToken ?? "").trim();
   const invite = verifyInvitationToken(token);
-  if (!invite || !attId) {
+  const phoneSession = phoneSessionToken ? verifyPhoneSession(phoneSessionToken) : null;
+  if (!invite || !attId || !phoneSession) {
     setNoStore(res);
-    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Нет доступа."));
+    res
+      .status(403)
+      .json(apiError(ERROR_CODES.FORBIDDEN, "Подтвердите номер телефона, чтобы открыть файлы."));
+    return;
+  }
+  if (
+    phoneSession.partyId !== invite.pendingPartyId ||
+    phoneSession.hv !== invite.hv
+  ) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Сессия подтверждения недействительна."));
     return;
   }
   const pool = getPool();
@@ -164,13 +176,17 @@ export async function publicRecipientAttachmentHandler(req: Request, res: Respon
   const transfer = (
     await pool.query<{ id: string }>(
       `SELECT t.id FROM tt_transfers t
-       JOIN tt_transfer_invitations inv ON inv.transfer_id = t.id AND inv.superseded_at IS NULL
-       WHERE (t.id = $1 OR t.public_code = $1) AND t.handoff_version = $2 AND t.pending_party_id = $3::uuid
+       JOIN tt_transfer_invitations inv
+         ON inv.transfer_id = t.id AND inv.handoff_version = t.handoff_version AND inv.superseded_at IS NULL
+       WHERE (t.id = $1 OR t.public_code = $1)
+         AND t.handoff_version = $2
+         AND t.pending_party_id = $3::uuid
+         AND inv.pending_party_id = $3::uuid
          AND t.status <> 'completed'`,
       [invite.transferId, invite.hv, invite.pendingPartyId],
     )
   ).rows[0];
-  if (!transfer) {
+  if (!transfer || transfer.id !== phoneSession.transferId) {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Приглашение недоступно."));
     return;

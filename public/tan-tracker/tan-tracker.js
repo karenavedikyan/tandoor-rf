@@ -639,6 +639,30 @@
     return raw.trim().replace(/\/$/, "");
   }
 
+  function publicInvitationTokenForOrder(o) {
+    return state.recipientTicket?.tok || o?.activeInvitation?.invitationToken || "";
+  }
+
+  function buildPublicAttachmentDownloadUrl(attId, o) {
+    const invTok = publicInvitationTokenForOrder(o);
+    const session = state.lkPhoneSessionToken;
+    if (!attId || !invTok || !session) return "";
+    const q =
+      "invitationToken=" +
+      encodeURIComponent(invTok) +
+      "&phoneSessionToken=" +
+      encodeURIComponent(session);
+    return "/api/tan-tracker/public/recipient/attachments/" + encodeURIComponent(attId) + "?" + q;
+  }
+
+  function applyPublicAttachmentUrls(o) {
+    if (!window.__TT_PUBLIC_RECIPIENT__ || !o?.attachments?.length) return;
+    const verified = identityVerified(o);
+    for (const a of o.attachments) {
+      a.url = verified ? buildPublicAttachmentDownloadUrl(a.id, o) : "";
+    }
+  }
+
   function handoffUrl(o, inv) {
     const t = inv || o.activeInvitation;
     const role = state.ttPrototypeRole || "manager";
@@ -4100,6 +4124,7 @@
         .then((token) => {
           state.lkPhoneSessionToken = token;
           state.lkPhoneSessionKey = recipientKey(o);
+          applyPublicAttachmentUrls(o);
           state.toast = "Номер подтверждён.";
           renderTracker();
         })
@@ -4403,6 +4428,7 @@
       } else {
         copy.attachments = copy.attachments || [];
       }
+      applyPublicAttachmentUrls(copy);
       return copy;
     });
     if (opts?.preserveCode) {

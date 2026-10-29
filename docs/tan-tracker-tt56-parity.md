@@ -52,7 +52,7 @@
 ## Блокеры (честно)
 
 1. **SMS/OTP (production):** реальный провайдер не подключён → send 503; в test `TT_PHONE_VERIFICATION_PROVIDER=test`. Лимиты: 5 verify attempts (persist), cooldown 60s send, max 3 send / 15 min.
-2. **Остаток UI/API:** relay/final цепочки, полная адаптация 26 QA + relay regression; legacy complete и public receipt — сервер + LK (ветка tt56), браузерная приёмка отдельно.
+2. **Остаток UI/API:** relay/final цепочки, полная адаптация 26 QA + relay regression; public recipient browser E2E (SMS, файлы, confirm, reload) — отдельная приёмка.
 3. **Integration:** `tan-tracker-linked-bootstrap.test.ts`, `tan-tracker-public-phone-guards.test.ts`, guards/scope/schema — на изолированной PostgreSQL.
 
 ## Следующие шаги исполнителя

@@ -68,6 +68,48 @@
     location.hash = "tan-tracker?" + p.toString();
   }
 
+  function whenTanTrackerReady(cb, attempt) {
+    var n = attempt || 0;
+    if (
+      window.TanTrackerPrototype &&
+      typeof window.TanTrackerPrototype.hydrateFromServer === "function"
+    ) {
+      cb();
+      return;
+    }
+    if (n >= 80) {
+      showError("Не удалось инициализировать интерфейс получения.");
+      return;
+    }
+    setTimeout(function () {
+      whenTanTrackerReady(cb, n + 1);
+    }, 25);
+  }
+
+  function finishBoot(data, inv) {
+    window.__TT_PUBLIC_RECIPIENT__ = true;
+    if (data.publicReceipt && data.receipt) {
+      window.__TT_PUBLIC_RECEIPT__ = data.receipt;
+      window.__TT_LK_BOOTSTRAP__ = {
+        lkMode: true,
+        publicRecipient: true,
+        appOrigin: data.appOrigin || null,
+        actorPartyId: data.receipt.recipientPartyId,
+        prototypeRole: "manager",
+        contacts: [],
+        orders: [],
+        capabilities: { canWrite: false },
+      };
+    } else {
+      window.__TT_LK_BOOTSTRAP__ = data;
+    }
+    if (!data.publicReceipt) applyPublicRoute(inv);
+    window.TanTrackerPrototype.hydrateFromServer(window.__TT_LK_BOOTSTRAP__);
+    if (typeof window.__ttLkRenderTracker === "function") {
+      window.__ttLkRenderTracker();
+    }
+  }
+
   function boot() {
     document.body.classList.add("tt-lk-mode", "tt-active");
     var inv = parseInvitationFromLocation();
@@ -80,29 +122,9 @@
         return loadPublicReceipt(inv.token);
       })
       .then(function (data) {
-        window.__TT_PUBLIC_RECIPIENT__ = true;
-        if (data.publicReceipt && data.receipt) {
-          window.__TT_PUBLIC_RECEIPT__ = data.receipt;
-          window.__TT_LK_BOOTSTRAP__ = {
-            lkMode: true,
-            publicRecipient: true,
-            appOrigin: data.appOrigin || null,
-            actorPartyId: data.receipt.recipientPartyId,
-            prototypeRole: "manager",
-            contacts: [],
-            orders: [],
-            capabilities: { canWrite: false },
-          };
-        } else {
-          window.__TT_LK_BOOTSTRAP__ = data;
-        }
-        if (window.TanTrackerPrototype.hydrateFromServer) {
-          window.TanTrackerPrototype.hydrateFromServer(window.__TT_LK_BOOTSTRAP__);
-        }
-        if (!data.publicReceipt) applyPublicRoute(inv);
-        if (typeof window.__ttLkRenderTracker === "function") {
-          window.__ttLkRenderTracker();
-        }
+        whenTanTrackerReady(function () {
+          finishBoot(data, inv);
+        });
       })
       .catch(function (err) {
         showError(err && err.message ? err.message : "Не удалось открыть приглашение.");
