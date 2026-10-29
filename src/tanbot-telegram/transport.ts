@@ -1,6 +1,6 @@
 import { TELEGRAM_API_ORIGIN } from "./config";
 import { readBoundedResponseBody } from "./bounded-body";
-import { mapTelegramHttpStatus, safeTransportFailure } from "./safe-errors";
+import { safeTransportFailure } from "./safe-errors";
 import { redactTelegramSecrets } from "./sanitize";
 import {
   TELEGRAM_ALLOWED_METHODS,
@@ -24,7 +24,10 @@ function classifyHttpError(status: number, bodyText: string, token: string): Tel
   if (status >= 500) return safeTransportFailure("API_ERROR", { httpStatus: status, retryable: true });
 
   const parsed = parseTelegramEnvelope(bodyText, token);
-  if (!parsed.ok && parsed.code === "INVALID_JSON") {
+  if (parsed.ok) {
+    return safeTransportFailure("HTTP_ERROR", { httpStatus: status });
+  }
+  if (parsed.code === "INVALID_JSON") {
     return safeTransportFailure("HTTP_ERROR", { httpStatus: status });
   }
   return parsed;

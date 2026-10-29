@@ -118,6 +118,48 @@ describe("tanbot telegram transport", () => {
     }
   });
 
+  const validGetMeBody = JSON.stringify({
+    ok: true,
+    result: { id: 1, is_bot: true, username: "TANDOOR_IBOT" },
+  });
+
+  for (const status of [400, 404, 418]) {
+    it(`rejects HTTP ${status} even when envelope ok:true (TB-ERR-05)`, async () => {
+      const transport = createDefaultTelegramTransport(async () =>
+        new Response(validGetMeBody, { status, headers: { "Content-Type": "application/json" } }),
+      );
+      const result = await transport({
+        method: "getMe",
+        token: TOKEN,
+        timeoutMs: 5_000,
+        maxResponseBytes: 65_536,
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.code, "HTTP_ERROR");
+    });
+  }
+
+  for (const [status, expectedCode] of [
+    [401, "UNAUTHORIZED"],
+    [403, "FORBIDDEN"],
+    [429, "RATE_LIMITED"],
+    [503, "API_ERROR"],
+  ] as const) {
+    it(`rejects HTTP ${status} with contradictory ok:true body (TB-ERR-05 control)`, async () => {
+      const transport = createDefaultTelegramTransport(async () =>
+        new Response(validGetMeBody, { status, headers: { "Content-Type": "application/json" } }),
+      );
+      const result = await transport({
+        method: "getMe",
+        token: TOKEN,
+        timeoutMs: 5_000,
+        maxResponseBytes: 65_536,
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.code, expectedCode);
+    });
+  }
+
   it("handles invalid JSON on success status", async () => {
     const transport = createDefaultTelegramTransport(async () => new Response("not-json", { status: 200 }));
     const result = await transport({

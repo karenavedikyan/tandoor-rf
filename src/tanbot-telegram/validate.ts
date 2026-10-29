@@ -5,7 +5,7 @@ const MAX_WEBHOOK_ERROR_EPOCH_SEC = 4_102_444_800; // 2100-01-01 UTC
 
 export type ValidatedWebhookInfo = {
   url: string;
-  pendingUpdateCount: number | null;
+  pendingUpdateCount: number;
   lastErrorAt: string | null;
   lastErrorReported: boolean;
 };
@@ -56,22 +56,29 @@ export function parseTelegramWebhookInfoResult(raw: unknown):
   }
   const row = raw as Record<string, unknown>;
 
-  let url = "";
-  if (row.url !== undefined) {
-    if (typeof row.url !== "string") {
-      return { ok: false, message: "Telegram getWebhookInfo response is invalid." };
-    }
-    url = row.url.trim();
+  if (!Object.prototype.hasOwnProperty.call(row, "url")) {
+    return { ok: false, message: "Telegram getWebhookInfo response is invalid." };
+  }
+  if (typeof row.url !== "string") {
+    return { ok: false, message: "Telegram getWebhookInfo response is invalid." };
+  }
+  const url = row.url.trim();
+
+  if (!Object.prototype.hasOwnProperty.call(row, "has_custom_certificate")) {
+    return { ok: false, message: "Telegram getWebhookInfo response is invalid." };
+  }
+  if (typeof row.has_custom_certificate !== "boolean") {
+    return { ok: false, message: "Telegram getWebhookInfo response is invalid." };
   }
 
-  let pendingUpdateCount: number | null = null;
-  if (row.pending_update_count !== undefined) {
-    const pending = row.pending_update_count;
-    if (typeof pending !== "number" || !Number.isInteger(pending) || pending < 0) {
-      return { ok: false, message: "Telegram getWebhookInfo response is invalid." };
-    }
-    pendingUpdateCount = pending;
+  if (!Object.prototype.hasOwnProperty.call(row, "pending_update_count")) {
+    return { ok: false, message: "Telegram getWebhookInfo response is invalid." };
   }
+  const pending = row.pending_update_count;
+  if (typeof pending !== "number" || !Number.isInteger(pending) || pending < 0) {
+    return { ok: false, message: "Telegram getWebhookInfo response is invalid." };
+  }
+  const pendingUpdateCount = pending;
 
   let lastErrorAt: string | null = null;
   if (row.last_error_date !== undefined) {
@@ -92,10 +99,6 @@ export function parseTelegramWebhookInfoResult(raw: unknown):
     if (row.last_error_message.trim().length > 0) {
       lastErrorReported = true;
     }
-  }
-
-  if (row.has_custom_certificate !== undefined && typeof row.has_custom_certificate !== "boolean") {
-    return { ok: false, message: "Telegram getWebhookInfo response is invalid." };
   }
 
   return {

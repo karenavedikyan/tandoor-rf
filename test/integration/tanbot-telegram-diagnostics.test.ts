@@ -203,7 +203,7 @@ describe("tanbot telegram admin diagnostics HTTP", { concurrency: false }, () =>
         );
       }
       if (url.includes("/getWebhookInfo")) {
-        return new Response(JSON.stringify({ ok: true, result: null }), {
+        return new Response(JSON.stringify({ ok: true, result: {} }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -217,6 +217,78 @@ describe("tanbot telegram admin diagnostics HTTP", { concurrency: false }, () =>
       assert.equal(res.body.status, "API_ERROR");
       assert.equal(res.body.webhookConfigured, null);
       assert.doesNotMatch(JSON.stringify(res.body), new RegExp(MARKER));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("admin live=1 rejects HTTP400 ok:true getMe without calling getWebhookInfo (TB-ERR-05)", async () => {
+    setTanbotEnv({
+      TANBOT_TELEGRAM_ENABLED: "true",
+      TANBOT_TELEGRAM_BOT_TOKEN: SYNTH_TOKEN,
+      TANBOT_TELEGRAM_EXPECTED_USERNAME: "TANDOOR_IBOT",
+    });
+    let webhookFetches = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/getMe")) {
+        return new Response(
+          JSON.stringify({ ok: true, result: { id: 1, is_bot: true, username: "TANDOOR_IBOT" } }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/getWebhookInfo")) {
+        webhookFetches += 1;
+        return new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    };
+    try {
+      const app = await loadApp();
+      const res = await request(app).get(`${PATH}?live=1`).set(authHeaders(adminCookie));
+      assert.equal(res.status, 200);
+      assert.notEqual(res.body.status, "SUCCESS");
+      assert.equal(res.body.webhookConfigured, null);
+      assert.equal(webhookFetches, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("admin live=1 SUCCESS with valid minimal webhook object (TB-DIAG-04)", async () => {
+    setTanbotEnv({
+      TANBOT_TELEGRAM_ENABLED: "true",
+      TANBOT_TELEGRAM_BOT_TOKEN: SYNTH_TOKEN,
+      TANBOT_TELEGRAM_EXPECTED_USERNAME: "TANDOOR_IBOT",
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/getMe")) {
+        return new Response(
+          JSON.stringify({ ok: true, result: { id: 1, is_bot: true, username: "TANDOOR_IBOT" } }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/getWebhookInfo")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            result: { url: "", has_custom_certificate: false, pending_update_count: 0 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    };
+    try {
+      const app = await loadApp();
+      const res = await request(app).get(`${PATH}?live=1`).set(authHeaders(adminCookie));
+      assert.equal(res.status, 200);
+      assert.equal(res.body.status, "SUCCESS");
+      assert.equal(res.body.webhookConfigured, false);
+      assert.equal(res.body.pendingUpdateCount, 0);
     } finally {
       globalThis.fetch = originalFetch;
     }

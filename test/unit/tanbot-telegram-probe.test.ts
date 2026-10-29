@@ -7,6 +7,7 @@ import type { TelegramTransportCall, TelegramTransportResult } from "../../src/t
 import { formatDiagnosticReportForCli } from "../../src/tanbot-telegram/sanitize";
 import { buildTelegramMethodUrl } from "../../src/tanbot-telegram/transport";
 import { parseTanbotTelegramProbeCliArgs } from "../../src/tanbot-telegram/cli-args";
+import { createDefaultTelegramTransport } from "../../src/tanbot-telegram/transport";
 
 const SYNTH_TOKEN = "123456789:SYNTH_TANBOT_TOKEN_LEAK_MARKER_abcdefghijklmnopqrst";
 const VALID_ENV = {
@@ -71,6 +72,7 @@ describe("tanbot telegram probe", () => {
         ok: true,
         result: {
           url: "https://example.com/telegram/webhook",
+          has_custom_certificate: false,
           pending_update_count: 3,
           last_error_date: 1_700_000_000,
           last_error_message: "connection timed out",
@@ -105,6 +107,29 @@ describe("tanbot telegram probe", () => {
     assert.equal(result.status, "AUTH_FAILED");
   });
 
+  it("does not call getWebhookInfo after getMe HTTP failure (TB-ERR-05)", async () => {
+    let fetchCalls = 0;
+    const transport = createDefaultTelegramTransport(async (input) => {
+      fetchCalls += 1;
+      const url = String(input);
+      if (url.includes("/getMe")) {
+        return new Response(
+          JSON.stringify({ ok: true, result: { id: 42, is_bot: true, username: "TANDOOR_IBOT" } }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      throw new Error("getWebhookInfo must not be requested");
+    });
+    const result = await runTanbotTelegramProbe({
+      env: VALID_ENV,
+      live: true,
+      transport,
+    });
+    assert.notEqual(result.status, "SUCCESS");
+    assert.equal(result.webhookConfigured, null);
+    assert.equal(fetchCalls, 1);
+  });
+
   it("maps rate limit and network failures", async () => {
     const rate = await runTanbotTelegramProbe({
       env: VALID_ENV,
@@ -129,7 +154,7 @@ describe("tanbot telegram probe", () => {
       }),
       getWebhookInfo: () => ({
         ok: true,
-        result: { url: "", pending_update_count: 0 },
+        result: { url: "", has_custom_certificate: false, pending_update_count: 0 },
       }),
     });
     const result = await runTanbotTelegramProbe({ env: VALID_ENV, live: true, transport });

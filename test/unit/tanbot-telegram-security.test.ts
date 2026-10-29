@@ -37,6 +37,8 @@ describe("tanbot telegram security (TB-SEC-01)", () => {
           ok: true,
           result: {
             url: "",
+            has_custom_certificate: false,
+            pending_update_count: 0,
             last_error_message: `${padding}${SYNTH_TOKEN}`,
             last_error_date: 1_700_000_000,
           },
@@ -77,6 +79,8 @@ describe("tanbot telegram security (TB-SEC-01)", () => {
         ok: true,
         result: {
           url: "",
+          has_custom_certificate: false,
+          pending_update_count: 0,
           last_error_message: `delivery failed ${INTERNAL_URL}`,
         },
       }),
