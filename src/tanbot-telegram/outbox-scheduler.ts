@@ -4,6 +4,7 @@ import type { TelegramDeliveryTransport } from "./delivery-transport";
 import { createDefaultTelegramDeliveryTransport } from "./delivery-transport";
 import { processTanbotNotificationOutbox } from "./outbox-worker";
 import { isTanbotTelegramDeliveryEnabled } from "./stage2-config";
+import { processUndeliveredTelegramWebhookReplies } from "./reply-retry";
 
 const DEFAULT_INTERVAL_MS = 15_000;
 
@@ -18,9 +19,11 @@ export async function runTanbotOutboxWorkerOnce(
   transport?: TelegramDeliveryTransport,
 ): Promise<void> {
   const deliveryTransport = transport ?? createDefaultTelegramDeliveryTransport();
+  const deliveryEnabled = isTanbotTelegramDeliveryEnabled();
   await processTanbotNotificationOutbox(pool, config, deliveryTransport, {
-    deliveryEnabled: isTanbotTelegramDeliveryEnabled(),
+    deliveryEnabled,
   });
+  await processUndeliveredTelegramWebhookReplies(pool, config, deliveryTransport, { deliveryEnabled });
 }
 
 export function startTanbotTelegramOutboxWorker(

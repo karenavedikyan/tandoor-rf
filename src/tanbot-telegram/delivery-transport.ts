@@ -3,7 +3,7 @@ import { TELEGRAM_API_ORIGIN } from "./config";
 import { safeTransportFailure } from "./safe-errors";
 import { redactTelegramSecrets } from "./sanitize";
 
-export const TELEGRAM_DELIVERY_METHODS = ["sendMessage"] as const;
+export const TELEGRAM_DELIVERY_METHODS = ["sendMessage", "answerCallbackQuery"] as const;
 export type TelegramDeliveryMethod = (typeof TELEGRAM_DELIVERY_METHODS)[number];
 
 export type TelegramDeliveryResult =

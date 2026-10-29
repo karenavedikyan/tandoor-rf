@@ -8,7 +8,9 @@ import {
   cancelActiveLinkAttempts,
   insertLinkAudit,
 } from "./link-repository";
-import type { MaxDeliveryTransport, MaxDeliveryResult } from "./delivery-transport";
+import type { MaxDeliveryTransport, MaxDeliveryResult, MaxInlineButton } from "./delivery-transport";
+import { buildHandoffCodeBotReply } from "../tanbot/handoff-code-bot-flow";
+import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
 import {
   claimMaxUpdate,
   commitMaxUpdateReply,
@@ -16,7 +18,12 @@ import {
   markMaxUpdateFailed,
 } from "./webhook-inbox";
 
-export type WebhookReply = { userId: bigint; chatId: bigint; text: string } | null;
+export type WebhookReply = {
+  userId: bigint;
+  chatId: bigint;
+  text: string;
+  inlineButtons?: MaxInlineButton[][];
+} | null;
 
 async function disconnectMaxAccountOnClient(client: PoolClient, userId: string): Promise<void> {
   await client.query(
@@ -38,6 +45,7 @@ async function processUpdateInTransaction(
     chatId: bigint;
     startPayload: string | null;
     commandText: string | null;
+    callbackPayload: string | null;
     username: string | null;
     firstName: string | null;
   },
@@ -117,11 +125,31 @@ async function processUpdateInTransaction(
           };
         }
       }
+    } else if (
+      isTanbotHandoffCodePilotEnabled() &&
+      (update.updateType === "message_callback" ||
+        update.callbackPayload ||
+        update.commandText?.trim().toLowerCase() === "/code" ||
+        update.commandText?.trim().toLowerCase() === "код")
+    ) {
+      const handoff = await buildHandoffCodeBotReply(client, "max", {
+        externalUserId: update.maxUserId,
+        callbackPayload: update.callbackPayload,
+        commandText: update.commandText,
+      });
+      if (handoff.text) {
+        reply = {
+          userId: update.maxUserId,
+          chatId: update.chatId,
+          text: handoff.text,
+          inlineButtons: handoff.maxInlineButtons,
+        };
+      }
     } else if (update.commandText) {
       reply = {
         userId: update.maxUserId,
         chatId: update.chatId,
-        text: "Команды: /status — статус подключения, /stop — отключить уведомления.",
+        text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",
       };
     }
 
@@ -161,6 +189,7 @@ export async function maybeSendMaxWebhookReply(
     text: reply.text,
     timeoutMs: config.requestTimeoutMs,
     maxResponseBytes: config.maxResponseBytes,
+    inlineButtons: reply.inlineButtons,
   });
   if (result.ok) {
     await markMaxReplyDelivered(pool, dedupKey);

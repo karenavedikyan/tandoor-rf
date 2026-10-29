@@ -1,0 +1,183 @@
+import type { PoolClient } from "pg";
+import { generateHandoffCodeForPendingParty } from "../tan-tracker/handoff-code-generate";
+import { ensurePartyForUserOnWrite } from "../tan-tracker/repository";
+import { findAccountByMaxUserId } from "../tanbot-max/link-repository";
+import { findAccountByTelegramUserId } from "../tanbot-telegram/link-repository";
+import { isTanbotHandoffCodePilotEnabled } from "./handoff-code-pilot-config";
+import { isTanbotMaxEnabled } from "../tanbot-max/config";
+import { isTanbotTelegramEnabled } from "../tanbot-telegram/config";
+
+export type BotChannel = "telegram" | "max";
+
+export type PendingTransferRow = {
+  id: string;
+  publicCode: string;
+  itemTitle: string;
+};
+
+const CALLBACK_PREFIX = "hc:";
+export const HANDOFF_CALLBACK_GEN = `${CALLBACK_PREFIX}gen:`;
+export const HANDOFF_CALLBACK_MENU = `${CALLBACK_PREFIX}menu`;
+
+export function buildHandoffGenCallback(publicCode: string): string {
+  return `${HANDOFF_CALLBACK_GEN}${publicCode}`.slice(0, 64);
+}
+
+export function parseHandoffGenCallback(payload: string): string | null {
+  if (!payload.startsWith(HANDOFF_CALLBACK_GEN)) return null;
+  const code = payload.slice(HANDOFF_CALLBACK_GEN.length).trim();
+  return code.length ? code.slice(0, 32) : null;
+}
+
+export async function resolveStaffUserIdForBotChannel(
+  client: PoolClient,
+  channel: BotChannel,
+  externalUserId: bigint,
+): Promise<string | null> {
+  if (channel === "telegram") {
+    const row = await findAccountByTelegramUserId(client, externalUserId);
+    return row?.user_id ?? null;
+  }
+  const row = await findAccountByMaxUserId(client, externalUserId);
+  return row?.user_id ?? null;
+}
+
+export async function loadStaffUserRow(client: PoolClient, userId: string) {
+  const res = await client.query<{ id: string; status: string; full_name: string; phone: string | null }>(
+    `SELECT id::text, status, full_name, phone FROM users WHERE id = $1::uuid`,
+    [userId],
+  );
+  return res.rows[0];
+}
+
+export async function assertHandoffCodeBotAccess(
+  client: PoolClient,
+  channel: BotChannel,
+  userId: string,
+): Promise<{ ok: true; partyId: string } | { ok: false; message: string }> {
+  if (!isTanbotHandoffCodePilotEnabled()) {
+    return { ok: false, message: "Пилот кодов приёма отключён." };
+  }
+  if (channel === "telegram" && !isTanbotTelegramEnabled()) {
+    return { ok: false, message: "Telegram отключён." };
+  }
+  if (channel === "max" && !isTanbotMaxEnabled()) {
+    return { ok: false, message: "MAX отключён." };
+  }
+
+  const user = await loadStaffUserRow(client, userId);
+  if (!user || user.status !== "active") {
+    return { ok: false, message: "Аккаунт недоступен." };
+  }
+
+  const account =
+    channel === "telegram"
+      ? await client.query<{ notifications_enabled: boolean; stopped_at: Date | null }>(
+          `SELECT notifications_enabled, stopped_at FROM tanbot_telegram_accounts WHERE user_id = $1::uuid`,
+          [userId],
+        )
+      : await client.query<{ notifications_enabled: boolean; stopped_at: Date | null }>(
+          `SELECT notifications_enabled, stopped_at FROM tanbot_max_accounts WHERE user_id = $1::uuid`,
+          [userId],
+        );
+  const acc = account.rows[0];
+  if (!acc || acc.stopped_at) {
+    return { ok: false, message: "Канал не подключён к личному кабинету." };
+  }
+  if (!acc.notifications_enabled) {
+    return { ok: false, message: "Включите уведомления канала в личном кабинете." };
+  }
+
+  const party = await ensurePartyForUserOnWrite(client, user.id, user.full_name, user.phone);
+  return { ok: true, partyId: party.id };
+}
+
+export async function listPendingTransfersForParty(
+  client: PoolClient,
+  partyId: string,
+): Promise<PendingTransferRow[]> {
+  const res = await client.query<PendingTransferRow>(
+    `SELECT id, public_code AS "publicCode", item_title AS "itemTitle"
+     FROM tt_transfers
+     WHERE pending_party_id = $1::uuid
+       AND status IN ('waiting', 'active')
+     ORDER BY public_code ASC
+     LIMIT 10`,
+    [partyId],
+  );
+  return res.rows;
+}
+
+export function formatPendingTransfersMessage(transfers: PendingTransferRow[]): string {
+  if (!transfers.length) {
+    return "Нет передач, где вы сейчас ожидающий получатель.";
+  }
+  if (transfers.length === 1) {
+    const t = transfers[0]!;
+    return `Передача ${t.publicCode}: ${t.itemTitle}\nНажмите «Получить код».`;
+  }
+  const lines = transfers.map((t) => `• ${t.publicCode}: ${t.itemTitle}`);
+  return `Выберите передачу:\n${lines.join("\n")}`;
+}
+
+export function formatIssuedCodeMessage(input: {
+  publicCode: string;
+  itemTitle: string;
+  code: string;
+  expiresAt: number;
+  replacedPrevious: boolean;
+}): string {
+  const until = new Date(input.expiresAt).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
+  const replaced = input.replacedPrevious
+    ? "\nПрежний код больше не действует."
+    : "";
+  return (
+    `Код приёма для «${input.itemTitle}» (${input.publicCode}):\n` +
+    `${input.code}\n` +
+    `Действует до: ${until} (МСК).` +
+    `${replaced}\n` +
+    `Сообщите код передающему для ввода в Тан-трекере. Это не SMS-код входа.`
+  );
+}
+
+export async function issueHandoffCodeViaBot(
+  client: PoolClient,
+  input: {
+    channel: BotChannel;
+    userId: string;
+    partyId: string;
+    transferPublicCode: string;
+  },
+): Promise<
+  | { ok: true; message: string }
+  | { ok: false; message: string }
+> {
+  const hadActive = await client.query(
+    `SELECT 1 FROM tt_handoff_codes hc
+     JOIN tt_transfers t ON t.id = hc.transfer_id
+     WHERE t.public_code = $1 AND hc.consumed_at IS NULL AND hc.expires_at > NOW()
+     LIMIT 1`,
+    [input.transferPublicCode],
+  );
+
+  const gen = await generateHandoffCodeForPendingParty(client, {
+    transferIdOrCode: input.transferPublicCode,
+    pendingPartyId: input.partyId,
+    auditUserId: input.userId,
+    auditPartyId: input.partyId,
+    auditAction: input.channel === "telegram" ? "code_generate_telegram" : "code_generate_max",
+  });
+  if (!gen.ok) {
+    return { ok: false, message: gen.message };
+  }
+  return {
+    ok: true,
+    message: formatIssuedCodeMessage({
+      publicCode: gen.publicCode,
+      itemTitle: gen.itemTitle,
+      code: gen.code,
+      expiresAt: gen.expiresAt,
+      replacedPrevious: (hadActive.rowCount ?? 0) > 0,
+    }),
+  };
+}

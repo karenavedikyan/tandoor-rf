@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 import type { PoolClient } from "pg";
 import { withTransaction } from "../access/db";
 import type { TanbotTelegramStage2Config } from "./stage2-config";
-import { parseTelegramWebhookUpdate } from "./update-parse";
+import { parseTelegramWebhookUpdate, type ParsedTelegramWebhookUpdate } from "./update-parse";
 import { consumeStartTokenForTelegramUser } from "./link-service";
 import { findAccountByTelegramUserId, cancelActiveLinkAttempts, insertLinkAudit } from "./link-repository";
 import type { TelegramDeliveryTransport, TelegramDeliveryResult } from "./delivery-transport";
@@ -12,8 +12,15 @@ import {
   markTelegramReplyDelivered,
   markTelegramUpdateFailed,
 } from "./webhook-inbox";
+import { buildHandoffCodeBotReply } from "../tanbot/handoff-code-bot-flow";
+import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
 
-export type WebhookReply = { chatId: bigint; text: string } | null;
+export type WebhookReply = {
+  chatId: bigint;
+  text: string;
+  replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+  answerCallbackQueryId?: string;
+} | null;
 
 async function disconnectTelegramAccountOnClient(client: PoolClient, userId: string): Promise<void> {
   await client.query(
@@ -24,27 +31,50 @@ async function disconnectTelegramAccountOnClient(client: PoolClient, userId: str
   await insertLinkAudit(client, { userId, actorUserId: userId, action: "link_disconnect" });
 }
 
-async function processUpdateInTransaction(
+async function processParsedUpdate(
   client: PoolClient,
   pool: Pool,
   config: TanbotTelegramStage2Config,
-  update: {
-    updateId: number;
-    telegramUserId: bigint;
-    chatId: bigint;
-    text: string;
-    startPayload: string | null;
-    username: string | null;
-    firstName: string | null;
-  },
+  parsed: ParsedTelegramWebhookUpdate,
 ): Promise<WebhookReply> {
+  if (parsed.kind === "callback") {
+    const update = parsed.update;
+    const claim = await claimTelegramUpdate(client, update.updateId);
+    if (claim.kind === "ignore") return null;
+    if (claim.kind === "resend") return claim.reply;
+    try {
+      let reply: WebhookReply = null;
+      if (isTanbotHandoffCodePilotEnabled()) {
+        const handoff = await buildHandoffCodeBotReply(client, "telegram", {
+          externalUserId: update.telegramUserId,
+          callbackPayload: update.callbackData,
+        });
+        if (handoff.text) {
+          reply = {
+            chatId: update.chatId,
+            text: handoff.text,
+            replyMarkup: handoff.telegramInlineKeyboard
+              ? { inline_keyboard: handoff.telegramInlineKeyboard }
+              : undefined,
+            answerCallbackQueryId: update.callbackQueryId,
+          };
+        }
+      }
+      if (!reply) {
+        reply = { chatId: update.chatId, text: "Действие недоступно.", answerCallbackQueryId: update.callbackQueryId };
+      }
+      await commitTelegramUpdateReply(client, update.updateId, reply);
+      return reply;
+    } catch (err) {
+      await markTelegramUpdateFailed(client, update.updateId);
+      throw err;
+    }
+  }
+
+  const update = parsed.update;
   const claim = await claimTelegramUpdate(client, update.updateId);
-  if (claim.kind === "ignore") {
-    return null;
-  }
-  if (claim.kind === "resend") {
-    return claim.reply;
-  }
+  if (claim.kind === "ignore") return null;
+  if (claim.kind === "resend") return claim.reply;
 
   let reply: WebhookReply = null;
   const command = update.text.split(/\s+/)[0]?.toLowerCase() ?? "";
@@ -107,10 +137,24 @@ async function processUpdateInTransaction(
           };
         }
       }
+    } else if (isTanbotHandoffCodePilotEnabled() && (command === "/code" || command.startsWith("/code@"))) {
+      const handoff = await buildHandoffCodeBotReply(client, "telegram", {
+        externalUserId: update.telegramUserId,
+        commandText: update.text,
+      });
+      if (handoff.text) {
+        reply = {
+          chatId: update.chatId,
+          text: handoff.text,
+          replyMarkup: handoff.telegramInlineKeyboard
+            ? { inline_keyboard: handoff.telegramInlineKeyboard }
+            : undefined,
+        };
+      }
     } else {
       reply = {
         chatId: update.chatId,
-        text: "Команды: /status — статус подключения, /stop — отключить уведомления.",
+        text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",
       };
     }
     await commitTelegramUpdateReply(client, update.updateId, reply);
@@ -130,11 +174,10 @@ export async function handleTanbotTelegramUpdate(
   if (!parsed.ok) {
     return { reply: null, updateId: null };
   }
-  const { update } = parsed;
-  const reply = await withTransaction((client) =>
-    processUpdateInTransaction(client, pool, config, update),
-  );
-  return { reply, updateId: update.updateId };
+  const reply = await withTransaction((client) => processParsedUpdate(client, pool, config, parsed.parsed));
+  const updateId =
+    parsed.parsed.kind === "message" ? parsed.parsed.update.updateId : parsed.parsed.update.updateId;
+  return { reply, updateId };
 }
 
 export async function maybeSendWebhookReply(
@@ -145,10 +188,23 @@ export async function maybeSendWebhookReply(
   reply: WebhookReply,
 ): Promise<TelegramDeliveryResult | null> {
   if (!reply || !transport || !config.deliveryEnabled || updateId == null) return null;
+  if (reply.answerCallbackQueryId) {
+    await transport({
+      method: "answerCallbackQuery",
+      token: config.botToken,
+      body: { callback_query_id: reply.answerCallbackQueryId },
+      timeoutMs: config.requestTimeoutMs,
+      maxResponseBytes: config.maxResponseBytes,
+    });
+  }
+  const body: Record<string, unknown> = { chat_id: reply.chatId.toString(), text: reply.text };
+  if (reply.replyMarkup) {
+    body.reply_markup = reply.replyMarkup;
+  }
   const result = await transport({
     method: "sendMessage",
     token: config.botToken,
-    body: { chat_id: reply.chatId.toString(), text: reply.text },
+    body,
     timeoutMs: config.requestTimeoutMs,
     maxResponseBytes: config.maxResponseBytes,
   });

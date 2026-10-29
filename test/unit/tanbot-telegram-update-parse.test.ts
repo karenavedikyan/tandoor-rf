@@ -16,8 +16,11 @@ describe("tanbot telegram update parse", () => {
     });
     assert.equal(parsed.ok, true);
     if (parsed.ok) {
-      assert.equal(parsed.update.startPayload, "abc123token");
-      assert.equal(parsed.update.telegramUserId, 42n);
+      assert.equal(parsed.parsed.kind, "message");
+      if (parsed.parsed.kind === "message") {
+        assert.equal(parsed.parsed.update.startPayload, "abc123token");
+        assert.equal(parsed.parsed.update.telegramUserId, 42n);
+      }
     }
   });
 
