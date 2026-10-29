@@ -143,7 +143,8 @@
     const accessToken = demoConfig().maxAccessToken || "demo-max-token";
     const userId = demoConfig().maxDemoUserId || "max-user-demo-1";
     const { vcf } = buildSignedMaxVcf(pendingPhone, userId, accessToken);
-    const hash = await hmacSha256Hex(accessToken, vcf);
+    const normalized = decodeVcfCrLf(vcf);
+    const hash = await hmacSha256Hex(accessToken, normalized);
     return { vcf, hash, maxUserId: userId, senderId: userId, accessToken };
   }
 

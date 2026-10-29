@@ -38,8 +38,12 @@ var TT_EXTERNAL_MESSENGER_QA = await (async () => {
   ok(await page.locator('[data-tt="pick-channel"][data-channel="max"]').isDisabled(), "MAX disabled without demo checkbox");
   await ttOpenDemoSettings();
   await page.locator('[data-tt="demo-max-enabled"]').check();
-  await page.locator('[data-tt="pick-channel"][data-channel="max"]').click();
+  await page.waitForFunction(
+    () => window.TanTrackerMessengerDemo?.channelAvailability?.().max?.available === true
+  );
+  await page.locator('[data-tt="pick-channel"][data-channel="max"]:not([disabled])').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
+  await page.locator('[data-tt="messenger-verified"]').waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
   ok((await page.locator('[data-tt="shown-code"]').textContent()).trim().length === 6, "MAX enabled via visible demo settings checkbox");
   const bad = await page.evaluate(async () => {

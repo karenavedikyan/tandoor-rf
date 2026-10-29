@@ -62,9 +62,9 @@ var TT_REGISTRY_PERSONAL_QA = await (async () => {
   await page.reload();
   await ttWaitRegistryPersonalReady();
   ok((await vis("TT-2026-010").count()) === 0, "removed hidden for initiator on general main registry");
-  await page.locator('[data-tt="registry-preset"][data-preset="waiting"]').click();
+  await page.locator('[data-tt="registry-preset"][data-preset="waiting"]:visible').first().click();
   ok((await vis("TT-2026-010").count()) >= 1, "waiting filter retains active obligation after remove");
-  await page.locator('[data-tt="mine-all"]').click();
+  await page.locator('[data-tt="registry-preset"][data-preset="all"]:visible').first().click();
   await page.reload();
   await ttWaitRegistryPersonalReady();
   ok((await vis("TT-2026-010").count()) === 0, "removed flag persists after reload on general list");
@@ -73,7 +73,7 @@ var TT_REGISTRY_PERSONAL_QA = await (async () => {
   await page.locator('summary[aria-label="Ещё действия"]').click();
   await page.getByRole("button", { name: "Восстановить в реестре", exact: true }).click();
   await ttWaitDemoSaveSaved();
-  await page.locator('[data-tt="registry-view-main"]').click();
+  await page.locator('[data-tt="back-list"]').click();
   await ttWaitRegistryPersonalReady();
   ok((await vis("TT-2026-010").count()) >= 1, "restore returns row to general main registry");
   return { passed: checks.length, checks };
