@@ -31,6 +31,15 @@ try {
   page.setDefaultTimeout(8000);
   page.on("pageerror", (e) => console.error("PAGEERROR:", e.message));
   globalThis.page = page;
+  globalThis.ttWaitDemoSaveSaved = async () => {
+    await page.evaluate(async () => {
+      await window.NotificationDemoStore.flush();
+    });
+    await page.waitForFunction(() => window.NotificationDemoStore.getSaveStatus() === "saved");
+  };
+  globalThis.ttWaitRegistryPersonalReady = async () => {
+    await page.locator('[data-tt-registry-personal-ready="true"]').waitFor({ state: "attached" });
+  };
   globalThis.ttOpenDemoSettings = async () => {
     const panel = page.locator('[data-tt="demo-settings"]');
     if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();

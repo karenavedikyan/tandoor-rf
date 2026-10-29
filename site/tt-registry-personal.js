@@ -4,6 +4,7 @@
   /** Personal registry visibility flags (per visitor + actor), not canonical order data. */
   let cache = {};
   let readyPromise = null;
+  let hydrated = false;
 
   function storeApi() {
     return window.NotificationDemoStore;
@@ -28,14 +29,19 @@
   function init() {
     if (!readyPromise) {
       readyPromise = (async () => {
-        const DS = storeApi();
-        if (!DS) return;
-        await DS.ready;
-        const snap = DS.loadStore();
-        cache =
-          snap.registryPersonal && typeof snap.registryPersonal === "object"
-            ? structuredClone(snap.registryPersonal)
-            : {};
+        try {
+          const DS = storeApi();
+          if (DS) {
+            await DS.ready;
+            const snap = DS.loadStore();
+            cache =
+              snap.registryPersonal && typeof snap.registryPersonal === "object"
+                ? structuredClone(snap.registryPersonal)
+                : {};
+          }
+        } finally {
+          hydrated = true;
+        }
       })();
     }
     return readyPromise;
@@ -89,6 +95,9 @@
     counts(actorId) {
       const rec = lists(actorId);
       return { removed: rec.removed.length, archived: rec.archived.length };
+    },
+    isHydrated() {
+      return hydrated;
     },
     _testReset() {
       cache = {};

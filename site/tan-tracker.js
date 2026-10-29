@@ -989,14 +989,15 @@
 
   function registryCounts() {
     const actor = registryActorId();
-    let base = orders.filter((o) => orderVisible(o));
+    const scopeVisible = orders.filter((o) => orderVisible(o));
+    let base = scopeVisible;
     if (state.registryPersonalView === "main") {
       base = base.filter((o) => !registryPersonallyHidden(o, actor));
     }
-    const handoff = base.filter(
+    const handoff = scopeVisible.filter(
       (o) => o.holderId === actor && o.status !== "completed" && o.finalRecipientId && o.holderId !== o.finalRecipientId
     ).length;
-    const receive = base.filter((o) => o.pendingId === actor).length;
+    const receive = scopeVisible.filter((o) => o.pendingId === actor).length;
     const overdue = base.filter((o) => isOverdue(o)).length;
     const active = base.filter((o) => o.status !== "completed").length;
     return { handoff, receive, overdue, active, total: base.length };
@@ -2051,14 +2052,30 @@
     return true;
   }
 
+  function isGeneralMainRegistry() {
+    return (
+      (state.registryPersonalView || "main") === "main" &&
+      state.mineFilter === "all" &&
+      state.statusFilter === "all" &&
+      !state.query.trim()
+    );
+  }
+
   function registryPersonallyHidden(o, actor) {
     const RP = RegPersonal();
     if (!RP || !actor) return false;
-    if (actorHasRegistryObligation(o, actor)) return false;
-    if (state.mineFilter === "handoff" || state.mineFilter === "receive") return false;
+    if (!isGeneralMainRegistry()) return false;
     if (RP.isArchived(o.id, actor)) return true;
     if (RP.isRemoved(o.id, actor) && isRegistryInitiator(o, actor)) return true;
     return false;
+  }
+
+  function registryPersonalFlagsReady() {
+    const RP = RegPersonal();
+    if (!RP) return true;
+    const DS = window.NotificationDemoStore;
+    if (!DS?.isApiEnabled?.()) return true;
+    return !!RP.isHydrated?.();
   }
 
   function applyRegistryPersonalView(list, actor) {
@@ -2075,7 +2092,7 @@
   }
 
   function canInitiatorRemoveFromRegistry(o, actor) {
-    return !!(isRegistryInitiator(o, actor) && !actorHasRegistryObligation(o, actor));
+    return isRegistryInitiator(o, actor);
   }
 
   function canPersonalArchive(o, actor) {
@@ -2399,9 +2416,15 @@
     </div>`;
   }
 
+  function registryPersonalLoadingView() {
+    return `<div class="tt-registry tt-view-enter" data-tt="registry-personal-loading">
+      <p class="tt-muted">Загрузка вашего реестра…</p>
+    </div>`;
+  }
+
   function registryView() {
     const rows = visibleOrders();
-    return `<div class="tt-registry tt-view-enter" data-tt="registry-shell">
+    return `<div class="tt-registry tt-view-enter" data-tt="registry-shell" data-tt-registry-personal-ready="true">
       ${registryStatTiles()}
       ${
         rows.length
@@ -3168,7 +3191,7 @@
       ${
         state.registryConfirmRemoveOrderId === o.id
           ? `<div class="tt-registry-remove-confirm" data-tt="registry-remove-confirm">
-        <p class="tt-warning">Убрать «${E(o.item)}» из вашего реестра? Каноническая история и обязанности других участников не изменятся.</p>
+        <p class="tt-warning">Убрать «${E(o.item)}» из общего списка реестра? Передача не отменяется: история и другие участники без изменений; при активном обязательстве строка останется в фильтрах «Нужно передать» и «Жду получения» и в их счётчиках.</p>
         <div class="tt-actions">${btn("Убрать из реестра", 'data-tt="registry-remove-confirm"', "tt-primary")}${btn("Отмена", 'data-tt="registry-remove-cancel"')}</div>
       </div>`
           : ""
@@ -3405,6 +3428,7 @@
     if (state.view === "detail" && o) return detailView(o);
     if (isExternalShell() && o) return detailView(o);
     if (isExternalShell()) return `<div class="tt-empty"><p>Нет доступных передач для этого участника.</p></div>`;
+    if (state.view === "list" && !registryPersonalFlagsReady()) return registryPersonalLoadingView();
     return registryView();
   }
 
@@ -3452,7 +3476,7 @@
 
     const snap =
       opts.soft || document.activeElement?.matches?.('[data-tt="search"]') ? captureFocus() : null;
-    if (opts.soft && state.view === "list" && patchRegistry()) {
+    if (opts.soft && state.view === "list" && registryPersonalFlagsReady() && patchRegistry()) {
       restoreFocus(snap);
       return;
     }
@@ -4250,7 +4274,7 @@
     if (action === "registry-remove-ask" && o) {
       const actor = registryActorId();
       if (!canInitiatorRemoveFromRegistry(o, actor)) {
-        state.error = "Убрать из реестра может только инициатор, без активных обязательств по передаче.";
+        state.error = "Убрать из общего реестра может только инициатор передачи.";
         renderTracker();
         return;
       }
@@ -4275,7 +4299,15 @@
       }
       RP.addRemoved(o.id, actor);
       state.registryConfirmRemoveOrderId = null;
-      state.toast = "Передача убрана из вашего реестра. Другие участники по-прежнему видят её.";
+      const dsRem = window.NotificationDemoStore;
+      if (dsRem?.isApiEnabled?.() && dsRem.getSaveStatus() === "failed") {
+        state.error = "Не удалось сохранить настройку реестра в демо-хранилище.";
+        state.toast = "";
+      } else {
+        state.toast =
+          "Передача убрана из общего списка. Другие участники видят её как прежде; при вашем обязательстве она остаётся в фильтрах передачи и получения.";
+        state.error = "";
+      }
       if (state.view === "detail") state.view = "list";
       writeUrl();
       renderTracker();
@@ -4290,7 +4322,14 @@
         return;
       }
       RP.addArchived(o.id, actor);
-      state.toast = "Передача в вашем архиве.";
+      const ds = window.NotificationDemoStore;
+      if (ds?.isApiEnabled?.() && ds.getSaveStatus() === "failed") {
+        state.error = "Не удалось сохранить архив в демо-хранилище.";
+        state.toast = "";
+      } else {
+        state.toast = "Передача в вашем архиве.";
+        state.error = "";
+      }
       renderTracker();
       return;
     }
@@ -4657,10 +4696,8 @@
     hasFirstConfirmedCustodyHandoff,
   };
 
-  let regPersonalHydratedRendered = false;
   const paintAfterRegPersonalReady = () => {
-    if (regPersonalHydratedRendered || current !== ROUTE) return;
-    regPersonalHydratedRendered = true;
+    if (current !== ROUTE) return;
     renderTracker();
   };
   RegPersonal()?.init?.()?.then?.(paintAfterRegPersonalReady)?.catch?.(() => {});
