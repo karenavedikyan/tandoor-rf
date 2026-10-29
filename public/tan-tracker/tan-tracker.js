@@ -30,8 +30,10 @@
   };
   const maskPhone = (digits) => {
     const d = String(digits).replace(/\D/g, "");
-    if (d.length < 4) return "··· · демо";
-    return `+7 ··· ···-··-${d.slice(-2)} · демо`;
+    const lkRuntime = (typeof TT_LK !== "undefined" && TT_LK) || window.__TT_PUBLIC_RECIPIENT__;
+    if (d.length < 4) return lkRuntime ? "+7 ··· ···-··-XX" : "··· · демо";
+    const core = `+7 ··· ···-··-${d.slice(-2)}`;
+    return lkRuntime ? core : `${core} · демо`;
   };
   const normPhone = (raw) => {
     let d = String(raw ?? "").replace(/\D/g, "");

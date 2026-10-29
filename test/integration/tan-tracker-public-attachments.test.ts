@@ -170,9 +170,19 @@ describe("tan-tracker public recipient attachments", { concurrency: false }, () 
 
     const ok = await request(app)
       .get(`/api/tan-tracker/public/recipient/attachments/${encodeURIComponent(seed.attachmentId)}`)
-      .query({ invitationToken: seed.invitationToken, phoneSessionToken });
+      .query({ invitationToken: seed.invitationToken, phoneSessionToken })
+      .buffer(true)
+      .parse((res, callback) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => callback(null, Buffer.concat(chunks)));
+      });
     assert.equal(ok.status, 200, ok.text);
+    assert.ok(Buffer.isBuffer(ok.body), "expected binary body");
     assert.deepEqual(ok.body, FILE_BYTES);
+    const disp = String(ok.headers["content-disposition"] ?? "");
+    assert.ok(disp.startsWith("attachment;"), disp);
+    assert.ok(disp.includes(encodeURIComponent("secret.txt")), disp);
   });
 
   it("rejects forged, expired, and wrong-transfer attachment access", async () => {

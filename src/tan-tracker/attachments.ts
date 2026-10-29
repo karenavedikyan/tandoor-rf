@@ -45,9 +45,19 @@ function decodeUploadFilename(rawHeader: string): string {
   return decoded || "file";
 }
 
-export function contentDispositionFilename(name: string): string {
-  const asciiFallback = name.replace(/[^\x20-\x7E]+/g, "_").replace(/["\\]/g, "_") || "file";
-  return `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+export function contentDispositionFilename(
+  name: string,
+  disposition: "inline" | "attachment" = "inline",
+): string {
+  const safeName = path.basename(String(name ?? ""))
+    .replace(/[\0\r\n"\\]/g, "")
+    .slice(0, 200) || "file";
+  const ext = path.extname(safeName);
+  const base = ext ? safeName.slice(0, -ext.length) : safeName;
+  const asciiBase = base.replace(/[^\x20-\x7E]/g, "").replace(/["\\]/g, "").trim();
+  let asciiFallback = asciiBase ? `${asciiBase}${ext}` : ext ? `file${ext}` : "file";
+  asciiFallback = asciiFallback.replace(/["\\]/g, "_") || "file";
+  return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(safeName)}`;
 }
 
 export async function stageAttachmentHandler(req: AccessRequest, res: Response): Promise<void> {

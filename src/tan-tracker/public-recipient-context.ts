@@ -206,7 +206,10 @@ export async function publicRecipientAttachmentHandler(req: Request, res: Respon
   try {
     const data = await fs.readFile(attachmentAbsolutePath(fileRow.storage_key));
     res.setHeader("Content-Type", fileRow.mime_type);
-    res.setHeader("Content-Disposition", contentDispositionFilename(fileRow.original_name));
+    res.setHeader(
+      "Content-Disposition",
+      contentDispositionFilename(fileRow.original_name, "attachment"),
+    );
     res.status(200).send(data);
   } catch {
     setNoStore(res);
