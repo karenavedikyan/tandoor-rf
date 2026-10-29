@@ -9,6 +9,7 @@
   let saveStatus = "idle";
   let writeTimer = null;
   let writeChain = Promise.resolve();
+  let pendingWrites = 0;
   let statusListeners = [];
 
   function isLocalOrigin() {
@@ -103,7 +104,7 @@
   }
 
   function markSavedIfIdle() {
-    if (!writeTimer) setStatus("saved");
+    if (!writeTimer && pendingWrites === 0) setStatus("saved");
   }
 
   function scheduleWrite() {
@@ -116,6 +117,7 @@
   }
 
   function enqueueWrite() {
+    pendingWrites += 1;
     writeChain = writeChain
       .then(async () => {
         const body = JSON.stringify(memory);
@@ -126,8 +128,14 @@
         });
         if (!res.ok) throw new Error(String(res.status));
       })
-      .then(() => markSavedIfIdle())
-      .catch(() => setStatus("failed"));
+      .then(() => {
+        pendingWrites -= 1;
+        markSavedIfIdle();
+      })
+      .catch(() => {
+        pendingWrites -= 1;
+        setStatus("failed");
+      });
     return writeChain;
   }
 
@@ -166,6 +174,7 @@
     loadStore,
     saveStore,
     getSaveStatus: () => saveStatus,
+    getPendingWriteCount: () => pendingWrites,
     isApiEnabled: () => apiEnabled,
     onStatusChange(fn) {
       statusListeners.push(fn);

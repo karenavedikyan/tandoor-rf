@@ -151,7 +151,55 @@ var NOTIFICATION_CENTER_QA = await (async () => {
   ok(await page.locator("#af-inbox").isVisible(), "mobile inbox after resize down");
   await closeInbox();
 
-  await page.unroute("http://127.0.0.1:34113/**").catch(() => {});
+  await page.unroute("http://127.0.0.1:34113/v1/demo-notification-state").catch(() => {});
+  await page.locator("#af-profile-btn").click();
+  await page.locator("#af-profile-dialog").waitFor({ state: "visible" });
+  let releasePut1;
+  let releasePut2;
+  const gatePut1 = new Promise((r) => {
+    releasePut1 = r;
+  });
+  const gatePut2 = new Promise((r) => {
+    releasePut2 = r;
+  });
+  let gatedPutIndex = 0;
+  await page.route("http://127.0.0.1:34113/v1/demo-notification-state", async (route) => {
+    if (route.request().method() !== "PUT") return route.continue();
+    const i = gatedPutIndex++;
+    if (i === 0) {
+      await gatePut1;
+      return route.continue();
+    }
+    if (i === 1) {
+      await gatePut2;
+      return route.continue();
+    }
+    return route.continue();
+  });
+  const ttGate = page.locator('#af-profile-dialog [data-af="pref"][data-id="tt"]');
+  const assignGate = page.locator('#af-profile-dialog [data-af="pref"][data-id="assign"]');
+  const ttWasGate = await ttGate.isChecked();
+  const assignWasGate = await assignGate.isChecked();
+  await ttGate.click();
+  await page.waitForTimeout(55);
+  await assignGate.click();
+  await page.waitForTimeout(55);
+  await page.waitForFunction(() => window.NotificationDemoStore.getPendingWriteCount() >= 2);
+  ok((await page.evaluate(() => window.NotificationDemoStore.getSaveStatus())) === "saving", "saving while first PUT gated and second queued");
+  releasePut1();
+  await page.waitForFunction(() => window.NotificationDemoStore.getPendingWriteCount() >= 1);
+  ok((await page.evaluate(() => window.NotificationDemoStore.getSaveStatus())) === "saving", "still saving after first PUT completes with second pending");
+  releasePut2();
+  await page.waitForFunction(() => window.NotificationDemoStore.getSaveStatus() === "saved");
+  ok((await page.evaluate(() => window.NotificationDemoStore.getPendingWriteCount())) === 0, "no pending writes when saved");
+  await closeProfile();
+  await page.unroute("http://127.0.0.1:34113/v1/demo-notification-state");
+  await page.reload();
+  await page.locator("#af-profile-btn").click();
+  ok((await ttGate.isChecked()) === !ttWasGate, "tt pref persisted after overlapping PUTs");
+  ok((await assignGate.isChecked()) === !assignWasGate, "assign pref persisted after overlapping PUTs");
+  await closeProfile();
+
   await page.route("http://127.0.0.1:34113/**", (route) => route.abort("failed"));
   await page.locator("#af-profile-btn").click();
   await page.locator('#af-profile-dialog [data-af="pref"][data-id="tt"]').click();
