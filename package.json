@@ -52,6 +52,13 @@
     "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/**/*.test.ts",
     "test:integration:v3-pr76": "bash scripts/test-exchange-v3-pr76-integration.sh",
     "test:all": "npm test && npm run test:browser && npm run test:integration",
+    "test:integration:tan-tracker": "node --import tsx --test --test-concurrency=1 test/integration/tan-tracker*.test.ts",
+    "tt56-user-test:init-db": "bash scripts/tan-tracker-user-test/init-db.sh",
+    "tt56-user-test:seed": "npm run build && node --env-file=.env.tan-tracker-user-test.local scripts/tan-tracker-user-test/seed.mjs",
+    "tt56-user-test:reset": "node --env-file=.env.tan-tracker-user-test.local scripts/tan-tracker-user-test/reset.mjs",
+    "tt56-user-test:start": "npm run build && bash scripts/tan-tracker-user-test/start-local.sh",
+    "tt56-user-test:peek-sms": "node --env-file=.env.tan-tracker-user-test.local scripts/tan-tracker-user-test/peek-sms-code.mjs",
+    "tt56-user-test:browser-smoke": "node --env-file=.env.tan-tracker-user-test.local --import tsx --test --test-concurrency=1 test/browser/tan-tracker-user-test-env.browser.test.ts",
     "audit:exchange-fields": "tsx scripts/audit-exchange-fields.ts"
   },
   "engines": {

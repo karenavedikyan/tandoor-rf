@@ -3731,7 +3731,9 @@
     const demoBody = lkRuntime
       ? `<div data-tt="chrome">${TT_LK && !isPublicGuestPage() ? chrome : ""}</div>`
       : `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p><div data-tt="chrome">${chrome}</div>`;
-    const demoShell = "";
+    const demoShell = state.userTestEnvironmentBanner
+      ? `<div class="tt-user-test-banner" role="alert">${E(state.userTestEnvironmentBanner)}</div>`
+      : "";
 
     const demoHeadPopover = lkRuntime ? "" : demoHeadPopoverHtml(demoBody);
 
@@ -3776,7 +3778,10 @@
       const meta = document.querySelector(".tt-shell-meta");
       if (meta) {
         meta.classList.toggle("tt-shell-meta-compact", inDetailFocus);
-        meta.classList.toggle("tt-shell-meta--empty", onListRegistry || inCompactHead);
+        meta.classList.toggle(
+          "tt-shell-meta--empty",
+          (onListRegistry || inCompactHead) && !state.userTestEnvironmentBanner,
+        );
         meta.innerHTML = demoShell;
       }
     }
@@ -4805,6 +4810,7 @@
         state.codeDemoRevealed = true;
       }
     }
+    state.userTestEnvironmentBanner = data.userTestEnvironmentBanner || null;
     state.ttPrototypeRole = data.prototypeRole || "manager";
     state.ttRoleUnsupported = false;
     state.lkActorPartyId = data.actorPartyId || null;

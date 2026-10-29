@@ -1,3 +1,19 @@
+/* Isolated user-test banner (server flag TT_USER_TEST_ENV only) */
+.tt-user-test-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: var(--tt-radius-md, 12px);
+  background: color-mix(in srgb, var(--rf-warning, #c47a00) 18%, var(--surface, #fff));
+  color: var(--text, #1a1a1a);
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid color-mix(in srgb, var(--rf-warning, #c47a00) 35%, transparent);
+}
+[data-theme="dark"] .tt-user-test-banner {
+  background: color-mix(in srgb, var(--rf-warning, #e6a020) 22%, var(--surface, #1e1e1e));
+  color: var(--text, #f2f2f2);
+}
+
 /* Tan-tracker redesign tt52/tt53 — scoped under .tt-work / shells */
 .tt-work {
   --tt-radius-lg:16px; --tt-radius-md:12px; --tt-radius-sm:10px;
