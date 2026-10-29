@@ -1,4 +1,3 @@
-import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import type { Pool, PoolClient } from "pg";
@@ -10,6 +9,15 @@ import { setNoStore } from "../http/no-store";
 import type { AccessRequest } from "../access/middleware";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { requireTanTrackerMutationAccess } from "./guards";
+import {
+  attachmentAbsolutePath,
+  deleteAttachmentBytes,
+  readAttachmentBytes,
+  writeAttachmentBytes,
+} from "./attachment-storage";
+
+export { attachmentAbsolutePath } from "./attachment-storage";
+export { readAttachmentBytes, deleteAttachmentBytes, writeAttachmentBytes } from "./attachment-storage";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOW_MIME = new Set([
@@ -27,10 +35,6 @@ const ALLOW_MIME = new Set([
 ]);
 const MAX_FILES_PER_TRANSFER = 10;
 const MAX_TOTAL_BYTES_PER_TRANSFER = 50 * 1024 * 1024;
-
-function storageRoot(): string {
-  return process.env.TT_ATTACHMENTS_DIR?.trim() || path.join(process.cwd(), "var/tt-attachments");
-}
 
 export function decodeUploadFilename(rawHeader: string): string {
   const trimmed = String(rawHeader ?? "").trim();
@@ -85,17 +89,17 @@ export async function stageAttachmentBuffer(
     throw Object.assign(new Error(validationError), { http: 400 });
   }
   const id = crypto.randomUUID();
-  const key = path.join("staged", userId, `${id}-${filename}`);
-  const abs = path.join(storageRoot(), key);
-  await fs.mkdir(path.dirname(abs), { recursive: true });
-  await fs.writeFile(abs, buf);
+  const key = path.posix.join("staged", userId, `${id}-${filename}`);
+
   await withTransaction(async (client) => {
+    await writeAttachmentBytes(client, key, buf);
     await client.query(
       `INSERT INTO tt_staged_attachments (id, owner_user_id, storage_key, original_name, mime_type, byte_size)
        VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6)`,
       [id, userId, key, filename, mime, buf.length],
     );
   });
+
   return { id, name: filename, mimeType: mime, byteSize: buf.length };
 }
 
@@ -206,10 +210,6 @@ export async function listAttachmentsForTransfers(
   return map;
 }
 
-export function attachmentAbsolutePath(storageKey: string): string {
-  return path.join(storageRoot(), storageKey);
-}
-
 export async function downloadAttachmentHandler(req: AccessRequest, res: Response): Promise<void> {
   if (!req.authUser || !req.accessContext) {
     setNoStore(res);
@@ -243,9 +243,8 @@ export async function downloadAttachmentHandler(req: AccessRequest, res: Respons
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Нет доступа к вложению."));
     return;
   }
-  const abs = attachmentAbsolutePath(row.storage_key);
   try {
-    const data = await fs.readFile(abs);
+    const data = await readAttachmentBytes(row.storage_key, pool);
     res.setHeader("Content-Type", row.mime_type);
     res.setHeader("Content-Disposition", contentDispositionFilename(row.original_name));
     res.status(200).send(data);

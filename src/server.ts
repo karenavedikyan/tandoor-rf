@@ -46,6 +46,7 @@ import {
   assertTanTrackerUserTestStartup,
   shouldSkipBackgroundIntegrations,
 } from "./shared/tan-tracker-user-test-runtime";
+import { assertTanTrackerAttachmentsProductionBackend } from "./shared/tan-tracker-attachments-config";
 
 const HEALTH_BODY = { status: "ok", app: "tandoor-rf" } as const;
 
@@ -384,6 +385,7 @@ let stopTanbotMaxOutboxWorker: (() => void) | null = null;
 
 export function startServer(): ReturnType<express.Application["listen"]> {
   assertTanTrackerUserTestStartup();
+  assertTanTrackerAttachmentsProductionBackend();
   const port = parsePort(process.env.PORT);
   const app = createApp();
 

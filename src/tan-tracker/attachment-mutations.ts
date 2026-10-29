@@ -1,5 +1,4 @@
 import type { Response } from "express";
-import fs from "fs/promises";
 import { setNoStore } from "../http/no-store";
 import type { AccessRequest } from "../access/middleware";
 import { apiError, ERROR_CODES } from "../shared/errors";
@@ -8,7 +7,7 @@ import { getPool } from "../db/pool";
 import { buildTanTrackerBootstrap } from "./service";
 import { requireTanTrackerMutationAccess } from "./guards";
 import {
-  attachmentAbsolutePath,
+  deleteAttachmentBytes,
   linkStagedAttachmentsToTransfer,
   listAttachmentsForTransfers,
 } from "./attachments";
@@ -183,11 +182,7 @@ export async function deleteTransferAttachmentHandler(req: AccessRequest, res: R
     return;
   }
 
-  try {
-    await fs.unlink(attachmentAbsolutePath(row.storage_key));
-  } catch {
-    /* missing file on disk */
-  }
+  await deleteAttachmentBytes(row.storage_key, pool);
 
   const bootstrap = await buildTanTrackerBootstrap(req.authUser!, access);
   setNoStore(res);

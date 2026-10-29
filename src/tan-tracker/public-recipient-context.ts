@@ -1,5 +1,4 @@
 import type { Request, Response } from "express";
-import fs from "fs/promises";
 import { getPool } from "../db/pool";
 import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
@@ -13,7 +12,7 @@ import {
 } from "./repository";
 import { getAppOrigin } from "../config";
 import { tanTrackerUserTestBannerForApi } from "../shared/tan-tracker-user-test-env";
-import { attachmentAbsolutePath, contentDispositionFilename, listAttachmentsForTransfers } from "./attachments";
+import { contentDispositionFilename, listAttachmentsForTransfers, readAttachmentBytes } from "./attachments";
 
 function maskPhone(phone: string | null): string {
   if (!phone || phone.length < 6) return "—";
@@ -209,7 +208,7 @@ export async function publicRecipientAttachmentHandler(req: Request, res: Respon
     return;
   }
   try {
-    const data = await fs.readFile(attachmentAbsolutePath(fileRow.storage_key));
+    const data = await readAttachmentBytes(fileRow.storage_key, pool);
     res.setHeader("Content-Type", fileRow.mime_type);
     res.setHeader(
       "Content-Disposition",

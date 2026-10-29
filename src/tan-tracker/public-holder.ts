@@ -1,5 +1,4 @@
 import type { Request, Response } from "express";
-import fs from "fs/promises";
 import { withTransaction } from "../access/db";
 import { getPool } from "../db/pool";
 import { setNoStore } from "../http/no-store";
@@ -12,11 +11,12 @@ import { requireHandoffOtpPepper } from "./otp-config";
 import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS } from "./otp-config";
 import { hashOtp } from "./phone-verification";
 import {
-  attachmentAbsolutePath,
   contentDispositionFilename,
   decodeUploadFilename,
+  deleteAttachmentBytes,
   linkStagedAttachmentsToTransfer,
   listAttachmentsForTransfers,
+  readAttachmentBytes,
   stageAttachmentBuffer,
 } from "./attachments";
 import {
@@ -379,10 +379,9 @@ export async function publicHolderAttachmentHandler(req: Request, res: Response)
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Файл не найден."));
     return;
   }
-  const abs = attachmentAbsolutePath(fileRow.storage_key);
   let buf: Buffer;
   try {
-    buf = await fs.readFile(abs);
+    buf = await readAttachmentBytes(fileRow.storage_key, pool);
   } catch {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Файл недоступен."));
@@ -605,11 +604,7 @@ export async function publicHolderDeleteAttachmentHandler(req: Request, res: Res
       if (!deleted) {
         throw Object.assign(new Error("Вложение не найдено."), { http: 404 });
       }
-      try {
-        await fs.unlink(attachmentAbsolutePath(deleted.storage_key));
-      } catch {
-        /* missing file */
-      }
+      await deleteAttachmentBytes(deleted.storage_key, client);
       await client.query(
         `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
          VALUES ($1,NULL,$2::uuid,'holder_attach_delete', $3::jsonb)`,
