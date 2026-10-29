@@ -219,7 +219,7 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 .tt-registry-status-chips { display:none; flex-wrap:wrap; gap:8px; margin:0 0 12px; }
 .tt-registry-status-chip {
   min-height:40px; padding:8px 12px; border-radius:999px; border:1px solid var(--line); background:var(--surface);
-  font-size:13px; font-weight:600; cursor:pointer;
+  font-size:13px; font-weight:600; cursor:pointer; color:var(--text);
 }
 .tt-registry-status-chip[aria-pressed=true] {
   border-color:color-mix(in srgb, var(--green,#507f22) 55%, var(--line)); background:var(--tint,#eef5e7);

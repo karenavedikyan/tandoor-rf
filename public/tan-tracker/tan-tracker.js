@@ -524,10 +524,12 @@
       const inv = data.orders[0].activeInvitation;
       if (inv?.invitationToken) state.publicInvitationToken = inv.invitationToken;
     }
+    const completed = data.orders?.[0]?.status === "completed";
+    const nextView = completed ? "public-receipt" : "detail";
     if (window.TanTrackerPrototype?.hydrateFromServer) {
-      window.TanTrackerPrototype.hydrateFromServer(data);
+      window.TanTrackerPrototype.hydrateFromServer(data, { skipUrlRead: true, skipRender: true });
     }
-    if (data.orders?.[0]?.status === "completed") {
+    if (completed) {
       state.publicReceipt = {
         publicCode: data.orders[0].id,
         item: data.orders[0].item,
@@ -535,11 +537,11 @@
         transferStatus: "completed",
         completedAt: Date.now(),
       };
-      state.view = "public-receipt";
-    } else {
-      state.view = "detail";
     }
+    state.recipientMode = false;
+    state.view = nextView;
     writeUrl();
+    renderTracker();
   }
 
   const Att = () => window.TanTrackerAttachments;
@@ -652,6 +654,10 @@
   }
 
   function identityVerified(o) {
+    if (isPublicGuestPage()) {
+      if (state.lkPhoneSessionToken && state.lkPhoneSessionKey === recipientKey(o)) return true;
+      return state.phoneVerified && state.phoneVerifiedKey === recipientKey(o);
+    }
     if (TT_LK) {
       const actor = actorContactId();
       if (o.pendingId && actor && o.pendingId === actor) {
@@ -1524,7 +1530,11 @@
       if (!f.newName.trim()) return "Введите имя получателя.";
     }
     if (phase === "recipient-new-phone") {
-      if (!normPhone(f.newPhone)) return "Введите телефон: 10 цифр после +7 (демо).";
+      if (!normPhone(f.newPhone)) {
+        return TT_LK || window.__TT_PUBLIC_RECIPIENT__
+          ? "Введите телефон: 10 цифр после +7."
+          : "Введите телефон: 10 цифр после +7 (демо).";
+      }
     }
     return "";
   }
@@ -1705,7 +1715,22 @@
         }
         if (r.error) errors.push(r.error);
         else {
-          if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.uploadStagingFile) {
+          if (
+            isPublicHolderSession() &&
+            window.TanTrackerLk?.publicHolderUploadStagingFile
+          ) {
+            try {
+              const uploaded = await window.TanTrackerLk.publicHolderUploadStagingFile(
+                state.publicHolderAccessToken,
+                file,
+              );
+              r.item.serverStagingId = uploaded.id;
+            } catch (upErr) {
+              Att().revokeStagingItem(r.item);
+              errors.push(upErr?.message || "Не удалось загрузить файл.");
+              continue;
+            }
+          } else if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.uploadStagingFile) {
             try {
               const uploaded = await window.TanTrackerLk.uploadStagingFile(file);
               r.item.serverStagingId = uploaded.id;
@@ -1722,6 +1747,23 @@
         if (target === "create") state.attachStaging = [...staging, ...accepted];
         else if (order && accepted.length) {
           if (
+            isPublicHolderSession() &&
+            window.TanTrackerLk?.publicHolderAddAttachments &&
+            accepted.every((x) => x.serverStagingId)
+          ) {
+            try {
+              const data = await window.TanTrackerLk.publicHolderAddAttachments(
+                state.publicHolderAccessToken,
+                accepted.map((x) => x.serverStagingId),
+              );
+              accepted.forEach((x) => Att().revokeStagingItem(x));
+              applyPublicHolderPayload(data);
+              state.toast = `Добавлено файлов: ${accepted.length}.`;
+            } catch (upErr) {
+              Att().revokeStagingItems(accepted);
+              errors.push(upErr?.message || "Не удалось сохранить файлы на сервере.");
+            }
+          } else if (
             TT_LK &&
             window.TanTrackerLk &&
             window.TanTrackerLk.addTransferAttachments &&
@@ -2248,7 +2290,24 @@
     state.toast = "Передача завершена.";
   }
 
-  function startPending(o, recipientId) {
+  function startPending(o, recipientId, externalMeta) {
+    if (isPublicHolderSession() && window.TanTrackerLk?.publicHolderChangePending) {
+      void window.TanTrackerLk.publicHolderChangePending(
+        state.publicHolderAccessToken,
+        recipientId,
+        externalMeta,
+      )
+        .then((data) => {
+          applyPublicHolderPayload(data);
+          state.form = null;
+          state.toast = "Получатель выбран.";
+        })
+        .catch((err) => {
+          state.error = err?.message || "Не удалось назначить получателя.";
+          renderTracker();
+        });
+      return;
+    }
     if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.changePending) {
       void window.TanTrackerLk.changePending(o.id, recipientId)
         .then(() => {
@@ -2540,13 +2599,8 @@
       state.publicHolderAccessToken = hat;
       window.__TT_PUBLIC_HOLDER__ = true;
     }
-    const pts = p.get("tt_pts");
-    if (pts && isPublicGuestPage()) {
-      state.lkPhoneSessionToken = pts;
-      state.lkPhoneSessionKey = state.orderId && state.recipientTicket?.rcv
-        ? `${state.orderId}|${state.recipientTicket.rcv}`
-        : state.lkPhoneSessionKey;
-    }
+    const ptsEarly = p.get("tt_pts");
+    const screenEarly = p.get("tt_screen");
     const urlExternalActing = state.actingContactId && contactById(state.actingContactId)?.kind === "external";
     const ttEmp = p.get("tt_emp");
     if (!resolved.unsupported && ttEmp && employees[ttEmp] && !urlExternalActing) {
@@ -2564,10 +2618,18 @@
       !recipientFromUrl &&
       ttTok &&
       (p.get("tt_order") || p.get("tt_id")) &&
-      p.get("tt_via") === "qr"
+      p.get("tt_via") === "qr" &&
+      screenEarly !== "detail" &&
+      screenEarly !== "code"
     ) {
       recipientFromUrl = true;
       p.set("tt_view", "recipient");
+    }
+    if (
+      isPublicGuestPage() &&
+      (screenEarly === "detail" || screenEarly === "code" || screenEarly === "public-receipt")
+    ) {
+      recipientFromUrl = false;
     }
     state.recipientMode = recipientFromUrl;
     const oid = p.get("tt_order") || p.get("tt_id");
@@ -2583,8 +2645,15 @@
       resetPhoneIdentity();
       state.lkPhoneSessionToken = "";
       state.lkPhoneSessionKey = "";
-    } else if (!isPublicGuestPage() || p.get("tt_screen") !== "public-receipt") {
-      state.recipientTicket = null;
+    } else {
+      if (!isPublicGuestPage() || p.get("tt_screen") !== "public-receipt") {
+        state.recipientTicket = null;
+      }
+      if (ptsEarly && isPublicGuestPage() && oid) {
+        state.lkPhoneSessionToken = ptsEarly;
+        const ordPts = orders.find((x) => x.id === oid);
+        if (ordPts) state.lkPhoneSessionKey = recipientKey(ordPts);
+      }
     }
     const ordForRoute = oid ? orders.find((x) => x.id === oid) : null;
     if (ordForRoute?.status === "completed" && (state.recipientMode || state.view === "code")) {
@@ -2913,9 +2982,12 @@
   function routeStepperNode(c, roleEyebrow, variant, planned, showLine) {
     const phoneCore = c?.phone ? fmtPhoneCore(c.phone) : "";
     const telDigits = c?.phone ? normPhone(c.phone) : "";
+    const lkRuntime = (typeof TT_LK !== "undefined" && TT_LK) || window.__TT_PUBLIC_RECIPIENT__;
     const phoneHtml =
       telDigits && c?.phone
-        ? `<span class="tt-route-phone-line"><a class="tt-route-phone" href="tel:+${E(telDigits)}" data-tt="route-phone">${E(phoneCore)}</a><span class="tt-route-phone-suffix"> · демо</span></span>`
+        ? lkRuntime
+          ? `<span class="tt-route-phone-line"><a class="tt-route-phone" href="tel:+${E(telDigits)}" data-tt="route-phone">${E(phoneCore)}</a></span>`
+          : `<span class="tt-route-phone-line"><a class="tt-route-phone" href="tel:+${E(telDigits)}" data-tt="route-phone">${E(phoneCore)}</a><span class="tt-route-phone-suffix"> · демо</span></span>`
         : `<span class="tt-route-phone">${phoneCore ? E(phoneCore) : "—"}</span>`;
     const plannedChip = planned
       ? `<span class="tt-route-planned" data-tt="route-planned">План · ждёт подтверждения</span>`
@@ -3542,6 +3614,7 @@
       <p class="tt-recipient-to">Вам · ${E(maskPhone(to?.phone || ""))}</p>
       ${fin && intermediate ? `<p class="tt-recipient-fin">Конечный получатель: <strong>${E(fin.name)}</strong></p>` : ""}
       ${intermediate ? `<div class="tt-reminder tt-recipient-relay" data-tt="recipient-relay-reminder"><strong>После получения передайте дальше</strong><p>Доставить до ${o.dueAt ? dt(o.dueAt) : "срока не указан"}.</p></div>` : ""}
+      ${state.error ? `<p class="tt-error" data-tt="recipient-error">${E(state.error)}</p>` : ""}
       ${verifyStep}
       ${receiveStep}
       ${codeBlock}
@@ -4211,6 +4284,12 @@
     if (action === "confirm-transfer" && o && state.form) {
       let rid = state.form.recipientId;
       if (state.form.mode === "new") {
+        if (isPublicHolderSession()) {
+          startPending(o, null, { name: state.form.newName, phone: state.form.newPhone });
+          state.view = "detail";
+          writeUrl();
+          return;
+        }
         const r = addExternalContact(state.form.newName, state.form.newPhone);
         if (r.error) {
           state.error = r.error;
@@ -4480,12 +4559,22 @@
       renderTracker();
       return;
     }
-    if (action === "attach-delete" && o && TT_LK && window.TanTrackerLk?.deleteTransferAttachment) {
+    if (action === "attach-delete" && o) {
       const attId = b.getAttribute("data-att-id");
       if (!attId) return;
       state.attachBusy = true;
       renderTracker();
-      window.TanTrackerLk.deleteTransferAttachment(o.id, attId)
+      const deletePromise =
+        isPublicHolderSession() && window.TanTrackerLk?.publicHolderDeleteAttachment
+          ? window.TanTrackerLk.publicHolderDeleteAttachment(state.publicHolderAccessToken, attId).then(
+              (data) => {
+                applyPublicHolderPayload(data);
+              },
+            )
+          : TT_LK && window.TanTrackerLk?.deleteTransferAttachment
+            ? window.TanTrackerLk.deleteTransferAttachment(o.id, attId)
+            : Promise.reject(new Error("Удаление недоступно."));
+      deletePromise
         .then(() => {
           state.toast = "Файл удалён.";
         })
@@ -4675,6 +4764,9 @@
 
   function hydrateFromServer(data, opts) {
     if (!data) return;
+    const skipUrlRead = !!opts?.skipUrlRead;
+    const skipRender = !!opts?.skipRender;
+    const authoritativeHat = data.holderAccessToken || null;
     contacts = (data.contacts || []).map((c) => ({
       id: c.id,
       name: c.name,
@@ -4725,14 +4817,17 @@
       state.actingContactId = data.actorContact?.id || data.actorPartyId || null;
     }
     if (data.publicHolder) {
-      state.publicHolderAccessToken = data.holderAccessToken || state.publicHolderAccessToken || "";
+      state.publicHolderAccessToken = authoritativeHat || state.publicHolderAccessToken || "";
       state.orderId = data.orders?.[0]?.id || state.orderId;
       window.__TT_PUBLIC_HOLDER__ = true;
     }
-    if (window.__TT_PUBLIC_RECIPIENT__) {
-      readUrl();
-    } else {
-      state.recipientMode = false;
+    if (!skipUrlRead) {
+      if (window.__TT_PUBLIC_RECIPIENT__) {
+        readUrl();
+        if (authoritativeHat) state.publicHolderAccessToken = authoritativeHat;
+      } else {
+        state.recipientMode = false;
+      }
     }
     if (window.__TT_PUBLIC_INVITATION_TOKEN__) {
       state.publicInvitationToken = window.__TT_PUBLIC_INVITATION_TOKEN__;
@@ -4745,7 +4840,7 @@
       delete window.__TT_PUBLIC_RECEIPT__;
     }
     bumpAttachOpGen();
-    renderTracker();
+    if (!skipRender) renderTracker();
   }
 
   window.TanTrackerPrototype = {

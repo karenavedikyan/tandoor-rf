@@ -62,6 +62,19 @@ describe("tan-tracker scope", () => {
     assert.equal(canViewOrder(baseOrder, ctx, contacts, null, false), true);
   });
 
+  it("ROP without own party sees team member participant order", () => {
+    const ctx: TanTrackerScopeContext = {
+      userId: "rop1",
+      role: "rop",
+      employeeId: "emp-rop",
+      actorPartyId: null,
+      previewReadOnly: false,
+    };
+    const team = new Set(["emp-b"]);
+    const partyMap = new Map<string, string | null>([["h1", "emp-b"]]);
+    assert.equal(canViewOrder(baseOrder, ctx, [], team, false, partyMap), true);
+  });
+
   it("unrelated manager cannot see order", () => {
     const ctx: TanTrackerScopeContext = {
       userId: "u3",

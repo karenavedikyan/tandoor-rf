@@ -49,19 +49,18 @@
 | `seedOrders` / localStorage | **Нет** — PostgreSQL |
 | In-memory attachments | **Staging upload** + `tt_transfer_attachments` (LK API; browser E2E — в работе) |
 
-## Блокеры (честно, обновление после P1)
+## Блокеры (честно, обновление TT56-77b0c71-BLOCKERS-20261029)
 
-| ID | Статус в ветке `cursor/tan-tracker-lk-tt56-20261028` |
-|----|--------------------------------------------------------|
-| RELAY-01 | **Доработано (8885f16→):** holder detail UI tt56, `tt_hat` обновляется после send-to-final, holder file download + code verify, hydrate после qr-confirm. Browser E2E — приёмка. |
-| ACTOR-01 | **Исправлено:** `actorContactId()` в detail/complete/mobile; LK holder actions (pending, files, legacy-complete). |
-| CODE-01 | **Доработано:** `writeUrl` сохраняет `tt_tok`/`tt_pts`/`tt_hat` на public detail; boot reload detail/code. |
-| CODE-01 | **Исправлено:** `POST /public/recipient/code/generate` с `phoneSessionToken`. Integration-тест. Browser E2E — приёмка. |
-| SCOPE-01 | **Исправлено:** ROP union legacy + 1С команды в `team-scope.ts`. Integration-тест с двумя командами. |
-| PICKER-01 | **Исправлено:** единый `transferPickAllowed` для initial render и `patchContactPick`; LK не подставляет `actingContactId` сотрудника. |
-| DEMO/COPY/FILES/VISUAL P2 | **Частично:** demo chrome в LK/public, FILES-01/02 server, tt56 токены в `tan-tracker-lk-theme.css`. Остаток demo-copy в wizard/strings, VISUAL-01 logo — см. diff. |
+| ID | Статус после правок блокеров 77b0c71 |
+|----|--------------------------------------|
+| RELAY-STATE/URL | **Исправлено в коде:** `applyPublicHolderPayload` → hydrate без `readUrl`, авторитетный `tt_hat`, render detail сразу после QR/send-to-final. Browser E2E — независимая приёмка. |
+| RELAY-OTHER / HOLDER-FILES | **Исправлено в коде:** `POST /public/holder/pending/change`, staging/add/delete attachments по holder token; creator в holder contacts для `addedBy`. Browser E2E — приёмка. |
+| CODE-RELOAD | **Исправлено в коде:** boot без принудительного `tt_view=recipient` при `tt_screen=detail|code`; восстановление `tt_pts` + полный `recipientKey`. Browser E2E — приёмка. |
+| PUBLIC-STAFF | **Исправлено в коде:** public guest не считает `kind=user` верификацией; ошибки на recipient-screen. |
+| SCOPE-01 | **Исправлено в коде:** ROP без `actorPartyId` видит передачи участников 1С-команды (`scope.ts` + unit). Integration PG — см. прогон ниже. |
+| VISUAL-02 / COPY-01 | **Исправлено:** `color: var(--text)` на status-chip; убраны «· демо» в route-phone LK/public и «(демо)» в invalid phone LK/public. |
 
-**Не заявляется «полностью принято»** без повторной независимой browser-матрицы и merge.
+**Не заявляется «полностью принято»** без зелёного PostgreSQL integration + browser E2E на новом SHA.
 
 1. **SMS/OTP (production):** реальный провайдер не подключён → send 503; в test `TT_PHONE_VERIFICATION_PROVIDER=test`.
 2. **Integration:** `tan-tracker-p1-regression.test.ts` + существующие tan-tracker integration — PostgreSQL test DB.

@@ -32,7 +32,7 @@ function storageRoot(): string {
   return process.env.TT_ATTACHMENTS_DIR?.trim() || path.join(process.cwd(), "var/tt-attachments");
 }
 
-function decodeUploadFilename(rawHeader: string): string {
+export function decodeUploadFilename(rawHeader: string): string {
   const trimmed = String(rawHeader ?? "").trim();
   if (!trimmed) return "file";
   let decoded = trimmed;
@@ -60,29 +60,32 @@ export function contentDispositionFilename(
   return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(safeName)}`;
 }
 
-export async function stageAttachmentHandler(req: AccessRequest, res: Response): Promise<void> {
-  const gate = requireTanTrackerMutationAccess(req, res);
-  if (!gate) return;
-  const { user } = gate;
-  const filename = decodeUploadFilename(String(req.headers["x-tt-filename"] ?? "file"));
-  const mime = String(req.headers["x-tt-mime-type"] ?? "application/octet-stream").toLowerCase();
-  const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
+function validateStagingUpload(filename: string, mime: string, buf: Buffer): string | null {
   if (!buf.length || buf.length > MAX_FILE_BYTES) {
-    setNoStore(res);
-    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Недопустимый размер файла."));
-    return;
+    return "Недопустимый размер файла.";
   }
   const ext = path.extname(filename).toLowerCase();
   const extOk = [".pdf", ".txt", ".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".doc", ".docx", ".xls", ".xlsx"].includes(
     ext,
   );
   if (!ALLOW_MIME.has(mime) && !(extOk && (!mime || mime === "application/octet-stream"))) {
-    setNoStore(res);
-    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Тип файла не поддерживается."));
-    return;
+    return "Тип файла не поддерживается.";
+  }
+  return null;
+}
+
+export async function stageAttachmentBuffer(
+  userId: string,
+  filename: string,
+  mime: string,
+  buf: Buffer,
+): Promise<{ id: string; name: string; mimeType: string; byteSize: number }> {
+  const validationError = validateStagingUpload(filename, mime, buf);
+  if (validationError) {
+    throw Object.assign(new Error(validationError), { http: 400 });
   }
   const id = crypto.randomUUID();
-  const key = path.join("staged", user.id, `${id}-${filename}`);
+  const key = path.join("staged", userId, `${id}-${filename}`);
   const abs = path.join(storageRoot(), key);
   await fs.mkdir(path.dirname(abs), { recursive: true });
   await fs.writeFile(abs, buf);
@@ -90,11 +93,30 @@ export async function stageAttachmentHandler(req: AccessRequest, res: Response):
     await client.query(
       `INSERT INTO tt_staged_attachments (id, owner_user_id, storage_key, original_name, mime_type, byte_size)
        VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6)`,
-      [id, user.id, key, filename, mime, buf.length],
+      [id, userId, key, filename, mime, buf.length],
     );
   });
-  setNoStore(res);
-  res.status(201).json({ id, name: filename, mimeType: mime, byteSize: buf.length });
+  return { id, name: filename, mimeType: mime, byteSize: buf.length };
+}
+
+export async function stageAttachmentHandler(req: AccessRequest, res: Response): Promise<void> {
+  const gate = requireTanTrackerMutationAccess(req, res);
+  if (!gate) return;
+  const { user } = gate;
+  const filename = decodeUploadFilename(String(req.headers["x-tt-filename"] ?? "file"));
+  const mime = String(req.headers["x-tt-mime-type"] ?? "application/octet-stream").toLowerCase();
+  const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
+  try {
+    const staged = await stageAttachmentBuffer(user.id, filename, mime, buf);
+    setNoStore(res);
+    res.status(201).json(staged);
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http ?? 400;
+    setNoStore(res);
+    res
+      .status(http)
+      .json(apiError(ERROR_CODES.VALIDATION_ERROR, err instanceof Error ? err.message : "Не удалось загрузить файл."));
+  }
 }
 
 export async function linkStagedAttachmentsToTransfer(

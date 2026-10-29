@@ -10,14 +10,24 @@ import { applyPendingReceiptHandoff } from "./handoff-complete";
 import { requireHandoffOtpPepper } from "./otp-config";
 import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS } from "./otp-config";
 import { hashOtp } from "./phone-verification";
-import { attachmentAbsolutePath, contentDispositionFilename } from "./attachments";
+import {
+  attachmentAbsolutePath,
+  contentDispositionFilename,
+  decodeUploadFilename,
+  linkStagedAttachmentsToTransfer,
+  listAttachmentsForTransfers,
+  stageAttachmentBuffer,
+} from "./attachments";
 import {
   listRevokedParties,
   listTimelineForTransfer,
   mapTransferToOrderDto,
   partyToContact,
 } from "./repository";
-import { listAttachmentsForTransfers } from "./attachments";
+import {
+  loadPublicHolderCreatorUserId,
+  resolvePublicHolderPendingPartyId,
+} from "./public-holder-eligibility";
 
 async function loadHolderTransfer(
   client: { query: Function },
@@ -68,11 +78,23 @@ async function buildPublicHolderJson(pool: NonNullable<ReturnType<typeof getPool
     attachments: attMap.get(row.id) ?? [],
   });
   dto.attachments = (dto.attachments ?? []).map((a) => ({ ...a, url: undefined }));
-  const partyIds = [row.holder_party_id, row.final_recipient_party_id, row.pending_party_id].filter(Boolean);
+  const partyIdSet = new Set<string>(
+    [
+      row.creator_party_id,
+      row.holder_party_id,
+      row.final_recipient_party_id,
+      row.pending_party_id,
+      ...timeline.map((t) => t.from_party_id),
+      ...timeline.map((t) => t.to_party_id),
+    ].filter(Boolean) as string[],
+  );
   const parties = await pool.query(
-    `SELECT p.id, p.kind, p.user_id, p.display_name, p.phone_e164, NULL::text AS linked_employee_id
-     FROM tt_parties p WHERE p.id = ANY($1::uuid[])`,
-    [partyIds],
+    `SELECT p.id, p.kind, p.user_id, p.display_name, p.phone_e164,
+            uoel.employee_id::text AS linked_employee_id
+     FROM tt_parties p
+     LEFT JOIN user_onec_employee_links uoel ON uoel.user_id = p.user_id AND uoel.revoked_at IS NULL
+     WHERE p.id = ANY($1::uuid[])`,
+    [[...partyIdSet]],
   );
   const contacts = parties.rows.map(partyToContact);
   const holderToken = signHolderAccess({
@@ -371,4 +393,249 @@ export async function publicHolderAttachmentHandler(req: Request, res: Response)
     contentDispositionFilename(fileRow.original_name, "attachment"),
   );
   res.status(200).send(buf);
+}
+
+export async function publicHolderChangePendingHandler(req: Request, res: Response): Promise<void> {
+  const body = req.body as {
+    holderAccessToken?: string;
+    pendingPartyId?: string;
+    external?: { name?: string; phone?: string };
+  };
+  const access = body.holderAccessToken ? verifyHolderAccess(body.holderAccessToken) : null;
+  if (!access) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Доступ недоступен или устарел."));
+    return;
+  }
+  let transferId = "";
+  try {
+    transferId = await withTransaction(async (client) => {
+      const row = await loadHolderTransfer(client, access.transferId, access.partyId, access.hv);
+      if (!row) {
+        throw Object.assign(new Error("Передача недоступна."), { http: 404 });
+      }
+      if (row.pending_party_id) {
+        throw Object.assign(new Error("Ожидание уже назначено."), { http: 409 });
+      }
+      const externalInput =
+        body.external && (body.external.name || body.external.phone)
+          ? { name: body.external.name ?? "", phone: body.external.phone ?? "" }
+          : undefined;
+      const pendingPartyId = await resolvePublicHolderPendingPartyId(
+        client,
+        row.id,
+        access.partyId,
+        body.pendingPartyId,
+        externalInput,
+      );
+      const nextVer = row.handoff_version + 1;
+      await client.query(
+        `UPDATE tt_transfers SET pending_party_id = $2, status = 'waiting', handoff_version = $3,
+                row_version = row_version + 1 WHERE id = $1`,
+        [row.id, pendingPartyId, nextVer],
+      );
+      await client.query(
+        `UPDATE tt_transfer_invitations SET superseded_at = NOW() WHERE transfer_id = $1 AND superseded_at IS NULL`,
+        [row.id],
+      );
+      await client.query(
+        `INSERT INTO tt_transfer_invitations (transfer_id, handoff_version, holder_party_id, pending_party_id, item_snapshot)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [row.id, nextVer, row.holder_party_id, pendingPartyId, row.item_title],
+      );
+      await client.query(
+        `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
+         VALUES ($1,$2,$3,$4,NULL)`,
+        [row.id, row.holder_party_id, pendingPartyId, "Назначен следующий получатель"],
+      );
+      await client.query(
+        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+         VALUES ($1,NULL,$2::uuid,'holder_pending_change','{}'::jsonb)`,
+        [row.id, access.partyId],
+      );
+      return row.id as string;
+    });
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http ?? 503;
+    const message = err instanceof Error ? err.message : "Не удалось назначить получателя.";
+    setNoStore(res);
+    res
+      .status(http)
+      .json(
+        apiError(
+          http === 403 ? ERROR_CODES.FORBIDDEN : http === 404 ? ERROR_CODES.NOT_FOUND : ERROR_CODES.VALIDATION_ERROR,
+          message,
+        ),
+      );
+    return;
+  }
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
+    return;
+  }
+  const payload = await buildPublicHolderJson(pool, transferId);
+  setNoStore(res);
+  res.status(200).json(payload);
+}
+
+export async function publicHolderStageAttachmentHandler(req: Request, res: Response): Promise<void> {
+  const holderAccessToken = String(req.query.holderAccessToken ?? "").trim();
+  const access = holderAccessToken ? verifyHolderAccess(holderAccessToken) : null;
+  if (!access) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Доступ недоступен или устарел."));
+    return;
+  }
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
+    return;
+  }
+  const creatorUserId = await loadPublicHolderCreatorUserId(pool, access.transferId);
+  if (!creatorUserId) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Не удалось загрузить файл."));
+    return;
+  }
+  const filename = decodeUploadFilename(String(req.headers["x-tt-filename"] ?? "file"));
+  const mime = String(req.headers["x-tt-mime-type"] ?? "application/octet-stream").toLowerCase();
+  const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
+  try {
+    const staged = await stageAttachmentBuffer(creatorUserId, filename, mime, buf);
+    setNoStore(res);
+    res.status(201).json(staged);
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http ?? 400;
+    setNoStore(res);
+    res
+      .status(http)
+      .json(apiError(ERROR_CODES.VALIDATION_ERROR, err instanceof Error ? err.message : "Не удалось загрузить файл."));
+  }
+}
+
+export async function publicHolderAddAttachmentsHandler(req: Request, res: Response): Promise<void> {
+  const body = req.body as { holderAccessToken?: string; stagingAttachmentIds?: string[] };
+  const access = body.holderAccessToken ? verifyHolderAccess(body.holderAccessToken) : null;
+  if (!access) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Доступ недоступен или устарел."));
+    return;
+  }
+  const stagingIds = Array.isArray(body.stagingAttachmentIds)
+    ? body.stagingAttachmentIds.map(String).filter(Boolean)
+    : [];
+  if (!stagingIds.length || stagingIds.length > 10) {
+    setNoStore(res);
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Укажите файлы для прикрепления."));
+    return;
+  }
+  let transferId = "";
+  try {
+    transferId = await withTransaction(async (client) => {
+      const row = await loadHolderTransfer(client, access.transferId, access.partyId, access.hv);
+      if (!row) {
+        throw Object.assign(new Error("Передача недоступна."), { http: 404 });
+      }
+      const creatorUserId = await loadPublicHolderCreatorUserId(client, row.id);
+      if (!creatorUserId) {
+        throw Object.assign(new Error("Не удалось прикрепить файлы."), { http: 503 });
+      }
+      await linkStagedAttachmentsToTransfer(client, creatorUserId, row.id, stagingIds);
+      await client.query(
+        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+         VALUES ($1,NULL,$2::uuid,'holder_attach_add', $3::jsonb)`,
+        [row.id, access.partyId, JSON.stringify({ count: stagingIds.length })],
+      );
+      return row.id as string;
+    });
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http ?? 503;
+    const message = err instanceof Error ? err.message : "Не удалось прикрепить файлы.";
+    setNoStore(res);
+    res
+      .status(http)
+      .json(
+        apiError(
+          http === 403 ? ERROR_CODES.FORBIDDEN : http === 404 ? ERROR_CODES.NOT_FOUND : ERROR_CODES.VALIDATION_ERROR,
+          message,
+        ),
+      );
+    return;
+  }
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
+    return;
+  }
+  const payload = await buildPublicHolderJson(pool, transferId);
+  setNoStore(res);
+  res.status(200).json(payload);
+}
+
+export async function publicHolderDeleteAttachmentHandler(req: Request, res: Response): Promise<void> {
+  const attId = String(req.params.attId ?? "").trim();
+  const holderAccessToken = String(req.query.holderAccessToken ?? "").trim();
+  const access = holderAccessToken ? verifyHolderAccess(holderAccessToken) : null;
+  if (!access || !attId) {
+    setNoStore(res);
+    res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Доступ недоступен."));
+    return;
+  }
+  let transferId = "";
+  try {
+    transferId = await withTransaction(async (client) => {
+      const row = await loadHolderTransfer(client, access.transferId, access.partyId, access.hv);
+      if (!row) {
+        throw Object.assign(new Error("Передача недоступна."), { http: 404 });
+      }
+      const deleted = (
+        await client.query<{ storage_key: string }>(
+          `DELETE FROM tt_transfer_attachments
+           WHERE id = $1::uuid AND transfer_id = $2
+           RETURNING storage_key`,
+          [attId, row.id],
+        )
+      ).rows[0];
+      if (!deleted) {
+        throw Object.assign(new Error("Вложение не найдено."), { http: 404 });
+      }
+      try {
+        await fs.unlink(attachmentAbsolutePath(deleted.storage_key));
+      } catch {
+        /* missing file */
+      }
+      await client.query(
+        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+         VALUES ($1,NULL,$2::uuid,'holder_attach_delete', $3::jsonb)`,
+        [row.id, access.partyId, JSON.stringify({ attachmentId: attId })],
+      );
+      return row.id as string;
+    });
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http ?? 503;
+    const message = err instanceof Error ? err.message : "Не удалось удалить вложение.";
+    setNoStore(res);
+    res
+      .status(http)
+      .json(
+        apiError(
+          http === 404 ? ERROR_CODES.NOT_FOUND : ERROR_CODES.FORBIDDEN,
+          message,
+        ),
+      );
+    return;
+  }
+  const pool = getPool();
+  if (!pool) {
+    setNoStore(res);
+    res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
+    return;
+  }
+  const payload = await buildPublicHolderJson(pool, transferId);
+  setNoStore(res);
+  res.status(200).json(payload);
 }

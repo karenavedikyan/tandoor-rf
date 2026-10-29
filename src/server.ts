@@ -18,6 +18,7 @@ import { createClientsRouter } from "./clients/router";
 import { createWorkRouter } from "./work/router";
 import { createTanTrackerRouter } from "./tan-tracker/router";
 import { stageAttachmentHandler } from "./tan-tracker/attachments";
+import { publicHolderStageAttachmentHandler } from "./tan-tracker/public-holder";
 import { attachAccessContext, blockPreviewWrites } from "./access/middleware";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
 import { changePasswordHandler } from "./profile/password-handlers";
@@ -138,6 +139,16 @@ export function createApp(): express.Application {
     csrfOriginProtection,
     (req, res, next) => {
       void stageAttachmentHandler(req, res).catch(next);
+    },
+  );
+
+  app.post(
+    "/api/tan-tracker/public/holder/staging-attachments",
+    express.raw({ type: "*/*", limit: "11mb" }),
+    requireDatabaseReady,
+    csrfOriginProtection,
+    (req, res, next) => {
+      void publicHolderStageAttachmentHandler(req, res).catch(next);
     },
   );
 

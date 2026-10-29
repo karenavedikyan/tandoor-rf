@@ -155,7 +155,19 @@
     } else {
       window.__TT_LK_BOOTSTRAP__ = data;
     }
-    if (!data.publicReceipt) applyPublicRoute(inv);
+    if (!data.publicReceipt) {
+      var screen = inv.params.get("tt_screen") || "";
+      if (screen === "detail" || screen === "code") {
+        var p = inv.params;
+        p.delete("tt_view");
+        if (inv.orderId) p.set("tt_order", inv.orderId);
+        if (inv.token) p.set("tt_tok", inv.token);
+        p.set("tt_screen", screen);
+        location.hash = "tan-tracker?" + p.toString();
+      } else {
+        applyPublicRoute(inv);
+      }
+    }
     window.TanTrackerPrototype.hydrateFromServer(window.__TT_LK_BOOTSTRAP__);
     if (typeof window.__ttLkRenderTracker === "function") {
       window.__ttLkRenderTracker();

@@ -16,8 +16,11 @@ import {
   publicVerifyPhoneCodeHandler,
 } from "./public-recipient";
 import {
+  publicHolderAddAttachmentsHandler,
   publicHolderAttachmentHandler,
+  publicHolderChangePendingHandler,
   publicHolderContextHandler,
+  publicHolderDeleteAttachmentHandler,
   publicHolderSendToFinalHandler,
   publicHolderVerifyCodeHandler,
 } from "./public-holder";
@@ -64,6 +67,18 @@ export function createTanTrackerRouter(): express.Router {
 
   router.get("/public/holder/attachments/:attId", requireDatabaseReady, (req, res, next) => {
     void publicHolderAttachmentHandler(req, res).catch(next);
+  });
+
+  router.post("/public/holder/pending/change", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void publicHolderChangePendingHandler(req, res).catch(next);
+  });
+
+  router.post("/public/holder/attachments", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void publicHolderAddAttachmentsHandler(req, res).catch(next);
+  });
+
+  router.delete("/public/holder/attachments/:attId", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void publicHolderDeleteAttachmentHandler(req, res).catch(next);
   });
 
   router.get("/public/recipient/context", requireDatabaseReady, (req, res, next) => {

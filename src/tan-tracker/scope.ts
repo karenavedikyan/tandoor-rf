@@ -39,17 +39,21 @@ export function canViewOrder(
 ): boolean {
   if (!o) return false;
   if (ctx.role === "director") return true;
-  if (!ctx.actorPartyId) return false;
-  if (externalActing) {
-    const allowed = [o.holderId, o.pendingId, o.finalRecipientId].filter(Boolean) as string[];
-    return allowed.includes(ctx.actorPartyId);
+  if (!ctx.actorPartyId) {
+    if (ctx.role !== "rop" && ctx.role !== "regional_manager") return false;
+  } else {
+    if (externalActing) {
+      const allowed = [o.holderId, o.pendingId, o.finalRecipientId].filter(Boolean) as string[];
+      return allowed.includes(ctx.actorPartyId);
+    }
+    if (ctx.role === "admin") return false;
+    const actor = ctx.actorPartyId;
+    if ([o.holderId, o.pendingId, o.finalRecipientId].includes(actor)) return true;
+    const participants = orderParticipantIds(o);
+    if (participants.has(actor)) return true;
+    if ((o.revokedParticipants || []).includes(actor)) return false;
   }
-  if (ctx.role === "admin") return false;
-  const actor = ctx.actorPartyId;
-  if ([o.holderId, o.pendingId, o.finalRecipientId].includes(actor)) return true;
   const participants = orderParticipantIds(o);
-  if (participants.has(actor)) return true;
-  if ((o.revokedParticipants || []).includes(actor)) return false;
   if (ctx.role === "rop" || ctx.role === "regional_manager") {
     if (teamEmployeeIds && teamEmployeeIds.size > 0) {
       for (const cid of participants) {

@@ -183,8 +183,70 @@
         if (result.response.status !== 200 || !result.data) {
           throw new Error(api.extractErrorMessage(result.data, "Не удалось назначить получателя."));
         }
-        if (result.data.orders && window.TanTrackerPrototype.hydrateFromServer) {
-          window.TanTrackerPrototype.hydrateFromServer(result.data);
+        return result.data;
+      });
+    },
+    publicHolderChangePending: function (holderAccessToken, pendingPartyId, external) {
+      var body = { holderAccessToken: holderAccessToken };
+      if (external && (external.name || external.phone)) {
+        body.external = external;
+      } else {
+        body.pendingPartyId = pendingPartyId;
+      }
+      return jsonFetch("/api/tan-tracker/public/holder/pending/change", {
+        method: "POST",
+        body: body,
+      }).then(function (result) {
+        if (result.response.status !== 200 || !result.data) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось назначить получателя."));
+        }
+        return result.data;
+      });
+    },
+    publicHolderUploadStagingFile: function (holderAccessToken, file) {
+      var url =
+        "/api/tan-tracker/public/holder/staging-attachments?holderAccessToken=" +
+        encodeURIComponent(holderAccessToken);
+      return fetch(ORIGIN + url, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          Origin: ORIGIN,
+          "X-TT-Filename": encodeURIComponent(file.name),
+          "X-TT-Mime-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      }).then(function (response) {
+        return response.json().then(function (data) {
+          if (!response.ok) {
+            throw new Error(
+              (data && data.error && data.error.message) || "Не удалось загрузить файл.",
+            );
+          }
+          return data;
+        });
+      });
+    },
+    publicHolderAddAttachments: function (holderAccessToken, stagingAttachmentIds) {
+      return jsonFetch("/api/tan-tracker/public/holder/attachments", {
+        method: "POST",
+        body: { holderAccessToken: holderAccessToken, stagingAttachmentIds: stagingAttachmentIds },
+      }).then(function (result) {
+        if (result.response.status !== 200 || !result.data) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось сохранить файлы."));
+        }
+        return result.data;
+      });
+    },
+    publicHolderDeleteAttachment: function (holderAccessToken, attachmentId) {
+      var url =
+        "/api/tan-tracker/public/holder/attachments/" +
+        encodeURIComponent(attachmentId) +
+        "?holderAccessToken=" +
+        encodeURIComponent(holderAccessToken);
+      return jsonFetch(url, { method: "DELETE" }).then(function (result) {
+        if (result.response.status !== 200 || !result.data) {
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось удалить файл."));
         }
         return result.data;
       });
@@ -196,9 +258,6 @@
       }).then(function (result) {
         if (result.response.status !== 200 || !result.data) {
           throw new Error(api.extractErrorMessage(result.data, "Не удалось подтвердить код."));
-        }
-        if (result.data.orders && window.TanTrackerPrototype.hydrateFromServer) {
-          window.TanTrackerPrototype.hydrateFromServer(result.data);
         }
         return result.data;
       });
