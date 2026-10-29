@@ -76,8 +76,8 @@
 - **Initiator + current holder** before any timeline «Подтверждено одноразовым кодом/по QR»: **Изменить передачу** → prefilled create wizard (item, route, files, due, comment); **Сохранить изменения** updates **same** `TT-…` id and creator audit. **Any** saved edit bumps `handoffVer` and invalidates code/QR/invitation/messenger context (not only recipient change), because title/files/deadline change what the recipient confirms. **Сменить получателя** / handoff recover when code fails. Non-initiator / post-confirm: no controls; handlers denied.
 - QA: `tan-tracker-pre-handoff-edit-qa.js`.
 
-### Personal registry visibility (initiator-only, demo backend)
-- **Убрать из моего реестра** (initiator, logical hide; canonical order/history/other actors unchanged) with confirm; **Архив** for initiator’s completed rows; **Архив / Удалённые** views + restore. Active holder obligations stay visible in main registry. Flags in `registryPersonal` via same `:34113` store per visitor+actor (`site/tt-registry-personal.js`).
+### Personal registry visibility (demo backend)
+- **Убрать из моего реестра** (creator only): hides from general list only; custody/history/other actors unchanged; active handoff/receive filters and detail stay available. **Архив** — any actor with scope on a completed row; **Архив / Удалённые** + restore. `registryPersonal` on `:34113` preserved in `NotificationDemoStore` hydrate/save; list re-renders after `TtRegistryPersonal` load. Demo **MAX** toggle in «Демо» settings.
 - QA: `tan-tracker-registry-personal-qa.js`.
 
 ## Notifications and completed-assignment feedback

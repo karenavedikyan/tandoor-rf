@@ -11,6 +11,7 @@
   let writeChain = Promise.resolve();
   let pendingWrites = 0;
   let statusListeners = [];
+  let hydrateListeners = [];
 
   function isLocalOrigin() {
     return /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
@@ -80,11 +81,19 @@
       if (data && typeof data === "object" && data.users && typeof data.users === "object") {
         memory = {
           users: structuredClone(data.users),
-          registryPersonal: data.registryPersonal && typeof data.registryPersonal === "object" ? structuredClone(data.registryPersonal) : {},
+          registryPersonal:
+            data.registryPersonal && typeof data.registryPersonal === "object"
+              ? structuredClone(data.registryPersonal)
+              : {},
         };
       } else memory = { users: {}, registryPersonal: {} };
       setStatus("saved");
       hydrated = true;
+      hydrateListeners.forEach((fn) => {
+        try {
+          fn(loadStore());
+        } catch {}
+      });
       return { ok: true };
     } catch {
       setStatus("unavailable");
@@ -98,7 +107,17 @@
   }
 
   function saveStore(store) {
-    memory = structuredClone(store);
+    if (!store || typeof store !== "object") store = {};
+    memory = {
+      users:
+        store.users && typeof store.users === "object" && !Array.isArray(store.users)
+          ? structuredClone(store.users)
+          : memory.users || {},
+      registryPersonal:
+        store.registryPersonal && typeof store.registryPersonal === "object" && !Array.isArray(store.registryPersonal)
+          ? structuredClone(store.registryPersonal)
+          : memory.registryPersonal || {},
+    };
     if (!apiEnabled) {
       setStatus("unavailable");
       return;
@@ -183,6 +202,18 @@
       statusListeners.push(fn);
       return () => {
         statusListeners = statusListeners.filter((x) => x !== fn);
+      };
+    },
+    onHydrated(fn) {
+      if (typeof fn !== "function") return () => {};
+      hydrateListeners.push(fn);
+      if (hydrated && saveStatus === "saved") {
+        try {
+          fn(loadStore());
+        } catch {}
+      }
+      return () => {
+        hydrateListeners = hydrateListeners.filter((x) => x !== fn);
       };
     },
     testResolveApiBase: (cfg, baseURI, hostname) => resolveApiBaseFromConfig(cfg, baseURI, hostname),

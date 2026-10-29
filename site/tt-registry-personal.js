@@ -4,6 +4,8 @@
   /** Personal registry visibility flags (per visitor + actor), not canonical order data. */
   let cache = {};
   let readyPromise = null;
+  let loaded = false;
+  const listeners = [];
 
   function storeApi() {
     return window.NotificationDemoStore;
@@ -25,17 +27,46 @@
     DS.saveStore(snap);
   }
 
+  function reloadFromStore() {
+    const DS = storeApi();
+    if (!DS) return;
+    const snap = DS.loadStore();
+    cache =
+      snap.registryPersonal && typeof snap.registryPersonal === "object"
+        ? structuredClone(snap.registryPersonal)
+        : {};
+  }
+
+  function notifyLoaded() {
+    loaded = true;
+    listeners.forEach((fn) => {
+      try {
+        fn();
+      } catch {}
+    });
+  }
+
+  function bindStoreHydrate() {
+    const DS = storeApi();
+    if (!DS?.onHydrated || DS._ttRegPersonalHydrateBound) return;
+    DS._ttRegPersonalHydrateBound = true;
+    DS.onHydrated(() => {
+      reloadFromStore();
+    });
+  }
+
   function init() {
+    bindStoreHydrate();
     if (!readyPromise) {
       readyPromise = (async () => {
         const DS = storeApi();
-        if (!DS) return;
+        if (!DS) {
+          notifyLoaded();
+          return;
+        }
         await DS.ready;
-        const snap = DS.loadStore();
-        cache =
-          snap.registryPersonal && typeof snap.registryPersonal === "object"
-            ? structuredClone(snap.registryPersonal)
-            : {};
+        reloadFromStore();
+        notifyLoaded();
       })();
     }
     return readyPromise;
@@ -90,8 +121,15 @@
       const rec = lists(actorId);
       return { removed: rec.removed.length, archived: rec.archived.length };
     },
+    isLoaded: () => loaded,
+    onLoaded(fn) {
+      if (typeof fn === "function") listeners.push(fn);
+      if (loaded) fn();
+    },
+    reloadFromStore,
     _testReset() {
       cache = {};
+      loaded = false;
     },
   };
 })();

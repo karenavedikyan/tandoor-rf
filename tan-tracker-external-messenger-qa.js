@@ -14,7 +14,7 @@ var TT_EXTERNAL_MESSENGER_QA = await (async () => {
   ok(await page.locator('[data-tt="invite-url"]').isVisible(), "holder sees personal invite link");
   const invite = await page.locator('[data-tt="invite-url"]').textContent();
   ok(invite.includes("tt_st="), "invite carries start token");
-  await page.locator('[data-tt="open-recipient"]').click();
+  await ttOpenRecipientDemo();
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
@@ -32,17 +32,20 @@ var TT_EXTERNAL_MESSENGER_QA = await (async () => {
   );
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m2&tt_id=TT-2026-006`);
   await page.reload();
-  await page.locator('[data-tt="open-recipient"]').click();
-  ok(await page.locator('[data-tt="pick-channel"][data-channel="max"]').isDisabled(), "MAX disabled without config");
-  await page.evaluate(() => {
-    window.__TT_MESSENGER_DEMO__ = { maxEnabled: true, maxAccessToken: "qa-max-token", maxDemoUserId: "max-qa-1" };
-  });
-  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m2&tt_id=TT-2026-006&tt_view=recipient&tt_order=TT-2026-006&tt_hv=1&tt_rcv=ext_04`);
-  await page.reload();
+  await ttOpenRecipientDemo();
+  ok(await page.locator('[data-tt="pick-channel"][data-channel="max"]').isDisabled(), "MAX disabled without demo toggle");
+  await page.locator('[data-tt="exit-recipient"]').click();
+  await ttOpenDemoSettings();
+  await page.locator('[data-tt="demo-max-messenger"]').check();
+  await page.waitForFunction(() => window.__TT_MESSENGER_DEMO__?.maxEnabled === true);
+  await ttCloseDemoSettings();
+  await ttOpenRecipientDemo();
+  ok(!(await page.locator('[data-tt="pick-channel"][data-channel="max"]').isDisabled()), "MAX channel enabled after demo settings");
   await page.locator('[data-tt="pick-channel"][data-channel="max"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
+  await page.locator('[data-tt="messenger-verified"]').waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
-  ok((await page.locator('[data-tt="shown-code"]').textContent()).trim().length === 6, "MAX enabled in isolated demo config");
+  ok((await page.locator('[data-tt="shown-code"]').textContent()).trim().length === 6, "MAX enabled via demo settings without reload");
   const bad = await page.evaluate(async () => {
     window.TanTrackerPrototype.pickMessengerChannel("telegram");
     return window.TanTrackerPrototype.simulateMessengerContact("wrong_phone");

@@ -439,6 +439,7 @@
   let ttShellMounted = false;
   let detailDockObserver = null;
   let lastViewKey = "";
+  let regPersonalReady = !window.TtRegistryPersonal;
 
   function trackerShellLive(main) {
     return !!(main && main.querySelector("#tt-root") && main.querySelector("#tt-content"));
@@ -492,6 +493,7 @@
     registryPersonalView: "main",
     registryConfirmRemoveOrderId: null,
     editOrderId: null,
+    demoMaxMessengerEnabled: false,
   };
 
   const Att = () => window.TanTrackerAttachments;
@@ -988,10 +990,11 @@
   }
 
   function registryCounts() {
+    syncRegistryPersonalFromStore();
     const actor = registryActorId();
     let base = orders.filter((o) => orderVisible(o));
     if (state.registryPersonalView === "main") {
-      base = base.filter((o) => !registryPersonallyHidden(o, actor));
+      base = base.filter((o) => registryMainListVisible(o, actor));
     }
     const handoff = base.filter(
       (o) => o.holderId === actor && o.status !== "completed" && o.finalRecipientId && o.holderId !== o.finalRecipientId
@@ -2035,11 +2038,12 @@
     return false;
   }
 
-  function registryPersonallyHidden(o, actor) {
+  function registryMainListVisible(o, actor) {
     const RP = RegPersonal();
-    if (!RP || !actor || o.createdById !== actor) return false;
-    if (actorHasRegistryObligation(o, actor)) return false;
-    return RP.isRemoved(o.id, actor) || RP.isArchived(o.id, actor);
+    if (!RP || !actor) return true;
+    if (RP.isArchived(o.id, actor)) return false;
+    if (RP.isRemoved(o.id, actor) && orderCreatorId(o) === actor) return false;
+    return true;
   }
 
   function applyRegistryPersonalView(list, actor) {
@@ -2047,23 +2051,46 @@
     const view = state.registryPersonalView || "main";
     if (!RP || !actor) return list;
     if (view === "archived") {
-      return list.filter((o) => o.createdById === actor && RP.isArchived(o.id, actor));
+      return list.filter((o) => RP.isArchived(o.id, actor));
     }
     if (view === "removed") {
-      return list.filter((o) => o.createdById === actor && RP.isRemoved(o.id, actor));
+      return list.filter((o) => orderCreatorId(o) === actor && RP.isRemoved(o.id, actor));
     }
-    return list.filter((o) => !registryPersonallyHidden(o, actor));
+    return list.filter((o) => registryMainListVisible(o, actor));
   }
 
-  function canInitiatorRemoveFromRegistry(o, actor) {
-    return !!(o && actor && o.createdById === actor && !actorHasRegistryObligation(o, actor));
+  function canCreatorRemoveFromRegistry(o, actor) {
+    return !!(o && actor && orderCreatorId(o) === actor);
   }
 
-  function canInitiatorArchive(o, actor) {
-    return !!(o && actor && o.createdById === actor && o.status === "completed");
+  function canPersonalArchive(o, actor) {
+    return !!(o && actor && o.status === "completed" && orderVisible(o));
+  }
+
+  function syncMessengerDemoUiConfig() {
+    const prev =
+      window.__TT_MESSENGER_DEMO__ && typeof window.__TT_MESSENGER_DEMO__ === "object"
+        ? window.__TT_MESSENGER_DEMO__
+        : {};
+    window.__TT_MESSENGER_DEMO__ = { ...prev, maxEnabled: !!state.demoMaxMessengerEnabled };
+  }
+
+  function loadDemoMaxMessengerPref() {
+    try {
+      state.demoMaxMessengerEnabled = sessionStorage.getItem("tt-demo-max-messenger") === "1";
+    } catch {
+      state.demoMaxMessengerEnabled = false;
+    }
+    syncMessengerDemoUiConfig();
+  }
+
+  function syncRegistryPersonalFromStore() {
+    const RP = RegPersonal();
+    if (RP?.isLoaded?.()) RP.reloadFromStore();
   }
 
   function visibleOrders() {
+    syncRegistryPersonalFromStore();
     const actor = registryActorId();
     let list = orders.filter((o) => orderVisible(o));
     if (state.actingContactId) {
@@ -2095,7 +2122,9 @@
       }
       return true;
     });
-    list = applyRegistryPersonalView(list, actor);
+    if (state.mineFilter !== "handoff" && state.mineFilter !== "receive") {
+      list = applyRegistryPersonalView(list, actor);
+    }
     return list;
   }
 
@@ -3054,11 +3083,11 @@
 
     const initiatorBtns = [];
     const RP = RegPersonal();
-    if (actor && o.createdById === actor && RP) {
-      if (canInitiatorArchive(o, actor) && !RP.isArchived(o.id, actor)) {
+    if (actor && RP) {
+      if (canPersonalArchive(o, actor) && !RP.isArchived(o.id, actor)) {
         initiatorBtns.push(overflowActionBtn("В мой архив", "registry-archive", "archive"));
       }
-      if (canInitiatorRemoveFromRegistry(o, actor) && !RP.isRemoved(o.id, actor)) {
+      if (canCreatorRemoveFromRegistry(o, actor) && !RP.isRemoved(o.id, actor)) {
         initiatorBtns.push(overflowActionBtn("Убрать из моего реестра", "registry-remove-ask", "trash-2"));
       }
       if (RP.isArchived(o.id, actor)) {
@@ -3138,7 +3167,7 @@
       ${
         state.registryConfirmRemoveOrderId === o.id
           ? `<div class="tt-registry-remove-confirm" data-tt="registry-remove-confirm">
-        <p class="tt-warning">Убрать «${E(o.item)}» из вашего реестра? Каноническая история и обязанности других участников не изменятся.</p>
+        <p class="tt-warning">Убрать «${E(o.item)}» из общего реестра? История и custody не меняются; другие участники видят передачу как прежде. Если у вас остаётся активная обязанность (передать/получить), она останется в фильтрах «Нужно передать» / «Жду получения» и в карточке.</p>
         <div class="tt-actions">${btn("Убрать из реестра", 'data-tt="registry-remove-confirm"', "tt-primary")}${btn("Отмена", 'data-tt="registry-remove-cancel"')}</div>
       </div>`
           : ""
@@ -3380,6 +3409,17 @@
 
   function renderTracker(opts = {}) {
     if (current !== ROUTE) return;
+    if (RegPersonal() && !regPersonalReady && !opts.afterRegPersonal) {
+      RegPersonal()
+        .ready()
+        .then(() => {
+          RegPersonal().reloadFromStore();
+          regPersonalReady = true;
+          renderTracker({ ...opts, afterRegPersonal: true });
+        });
+      return;
+    }
+    if (RegPersonal()?.isLoaded?.()) syncRegistryPersonalFromStore();
     applyBodyClasses();
     const main = document.querySelector(".main");
     if (!main) return;
@@ -3449,7 +3489,9 @@
             })
             .join("")}</select></label>`;
 
-    const demoBody = `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p><div data-tt="chrome">${chrome}</div>`;
+    const maxToggle = `<label class="tt-demo-max-toggle"><input type="checkbox" data-tt="demo-max-messenger"${state.demoMaxMessengerEnabled ? " checked" : ""}> Демо MAX на экране получателя (без prod-бота)</label>
+      <p class="tt-muted tt-demo-max-note">Выключено — MAX показан недоступным, как без серверной настройки.</p>`;
+    const demoBody = `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p>${maxToggle}<div data-tt="chrome">${chrome}</div>`;
     const demoShell = "";
 
     const demoHeadPopover = demoHeadPopoverHtml(demoBody);
@@ -4219,8 +4261,8 @@
     }
     if (action === "registry-remove-ask" && o) {
       const actor = registryActorId();
-      if (!canInitiatorRemoveFromRegistry(o, actor)) {
-        state.error = "Убрать из реестра может только инициатор, без активных обязательств по передаче.";
+      if (!canCreatorRemoveFromRegistry(o, actor)) {
+        state.error = "Убрать из реестра может только создатель передачи.";
         renderTracker();
         return;
       }
@@ -4237,7 +4279,7 @@
     if (action === "registry-remove-confirm" && o) {
       const actor = registryActorId();
       const RP = RegPersonal();
-      if (!RP || !canInitiatorRemoveFromRegistry(o, actor)) {
+      if (!RP || !canCreatorRemoveFromRegistry(o, actor)) {
         state.error = "Нельзя убрать эту передачу из реестра.";
         state.registryConfirmRemoveOrderId = null;
         renderTracker();
@@ -4254,8 +4296,8 @@
     if (action === "registry-archive" && o) {
       const actor = registryActorId();
       const RP = RegPersonal();
-      if (!RP || !canInitiatorArchive(o, actor)) {
-        state.error = "В архив можно отправить только завершённую передачу, которую вы создали.";
+      if (!RP || !canPersonalArchive(o, actor)) {
+        state.error = "В архив можно отправить только завершённую передачу в вашей области видимости.";
         renderTracker();
         return;
       }
@@ -4273,8 +4315,8 @@
     }
     if (action === "registry-unremove" && o) {
       const actor = registryActorId();
-      if (o.createdById !== actor) {
-        state.error = "Восстановить может только инициатор.";
+      if (orderCreatorId(o) !== actor) {
+        state.error = "Восстановить может только создатель передачи.";
         renderTracker();
         return;
       }
@@ -4487,6 +4529,15 @@
       writeUrl();
       renderTracker();
     }
+    if (e.target.matches('[data-tt="demo-max-messenger"]')) {
+      state.demoMaxMessengerEnabled = !!e.target.checked;
+      try {
+        sessionStorage.setItem("tt-demo-max-messenger", state.demoMaxMessengerEnabled ? "1" : "0");
+      } catch {}
+      syncMessengerDemoUiConfig();
+      if (state.recipientMode) renderTracker();
+      return;
+    }
     if (e.target.matches('[data-tt="attach-input"]')) {
       const key = e.target.getAttribute("data-input-key") || "create";
       const files = [...e.target.files];
@@ -4615,6 +4666,18 @@
     hasFirstConfirmedCustodyHandoff,
   };
 
+  regPersonalReady = !RegPersonal();
+  loadDemoMaxMessengerPref();
   RegPersonal()?.init?.();
+  RegPersonal()?.onLoaded?.(() => {
+    RegPersonal()?.reloadFromStore?.();
+    regPersonalReady = true;
+    if (current === ROUTE) renderTracker({ afterRegPersonal: true });
+  });
+  window.NotificationDemoStore?.onHydrated?.(() => {
+    RegPersonal()?.reloadFromStore?.();
+    if (regPersonalReady && current === ROUTE) renderTracker({ afterRegPersonal: true });
+  });
+
   syncShellNav();
 })();

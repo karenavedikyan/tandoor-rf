@@ -65,10 +65,11 @@ var TT_ATT_QA = await (async () => {
   const orderId = await page.evaluate(() => window.TanTrackerPrototype.orders().find((x) => x.item === "Attach QA")?.id);
   ok(!!orderId, "created order in memory");
 
-  await ttOpenDetailDemo();
-  await page.locator('[data-tt="open-recipient"]').click();
-  ok((await page.locator('[data-tt="attachments"]').count()) === 0, "recipient hides attachments before phone verify");
-  await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  await ttOpenRecipientDemo();
+  ok((await page.locator('[data-tt="attachments"]').count()) === 0, "recipient hides attachments before messenger verify");
+  await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
+  await page.getByRole("button", { name: /Поделиться контактом/ }).click();
+  await page.waitForFunction(() => window.TanTrackerPrototype.state.phoneVerified === true, null, { timeout: 10000 });
   const recipAtt = page.locator('[data-tt="recipient-attachments-disclosure"]');
   if (await recipAtt.count()) {
     if (!(await recipAtt.evaluate((el) => el.open))) await recipAtt.locator("summary").click();

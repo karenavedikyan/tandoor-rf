@@ -1,36 +1,5 @@
 #!/usr/bin/env node
-import { spawn, execSync } from "child_process";
-import net from "net";
-import { fileURLToPath } from "url";
-import { join } from "path";
-
 const BASE = "http://127.0.0.1:34113/v1/demo-notification-state";
-const root = join(fileURLToPath(import.meta.url), "..");
-
-function waitForPort(port, attempts = 80) {
-  return new Promise((resolve, reject) => {
-    let n = 0;
-    const tryOnce = () => {
-      const socket = net.connect(port, "127.0.0.1", () => {
-        socket.end();
-        resolve();
-      });
-      socket.on("error", () => {
-        if (++n >= attempts) reject(new Error(`port ${port} not ready`));
-        else setTimeout(tryOnce, 100);
-      });
-    };
-    tryOnce();
-  });
-}
-
-try {
-  execSync("fuser -k 34113/tcp 2>/dev/null || true", { stdio: "ignore" });
-} catch {}
-await new Promise((r) => setTimeout(r, 400));
-const demoProc = spawn("node", ["prototype/notification-demo-server.mjs"], { cwd: root, stdio: "ignore" });
-process.on("exit", () => demoProc.kill("SIGTERM"));
-await waitForPort(34113);
 const checks = [];
 const ok = (v, s) => {
   if (!v) throw new Error("API QA: " + s);
@@ -50,6 +19,9 @@ async function req(method, headers, body) {
   } catch {}
   return { status: res.status, json, text };
 }
+
+const health = await req("GET", { "X-Visitor-Id": "api-qa-health-probe-01" });
+ok(health.status === 200, "reuse existing demo backend on :34113");
 
 const v1 = "api-qa-visitor-aaa11111";
 const v2 = "api-qa-visitor-bbb22222";
@@ -72,10 +44,9 @@ ok(r.status === 400, "reject short visitor id");
 r = await req("PUT", { "X-Visitor-Id": v1 }, { nope: true });
 ok(r.status === 400, "reject invalid body shape");
 
-r = await req("GET", { "X-Visitor-Id": v1 });
-ok(r.json?.users?.m1?.read?.["m1:x"] === true, "invalid PUT did not wipe state");
-
 const snap = await req("GET", { "X-Visitor-Id": v1 });
+ok(snap.json?.users?.m1?.read?.["m1:x"] === true, "invalid PUT did not wipe state");
+
 r = await req(
   "PUT",
   { "X-Visitor-Id": v1 },

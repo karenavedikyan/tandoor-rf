@@ -26,15 +26,21 @@ function waitForPort(port, host = "127.0.0.1", attempts = 60) {
   });
 }
 
-const demoProc = spawn("node", ["prototype/notification-demo-server.mjs"], {
-  cwd: join(fileURLToPath(import.meta.url), ".."),
-  stdio: ["ignore", "pipe", "pipe"],
-});
-demoProc.on("exit", (code) => {
-  if (code && code !== 0) console.error("notification demo backend exited", code);
-});
-process.on("exit", () => demoProc.kill("SIGTERM"));
-await waitForPort(34113);
+let demoProc = null;
+let demoProcStarted = false;
+try {
+  await waitForPort(34113, "127.0.0.1", 3);
+} catch {
+  demoProc = spawn("node", ["prototype/notification-demo-server.mjs"], {
+    cwd: join(fileURLToPath(import.meta.url), ".."),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  demoProcStarted = true;
+  demoProc.on("exit", (code) => {
+    if (code && code !== 0) console.error("notification demo backend exited", code);
+  });
+  await waitForPort(34113);
+}
 
 const server = createServer(async (req, res) => {
   try {
@@ -59,12 +65,23 @@ globalThis.ttOpenDemoSettings = async () => {
   const panel = page.locator('[data-tt="demo-settings"]');
   if (await panel.count() && !(await panel.evaluate((el) => el.open))) await panel.locator("summary").click();
 };
+globalThis.ttCloseDemoSettings = async () => {
+  const panel = page.locator('[data-tt="demo-settings"]');
+  if (await panel.count() && (await panel.evaluate((el) => el.open))) {
+    await panel.locator("summary").click();
+  }
+};
 globalThis.ttOpenDetailDemo = async () => {
-  if (!(await page.locator('[data-tt="detail-demo"]').count())) return;
+  await ttCloseDemoSettings();
   const overflow = page.locator('[data-tt="detail-overflow"]');
   if (await overflow.count() && !(await overflow.evaluate((el) => el.open))) {
-    await overflow.locator(":scope > summary").click();
+    await overflow.locator(":scope > summary").click({ force: true });
   }
+};
+globalThis.ttOpenRecipientDemo = async () => {
+  await ttOpenDetailDemo();
+  await page.locator('[data-tt="open-recipient"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt="open-recipient"]').click();
 };
 globalThis.ttBackToList = async () => {
   const terminal = page.locator('[data-tt="terminal-back-list"]');
@@ -81,7 +98,6 @@ globalThis.ttBackToList = async () => {
   await page.locator("#tt-root").waitFor({ state: "visible" });
 };
 globalThis.ttOpenOtherActions = async () => {
-  if (!(await page.locator('[data-tt="other-actions"]').count())) return;
   const overflow = page.locator('[data-tt="detail-overflow"]');
   if (await overflow.count() && !(await overflow.evaluate((el) => el.open))) {
     await overflow.locator(":scope > summary").click();
@@ -121,7 +137,6 @@ globalThis.ttWaitAttThumbLoaded = async () => {
     return img && img.naturalWidth > 0;
   });
 };
-/** After pick or when summary card is shown: one «Далее» → review. */
 globalThis.ttClickCreate = async () => {
   const fab = page.locator('[data-tt="create-fab"]');
   if (await fab.isVisible()) await fab.click();
@@ -151,9 +166,8 @@ await writeFile(tmpQa, qaSource);
 try {
   await import(pathToFileURL(tmpQa).href);
 } finally {
+  await browser.close();
+  server.close();
+  if (demoProcStarted && demoProc) demoProc.kill("SIGTERM");
   await unlink(tmpQa).catch(() => {});
 }
-
-await browser.close();
-server.close();
-demoProc.kill("SIGTERM");
