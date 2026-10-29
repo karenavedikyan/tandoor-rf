@@ -199,6 +199,12 @@ describe("tanbot telegram probe", () => {
 
   it("does not embed tanbot secrets in public static bundle", () => {
     const publicDir = path.join(process.cwd(), "public");
+    const secretPatterns = [
+      /TANBOT_TELEGRAM_BOT_TOKEN\s*=/,
+      /TANBOT_TELEGRAM_WEBHOOK_SECRET\s*=/,
+      /TANBOT_TELEGRAM_LINK_TOKEN_PEPPER\s*=/,
+      /\d{8,10}:[A-Za-z0-9_-]{30,}/,
+    ];
     const hits: string[] = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -206,7 +212,7 @@ describe("tanbot telegram probe", () => {
         if (entry.isDirectory()) walk(full);
         else if (/\.(js|html|css)$/i.test(entry.name)) {
           const text = fs.readFileSync(full, "utf8");
-          if (text.includes("TANBOT_TELEGRAM_BOT_TOKEN") || text.includes("tanbot-telegram")) {
+          if (secretPatterns.some((re) => re.test(text))) {
             hits.push(full);
           }
         }

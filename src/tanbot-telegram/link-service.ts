@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { withTransaction } from "../access/db";
 import type { TanbotTelegramStage2Config } from "./stage2-config";
 import {
@@ -27,7 +27,12 @@ export type LinkStatusDto = {
   integrationEnabled: boolean;
 };
 
-export async function getTanbotLinkStatus(pool: Pool, userId: string, botUsername: string): Promise<LinkStatusDto> {
+export async function getTanbotLinkStatus(
+  pool: Pool,
+  userId: string,
+  botUsername: string,
+  flags: { integrationEnabled: boolean },
+): Promise<LinkStatusDto> {
   const client = await pool.connect();
   try {
     const account = await findAccountByUserId(client, userId);
@@ -46,7 +51,7 @@ export async function getTanbotLinkStatus(pool: Pool, userId: string, botUsernam
           }
         : null,
       botUsername,
-      integrationEnabled: true,
+      integrationEnabled: flags.integrationEnabled,
     };
   } finally {
     client.release();
@@ -89,7 +94,9 @@ export async function confirmTanbotLink(
   pool: Pool,
   userId: string,
   attemptId: string,
+  options: { enableNotifications?: boolean } = {},
 ): Promise<{ linked: true }> {
+  const enableNotifications = options.enableNotifications === true;
   await withTransaction(async (client) => {
     const attemptRow = await client.query(
       `SELECT id::text, user_id::text, expires_at, consumed_at, cancelled_at,
@@ -125,24 +132,36 @@ export async function confirmTanbotLink(
     }
 
     const tgUserId = BigInt(attempt.telegram_user_id);
+    await client.query(`SELECT pg_advisory_xact_lock(845001, hashtext($1::text))`, [tgUserId.toString()]);
+
     const other = await findAccountByTelegramUserId(client, tgUserId);
     if (other && other.user_id !== userId) {
       throw Object.assign(new Error("Этот Telegram уже привязан к другому сотруднику."), { http: 409 });
     }
 
     await client.query(`DELETE FROM tanbot_telegram_accounts WHERE user_id = $1::uuid`, [userId]);
-    await client.query(
+    const inserted = await client.query<{ user_id: string }>(
       `INSERT INTO tanbot_telegram_accounts (user_id, telegram_user_id, telegram_chat_id, telegram_username, notifications_enabled, stopped_at)
-       VALUES ($1::uuid, $2, $3, $4, TRUE, NULL)
+       VALUES ($1::uuid, $2, $3, $4, $5, NULL)
        ON CONFLICT (telegram_user_id) DO UPDATE SET
-         user_id = EXCLUDED.user_id,
          telegram_chat_id = EXCLUDED.telegram_chat_id,
          telegram_username = EXCLUDED.telegram_username,
-         notifications_enabled = TRUE,
+         notifications_enabled = EXCLUDED.notifications_enabled,
          stopped_at = NULL,
-         linked_at = NOW()`,
-      [userId, attempt.telegram_user_id, attempt.telegram_chat_id, attempt.telegram_username],
+         linked_at = NOW()
+       WHERE tanbot_telegram_accounts.user_id = EXCLUDED.user_id
+       RETURNING user_id::text`,
+      [
+        userId,
+        attempt.telegram_user_id,
+        attempt.telegram_chat_id,
+        attempt.telegram_username,
+        enableNotifications,
+      ],
     );
+    if (!inserted.rows[0] || inserted.rows[0].user_id !== userId) {
+      throw Object.assign(new Error("Этот Telegram уже привязан к другому сотруднику."), { http: 409 });
+    }
 
     await client.query(
       `UPDATE tanbot_telegram_link_attempts SET consumed_at = NOW(), confirmed_at = NOW() WHERE id = $1::uuid`,
@@ -192,9 +211,10 @@ export async function consumeStartTokenForTelegramUser(
     telegramUsername: string | null;
     telegramFirstName: string | null;
   },
+  existingClient?: PoolClient,
 ): Promise<"linked" | "pending_lk_confirm" | "invalid" | "conflict"> {
   const tokenHash = hashLinkStartToken(input.startToken, config.linkTokenPepper);
-  return withTransaction(async (client) => {
+  const run = async (client: PoolClient) => {
     const existingAccount = await findAccountByTelegramUserId(client, input.telegramUserId);
     if (existingAccount) {
       return "conflict";
@@ -225,5 +245,9 @@ export async function consumeStartTokenForTelegramUser(
       detail: { attemptId: attempt.id },
     });
     return "pending_lk_confirm";
-  });
+  };
+  if (existingClient) {
+    return run(existingClient);
+  }
+  return withTransaction(run);
 }

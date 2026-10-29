@@ -1,5 +1,5 @@
 /**
- * Profile UI smoke for Tanbot linking (HTTP + PG; Telegram via webhook API, not page mock).
+ * Profile UI: start from button → synthetic webhook → focus refresh → confirm (no forced reload).
  * Run: TANBOT_STAGE2_BROWSER_SMOKE=1 npm run test:browser -- test/browser/tanbot-telegram-profile-link.browser.test.ts
  */
 import assert from "node:assert/strict";
@@ -67,11 +67,23 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
     });
   });
 
-  it("profile shows Telegram section and confirm links account", async () => {
+  it("profile shows Telegram section and confirm links account after return refresh", async () => {
     const { createApp } = await import("../../src/server");
     const app = createApp();
     const context = await browser.newContext({ baseURL: baseUrl });
     const page = await context.newPage();
+    let startToken: string | null = null;
+    page.on("response", async (res) => {
+      if (
+        res.url().includes("/api/profile/tanbot/telegram/link/start") &&
+        res.request().method() === "POST" &&
+        res.status() === 200
+      ) {
+        const body = (await res.json()) as { deepLink?: string };
+        if (body.deepLink) startToken = new URL(body.deepLink).searchParams.get("start");
+      }
+    });
+
     await page.goto("/login");
     await page.fill("#email", "tanbot-browser@test.local");
     await page.fill("#password", PASSWORD);
@@ -80,16 +92,10 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
     await page.goto("/profile");
     await page.waitForSelector("#tanbot-telegram-section:not([hidden])", { timeout: 15000 });
     await page.click("button:text('Подключить Telegram')");
-    await page.waitForTimeout(300);
-
-    const cookies = await context.cookies();
-    const sessionCookie = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
-    const startApi = await request(app)
-      .post("/api/profile/tanbot/telegram/link/start")
-      .set({ Origin: baseUrl, Cookie: sessionCookie, "Content-Type": "application/json" })
-      .send({});
-    const token = new URL(startApi.body.deepLink).searchParams.get("start");
-    assert.ok(token);
+    for (let i = 0; i < 30 && !startToken; i += 1) {
+      await page.waitForTimeout(100);
+    }
+    assert.ok(startToken, "UI start must produce link/start token");
 
     await request(app)
       .post("/api/tanbot-telegram/webhook")
@@ -101,12 +107,16 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
           from: { id: 88001, is_bot: false, username: "browser_user" },
           chat: { id: 88001, type: "private" },
           date: 1,
-          text: `/start ${token}`,
+          text: `/start ${startToken}`,
         },
       });
 
-    await page.reload();
+    await page.evaluate(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
     await page.waitForSelector("button:text('Подтвердить привязку')", { timeout: 10000 });
+    await page.check("#tanbot-confirm-notifications");
     await page.click("button:text('Подтвердить привязку')");
     await page.waitForSelector("button:text('Отключить Telegram')", { timeout: 10000 });
     await context.close();

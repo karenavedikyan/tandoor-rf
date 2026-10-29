@@ -63,8 +63,8 @@ export function createTanbotTelegramWebhookRouter(): express.Router {
       }
 
       const transport = loaded.config.deliveryEnabled ? createDefaultTelegramDeliveryTransport() : null;
-      const reply = await handleTanbotTelegramUpdate(pool, loaded.config, raw, transport);
-      await maybeSendWebhookReply(loaded.config, transport, reply);
+      const { reply, updateId } = await handleTanbotTelegramUpdate(pool, loaded.config, raw);
+      await maybeSendWebhookReply(pool, loaded.config, transport, updateId, reply);
       res.status(200).json({ ok: true });
     })().catch(next);
   });

@@ -8,6 +8,12 @@ import { closePool, getPool } from "./db/pool";
 import { runOneDiagnosticJob } from "./onec-diagnostics/worker";
 import { drainPendingImportJobs } from "./onec-import/worker-scheduler";
 import { startNightlyExchangeScheduler } from "./onec-nightly-exchange/scheduler";
+import { isTanbotTelegramEnabled } from "./tanbot-telegram/config";
+import {
+  isTanbotTelegramOutboxWorkerEnabled,
+  startTanbotTelegramOutboxWorker,
+} from "./tanbot-telegram/outbox-scheduler";
+import { loadTanbotTelegramStage2Config } from "./tanbot-telegram/stage2-config";
 import { setNoStore } from "./http/no-store";
 import { requireAuth } from "./middleware/auth";
 import { csrfOriginProtection, csrfProtection } from "./middleware/csrf";
@@ -357,6 +363,8 @@ export function createApp(): express.Application {
   return app;
 }
 
+let stopTanbotOutboxWorker: (() => void) | null = null;
+
 export function startServer(): ReturnType<express.Application["listen"]> {
   const port = parsePort(process.env.PORT);
   const app = createApp();
@@ -370,11 +378,19 @@ export function startServer(): ReturnType<express.Application["listen"]> {
       if (diagnosticStatus !== "idle") console.log(`1C diagnostic job: ${diagnosticStatus}`);
       await drainPendingImportJobs();
       startNightlyExchangeScheduler(process.env);
+      if (isTanbotTelegramEnabled() && isTanbotTelegramOutboxWorkerEnabled()) {
+        const loaded = loadTanbotTelegramStage2Config();
+        if (loaded.ok) {
+          stopTanbotOutboxWorker = startTanbotTelegramOutboxWorker(pool, loaded.config).stop;
+          console.log("Tanbot Telegram outbox worker enabled");
+        }
+      }
     }).catch(() => console.error("1C background workers unavailable"));
   });
 
   process.on("SIGTERM", () => {
     console.log("SIGTERM received, shutting down gracefully...");
+    stopTanbotOutboxWorker?.();
     server.close(() => {
       void closePool()
         .catch(() => undefined)

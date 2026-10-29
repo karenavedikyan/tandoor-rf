@@ -47,6 +47,8 @@
     "bitrix24-diagnostics:local": "node --env-file=.env dist/cli/bitrix24-diagnostics.js",
     "tanbot-telegram-probe": "node dist/cli/tanbot-telegram-probe.js",
     "tanbot-telegram-probe:local": "node --env-file=.env dist/cli/tanbot-telegram-probe.js",
+    "tanbot-telegram-outbox-worker": "node dist/cli/tanbot-telegram-outbox-worker.js --once",
+    "tanbot-telegram-outbox-worker:local": "node --env-file=.env dist/cli/tanbot-telegram-outbox-worker.js --once",
     "verify:tanbot-readonly-check": "node scripts/verify-tanbot-readonly-check.mjs",
     "verify:tanbot-readonly-preflight": "node scripts/tanbot-readonly-packaging-preflight.mjs",
     "bitrix24-labels-bootstrap": "node dist/cli/bitrix24-labels-bootstrap.js",

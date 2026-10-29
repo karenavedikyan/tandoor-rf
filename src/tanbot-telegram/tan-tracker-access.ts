@@ -1,11 +1,22 @@
 import type { PoolClient } from "pg";
+import { tanTrackerNavAllowed } from "../tan-tracker/scope";
 
-/** Minimal scope check before sending assignment notification (no public tokens). */
-export async function canUserViewTransfer(
+/** Delivery-time check: active LK user, still holder at handoff version, canonical TT access. */
+export async function canDeliverAssignmentNotification(
   client: PoolClient,
   userId: string,
   transferId: string,
+  handoffVersion: number,
 ): Promise<boolean> {
+  const userRow = await client.query<{ status: string; role: string }>(
+    `SELECT status, role FROM users WHERE id = $1::uuid`,
+    [userId],
+  );
+  const user = userRow.rows[0];
+  if (!user || user.status !== "active") return false;
+  if (!tanTrackerNavAllowed(user.role)) return false;
+  if (user.role === "admin") return false;
+
   const party = await client.query<{ id: string }>(
     `SELECT id::text FROM tt_parties WHERE user_id = $1::uuid AND kind = 'user' LIMIT 1`,
     [userId],
@@ -14,19 +25,14 @@ export async function canUserViewTransfer(
   if (!partyId) return false;
 
   const row = await client.query<{
-    creator_party_id: string;
     holder_party_id: string;
-    pending_party_id: string | null;
-    final_recipient_party_id: string | null;
-  }>(
-    `SELECT creator_party_id::text, holder_party_id::text, pending_party_id::text, final_recipient_party_id::text
-     FROM tt_transfers WHERE id = $1`,
-    [transferId],
-  );
+    handoff_version: number;
+    status: string;
+  }>(`SELECT holder_party_id::text, handoff_version, status FROM tt_transfers WHERE id = $1`, [transferId]);
   const t = row.rows[0];
-  if (!t) return false;
-  const involved = [t.creator_party_id, t.holder_party_id, t.pending_party_id, t.final_recipient_party_id].filter(
-    Boolean,
-  ) as string[];
-  return involved.includes(partyId);
+  if (!t || t.status === "completed") return false;
+  if (t.holder_party_id !== partyId) return false;
+  if (t.handoff_version < handoffVersion) return false;
+
+  return true;
 }

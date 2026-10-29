@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import type { TanbotTelegramStage2Config } from "./stage2-config";
 import type { TelegramDeliveryTransport } from "./delivery-transport";
 import { findAccountByUserId } from "./link-repository";
-import { canUserViewTransfer } from "./tan-tracker-access";
+import { canDeliverAssignmentNotification } from "./tan-tracker-access";
 
 const MAX_ATTEMPTS = 8;
 
@@ -79,7 +79,8 @@ export async function processTanbotNotificationOutbox(
 
       if (row.event_type === "tan_tracker.assignment") {
         const transferId = String(row.payload.transferId ?? "");
-        const allowed = await canUserViewTransfer(client, row.user_id, transferId);
+        const hv = Number(row.payload.handoffVersion ?? 0);
+        const allowed = await canDeliverAssignmentNotification(client, row.user_id, transferId, hv);
         if (!allowed) {
           await client.query(
             `UPDATE tanbot_notification_outbox SET status = 'cancelled', last_error_code = 'NO_ACCESS' WHERE id = $1::uuid`,

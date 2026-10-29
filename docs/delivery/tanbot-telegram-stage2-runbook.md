@@ -12,6 +12,8 @@
 | `TANBOT_TELEGRAM_WEBHOOK_ENABLED` | Приём POST `/api/tanbot-telegram/webhook` |
 | `TANBOT_TELEGRAM_WEBHOOK_SECRET` | Header `X-Telegram-Bot-Api-Secret-Token` (≥16) |
 | `TANBOT_TELEGRAM_DELIVERY_ENABLED` | `sendMessage` (outbox + ответы webhook) |
+| `TANBOT_TELEGRAM_OUTBOX_WORKER_ENABLED` | In-process outbox tick loop (**default off**) |
+| `TANBOT_TELEGRAM_OUTBOX_INTERVAL_MS` | Интервал worker (≥5000 ms, default 15000) |
 | `TANBOT_TELEGRAM_LINK_TOKEN_PEPPER` | HMAC start-token (≥16), не в git |
 | `TANBOT_TELEGRAM_LINK_TOKEN_TTL_MINUTES` | 5–60, default 15 |
 | `TANBOT_TELEGRAM_BOT_USERNAME` | Deep link `@TANDOOR_IBOT` |
@@ -22,12 +24,13 @@ Read-only CLI `tanbot-telegram-probe` **не** расширен на sendMessage
 ## Миграция
 
 `server/migrations/055_tanbot_telegram_stage2.sql` — link attempts, accounts, update dedup, outbox, audit.  
+`056_tanbot_telegram_webhook_inbox.sql` — durable reply / retry state для webhook.  
 Откат: DROP таблиц в обратном порядке (только на test/stage DB).
 
 ## Сценарий сотрудника
 
 1. ЛК → «Мой профиль» → «Подключить Telegram» → deep link.
-2. Telegram `/start <token>` → вернуться в ЛК → «Подтвердить привязку» (виден @username).
+2. Telegram `/start <token>` → вернуться в ЛК (страница обновит статус по focus) → «Подтвердить привязку» + явный checkbox уведомлений.
 3. При назначении передачи (handoff commit) → outbox → Telegram текст + ссылка `/tan-tracker`.
 4. Отключение: ЛК или `/stop` в Telegram.
 
@@ -36,8 +39,10 @@ Read-only CLI `tanbot-telegram-probe` **не** расширен на sendMessage
 1. Read-only: `npm run build && node dist/cli/tanbot-telegram-probe.js` (getMe/getWebhookInfo).
 2. Задать `TANBOT_TELEGRAM_WEBHOOK_SECRET` на сервере.
 3. **Отдельное** подтверждение: `setWebhook` на URL `…/api/tanbot-telegram/webhook` с secret (не выполняется агентом).
-4. Включить `TANBOT_TELEGRAM_WEBHOOK_ENABLED` и `TANBOT_TELEGRAM_DELIVERY_ENABLED`.
+4. Включить `TANBOT_TELEGRAM_WEBHOOK_ENABLED`, `TANBOT_TELEGRAM_DELIVERY_ENABLED`, при необходимости `TANBOT_TELEGRAM_OUTBOX_WORKER_ENABLED=true` (или cron `npm run tanbot-telegram-outbox-worker:local`).
 5. Тест с одним сотрудником.
+
+Однократная обработка outbox без HTTP-сервера: `npm run build && npm run tanbot-telegram-outbox-worker:local` (требует `DATABASE_URL`, delivery flag).
 
 ## Проверки Cursor
 

@@ -52,7 +52,9 @@ export function createTanbotTelegramProfileRouter(): Router {
         res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "База данных недоступна."));
         return;
       }
-      const status = await getTanbotLinkStatus(pool, req.authUser!.id, loaded.config.botUsername);
+      const status = await getTanbotLinkStatus(pool, req.authUser!.id, loaded.config.botUsername, {
+        integrationEnabled: true,
+      });
       res.status(200).json(status);
     }),
   );
@@ -102,7 +104,17 @@ export function createTanbotTelegramProfileRouter(): Router {
     blockPreviewWrites,
     handle(async (req, res) => {
       setNoStore(res);
+      if (!isTanbotTelegramEnabled()) {
+        res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Интеграция Telegram отключена."));
+        return;
+      }
+      const loaded = loadTanbotTelegramStage2Config();
+      if (!loaded.ok) {
+        res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Telegram временно недоступен."));
+        return;
+      }
       const attemptId = String((req.body as { attemptId?: string })?.attemptId ?? "").trim();
+      const enableNotifications = (req.body as { enableNotifications?: boolean })?.enableNotifications === true;
       if (!attemptId) {
         res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "attemptId обязателен."));
         return;
@@ -113,7 +125,7 @@ export function createTanbotTelegramProfileRouter(): Router {
         return;
       }
       try {
-        const result = await confirmTanbotLink(pool, req.authUser!.id, attemptId);
+        const result = await confirmTanbotLink(pool, req.authUser!.id, attemptId, { enableNotifications });
         res.status(200).json(result);
       } catch (err: unknown) {
         const http = (err as { http?: number }).http ?? 503;

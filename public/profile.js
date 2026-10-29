@@ -18,6 +18,9 @@
   var tanbotActions = document.getElementById("tanbot-telegram-actions");
   var tanbotNotifWrap = document.getElementById("tanbot-notifications-toggle-wrap");
   var tanbotNotifToggle = document.getElementById("tanbot-notifications-toggle");
+  var tanbotConfirmNotifWrap = document.getElementById("tanbot-confirm-notifications-wrap");
+  var tanbotConfirmNotifToggle = document.getElementById("tanbot-confirm-notifications");
+  var tanbotRefreshTimer = null;
 
   var ROLE_LABELS = {
     admin: "Администратор",
@@ -105,6 +108,7 @@
       }
       if (d.pendingConfirmation) {
         tanbotPending.hidden = false;
+        if (tanbotConfirmNotifWrap) tanbotConfirmNotifWrap.hidden = false;
         var p = d.pendingConfirmation;
         tanbotPending.textContent =
           "Подтвердите привязку Telegram" +
@@ -112,6 +116,7 @@
           ".";
       } else {
         tanbotPending.hidden = true;
+        if (tanbotConfirmNotifWrap) tanbotConfirmNotifWrap.hidden = true;
       }
       tanbotActions.innerHTML = "";
       if (!d.linked) {
@@ -149,17 +154,30 @@
       .then(function (result) {
         if (result.response.status === 200 && result.data && result.data.deepLink) {
           window.open(result.data.deepLink, "_blank", "noopener,noreferrer");
-          api.setStatus(statusEl, "Откройте Telegram и вернитесь для подтверждения.", "success");
+          api.setStatus(statusEl, "Откройте Telegram и вернитесь — страница обновит статус автоматически.", "success");
           loadTanbotTelegram();
+          scheduleTanbotRefresh();
         } else {
           api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось начать привязку."), "error");
         }
       });
   }
 
+  function scheduleTanbotRefresh() {
+    if (tanbotRefreshTimer) window.clearTimeout(tanbotRefreshTimer);
+    tanbotRefreshTimer = window.setTimeout(function () {
+      loadTanbotTelegram();
+    }, 400);
+  }
+
   function confirmTanbotLink(attemptId) {
+    var enableNotifications =
+      tanbotConfirmNotifToggle && !tanbotConfirmNotifToggle.hidden && tanbotConfirmNotifToggle.checked;
     api
-      .apiRequest("/api/profile/tanbot/telegram/link/confirm", { method: "POST", body: { attemptId: attemptId } })
+      .apiRequest("/api/profile/tanbot/telegram/link/confirm", {
+        method: "POST",
+        body: { attemptId: attemptId, enableNotifications: !!enableNotifications },
+      })
       .then(function (result) {
         if (result.response.status === 200) {
           api.setStatus(statusEl, "Telegram подключён.", "success");
@@ -247,6 +265,11 @@
         saving = false;
         saveButton.disabled = false;
       });
+  });
+
+  window.addEventListener("focus", scheduleTanbotRefresh);
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") scheduleTanbotRefresh();
   });
 
   shell.mountAuthenticatedShell("profile", function (user, reason) {

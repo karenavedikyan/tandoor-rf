@@ -109,7 +109,10 @@ describe("tanbot telegram stage2", { concurrency: false }, () => {
     const confirm = await request(app)
       .post("/api/profile/tanbot/telegram/link/confirm")
       .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
-      .send({ attemptId: statusBefore.body.pendingConfirmation.attemptId });
+      .send({
+        attemptId: statusBefore.body.pendingConfirmation.attemptId,
+        enableNotifications: true,
+      });
     assert.equal(confirm.status, 200, confirm.text);
 
     const statusAfter = await request(app)
