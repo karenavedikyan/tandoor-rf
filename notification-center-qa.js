@@ -33,7 +33,7 @@ var NOTIFICATION_CENTER_QA = await (async () => {
 
   await page.locator('[data-af="read-all"]').click();
   await page.evaluate(() => window.AssistantFeedback.flushDemoStore());
-  ok((await page.locator("#af-save-status").getAttribute("data-state")) === "saved", "read-all persisted to backend before reload");
+  ok((await page.evaluate(() => window.NotificationDemoStore.getSaveStatus())) === "saved", "read-all persisted to backend before reload");
   ok((await page.locator("#af-bell").getAttribute("aria-label")).includes("0 непрочитанных"), "read all clears unread count");
   await page.locator('[data-af="unread"]').click();
   ok((await page.locator(".af-note").count()) === 0, "unread filter empty after read all");

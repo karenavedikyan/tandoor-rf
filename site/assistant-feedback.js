@@ -20,7 +20,7 @@
   function storedRead(user,key){return !!loadStore().users[user]?.read?.[key];}
   function storedNoteDelivery(user,key){return loadStore().users[user]?.deliveryStatus?.[key]||"";}
   function persistNoteDelivery(user,key,state){const store=loadStore();ensureUser(store,user).deliveryStatus[key]=state;saveStore(store);}
-  const saveStatusLabel=()=>({idle:"",saving:"Демо: сохранение…",saved:"Демо: сохранено на preview-сервере",failed:"Демо: не удалось сохранить — изменения только в памяти вкладки",unavailable:"Демо: preview-сервер недоступен — только память вкладки"}[DS.getSaveStatus()]||"");
+  const saveStatusLabel=()=>{const st=DS.getSaveStatus();if(st==="idle"||st==="saved")return "";return{saving:"Демо: сохранение…",failed:"Демо: не удалось сохранить — изменения только в памяти вкладки",unavailable:"Демо: preview-сервер недоступен — только память вкладки"}[st]||"";};
   function isNoteDeliveryFailed(user,n){const st=storedNoteDelivery(user,n.key);if(st==="sent")return false;if(st==="failed")return true;return !!n.deliveryFailSeed;}
   function markFailedDeliveriesRetried(user){notes.filter(n=>n.user===user&&isNoteDeliveryFailed(user,n)).forEach(n=>persistNoteDelivery(user,n.key,"sent"));}
   function noteCategory(n){if(n.kind==="tt-track")return "tt";if(n.kind==="info")return "system";return "assign";}

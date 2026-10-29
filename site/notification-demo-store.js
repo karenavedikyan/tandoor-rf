@@ -18,8 +18,9 @@
   function resolveApiBaseFromConfig(cfg, baseURI, hostname) {
     cfg = String(cfg ?? "").trim();
     if (!cfg || cfg === "off" || cfg === "disabled") return null;
-    if (cfg.includes("__PORT_34113__")) {
-      if (/^(localhost|127\.0\.0\.1)$/i.test(hostname || "")) return "http://127.0.0.1:34113";
+    const placeholder = cfg.match(/^__PORT_(\d+)__$/);
+    if (placeholder) {
+      if (/^(localhost|127\.0\.0\.1)$/i.test(hostname || "")) return `http://127.0.0.1:${placeholder[1]}`;
       return null;
     }
     let href;
