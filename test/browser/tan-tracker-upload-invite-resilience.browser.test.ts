@@ -61,10 +61,21 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
     await page.waitForURL(/\/(clients|profile|work|access|admin)(\/|\?|$)/, { timeout: 25000 });
   }
 
+  async function clickVisibleCreateTransfer(page: Page) {
+    const fab = page.locator('[data-tt="create-fab"]');
+    if ((await fab.count()) > 0 && (await fab.isVisible())) {
+      await fab.click();
+      return;
+    }
+    const desktop = page.locator('[data-tt="create"][data-tt-main-cta], [data-tt="create"]').first();
+    await desktop.waitFor({ state: "visible", timeout: 15000 });
+    await desktop.click();
+  }
+
   async function openCreateFilesStep(page: Page) {
     await page.goto(`${fixture.baseUrl}/tan-tracker`);
     await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
-    await page.click('[data-tt="create"]');
+    await clickVisibleCreateTransfer(page);
     await page.fill('[data-tt-field="item"]', "Deadline regression box");
     await page.click('[data-tt="create-wizard-next"]');
     await page.waitForSelector('[data-create-phase="files"]', { timeout: 10000 });
@@ -73,7 +84,7 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
   async function createExternalTransfer(page: Page) {
     await page.goto(`${fixture.baseUrl}/tan-tracker`);
     await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
-    await page.click('[data-tt="create"]');
+    await clickVisibleCreateTransfer(page);
     await page.fill('[data-tt-field="item"]', "Invite regression box");
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-skip-files"]');
