@@ -450,6 +450,7 @@
   let ttShellMounted = false;
   let detailDockObserver = null;
   let lastViewKey = "";
+  let pendingClipboardFallbackSelect = null;
 
   function trackerShellLive(main) {
     return !!(main && main.querySelector("#tt-root") && main.querySelector("#tt-content"));
@@ -641,25 +642,45 @@
     });
   }
 
+  function focusSelectFallbackControl(selector) {
+    const el = document.querySelector(selector);
+    if (!el) return false;
+    el.focus();
+    if (typeof el.select === "function") {
+      el.select();
+      return el.selectionStart === 0 && el.selectionEnd > 0;
+    }
+    return false;
+  }
+
+  function queueClipboardFallbackSelect(selector) {
+    pendingClipboardFallbackSelect = selector;
+  }
+
+  function applyPendingClipboardFallbackSelect() {
+    const selector = pendingClipboardFallbackSelect;
+    if (!selector) return;
+    pendingClipboardFallbackSelect = null;
+    requestAnimationFrame(() => {
+      focusSelectFallbackControl(selector);
+    });
+  }
+
   function copyInviteUrlWithFeedback(url, inputSelector) {
     if (!url) {
       renderTracker();
       return;
     }
     const manual = () => {
-      const el = document.querySelector(inputSelector);
-      if (el) {
-        el.focus();
-        el.select();
-      }
       state.toast = "Не удалось скопировать автоматически. Выделите ссылку и скопируйте вручную.";
-      renderTracker();
+      queueClipboardFallbackSelect(inputSelector);
+      renderTracker({ soft: true });
     };
     if (navigator.clipboard?.writeText) {
       void navigator.clipboard.writeText(url).then(
         () => {
           state.toast = "Ссылка скопирована";
-          renderTracker();
+          renderTracker({ soft: true });
         },
         () => manual(),
       );
@@ -674,12 +695,8 @@
       return;
     }
     const manual = () => {
-      const el = document.querySelector(fallbackSelector);
-      if (el) {
-        el.focus();
-        if (typeof el.select === "function") el.select();
-      }
       state.toast = "Не удалось скопировать автоматически. Выделите текст и скопируйте вручную.";
+      queueClipboardFallbackSelect(fallbackSelector);
       renderTracker({ soft: true });
     };
     if (navigator.clipboard?.writeText) {
@@ -725,7 +742,7 @@
         <p class="tt-invite-message-card-action">Посмотреть передачу →</p>
         <p class="tt-invite-message-card-url tt-muted">${E(abs)}</p>
       </div>
-      <pre class="tt-invite-message-fallback" data-tt="messenger-invite-message-text">${E(plain)}</pre>
+      <textarea class="tt-invite-message-fallback" data-tt="messenger-invite-message-text" readonly rows="8" aria-label="Текст приглашения для ручного копирования">${E(plain)}</textarea>
     </section>`;
   }
 
@@ -4556,7 +4573,11 @@
     lucide.createIcons();
     setupDetailMobileDock();
     setupDetailOverflowMenu();
-    restoreFocus(snap);
+    if (pendingClipboardFallbackSelect) {
+      applyPendingClipboardFallbackSelect();
+    } else {
+      restoreFocus(snap);
+    }
   }
 
   function submitCreate() {

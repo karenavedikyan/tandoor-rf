@@ -179,7 +179,20 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
     }
   });
 
-  it("holder copy full invitation uses clipboard fallback path without reissuing invite", async () => {
+  async function expectFullFieldSelection(page: Page, selector: string) {
+    await page.waitForFunction(
+      (sel) => {
+        const el = document.querySelector(sel);
+        if (!el || !("value" in el)) return false;
+        const len = String(el.value).length;
+        return len > 0 && el.selectionStart === 0 && el.selectionEnd === len;
+      },
+      selector,
+      { timeout: 10000 },
+    );
+  }
+
+  it("holder clipboard fallback selects full invitation text and URL without reissuing invite", async () => {
     const holderContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
     try {
       const holderPage = await holderContext.newPage();
@@ -199,6 +212,11 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       const urlBefore = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
       assert.ok(inviteBody.startToken);
 
+      let invitePostCount = 0;
+      holderPage.on("request", (req) => {
+        if (req.method() === "POST" && req.url().includes("/messenger-invite")) invitePostCount += 1;
+      });
+
       await holderPage.evaluate(() => {
         Object.defineProperty(navigator, "clipboard", {
           configurable: true,
@@ -207,18 +225,23 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
           },
         });
       });
-
-      let invitePostCount = 0;
-      holderPage.on("request", (req) => {
-        if (req.method() === "POST" && req.url().includes("/messenger-invite")) invitePostCount += 1;
-      });
       await holderPage.click('[data-tt="messenger-invite-copy-message"]');
       await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 10000 });
+      await expectFullFieldSelection(holderPage, '[data-tt="messenger-invite-message-text"]');
+      const messageValue = await holderPage.inputValue('[data-tt="messenger-invite-message-text"]');
+      assert.match(messageValue, /Messenger holder UI box/);
+      assert.match(messageValue, /Посмотреть передачу:/);
+
+      await holderPage.evaluate(() => {
+        Reflect.deleteProperty(navigator, "clipboard");
+      });
+      await holderPage.click('[data-tt="messenger-invite-copy"]');
+      await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 10000 });
+      await expectFullFieldSelection(holderPage, '[data-tt="messenger-invite-url"]');
       const urlAfter = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
       assert.equal(urlAfter, urlBefore);
       assert.match(urlAfter, inviteBody.startToken ?? "er");
       assert.equal(invitePostCount, 0);
-      await holderPage.locator('[data-tt="messenger-invite-message-text"]').focus();
     } finally {
       await holderContext.close();
     }
