@@ -271,6 +271,14 @@
       });
   }
 
+  function pluralRu(n, forms) {
+    var m10 = n % 10;
+    var m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return forms[0];
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return forms[1];
+    return forms[2];
+  }
+
   function registryCheckbox(o, card) {
     if (cleanupPreviewReadOnly()) return "";
     var checked = state().registrySelection.indexOf(o.id) >= 0;
@@ -278,7 +286,7 @@
       '<label class="tt-registry-check' +
       (card ? " tt-registry-check--card" : "") +
       '" data-tt="registry-check-label">' +
-      '<input type="checkbox" data-tt="registry-select" value="' +
+      '<input type="checkbox" class="tt-check-input" data-tt="registry-select" value="' +
       deps.E(o.id) +
       '" aria-label="Выбрать ' +
       deps.E(o.id) +
@@ -297,52 +305,105 @@
     var selected = registrySelectionOrders();
     var n = selected.length;
     var all = n > 0 && n === state().registryVisibleIds.length;
-    var action = function (mode, label) {
+    var total = state().registryVisibleIds.length;
+    var action = function (mode, label, icon) {
       var count = selected.filter(function (o) {
         return cleanupEligible(o, mode);
       }).length;
-      return deps.btn(
-        label + " (" + count + ")",
-        'data-tt="registry-batch" data-mode="' + mode + '" ' + (count ? "" : "disabled") + ' title="' + count + " из " + n + ' выбранных доступны для действия"',
-        mode === "delete" ? "tt-cleanup-danger" : "tt-link",
+      var hint =
+        count === n ? label + ": все выбранные" : label + ": доступно " + count + " из " + n;
+      return (
+        '<button type="button" class="tt-selbtn' +
+        (mode === "delete" ? " tt-selbtn--danger" : "") +
+        '" data-tt="registry-batch" data-mode="' +
+        mode +
+        '" ' +
+        (count ? "" : "disabled") +
+        ' title="' +
+        deps.E(hint) +
+        '" aria-label="' +
+        deps.E(label) +
+        " (" +
+        count +
+        ')"><i data-lucide="' +
+        icon +
+        '" aria-hidden="true"></i><span>' +
+        deps.E(label) +
+        '</span><b class="tt-selbtn-count">' +
+        count +
+        "</b></button>"
       );
     };
     var personalMode = state().registryPersonalView === "archived" ? "personal-restore" : "personal";
     var generalMode = state().registryPersonalView === "registry-archive" ? "restore" : "archive";
-    var body =
-      n ?
-        '<div class="tt-registry-selection-actions" role="group" aria-label="Действия с выбранными треками">' +
-          (state().registryPersonalView !== "registry-archive" ?
-            action(personalMode, personalMode === "personal" ? "В мой архив" : "Восстановить мои")
-          : "") +
-          (canManageRegistry() ?
-            action(generalMode, generalMode === "restore" ? "Восстановить общие" : "В общий архив")
-          : "") +
-          (canManageRegistry() || selected.some(function (o) { return orderCreatorId(o) === registryActorId(); }) ?
-            action("delete", "Удалить")
-          : "") +
-          deps.btn("Снять выбор", 'data-tt="registry-selection-clear"', "tt-link") +
-          '</div><p>Числа на кнопках: доступные треки. Удаление только до первого получения.</p>'
-      : "<p>Отметьте один или несколько треков для архивирования или удаления. Выбор действует только в текущем списке.</p>";
+    var canDelete =
+      canManageRegistry() ||
+      selected.some(function (o) {
+        return orderCreatorId(o) === registryActorId();
+      });
+    var countText = n ?
+      (n === 1 ? "Выбран" : "Выбрано") + " " + n + " " + pluralRu(n, ["трек", "трека", "треков"])
+    : "";
+    var actions = n ?
+      '<div class="tt-registry-selection-actions" role="group" aria-label="Действия с выбранными треками">' +
+        (state().registryPersonalView !== "registry-archive" ?
+          action(
+            personalMode,
+            personalMode === "personal" ? "В мой архив" : "Вернуть мои",
+            personalMode === "personal" ? "archive" : "archive-restore",
+          )
+        : "") +
+        (canManageRegistry() ?
+          action(
+            generalMode,
+            generalMode === "restore" ? "Восстановить общие" : "В общий архив",
+            generalMode === "restore" ? "archive-restore" : "archive",
+          )
+        : "") +
+        (canDelete ? action("delete", "Удалить", "trash-2") : "") +
+        "</div>"
+    : "";
     return (
-      '<div class="tt-registry-selection" data-tt="registry-selection">' +
+      '<div class="tt-registry-selection' +
+      (n ? " tt-registry-selection--active" : "") +
+      '" data-tt="registry-selection">' +
       '<div class="tt-registry-selection-top">' +
-      '<label class="tt-registry-select-all"><input type="checkbox" data-tt="registry-select-all" ' +
+      '<label class="tt-registry-select-all" title="' +
+      (all ? "Снять выбор со всех показанных" : "Выбрать все показанные") +
+      '">' +
+      '<input type="checkbox" class="tt-check-input" data-tt="registry-select-all" ' +
       (all ? "checked" : "") +
       " " +
-      (state().registryVisibleIds.length ? "" : "disabled") +
-      '><span>Выбрать показанные</span></label>' +
-      '<span class="tt-registry-selection-count" role="status">Выбрано: ' +
-      n +
-      "</span></div>" +
-      body +
+      (total ? "" : "disabled") +
+      ' aria-label="' +
+      (all ? "Снять выбор со всех показанных" : "Выбрать все показанные") +
+      '">' +
+      "<span>" +
+      (n ? "Выбрано <b>" + n + "</b> из " + total : "Выбрать показанные") +
+      "</span></label>" +
+      '<span class="tt-registry-selection-count" role="status">' +
+      (n ?
+        '<span class="tt-sr-only">Выбрано: ' + n + " · " + deps.E(countText) + "</span>"
+      : '<span class="tt-registry-selection-hint">Архив или удаление без открытия карточки</span>') +
+      "</span>" +
+      actions +
+      (n ?
+        '<button type="button" class="tt-selbtn tt-selbtn--icon" data-tt="registry-selection-clear" aria-label="Снять выбор" title="Снять выбор"><i data-lucide="x" aria-hidden="true"></i></button>'
+      : "") +
+      "</div>" +
+      (n ?
+        "<p>Цифра на кнопке — сколько выбранных треков доступно для действия. Удалить можно только до первого получения.</p>"
+      : "") +
       "</div>"
     );
   }
 
   function paintRegistrySelection() {
     var host = document.querySelector('[data-tt="registry-selection"]');
-    if (host) host.outerHTML = registrySelectionToolbar();
+    if (host) {
+      host.outerHTML = registrySelectionToolbar();
+      if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+    }
     document.querySelectorAll('[data-tt="registry-select"]').forEach(function (el) {
       el.checked = state().registrySelection.indexOf(el.value) >= 0;
       var row = el.closest(".tt-selectable-card") || el.closest("tr");
