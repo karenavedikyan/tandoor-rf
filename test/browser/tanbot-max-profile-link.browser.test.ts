@@ -88,6 +88,7 @@ describe("tanbot max profile link browser smoke", { concurrency: false, skip: !R
     await page.fill("#email", "tanbot-max-browser@test.local");
     await page.fill("#password", PASSWORD);
     await page.click("#login-button");
+    await page.waitForURL(/\/(clients|profile)(\/|\?|$)/, { timeout: 20000 });
     await page.goto("/profile");
     await page.waitForSelector("#tanbot-max-section:not([hidden])", { timeout: 15000 });
     await page.click("button:text('Подключить MAX')");

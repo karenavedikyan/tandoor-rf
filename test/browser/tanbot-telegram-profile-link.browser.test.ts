@@ -148,6 +148,7 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
     await page.fill("#email", "tanbot-browser2@test.local");
     await page.fill("#password", PASSWORD);
     await page.click("#login-button");
+    await page.waitForURL(/\/(clients|profile)(\/|\?|$)/, { timeout: 20000 });
     await page.goto("/profile");
     await page.waitForSelector("#tanbot-telegram-section:not([hidden])", { timeout: 15000 });
 
