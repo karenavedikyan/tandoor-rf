@@ -66,6 +66,50 @@ async function loadInvitationHandoffProof(
   };
 }
 
+/** Contact proof started on invitation path but strict proof is not valid (expired session, etc.). */
+async function loadInvitationHandoffArtifact(
+  client: PoolClient,
+  input: { transferId: string; externalPartyId: string; preHandoffVersion: number },
+): Promise<InvitationProofSession | null> {
+  const res = await client.query<{
+    channel: ExternalMessengerChannel;
+    telegram_chat_id: string | null;
+    max_chat_id: string | null;
+    bound_telegram_user_id: string | null;
+    bound_max_user_id: string | null;
+  }>(
+    `SELECT channel, telegram_chat_id::text, max_chat_id::text,
+            bound_telegram_user_id::text, bound_max_user_id::text
+     FROM tt_external_messenger_sessions
+     WHERE transfer_id = $1
+       AND pending_party_id = $2::uuid
+       AND handoff_version = $3
+       AND superseded_at IS NULL
+       AND phone_verified_at IS NOT NULL
+       AND code_issued_at IS NOT NULL
+       AND channel IS NOT NULL
+     ORDER BY code_issued_at DESC
+     LIMIT 1`,
+    [input.transferId, input.externalPartyId, input.preHandoffVersion],
+  );
+  const row = res.rows[0];
+  if (!row?.channel) return null;
+  if (row.channel === "telegram") {
+    if (!row.telegram_chat_id || !row.bound_telegram_user_id) return null;
+    return {
+      channel: "telegram",
+      messengerUserId: row.bound_telegram_user_id,
+      messengerChatId: row.telegram_chat_id,
+    };
+  }
+  if (!row.max_chat_id || !row.bound_max_user_id) return null;
+  return {
+    channel: "max",
+    messengerUserId: row.bound_max_user_id,
+    messengerChatId: row.max_chat_id,
+  };
+}
+
 type MaterializeOutcome =
   | { ok: true; channel: ExternalMessengerChannel }
   | { ok: false; channel: ExternalMessengerChannel };
@@ -155,16 +199,22 @@ export async function resolveInvitationHandoffForNotify(
   input: { transferId: string; externalPartyId: string; preHandoffVersion: number },
 ): Promise<InvitationHandoffBridgeResult> {
   const proof = await loadInvitationHandoffProof(client, input);
-  if (!proof) return { kind: "no_invitation_proof" };
-
-  const materialized = await materializePersonFromInvitationProof(client, {
-    externalPartyId: input.externalPartyId,
-    proof,
-  });
-  if (!materialized.ok) {
-    return { kind: "invitation_proof_rejected", channel: materialized.channel };
+  if (proof) {
+    const materialized = await materializePersonFromInvitationProof(client, {
+      externalPartyId: input.externalPartyId,
+      proof,
+    });
+    if (!materialized.ok) {
+      return { kind: "invitation_proof_rejected", channel: materialized.channel };
+    }
+    return { kind: "ok", channel: materialized.channel };
   }
-  return { kind: "ok", channel: materialized.channel };
+
+  const artifact = await loadInvitationHandoffArtifact(client, input);
+  if (artifact) {
+    return { kind: "invitation_proof_rejected", channel: artifact.channel };
+  }
+  return { kind: "no_invitation_proof" };
 }
 
 /** @deprecated use resolveInvitationHandoffForNotify */

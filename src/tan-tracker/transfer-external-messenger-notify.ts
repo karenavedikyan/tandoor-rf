@@ -38,8 +38,14 @@ export async function notifyExternalPartyAfterHandoff(
   if (bridge.kind === "invitation_proof_rejected") {
     return;
   }
-  const invitationChannel =
+
+  let singleChannel = input.singleChannel ?? input.event === "after_receipt";
+  let preferredChannel =
     input.preferredChannel ?? (bridge.kind === "ok" ? bridge.channel : undefined);
+  if (bridge.kind === "no_invitation_proof" && singleChannel && !preferredChannel) {
+    singleChannel = false;
+  }
+
   const links = await signExternalPersonMessengerLinks(client, {
     externalPartyId: input.externalPartyId,
     transferId: input.transferId,
@@ -58,8 +64,8 @@ export async function notifyExternalPartyAfterHandoff(
     event: input.event,
     body,
     idempotencyKey: `tt-ext-msg:${input.event}:${input.transferId}:hv:${input.handoffVersion}`,
-    preferredChannel: invitationChannel,
-    singleChannel: input.singleChannel ?? input.event === "after_receipt",
+    preferredChannel,
+    singleChannel,
   });
 }
 
