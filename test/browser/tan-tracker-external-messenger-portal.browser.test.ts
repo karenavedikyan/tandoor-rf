@@ -38,7 +38,7 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
     await page.waitForURL(/\/(clients|profile|work|access|admin)(\/|\?|$)/, { timeout: 25000 });
   }
 
-  async function createExternalTransferViaUi(page: Page): Promise<void> {
+  async function createExternalTransferViaUi(page: Page, phone = "+79992223344"): Promise<void> {
     await page.goto(`${fixture.baseUrl}/tan-tracker`);
     await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
     await page.click('[data-tt="create"]');
@@ -47,7 +47,7 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
     await page.click('[data-tt="create-skip-files"]');
     await page.click('[data-tt="create-new-recipient"]');
     await page.waitForSelector('[data-create-phase="recipient-new-phone"]', { timeout: 15000 });
-    await page.fill('[data-tt-field="newPhone"]', "+79992223344");
+    await page.fill('[data-tt-field="newPhone"]', phone);
     await page.click('[data-tt="create-wizard-next"]');
     await page.waitForSelector('[data-create-phase="recipient-new-name"]', { timeout: 15000 });
     await page.fill('[data-tt-field="newName"]', "Ext Browser Recipient");
@@ -107,7 +107,7 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       assert.match(portalUrl, /\/tan-tracker\/recipient\?mst=er/);
 
       await holderPage.waitForSelector('[data-tt="invite-message-preview"]', { timeout: 10000 });
-      const previewText = await holderPage.locator('[data-tt="messenger-invite-message-text"]').innerText();
+      const previewText = await holderPage.inputValue('[data-tt="messenger-invite-message-text"]');
       assert.match(previewText, /Messenger holder UI box/);
       assert.match(previewText, /Посмотреть передачу:/);
 
@@ -185,7 +185,7 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
         const el = document.querySelector(sel);
         if (!el || !("value" in el)) return false;
         const len = String(el.value).length;
-        return len > 0 && el.selectionStart === 0 && el.selectionEnd === len;
+        return document.activeElement === el && len > 0 && el.selectionStart === 0 && el.selectionEnd === len;
       },
       selector,
       { timeout: 10000 },
@@ -197,7 +197,7 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
     try {
       const holderPage = await holderContext.newPage();
       await login(holderPage, "tt-browser-admin@test.local");
-      await createExternalTransferViaUi(holderPage);
+      await createExternalTransferViaUi(holderPage, "+79992223345");
 
       const inviteResp = holderPage.waitForResponse(
         (r) =>
@@ -217,14 +217,10 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
         if (req.method() === "POST" && req.url().includes("/messenger-invite")) invitePostCount += 1;
       });
 
-      await holderPage.evaluate(() => {
-        Object.defineProperty(navigator, "clipboard", {
-          configurable: true,
-          value: {
-            writeText: () => Promise.reject(new Error("denied")),
-          },
-        });
-      });
+      // Keep browser-injected nested functions out of tsx/esbuild's __name transform.
+      await holderPage.evaluate(`Object.defineProperty(navigator, "clipboard", {
+        configurable: true, value: { writeText: () => Promise.reject(new Error("denied")) }
+      })`);
       await holderPage.click('[data-tt="messenger-invite-copy-message"]');
       await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 10000 });
       await expectFullFieldSelection(holderPage, '[data-tt="messenger-invite-message-text"]');
@@ -232,15 +228,26 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       assert.match(messageValue, /Messenger holder UI box/);
       assert.match(messageValue, /Посмотреть передачу:/);
 
-      await holderPage.evaluate(() => {
-        Reflect.deleteProperty(navigator, "clipboard");
-      });
+      await holderPage.evaluate(`Object.defineProperty(navigator, "clipboard", {
+        configurable: true, value: undefined
+      })`);
+      await holderPage.click('[data-tt="messenger-invite-copy-message"]');
+      await expectFullFieldSelection(holderPage, '[data-tt="messenger-invite-message-text"]');
       await holderPage.click('[data-tt="messenger-invite-copy"]');
       await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 10000 });
       await expectFullFieldSelection(holderPage, '[data-tt="messenger-invite-url"]');
       const urlAfter = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
       assert.equal(urlAfter, urlBefore);
-      assert.match(urlAfter, inviteBody.startToken ?? "er");
+      assert.equal(new URL(urlAfter).searchParams.get("mst"), inviteBody.startToken);
+      await holderPage.evaluate(`Object.defineProperty(navigator, "clipboard", {
+        configurable: true, value: { writeText: (text) => {
+          window.__ttInvitationCopied = text; return Promise.resolve();
+        } }
+      })`);
+      await holderPage.click('[data-tt="messenger-invite-copy-message"]');
+      const copiedMessage = await holderPage.evaluate("window.__ttInvitationCopied");
+      assert.equal(copiedMessage, messageValue);
+      assert.ok(copiedMessage.endsWith(urlBefore));
       assert.equal(invitePostCount, 0);
     } finally {
       await holderContext.close();
