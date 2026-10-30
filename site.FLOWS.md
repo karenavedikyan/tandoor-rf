@@ -1,5 +1,15 @@
 # Main flows
 
+## Requested invitation update: 30 October 2026
+
+- Valid recipient link first shows branded invitation: actual synthetic sender/item, concise purpose, no registration promise beyond LK account, and one primary «Посмотреть передачу».
+- «Посмотреть передачу» opens existing messenger flow without verifying phone, linking channels, opting into notifications or generating a receipt code.
+- Explain own-contact proof and code after physical receipt before messenger action; keep code separate from login/SMS.
+- Holder sharing area offers full short invitation preview/copy plus existing copy-URL control. Clipboard failure gives a selectable fallback; no real messaging.
+- Invalid/stale/expired states stay unusable; after receipt retains existing external received state and limited rights.
+- Verify real-click full relay/code chain, both channel variants, existing registry/create/files/notification/client navigation, no console regressions; 320/375/390px and desktop, short height, light/dark, long text, keyboard, responsive return cycle.
+- Baseline inspected in Chromium at 1440×900: TT-2026-004 transferred by m1 to ext_01, invitation shown in holder details, recipient currently starts at messenger chooser. Snapshot `/tmp/tandoor-invite-baseline-desktop.png` is outside deploy.
+
 ## Tan-tracker (document handoff prototype)
 
 ### Baseline (accepted `5786494` before detail hierarchy pass)

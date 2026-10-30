@@ -421,14 +421,17 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 .tt-recipient-code-display { font-size:36px; font-weight:800; letter-spacing:.12em; font-variant-numeric:tabular-nums; }
 .tt-recipient-code-block { text-align:center; margin:16px 0; }
 .tt-recipient-brand { display:flex; align-items:center; gap:10px; margin:0 0 14px; text-align:left; }
-.tt-recipient-logo { display:block; flex-shrink:0; border-radius:8px; }
+.tt-recipient-logo { display:block; flex-shrink:0; object-fit:contain; }
+.tt-recipient-logo-dark { display:none; }
+[data-theme="dark"] .tt-recipient-logo-light { display:none; }
+[data-theme="dark"] .tt-recipient-logo-dark { display:block; }
 .tt-recipient-brand-name { font-size:17px; font-weight:750; letter-spacing:-.01em; color:var(--text); }
 .tt-recipient-card--welcome { text-align:left; }
 .tt-recipient-welcome-heading { font-size:22px; font-weight:750; margin:0 0 12px; line-height:1.25; }
 .tt-recipient-welcome-lead { margin:0 0 16px; font-size:15px; line-height:1.45; color:var(--text); }
 .tt-recipient-welcome-facts { margin:0 0 14px; display:flex; flex-direction:column; gap:10px; }
 .tt-recipient-welcome-facts div { margin:0; }
-.tt-recipient-welcome-facts dt { font-size:12px; font-weight:600; color:var(--muted); margin:0 0 2px; }
+.tt-recipient-welcome-facts dt { font-size:12px; font-weight:600; color:var(--text); margin:0 0 2px; }
 .tt-recipient-welcome-facts dd { margin:0; font-size:15px; font-weight:600; word-break:break-word; }
 .tt-recipient-welcome-cta { min-height:48px; margin:0 0 12px; }
 .tt-recipient-welcome-about { margin-top:8px; }

@@ -655,13 +655,10 @@
     state.recipientWelcomeAck = false;
   }
 
-  function recipientLogoSrc() {
-    return document.documentElement.dataset.theme === "dark" ? "./assets/logo-light.png" : "./assets/logo.png";
-  }
-
   function recipientBrandHeader() {
     return `<header class="tt-recipient-brand" data-tt="recipient-brand">
-      <img class="tt-recipient-logo" src="${E(recipientLogoSrc())}" alt="" width="36" height="36" decoding="async">
+      <img class="tt-recipient-logo tt-recipient-logo-light" src="./assets/logo.png" alt="" width="128" height="36" decoding="async">
+      <img class="tt-recipient-logo tt-recipient-logo-dark" src="./assets/logo-light.png" alt="" width="128" height="36" decoding="async">
       <span class="tt-recipient-brand-name">Тандор</span>
     </header>`;
   }
@@ -687,7 +684,7 @@
       ${disclosureSummary("Что это за ссылка?", { icon: "help-circle" })}
       <div class="tt-disclosure-body tt-recipient-welcome-about-body">
         <p>Тандор помогает отследить передачу документа или предмета между людьми. Личный кабинет получателю не нужен.</p>
-        <p>Ссылка персональная — рассчитана на того, кому передают. Контакт в боте используется только для этой передачи.</p>
+        <p>Ссылка персональная — рассчитана на получателя. Подтверждение своего номера в боте помогает показать ваши передачи и выдать код получения.</p>
         <p>Код получения сообщайте отправителю только после того, как предмет реально у вас.</p>
       </div>
     </details>`;
@@ -5565,7 +5562,13 @@
         navigator.clipboard.writeText(new URL(url, location.href).href).then(() => {
           state.toast = "Ссылка скопирована";
           renderTracker();
+        }).catch(() => {
+          state.toast = "Копирование недоступно. Выделите и скопируйте ссылку ниже.";
+          renderTracker();
         });
+      } else if (url) {
+        state.toast = "Копирование недоступно. Выделите и скопируйте ссылку ниже.";
+        renderTracker();
       }
       return;
     }
@@ -5577,7 +5580,13 @@
         navigator.clipboard.writeText(text).then(() => {
           state.toast = "Текст приглашения скопирован";
           renderTracker();
+        }).catch(() => {
+          state.toast = "Копирование недоступно. Выделите и скопируйте текст приглашения ниже.";
+          renderTracker();
         });
+      } else if (text) {
+        state.toast = "Копирование недоступно. Выделите и скопируйте текст приглашения ниже.";
+        renderTracker();
       }
       return;
     }
