@@ -41,7 +41,10 @@ Requires `TEST_DATABASE_URL` (preferred) or integration `DATABASE_URL` on a disp
 
 ```bash
 npm run typecheck && npm run build && npm test
-npm run test:integration -- test/integration/tan-tracker-delivered-status.test.ts test/integration/tan-tracker-external-person-blockers.test.ts test/integration/tan-tracker-staff-notify-fanout.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/tan-tracker-external-person-channel-optout.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/tan-tracker-staff-notify-fanout.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/tan-tracker-delivered-status.test.ts
+node --import tsx --test --test-concurrency=1 test/integration/tan-tracker-external-person-blockers.test.ts
 ```
 
 **External person shell E2E (single file only).** Do not use `npm run test:browser` with a path argument — the npm script glob still runs the full `test/browser/**/*.test.ts` suite.
@@ -64,6 +67,7 @@ On failure, check diagnostic PNG under `var/browser-diagnostics/` (path echoed i
 - New browser session (`est`) does **not** bump `access_epoch`; other devices stay valid.
 - **Logout all** (`POST /api/tan-tracker/public/external/logout-all`) bumps `access_epoch` and revokes sessions.
 - Own-contact verification in messengers is separate from staff OTP handoff codes.
+- External **/stop** or `bot_stopped` on one messenger: notification opt-out for that channel only (verification `notifications_enabled`, pending outbox cancel, channel-scoped `tt_external_person_sessions`, drafts). Does **not** bump `access_epoch`, revoke signed LK capability (`cap`), or holder links; staff `tanbot_*` accounts are unrelated.
 
 ## Remaining limitations (explicit)
 
