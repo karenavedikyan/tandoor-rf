@@ -253,6 +253,7 @@ describe("tanbot link safety", { concurrency: false }, () => {
       fullName: "Thief",
       role: "manager",
     });
+    const app = await loadApp();
     const pool = getPool()!;
     const tgId = 881030;
     await pool.query(
@@ -260,7 +261,6 @@ describe("tanbot link safety", { concurrency: false }, () => {
        VALUES ($1::uuid, $2, $2, FALSE, NOW())`,
       [owner.id, tgId],
     );
-    const app = await loadApp();
     const cookieThief = await login("safe-tg-thief@test.local", app);
     const start = await request(app)
       .post("/api/profile/tanbot/telegram/link/start")
