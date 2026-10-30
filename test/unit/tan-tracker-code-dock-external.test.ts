@@ -11,6 +11,8 @@ describe("external shell code dock (inline, no keyboard overlap)", () => {
     const js = readFileSync(join(root, "public/tan-tracker/tan-tracker.js"), "utf8");
     assert.match(js, /tt-code-dock--inline/);
     assert.match(js, /isExternalShell\(\) \? " tt-code-dock--inline"/);
+    assert.match(js, /function codeEntryUsesDemoHelpers/);
+    assert.match(js, /!TT_LK && !isExternalShell\(\) && !window\.__TT_EXTERNAL_PERSON__/);
   });
 
   it("CSS hides feedback widget and FAB on external shell", () => {

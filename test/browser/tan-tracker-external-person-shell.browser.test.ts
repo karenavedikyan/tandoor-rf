@@ -35,7 +35,7 @@ const VISUAL_VIEWPORTS = [
 
 const VISUAL_THEMES = ["light", "dark"] as const;
 
-type ExtFixture = BrowserHttpFixture & { estToken?: string };
+type ExtFixture = BrowserHttpFixture & { estToken?: string; staffPartyId?: string };
 
 async function saveBrowserDiagnostic(page: Page, label: string): Promise<string> {
   await mkdir(DIAG_DIR, { recursive: true });
@@ -262,6 +262,7 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
       await pool.end();
     }
     fixture.estToken = est;
+    fixture.staffPartyId = staffParty.id;
   });
 
   after(async () => {
@@ -324,13 +325,26 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
         await page.fill('[data-tt="code-input"]', handoffCode);
         await page.click('[data-tt="confirm-code"]');
         assert.equal((await verifyResp).status(), 200);
+        const staffPartyId = fixture.staffPartyId;
+        assert.ok(staffPartyId);
         await page.waitForFunction(
-          (code) => {
-            const proto = (window as unknown as { TanTrackerPrototype?: { orders?: () => Array<{ id: string; status: string; holderId?: string }> } }).TanTrackerPrototype;
+          ({ code, holderPartyId }) => {
+            const proto = (window as unknown as {
+              TanTrackerPrototype?: {
+                orders?: () => Array<{ id: string; status: string; holderId?: string }>;
+                state?: { view?: string; orderId?: string };
+              };
+            }).TanTrackerPrototype;
             const o = proto?.orders?.().find((x) => x.id === code);
-            return o && o.status === "active";
+            return (
+              !!o &&
+              o.status === "delivered" &&
+              o.holderId === holderPartyId &&
+              proto?.state?.view === "detail" &&
+              proto?.state?.orderId === code
+            );
           },
-          publicCode,
+          { code: publicCode, holderPartyId: staffPartyId },
           { timeout: 20000 },
         );
         await page.waitForFunction(
@@ -346,6 +360,8 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
           undefined,
           { timeout: 10000 },
         );
+        assert.equal(await page.locator('[data-tt="code-screen"]').count(), 0);
+        assert.equal(await page.locator('[data-tt="demo-reveal-code"]').count(), 0);
         assert.equal(await page.locator('[data-tt="complete"]').count(), 0);
 
         await staffPage.goto(`${fixture.baseUrl}/tan-tracker`);

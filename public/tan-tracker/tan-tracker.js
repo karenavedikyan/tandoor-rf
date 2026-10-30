@@ -2575,8 +2575,16 @@
           o._codeBusy = false;
           state.codeInput = "";
           if (window.__TT_EXTERNAL_PERSON__ && window.TanTrackerExternal?.refreshBootstrap) {
+            const orderId = o.id;
+            const actingBefore = state.actingContactId;
             return window.TanTrackerExternal.refreshBootstrap().then(() => {
-              syncPublicHolderAccessTokenForOrder(o.id);
+              if (actingBefore) state.actingContactId = actingBefore;
+              syncPublicHolderAccessTokenForOrder(orderId);
+              state.codeInput = "";
+              state.recipientMode = false;
+              state.orderId = orderId;
+              state.view = "detail";
+              writeUrl();
               state.toast = "Передача подтверждена.";
               renderTracker();
             });
@@ -4160,11 +4168,26 @@
     });
   }
 
+  function codeEntryUsesDemoHelpers() {
+    return !TT_LK && !isExternalShell() && !window.__TT_EXTERNAL_PERSON__;
+  }
+
   function codeView(o) {
-    const showCode = state.codeDemoRevealed && o.code && codeValid(o);
+    const useDemoHelpers = codeEntryUsesDemoHelpers();
+    const showCode = useDemoHelpers && state.codeDemoRevealed && o.code && codeValid(o);
     const codeInputId = `tt-code-input-${String(o.id).replace(/[^\w-]/g, "")}`;
     const val = state.codeInput || "";
     const active = Math.min(val.length, 5);
+    const codeHelpId = useDemoHelpers ? "tt-code-demo-help" : "tt-code-entry-help";
+    const codeHelpText = useDemoHelpers
+      ? "Демо без СМС: нажмите «Получить демо-код», затем введите цифры и «Подтвердить»."
+      : "Введите 6-значный код, который показал отправитель или получатель.";
+    const demoActions = useDemoHelpers
+      ? `<div class="tt-code-secondary-actions">
+          ${btn("Получить демо-код", 'data-tt="demo-reveal-code"', "tt-btn-ghost")}
+          ${btn("Истечь срок кода (демо)", 'data-tt="demo-expire"', "tt-btn-ghost")}
+        </div>`
+      : "";
     return `<div class="tt-panel tt-code-screen tt-view-enter" data-tt="code-screen"><h2>Ввести код получателя</h2>
       <p class="tt-code-screen-sub">Предмет: ${E(o.item)} · ожидает ${E(contactById(o.pendingId)?.name || "")}</p>
       <div class="tt-code-field">
@@ -4177,19 +4200,16 @@
               return `<span class="tt-code-cell${cls}">${E(ch)}</span>`;
             })
             .join("")}</div>
-          <input id="${E(codeInputId)}" class="tt-code-input-overlay" inputmode="numeric" maxlength="6" data-tt="code-input" value="${E(val)}" autocomplete="one-time-code" aria-describedby="tt-code-demo-help">
+          <input id="${E(codeInputId)}" class="tt-code-input-overlay" inputmode="numeric" maxlength="6" data-tt="code-input" value="${E(val)}" autocomplete="one-time-code" aria-describedby="${E(codeHelpId)}">
         </div>
-        <div class="tt-code-secondary-actions">
-          ${btn("Получить демо-код", 'data-tt="demo-reveal-code"', "tt-btn-ghost")}
-          ${btn("Истечь срок кода (демо)", 'data-tt="demo-expire"', "tt-btn-ghost")}
-        </div>
+        ${demoActions}
       </div>
       ${
         showCode
           ? `<div class="tt-holder-demo-code" data-tt="holder-shown-code"><span class="tt-code tt-code-inline">${E(o.code.code)}</span></div>`
           : ""
       }
-      <p id="tt-code-demo-help" class="tt-muted tt-code-help">Демо без СМС: нажмите «Получить демо-код», затем введите цифры и «Подтвердить».</p>
+      <p id="${E(codeHelpId)}" class="tt-muted tt-code-help">${E(codeHelpText)}</p>
       ${state.error ? `<p class="tt-error" data-tt="code-error">${E(state.error)}</p>` : ""}
       <div class="tt-code-dock${isExternalShell() ? " tt-code-dock--inline" : ""}">${btn("Подтвердить", 'data-tt="confirm-code"', "tt-primary tt-btn-block")}${btn("Назад", 'data-tt="detail"', "tt-btn-ghost tt-btn-block")}</div>
     </div>`;
