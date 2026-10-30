@@ -569,6 +569,155 @@ describe("invitation own-contact receipt → external person notify (PG)", { con
     assert.match(myTransfers.reply?.text ?? "", /tan-tracker\/\?est=/);
   });
 
+  it("expired invitation session after contact yields no delivered outbox (no telegram fallback)", async () => {
+    const phone = "+79993001013";
+    const maxUserId = 93001013;
+    const tgUserId = 930010130;
+    const vcfRaw = "BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Syn\\r\\nTEL;TYPE=CELL:+79993001013\\r\\nEND:VCARD";
+    await withTransaction(async (client) => {
+      await upsertVerifiedPerson(client, {
+        channel: "telegram",
+        messengerUserId: BigInt(tgUserId),
+        messengerChatId: BigInt(tgUserId),
+        phoneRaw: phone,
+        displayName: "Stale TG",
+      });
+    });
+    const { publicCode, pendingPartyId } = await createExternalTransfer(phone, "Expired session");
+    const startToken = await mintInvite(publicCode);
+    const maxCfg = loadTanbotMaxStage2Config();
+    assert.equal(maxCfg.ok, true);
+    if (!maxCfg.ok) return;
+    await handleTanbotMaxUpdate(pool, maxCfg.config, {
+      update_type: "bot_started",
+      timestamp: Date.now(),
+      chat_id: maxUserId,
+      user: { user_id: maxUserId, is_bot: false, first_name: "Syn" },
+      payload: startToken,
+    });
+    const contactOut = await handleTanbotMaxUpdate(
+      pool,
+      maxCfg.config,
+      maxContactUpdate({ ts: Date.now() + 10, userId: maxUserId, chatId: maxUserId, mid: "inv-exp", vcfRaw }),
+    );
+    const code = extractSixDigitCode(contactOut.reply?.text ?? "");
+    await pool.query(
+      `UPDATE tt_external_messenger_sessions SET expires_at = NOW() - interval '1 minute'
+       WHERE transfer_id = (SELECT id FROM tt_transfers WHERE public_code = $1 LIMIT 1)`,
+      [publicCode],
+    );
+    await staffVerifyCode(publicCode, code);
+
+    const outbox = await pool.query(
+      `SELECT channel FROM tt_external_person_message_outbox o
+       JOIN tt_external_persons p ON p.id = o.person_id
+       WHERE p.party_id = $1::uuid`,
+      [pendingPartyId],
+    );
+    assert.equal(outbox.rowCount, 0);
+  });
+
+  it("invitation proof rejected on messenger identity collision — no outbox on other channel", async () => {
+    const phoneA = "+79993001014";
+    const phoneB = "+79993001015";
+    const maxUserId = 93001014;
+    const vcfRaw = "BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Syn\\r\\nTEL;TYPE=CELL:+79993001015\\r\\nEND:VCARD";
+    await withTransaction(async (client) => {
+      const partyA = (
+        await client.query<{ id: string }>(
+          `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Owner A', $1) RETURNING id::text`,
+          [phoneA],
+        )
+      ).rows[0]!.id;
+      await client.query(
+        `INSERT INTO tt_external_persons (phone_e164, display_name, party_id) VALUES ($1, 'Owner A', $2::uuid)`,
+        [phoneA, partyA],
+      );
+      await client.query(
+        `INSERT INTO tt_external_person_verifications (person_id, channel, messenger_user_id, messenger_chat_id)
+         SELECT id, 'max', $2, $2 FROM tt_external_persons WHERE party_id = $1::uuid`,
+        [partyA, maxUserId.toString()],
+      );
+    });
+    const { publicCode, pendingPartyId } = await createExternalTransfer(phoneB, "Collision");
+    assert.notEqual(pendingPartyId, "");
+    const startToken = await mintInvite(publicCode);
+    const maxCfg = loadTanbotMaxStage2Config();
+    assert.equal(maxCfg.ok, true);
+    if (!maxCfg.ok) return;
+    await handleTanbotMaxUpdate(pool, maxCfg.config, {
+      update_type: "bot_started",
+      timestamp: Date.now(),
+      chat_id: maxUserId,
+      user: { user_id: maxUserId, is_bot: false, first_name: "Syn" },
+      payload: startToken,
+    });
+    const contactOut = await handleTanbotMaxUpdate(
+      pool,
+      maxCfg.config,
+      maxContactUpdate({ ts: Date.now() + 11, userId: maxUserId, chatId: maxUserId, mid: "inv-coll", vcfRaw }),
+    );
+    await staffVerifyCode(publicCode, extractSixDigitCode(contactOut.reply?.text ?? ""));
+
+    const outbox = await pool.query(
+      `SELECT channel FROM tt_external_person_message_outbox o
+       JOIN tt_external_persons p ON p.id = o.person_id
+       WHERE p.party_id = $1::uuid`,
+      [pendingPartyId],
+    );
+    assert.equal(outbox.rowCount, 0);
+    const tgNoise = await pool.query(
+      `SELECT 1 FROM tt_external_person_message_outbox WHERE channel = 'telegram' AND idempotency_key LIKE $1`,
+      [`%${publicCode}%`],
+    );
+    assert.equal(tgNoise.rowCount, 0);
+  });
+
+  it("party phone change after invitation contact blocks bridge (invitation_proof_rejected)", async () => {
+    const phone = "+79993001016";
+    const newPhone = "+79993001017";
+    const maxUserId = 93001016;
+    const vcfRaw = "BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Syn\\r\\nTEL;TYPE=CELL:+79993001016\\r\\nEND:VCARD";
+    await pool.query(`INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Other', $1)`, [
+      newPhone,
+    ]);
+    await withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO tt_external_persons (phone_e164, display_name, party_id)
+         SELECT $1, 'Other', id FROM tt_parties WHERE phone_e164 = $1 LIMIT 1`,
+        [newPhone],
+      );
+    });
+    const { publicCode, pendingPartyId } = await createExternalTransfer(phone, "Phone change");
+    const startToken = await mintInvite(publicCode);
+    const maxCfg = loadTanbotMaxStage2Config();
+    assert.equal(maxCfg.ok, true);
+    if (!maxCfg.ok) return;
+    await handleTanbotMaxUpdate(pool, maxCfg.config, {
+      update_type: "bot_started",
+      timestamp: Date.now(),
+      chat_id: maxUserId,
+      user: { user_id: maxUserId, is_bot: false, first_name: "Syn" },
+      payload: startToken,
+    });
+    const contactOut = await handleTanbotMaxUpdate(
+      pool,
+      maxCfg.config,
+      maxContactUpdate({ ts: Date.now() + 12, userId: maxUserId, chatId: maxUserId, mid: "inv-ph", vcfRaw }),
+    );
+    const code = extractSixDigitCode(contactOut.reply?.text ?? "");
+    await pool.query(`UPDATE tt_parties SET phone_e164 = $1 WHERE id = $2::uuid`, [newPhone, pendingPartyId]);
+    await staffVerifyCode(publicCode, code);
+
+    const outbox = await pool.query(
+      `SELECT 1 FROM tt_external_person_message_outbox o
+       JOIN tt_external_persons p ON p.id = o.person_id
+       WHERE p.party_id = $1::uuid`,
+      [pendingPartyId],
+    );
+    assert.equal(outbox.rowCount, 0);
+  });
+
   it("opt-out on MAX channel cancels receipt outbox delivery", async () => {
     const phone = "+79993001006";
     const maxUserId = 93001006;

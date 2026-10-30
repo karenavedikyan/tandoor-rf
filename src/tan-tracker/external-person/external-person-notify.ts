@@ -1,6 +1,5 @@
 import type { PoolClient } from "pg";
 import type { ExternalMessengerChannel } from "./messenger-provenance";
-import { requirePersonMessengerProvenance } from "./messenger-provenance";
 import type { ExternalPersonMessengerEvent } from "./messenger-copy";
 
 export type ExternalPersonOutboxDelivery = "all_verified" | "single_channel";
@@ -27,13 +26,21 @@ export async function enqueueExternalPersonMessengerNotice(
   const delivery = input.delivery ?? "all_verified";
 
   if (delivery === "single_channel") {
-    const prov = await requirePersonMessengerProvenance(client, personId, input.preferredChannel);
+    if (!input.preferredChannel) return;
+    const prov = await client.query<{ messenger_chat_id: string }>(
+      `SELECT messenger_chat_id FROM tt_external_person_verifications
+       WHERE person_id = $1::uuid AND channel = $2
+       LIMIT 1`,
+      [personId, input.preferredChannel],
+    );
+    const chatId = prov.rows[0]?.messenger_chat_id;
+    if (!chatId) return;
     await insertOutboxRow(client, {
       personId,
-      channel: prov.channel,
-      messengerChatId: prov.messengerChatId,
+      channel: input.preferredChannel,
+      messengerChatId: chatId,
       body: input.body,
-      idempotencyKey: `${input.idempotencyKey}:${prov.channel}`,
+      idempotencyKey: `${input.idempotencyKey}:${input.preferredChannel}`,
       eventType,
     });
     return;

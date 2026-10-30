@@ -2,7 +2,7 @@ import type { PoolClient } from "pg";
 import { buildExternalPersonMessengerBody } from "./external-person/messenger-copy";
 import { enqueueExternalPersonMessengerEvent } from "./external-person/external-person-notify";
 import { signExternalPersonMessengerLinks } from "./external-person/holder-links";
-import { resolveInvitationHandoffMessengerChannel } from "./external-person/invitation-person-bridge";
+import { resolveInvitationHandoffForNotify } from "./external-person/invitation-person-bridge";
 import type { ExternalMessengerChannel } from "./external-person/messenger-provenance";
 import { isExternalParty } from "./transfer-lk-notify";
 
@@ -29,13 +29,17 @@ export async function notifyExternalPartyAfterHandoff(
   if (!(await isExternalParty(client, input.externalPartyId))) return;
   const meta = await transferMeta(client, input.transferId);
   if (!meta) return;
+  const preHandoffVersion = Math.max(1, input.handoffVersion - 1);
+  const bridge = await resolveInvitationHandoffForNotify(client, {
+    transferId: input.transferId,
+    externalPartyId: input.externalPartyId,
+    preHandoffVersion,
+  });
+  if (bridge.kind === "invitation_proof_rejected") {
+    return;
+  }
   const invitationChannel =
-    input.preferredChannel ??
-    (await resolveInvitationHandoffMessengerChannel(client, {
-      transferId: input.transferId,
-      externalPartyId: input.externalPartyId,
-      preHandoffVersion: Math.max(1, input.handoffVersion - 1),
-    }));
+    input.preferredChannel ?? (bridge.kind === "ok" ? bridge.channel : undefined);
   const links = await signExternalPersonMessengerLinks(client, {
     externalPartyId: input.externalPartyId,
     transferId: input.transferId,
@@ -54,7 +58,7 @@ export async function notifyExternalPartyAfterHandoff(
     event: input.event,
     body,
     idempotencyKey: `tt-ext-msg:${input.event}:${input.transferId}:hv:${input.handoffVersion}`,
-    preferredChannel: invitationChannel ?? input.preferredChannel,
+    preferredChannel: invitationChannel,
     singleChannel: input.singleChannel ?? input.event === "after_receipt",
   });
 }
