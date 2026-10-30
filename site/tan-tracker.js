@@ -3344,10 +3344,8 @@
         .pop() || null;
     const prevHolder = contactById(prevEntry?.from);
     const statusCard = `<article class="tt-panel tt-recipient-card" data-tt="holder-status-card">
-      <p class="tt-muted">Предмет у вас с ${E(dt(o.holderSince))} МСК</p>
-      <h2 class="tt-recipient-title">${E(o.item)}</h2>
-      <p class="tt-recipient-kicker">${E(o.id)}</p>
-      <p class="tt-recipient-from">Получено от <strong>${E(prevHolder?.name || "—")}</strong></p>
+      <h2 class="tt-recipient-hero">Предмет у вас</h2>
+      <p class="tt-recipient-from">С ${E(dt(o.holderSince))} МСК · получено от <strong>${E(prevHolder?.name || "—")}</strong></p>
     </article>`;
     let nextStep;
     if (mustRelay) {
@@ -3363,6 +3361,7 @@
   }
 
   function recipientPreviewDemoBtn(o) {
+    if (isExternalShell()) return "";
     const p = state.recipientReceivedPreview;
     if (!p || p.orderId !== o.id) return "";
     if (contactById(p.rcv)?.kind !== "external") return "";
