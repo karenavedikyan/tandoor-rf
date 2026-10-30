@@ -53,6 +53,7 @@ async function runExternalRequestWizard(page: Page, baseUrl: string, est: string
   await page.goto(`${baseUrl}/tan-tracker?est=${encodeURIComponent(est)}`);
   await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 30000 });
   try {
+    await page.waitForSelector('[data-tt="external-bar"]', { timeout: 15000 });
     await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 15000 });
   } catch (err) {
     const shot = await saveBrowserDiagnostic(page, "missing-ext-request-open");

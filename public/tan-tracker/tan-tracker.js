@@ -4222,6 +4222,11 @@
     </article></div>`;
   }
 
+  function externalShellChromeHtml() {
+    if (!isExternalShell() || !window.TtExternalUi?.externalActionBarHtml) return "";
+    return window.TtExternalUi.externalActionBarHtml();
+  }
+
   function bodyHtml() {
     if (state.ttRoleUnsupported) return unsupportedRoleView();
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
@@ -4348,8 +4353,11 @@
     }`;
 
     const demoHeadPopover = lkRuntime ? "" : demoHeadPopoverHtml(demoBody);
+    const externalLkShell = ext && lkRuntime;
 
-    const headBlock = inCompactHead
+    const headBlock = externalLkShell
+      ? ""
+      : inCompactHead
       ? `<div class="tt-head tt-head-compact${lkRuntime ? "" : " tt-head-compact-demo"}"><span class="tt-head-compact-label">Тан-трекер</span>${demoHeadPopover}</div>`
       : onListRegistry
         ? `<div class="tt-head tt-registry-head"><div class="tt-registry-head-row">
@@ -4401,7 +4409,7 @@
     }
 
     const content = document.getElementById("tt-content");
-    if (content) content.innerHTML = bodyHtml();
+    if (content) content.innerHTML = externalShellChromeHtml() + bodyHtml();
     paintQrHosts();
     paintCodeCells();
     document.title = "Tandoor RF · Тан-трекер";
