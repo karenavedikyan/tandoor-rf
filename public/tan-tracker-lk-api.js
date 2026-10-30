@@ -542,6 +542,16 @@
     },
     setStagingUploadTimeoutForTests: setStagingUploadTimeoutForTests,
     setMessengerInviteTimeoutForTests: setMessengerInviteTimeoutForTests,
+    registryCleanup: function (payload) {
+      return api
+        .apiRequest("/api/tan-tracker/registry/cleanup", { method: "POST", body: payload })
+        .then(function (result) {
+          if (result.response.status !== 200 || !result.data || result.data.ok !== true) {
+            throw new Error(api.extractErrorMessage(result.data, "Не удалось выполнить действие."));
+          }
+          return result.data;
+        });
+    },
     deleteTransferAttachment: function (transferId, attachmentId) {
       return api
         .apiRequest(

@@ -29,6 +29,8 @@ export type TanTrackerTransferRow = {
   row_version: number;
   first_custody_at?: Date | null;
   from_external?: boolean;
+  general_archived_at?: Date | null;
+  deleted_at?: Date | null;
 };
 
 export type TanTrackerTimelineRow = {
@@ -88,8 +90,15 @@ export type TanTrackerOrderDto = {
   canEditDraft?: boolean;
   rowVersion?: number;
   fromExternal?: boolean;
+  generalArchived?: boolean;
   /** Signed public-holder capability scoped to this order (external person bootstrap only). */
   holderAccessToken?: string | null;
+};
+
+export type TanTrackerRegistryPersonalBootstrap = {
+  hiddenTransferIds: string[];
+  archivedTransferIds: string[];
+  canManageGeneralArchive: boolean;
 };
 
 export type TanTrackerContactDto = {

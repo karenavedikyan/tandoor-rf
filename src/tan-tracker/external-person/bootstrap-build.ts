@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { getAppOrigin } from "../../config";
-import type { TanTrackerContactDto } from "../types";
+import type { TanTrackerContactDto, TanTrackerRegistryPersonalBootstrap } from "../types";
+import { loadPersonalRegistryLists } from "../registry-cleanup/personal-flags";
 import { loadExternalPersonOrders, loadExternalHistoricalSummaries } from "./external-person-orders";
 import { listEligibleStaffForExternalParty } from "../external-request/intake-handlers";
 import { signExternalPersonCapability } from "./session-token";
@@ -31,6 +32,7 @@ export async function buildExternalPersonBootstrapPayload(
   capabilities: { canWrite: true };
   prototypeRole: "manager";
   externalMessengerEnabled: false;
+  registryPersonal: TanTrackerRegistryPersonalBootstrap | null;
 }> {
   const orders = await loadExternalPersonOrders(pool, resolved.partyId);
   const historicalSummaries = await loadExternalHistoricalSummaries(pool, resolved.partyId);
@@ -70,6 +72,12 @@ export async function buildExternalPersonBootstrapPayload(
   const holderAccessToken =
     heldOrderIds.length === 1 ? holderAccessTokensByOrderId[heldOrderIds[0]!]! : null;
   const capability = signExternalPersonCapability(resolved.personId, 24 * 60 * 60 * 1000, resolved.accessEpoch);
+  const personalLists = await loadPersonalRegistryLists(pool, resolved.partyId);
+  const registryPersonal: TanTrackerRegistryPersonalBootstrap = {
+    hiddenTransferIds: personalLists.hiddenTransferIds,
+    archivedTransferIds: personalLists.archivedTransferIds,
+    canManageGeneralArchive: false,
+  };
   return {
     externalPerson: true,
     lkMode: true,
@@ -92,5 +100,6 @@ export async function buildExternalPersonBootstrapPayload(
     capabilities: { canWrite: true },
     prototypeRole: "manager",
     externalMessengerEnabled: false,
+    registryPersonal,
   };
 }

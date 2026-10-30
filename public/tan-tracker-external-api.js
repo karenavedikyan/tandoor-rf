@@ -83,6 +83,18 @@
     logoutAll: function () {
       return json("/api/tan-tracker/public/external/logout-all", { method: "POST", body: {} });
     },
+    registryCleanup: function (payload) {
+      return json("/api/tan-tracker/public/external/registry/cleanup", { method: "POST", body: payload }).then(
+        function (result) {
+          if (result.response.status !== 200 || !result.data || result.data.ok !== true) {
+            var msg =
+              (result.data && result.data.error && result.data.error.message) || "Не удалось выполнить действие.";
+            throw new Error(msg);
+          }
+          return result.data;
+        },
+      );
+    },
     attachmentUrl: function (transferId, attId, preview) {
       var q = new URLSearchParams(window.location.search);
       var cap = q.get("cap") || window.__TT_EXTERNAL_CAP__ || "";

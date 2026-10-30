@@ -4,6 +4,7 @@ import {
   HANDOFF_CODE_TTL_MS,
   requireHandoffOtpPepper,
 } from "./otp-config";
+import { transferWriteBlocked, TRANSFER_WRITE_BLOCKED_MESSAGE } from "./transfer-write-guard";
 
 export type HandoffCodeGenerateResult =
   | {
@@ -25,8 +26,11 @@ async function loadTransferForCode(client: PoolClient, id: string) {
     item_title: string;
     pending_party_id: string | null;
     handoff_version: number;
+    deleted_at: Date | null;
+    general_archived_at: Date | null;
   }>(
-    `SELECT id, status, public_code, item_title, pending_party_id, handoff_version
+    `SELECT id, status, public_code, item_title, pending_party_id, handoff_version,
+            deleted_at, general_archived_at
      FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1 FOR UPDATE`,
     [id],
   );
@@ -52,7 +56,10 @@ export async function generateHandoffCodeForPendingParty(
   }
 
   const row = await loadTransferForCode(client, input.transferIdOrCode.slice(0, 64));
-  if (!row || !row.pending_party_id) {
+  if (!row || transferWriteBlocked(row)) {
+    return { ok: false, http: 404, message: transferWriteBlocked(row) ? TRANSFER_WRITE_BLOCKED_MESSAGE : "Передача не найдена." };
+  }
+  if (!row.pending_party_id) {
     return { ok: false, http: 404, message: "Передача не найдена." };
   }
   if (row.pending_party_id !== input.pendingPartyId) {

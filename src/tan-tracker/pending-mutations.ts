@@ -10,11 +10,12 @@ import { requireTanTrackerMutationAccess } from "./guards";
 import { assertPartyEligibleAsRecipient } from "./party-eligibility";
 import { invalidateOpenHandoffArtifacts } from "./handoff-invalidation";
 import { notifyPendingCancelled, notifyReturnToCreator, notifyRouteContinued } from "./transfer-lk-notify";
+import { transferWriteBlocked } from "./transfer-write-guard";
 
 async function loadTransfer(client: { query: Function }, id: string) {
   const res = await client.query(
     `SELECT id, public_code, status, creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
-            handoff_version, item_title, delivered_at
+            handoff_version, item_title, delivered_at, deleted_at, general_archived_at
      FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1`,
     [id],
   );
@@ -30,6 +31,8 @@ async function loadTransfer(client: { query: Function }, id: string) {
         handoff_version: number;
         item_title: string;
         delivered_at: Date | null;
+        deleted_at: Date | null;
+        general_archived_at: Date | null;
       }
     | undefined;
 }
@@ -44,7 +47,8 @@ export async function cancelPendingHandler(req: AccessRequest, res: Response): P
   const done = await withTransaction(async (client) => {
     const party = await ensurePartyForUserOnWrite(client, user.id, user.fullName, user.phone);
     const row = await loadTransfer(client, transferId);
-    if (!row || !row.pending_party_id) return { ok: false as const, code: 404 };
+    if (!row || transferWriteBlocked(row)) return { ok: false as const, code: transferWriteBlocked(row) ? 403 : 404 };
+    if (!row.pending_party_id) return { ok: false as const, code: 404 };
     if (row.holder_party_id !== party.id) return { ok: false as const, code: 403 };
     const revoked = row.pending_party_id;
     const nextHandoffVersion = row.handoff_version + 1;
@@ -107,7 +111,7 @@ export async function changePendingHandler(req: AccessRequest, res: Response): P
     done = await withTransaction(async (client) => {
     const party = await ensurePartyForUserOnWrite(client, user.id, user.fullName, user.phone);
     const row = await loadTransfer(client, transferId);
-    if (!row) return { ok: false as const, code: 404 };
+    if (!row || transferWriteBlocked(row)) return { ok: false as const, code: transferWriteBlocked(row) ? 403 : 404 };
     if (row.holder_party_id !== party.id) return { ok: false as const, code: 403 };
     if (pendingPartyId === row.holder_party_id) return { ok: false as const, code: 400 };
     if (row.status === "completed") return { ok: false as const, code: 400 };

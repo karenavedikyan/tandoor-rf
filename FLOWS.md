@@ -1,5 +1,16 @@
 # QA flows (не public/dist)
 
+## Тан-трекер — личные архивы и очистка треков (production, 2026-10-30)
+
+- **База разработки:** `81d7d68240037823bb91572f64ebdedcea8665c9`; ветка `cursor/track-archives-cleanup-20261030`. Эталон UX: `ecf95239` (prototype), без demo-памяти/localStorage.
+- **Личный архив:** `completed`/`delivered` без `pending`; персонально для `owner_party_id` (LK party / внешний участник); не меняет реестры других; при новом `pending` снова в актуальных.
+- **Скрытие «Убрать из моего реестра»:** только инициатор, отдельно от архива/удаления.
+- **Выбор в реестре:** checkbox в строках/карточках, панель «Выбрано: N», действия только по выбранным IDs; «Выбрать показанные» = текущий фильтр/страница.
+- **Общий архив (admin):** `general_archived_at` на transfer; restore; audit; read-only для участников в прежних границах.
+- **Удаление до первого получения:** `custody-state` + `first_custody_at`/audit; creator или admin; транзакция + FOR UPDATE; tombstone audit; CASCADE дочерних; CSRF + preview read-only deny.
+- **API:** `POST /api/tan-tracker/registry/cleanup` (LK), `POST /api/tan-tracker/public/external/registry/cleanup` (cap/est). Bootstrap: `registryPersonal`, флаги на orders.
+- **QA:** integration personal/general/delete/race; browser selection→confirm без входа в карточку; регрессии приглашения/внешней передачи.
+
 ## Тан-трекер (перенос tt56 → LK)
 
 - Эталон UI/UX: SHA `7f28457` (ветка прототипа, worktree `.tt56-prototype-ref/`), 582 browser QA checks.

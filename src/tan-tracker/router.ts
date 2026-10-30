@@ -49,6 +49,10 @@ import {
   listExternalIntakeRecipientsPublicHandler,
   patchStaffExternalIntakeHandler,
 } from "./external-request/intake-handlers";
+import {
+  externalRegistryCleanupHandler,
+  lkRegistryCleanupHandler,
+} from "./registry-cleanup/handlers";
 
 export function createTanTrackerRouter(): express.Router {
   const router = express.Router();
@@ -174,6 +178,14 @@ export function createTanTrackerRouter(): express.Router {
   });
 
   // Placeholder for upcoming mutations (create/handoff/attachments) — wired with writeChain.
+  router.post("/registry/cleanup", csrfProtection, ...writeChain, (req, res, next) => {
+    void lkRegistryCleanupHandler(req, res).catch(next);
+  });
+
+  router.post("/public/external/registry/cleanup", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void externalRegistryCleanupHandler(req, res).catch(next);
+  });
+
   router.post("/transfers", csrfProtection, ...writeChain, (req, res, next) => {
     void createTransferHandler(req, res).catch(next);
   });

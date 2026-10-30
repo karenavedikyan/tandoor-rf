@@ -26,6 +26,8 @@ import {
   mergeTanTrackerContactLists,
 } from "./recipient-catalog";
 import { isExternalMessengerFeatureEnabled } from "./external-messenger/config";
+import { loadPersonalRegistryLists } from "./registry-cleanup/personal-flags";
+import type { TanTrackerRegistryPersonalBootstrap } from "./types";
 
 function mapRoleToPrototype(role: string): string {
   if (role === "regional_manager") return "regional";
@@ -78,6 +80,7 @@ export async function buildTanTrackerBootstrap(
   capabilities: { canWrite: boolean };
   externalMessengerEnabled: boolean;
   userTestEnvironmentBanner: string | null;
+  registryPersonal: TanTrackerRegistryPersonalBootstrap | null;
 }> {
   const pool = getPool();
   if (!pool) {
@@ -171,6 +174,16 @@ export async function buildTanTrackerBootstrap(
 
   const appOrigin = getAppOrigin() ?? null;
 
+  let registryPersonal: TanTrackerRegistryPersonalBootstrap | null = null;
+  if (actorPartyId) {
+    const lists = await loadPersonalRegistryLists(pool, actorPartyId);
+    registryPersonal = {
+      hiddenTransferIds: lists.hiddenTransferIds,
+      archivedTransferIds: lists.archivedTransferIds,
+      canManageGeneralArchive: user.role === "admin" && !ctx.previewReadOnly,
+    };
+  }
+
   return {
     lkMode: true,
     appOrigin,
@@ -184,6 +197,7 @@ export async function buildTanTrackerBootstrap(
     orders,
     capabilities: { canWrite: tanTrackerCanWrite(user, access) },
     externalMessengerEnabled: isExternalMessengerFeatureEnabled(),
+    registryPersonal,
     ...tanTrackerUserTestBannerForApi(),
   };
 }

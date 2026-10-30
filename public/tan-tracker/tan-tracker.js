@@ -18,6 +18,7 @@
     c1: { id: "c1", name: "Наталья Савельева", phone: "79001234021", team: "volkova" },
   };
   const Sc = () => window.TanTrackerScope;
+  const RC = () => window.TtRegistryCleanup;
   const fmtPhone = (digits) => {
     const core = fmtPhoneCore(digits);
     const lkRuntime = (typeof TT_LK !== "undefined" && TT_LK) || window.__TT_PUBLIC_RECIPIENT__;
@@ -519,6 +520,23 @@
     messengerInviteBusy: false,
     messengerInviteOrderId: null,
     messengerInviteError: "",
+    registryPersonal: null,
+    registryPersonalView: "main",
+    registrySelection: [],
+    registrySelectionKey: null,
+    registryVisibleIds: [],
+    archiveDialog: null,
+    archiveSelection: [],
+    archiveScope: "selected",
+    archiveReason: "",
+    archiveAllAck: false,
+    archiveReturnFocus: null,
+    archiveError: "",
+    archiveTypedAck: "",
+    archiveSingle: false,
+    archiveFromRegistry: false,
+    archiveCandidateIds: [],
+    archiveActorKey: null,
   };
 
   function isPublicGuestPage() {
@@ -1411,13 +1429,17 @@
       o.fromExternal && o.pendingId === actor
         ? '<span class="tt-badge" data-tt="from-external">от клиента</span> '
         : "";
-    return `<button type="button" class="tt-card-v2${overdue ? " tt-card-v2--overdue" : ""}${done ? " tt-card-v2--completed" : ""}" data-tt-open="${E(o.id)}" style="--tt-card-accent:${accent}">
+    const selected = state.registrySelection.includes(o.id);
+    const check = RC()?.registryCheckbox?.(o, true) ?? "";
+    const cardInner = `<button type="button" class="tt-card-v2${overdue ? " tt-card-v2--overdue" : ""}${done ? " tt-card-v2--completed" : ""}" data-tt-open="${E(o.id)}" style="--tt-card-accent:${accent}">
       <span class="tt-card-v2-accent" aria-hidden="true"></span>
       <div class="tt-card-v2-top"><h3 class="tt-card-v2-title">${extBadge}${E(o.item)}</h3><i data-lucide="chevron-right"></i></div>
       ${registryRouteLine(o)}
       <div class="tt-card-v2-foot">${statusBadge(o, actor, { compact: true })}<span class="tt-card-v2-due-inline ${due.overdue ? "tt-due-human--over" : ""}">${E(registryCardDuePrimary(o))}</span></div>
       <p class="tt-card-v2-meta">${registryCardMeta(o)}</p>
     </button>`;
+    if (!check) return cardInner;
+    return `<div class="tt-selectable-card${selected ? " tt-is-selected" : ""}">${check}${cardInner}</div>`;
   }
 
   function registryCounts() {
@@ -1472,7 +1494,11 @@
     return rows
       .map((o) => {
         const overdue = isOverdue(o);
-        return `<tr data-tt-open="${E(o.id)}" class="${overdue ? "tt-row--overdue" : ""}">
+        const selected = state.registrySelection.includes(o.id);
+        const checkCol =
+          RC()?.cleanupPreviewReadOnly?.() ? "" : `<td class="tt-selection-cell">${RC().registryCheckbox(o)}</td>`;
+        return `<tr data-tt-open="${E(o.id)}" class="${overdue ? "tt-row--overdue" : ""}${selected ? " tt-is-selected" : ""}">
+          ${checkCol}
           <td><strong>${E(o.item)}</strong><small>${E(o.id)}${o.qty ? ` · ${E(o.qty)}` : ""}</small></td>
           <td>${registryRouteLine(o)}</td>
           <td>${statusBadge(o, actor)}</td>
@@ -1483,12 +1509,13 @@
   }
 
   function registryEmptyHtml() {
-    return `<div class="tt-empty-v2 tt-empty" data-tt="empty">
+    const fallback = `<div class="tt-empty-v2 tt-empty" data-tt="empty">
       <svg viewBox="0 0 120 80" aria-hidden="true"><rect x="20" y="24" width="80" height="48" rx="10" fill="var(--tint,#eef5e7)" stroke="var(--green,#507f22)" stroke-width="2"/><path d="M40 44h40M40 54h28" stroke="var(--green,#507f22)" stroke-width="2" stroke-linecap="round"/></svg>
       <p><strong>Нет передач по фильтрам</strong></p>
       <p class="tt-muted">Измените поиск или сбросьте фильтры</p>
       ${btn("Сбросить фильтры", 'data-tt="reset-filters"', "tt-link")}
     </div>`;
+    return RC()?.registryEmptyHtml?.(fallback) ?? fallback;
   }
 
   function patchRegistryStats() {
@@ -1533,12 +1560,14 @@
     if (!tbody && !sectionsHost) return false;
     patchRegistryStats();
     patchRegistryResetRow();
+    RC()?.syncRegistrySelection?.(rows);
     if (rows.length) {
       if (tbody) tbody.innerHTML = registryRowsHtml(rows);
       const cardHtml = registryCardsHtml(rows);
       if (cardsHost) cardsHost.innerHTML = cardHtml;
       if (sectionsHost) sectionsHost.innerHTML = cardHtml;
       empty?.remove();
+      RC()?.paintRegistrySelection?.();
     } else {
       if (tbody) tbody.innerHTML = "";
       if (cardsHost) cardsHost.innerHTML = "";
@@ -3047,6 +3076,8 @@
       }
       return true;
     });
+    list = RC()?.filterGeneralArchiveView?.(list) ?? list;
+    list = RC()?.applyRegistryPersonalView?.(list, actor) ?? list;
     return list;
   }
 
@@ -3397,6 +3428,7 @@
       </div>
       <button type="button" class="tt-filter-trigger" data-tt="registry-filter-open" data-active="${filtActive}" aria-label="Фильтр статуса"><i data-lucide="sliders-horizontal"></i>${badge ? `<span class="tt-filter-badge" data-tt="filter-badge">${badge}</span>` : ""}</button>
     </div>
+    ${RC()?.registryPersonalToolbar?.() ?? ""}
     ${registryDesktopStatusChips()}
     <div class="tt-toolbar tt-toolbar--legacy">
       <div class="tt-mine-filters tt-mine-filters--legacy" role="group" aria-label="Мои передачи">
@@ -3440,12 +3472,18 @@
 
   function registryView() {
     const rows = visibleOrders();
+    RC()?.syncRegistrySelection?.(rows);
+    const selectionCol = RC()?.cleanupPreviewReadOnly?.() ? "" : '<th class="tt-selection-cell"><span class="tt-sr-only">Выбор</span></th>';
     return `<div class="tt-registry tt-view-enter" data-tt="registry-shell">
       ${registryStatTiles()}
+      ${RC()?.registrySelectionToolbar?.() ?? ""}
+      ${state.toast ? `<p class="tt-success" data-tt="cleanup-result" role="status">${E(state.toast)}</p>` : ""}
+      ${state.registryPersonalView === "registry-archive" ? '<p class="tt-muted">Общий архив. История и файлы доступны в рамках ваших обычных прав; восстановление доступно администратору.</p>' : ""}
+      ${state.registryPersonalView === "archived" ? '<p class="tt-muted">Только ваш архив. Другие участники видят передачи как прежде; историю и файлы можно открыть в карточке.</p>' : ""}
       ${
         rows.length
           ? `<div class="tt-table-scroll" tabindex="0" aria-label="Реестр передач"><table class="tt-table tt-table-v2" data-tt="registry"><thead><tr>
-      <th>Передача</th><th>Маршрут</th><th>Статус</th><th>Срок</th>
+      ${selectionCol}<th>Передача</th><th>Маршрут</th><th>Статус</th><th>Срок</th>
     </tr></thead><tbody id="tt-registry-body">${registryRowsHtml(rows)}</tbody></table></div>
     <div class="tt-cards" data-tt="cards"><div data-tt="registry-sections">${registryCardsHtml(rows)}</div></div>`
           : registryEmptyHtml()
@@ -4561,7 +4599,12 @@
     }
 
     const content = document.getElementById("tt-content");
-    if (content) content.innerHTML = externalShellChromeHtml() + bodyHtml();
+    RC()?.beforeRenderContent?.();
+    if (content) {
+      content.innerHTML =
+        externalShellChromeHtml() + bodyHtml() + (RC()?.cleanupDialogHtml?.() ?? "");
+    }
+    RC()?.afterRenderContent?.();
     paintQrHosts();
     paintCodeCells();
     document.title = "Tandoor RF · Тан-трекер";
@@ -4760,6 +4803,7 @@
     if (!b || current !== ROUTE) return;
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
 
+    if (RC()?.shouldIgnoreRegistryOpenClick?.(e.target)) return;
     if (b.hasAttribute("data-tt-open")) {
       bumpAttachOpGen();
       if (Att() && state.attachStaging.length) Att().revokeStaging(state.attachStaging);
@@ -4791,6 +4835,8 @@
       return;
     }
     const action = b.getAttribute("data-tt");
+    if (action === "registry-select" || action === "registry-select-all" || action === "registry-check-label") return;
+    if (RC()?.handleClickWithButton?.(action, o, b)) return;
     if (action && CABINET_WRITE_ACTIONS.has(action) && denyCabinetWriteMutation()) {
       renderTracker();
       return;
@@ -5639,6 +5685,7 @@
 
   document.addEventListener("input", (e) => {
     if (current !== ROUTE) return;
+    if (RC()?.handleInput?.(e.target)) return;
     if (e.target.matches("[data-tt-field]")) {
       if (!state.form) state.form = {};
       state.form[e.target.getAttribute("data-tt-field")] = e.target.value;
@@ -5690,6 +5737,7 @@
 
   document.addEventListener("change", (e) => {
     if (current !== ROUTE) return;
+    if (RC()?.handleChange?.(e.target)) return;
     if (e.target.matches('[data-tt="filter"]')) {
       state.statusFilter = e.target.value;
       renderTracker();
@@ -5850,6 +5898,7 @@
       }
     }
     state.userTestEnvironmentBanner = data.userTestEnvironmentBanner || null;
+    state.registryPersonal = data.registryPersonal || null;
     applyLkCapabilitiesFromBootstrap(data);
     enforceReadOnlyRouteGuards();
     state.ttPrototypeRole = data.prototypeRole || "manager";
@@ -5933,6 +5982,54 @@
   window.__ttLkRenderTracker = function () {
     if (current === ROUTE) renderTracker();
   };
+
+  function registryActorIdForCleanup() {
+    return actorContactId();
+  }
+
+  function hasConfirmedHandoffForCleanup(o) {
+    return !!lastConfirmedHandoffEntry(o);
+  }
+
+  if (window.TtRegistryCleanup) {
+    window.TtRegistryCleanup.init({
+      getState: () => state,
+      getOrders: () => orders,
+      getContacts: () => contacts,
+      E,
+      btn,
+      orderVisible,
+      registryActorId: registryActorIdForCleanup,
+      isExternalShell,
+      isPublicGuestPage,
+      isLkRuntime: () => TT_LK,
+      lkAuthenticatedCabinet,
+      lkMutationAllowed,
+      renderTracker,
+      writeUrl,
+      hasConfirmedHandoff: hasConfirmedHandoffForCleanup,
+      api: {
+        registryCleanup: function (body) {
+          if (window.__TT_EXTERNAL_PERSON__ && window.TanTrackerExternal && window.TanTrackerExternal.registryCleanup) {
+            return window.TanTrackerExternal.registryCleanup(body);
+          }
+          if (window.TanTrackerLk && window.TanTrackerLk.registryCleanup) {
+            return window.TanTrackerLk.registryCleanup(body);
+          }
+          return Promise.reject(new Error("Очистка реестра недоступна."));
+        },
+        refreshBootstrap: function () {
+          if (window.__TT_EXTERNAL_PERSON__ && window.TanTrackerExternal && window.TanTrackerExternal.refreshBootstrap) {
+            return window.TanTrackerExternal.refreshBootstrap();
+          }
+          if (window.TanTrackerLk && window.TanTrackerLk.refreshBootstrap) {
+            return window.TanTrackerLk.refreshBootstrap();
+          }
+          return Promise.resolve(null);
+        },
+      },
+    });
+  }
 
   syncShellNav();
 })();

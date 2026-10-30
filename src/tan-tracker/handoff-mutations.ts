@@ -11,10 +11,12 @@ import { requireTanTrackerMutationAccess } from "./guards";
 import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS, requireHandoffOtpPepper } from "./otp-config";
 import { generateHandoffCodeForPendingParty } from "./handoff-code-generate";
 import { applyPendingReceiptHandoff } from "./handoff-complete";
+import { transferWriteBlocked, TRANSFER_WRITE_BLOCKED_MESSAGE } from "./transfer-write-guard";
 
 async function loadTransfer(client: { query: Function }, id: string) {
   const res = await client.query(
-    `SELECT id, status, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version, row_version
+    `SELECT id, status, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version, row_version,
+            deleted_at, general_archived_at
      FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1 FOR UPDATE`,
     [id],
   );
@@ -27,6 +29,8 @@ async function loadTransfer(client: { query: Function }, id: string) {
         final_recipient_party_id: string | null;
         handoff_version: number;
         row_version: number;
+        deleted_at: Date | null;
+        general_archived_at: Date | null;
       }
     | undefined;
 }
@@ -119,7 +123,14 @@ export async function verifyHandoffCodeHandler(req: AccessRequest, res: Response
     result = await withTransaction(async (client) => {
       const party = await ensurePartyForUserOnWrite(client, user.id, user.fullName, user.phone);
       const row = await loadTransfer(client, transferId);
-      if (!row || !row.pending_party_id) {
+      if (!row || transferWriteBlocked(row)) {
+        return {
+          ok: false,
+          http: transferWriteBlocked(row) ? 403 : 404,
+          message: transferWriteBlocked(row) ? TRANSFER_WRITE_BLOCKED_MESSAGE : "Передача не найдена.",
+        };
+      }
+      if (!row.pending_party_id) {
         return { ok: false, http: 404, message: "Передача не найдена." };
       }
       if (row.holder_party_id !== party.id) {

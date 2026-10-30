@@ -106,8 +106,9 @@ export async function listAllTransferRows(client: Db): Promise<TanTrackerTransfe
     `SELECT id, public_code, item_title, qty_label, comment_text, status,
             creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
             due_at, holder_since, handoff_version, allow_legacy_complete, completed_at, row_version,
-            first_custody_at
+            first_custody_at, from_external, general_archived_at, deleted_at
      FROM tt_transfers
+     WHERE deleted_at IS NULL
      ORDER BY updated_at DESC`,
   );
   return res.rows;
@@ -194,6 +195,7 @@ export function mapTransferToOrderDto(
     attachments: extras?.attachments ?? [],
     rowVersion: row.row_version,
     fromExternal: row.from_external === true,
+    generalArchived: row.general_archived_at != null,
   };
 }
 
