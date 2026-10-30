@@ -9,12 +9,12 @@ import { buildTanTrackerBootstrap } from "./service";
 import { requireTanTrackerMutationAccess } from "./guards";
 import { assertPartyEligibleAsRecipient } from "./party-eligibility";
 import { invalidateOpenHandoffArtifacts } from "./handoff-invalidation";
-import { notifyContinuedReturnedLk } from "./transfer-lk-notify";
+import { notifyPendingCancelled, notifyReturnToCreator, notifyRouteContinued } from "./transfer-lk-notify";
 
 async function loadTransfer(client: { query: Function }, id: string) {
   const res = await client.query(
-    `SELECT id, public_code, status, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version,
-            item_title, delivered_at
+    `SELECT id, public_code, status, creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
+            handoff_version, item_title, delivered_at
      FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1`,
     [id],
   );
@@ -23,6 +23,7 @@ async function loadTransfer(client: { query: Function }, id: string) {
         id: string;
         public_code: string;
         status: string;
+        creator_party_id: string;
         holder_party_id: string;
         pending_party_id: string | null;
         final_recipient_party_id: string | null;
@@ -64,12 +65,13 @@ export async function cancelPendingHandler(req: AccessRequest, res: Response): P
        VALUES ($1,$2,$3,$4,$5::uuid)`,
       [row.id, row.holder_party_id, revoked, "Ожидание передачи отменено", auditUserId],
     );
-    await notifyContinuedReturnedLk(client, {
+    await notifyPendingCancelled(client, {
       transferId: row.id,
       publicCode: row.public_code,
       itemTitle: row.item_title,
       holderPartyId: row.holder_party_id,
-      kind: "returned",
+      revokedPendingPartyId: revoked,
+      creatorPartyId: row.creator_party_id,
       handoffVersion: nextHandoffVersion,
     });
     return { ok: true as const };
@@ -134,14 +136,26 @@ export async function changePendingHandler(req: AccessRequest, res: Response): P
        VALUES ($1,$2,$3,$4,$5::uuid)`,
       [row.id, row.holder_party_id, pendingPartyId, "Назначен следующий получатель", auditUserId],
     );
-    await notifyContinuedReturnedLk(client, {
-      transferId: row.id,
-      publicCode: row.public_code,
-      itemTitle: row.item_title,
-      holderPartyId: row.holder_party_id,
-      kind: "continued",
-      handoffVersion: nextVer,
-    });
+    if (pendingPartyId === row.creator_party_id && pendingPartyId !== row.holder_party_id) {
+      await notifyReturnToCreator(client, {
+        transferId: row.id,
+        publicCode: row.public_code,
+        itemTitle: row.item_title,
+        holderPartyId: row.holder_party_id,
+        creatorPartyId: row.creator_party_id,
+        handoffVersion: nextVer,
+      });
+    } else {
+      await notifyRouteContinued(client, {
+        transferId: row.id,
+        publicCode: row.public_code,
+        itemTitle: row.item_title,
+        holderPartyId: row.holder_party_id,
+        newPendingPartyId: pendingPartyId,
+        creatorPartyId: row.creator_party_id,
+        handoffVersion: nextVer,
+      });
+    }
     return { ok: true as const };
     });
   } catch (err: unknown) {

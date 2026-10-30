@@ -7,9 +7,7 @@ import {
   staffUserAcceptsExternalIntake,
   isActiveStaffUser,
 } from "./intake";
-import { enqueueExternalCreatedNotifications } from "../lk-notifications";
-import { enqueueTanTrackerAssignmentMax, enqueueTanTrackerAssignmentTelegram } from "../../tanbot-telegram/outbox";
-import { notifyTransferAssignmentLk } from "../transfer-lk-notify";
+import { notifyExternalCreatedStaff, notifyTransferAssignment } from "../transfer-lk-notify";
 
 export type ExternalDraftPayload = {
   item?: string;
@@ -151,32 +149,19 @@ export async function confirmExternalRequestDraft(
      WHERE id = $1::uuid`,
     [input.draftId, input.idempotencyKey, publicCode, input.personId],
   );
-  await enqueueExternalCreatedNotifications(client, {
+  await notifyExternalCreatedStaff(client, {
     transferId: publicCode,
     staffUserId: recipientUserId,
-    externalPartyId: input.externalPartyId,
     itemTitle: item,
+    publicCode,
+    handoffVersion: 1,
   });
-  await notifyTransferAssignmentLk(client, {
+  await notifyTransferAssignment(client, {
     transferId: publicCode,
     publicCode,
     itemTitle: item,
     holderUserId: recipientUserId,
     handoffVersion: 1,
-  });
-  await enqueueTanTrackerAssignmentTelegram(client, {
-    transferId: publicCode,
-    publicCode,
-    itemTitle: item,
-    handoffVersion: 1,
-    holderUserId: recipientUserId,
-  });
-  await enqueueTanTrackerAssignmentMax(client, {
-    transferId: publicCode,
-    publicCode,
-    itemTitle: item,
-    handoffVersion: 1,
-    holderUserId: recipientUserId,
   });
   return { transferId: publicCode, publicCode };
 }

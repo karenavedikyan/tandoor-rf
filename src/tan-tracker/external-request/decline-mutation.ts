@@ -9,7 +9,7 @@ import { buildTanTrackerBootstrap } from "../service";
 import { requireTanTrackerMutationAccess } from "../guards";
 import { enqueueExternalPersonMessengerNotice } from "../external-person/external-person-notify";
 import { invalidateOpenHandoffArtifacts } from "../handoff-invalidation";
-import { enqueueExternalDeclinedNotification } from "../lk-notifications";
+import { notifyExternalDeclinedStaff } from "../transfer-lk-notify";
 import { buildExternalPersonMessengerBody } from "../external-person/messenger-copy";
 
 export async function declineExternalRequestHandler(req: AccessRequest, res: Response): Promise<void> {
@@ -78,11 +78,13 @@ export async function declineExternalRequestHandler(req: AccessRequest, res: Res
         auditUserId,
       ],
     );
-    await enqueueExternalDeclinedNotification(client, {
+    await notifyExternalDeclinedStaff(client, {
       transferId: row.id,
       staffUserId: user.id,
       itemTitle: row.item_title,
+      publicCode: row.public_code,
       reason: reason || null,
+      handoffVersion: row.handoff_version + 1,
     });
     await enqueueExternalPersonMessengerNotice(client, {
       externalPartyId: row.creator_party_id,

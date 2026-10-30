@@ -7,7 +7,7 @@ import { resolveTanTrackerAuditUserId } from "./effective-user";
 import { ensurePartyForUserOnWrite } from "./repository";
 import { buildTanTrackerBootstrap } from "./service";
 import { requireTanTrackerMutationAccess } from "./guards";
-import { notifyClosedLk } from "./transfer-lk-notify";
+import { notifyClosed } from "./transfer-lk-notify";
 import { notifyExternalPartyAfterHandoff } from "./transfer-external-messenger-notify";
 
 export async function legacyCompleteHandler(req: AccessRequest, res: Response): Promise<void> {
@@ -114,7 +114,7 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
         [row.id, auditUserId, party.id],
       );
       const closedHv = row.handoff_version + 1;
-      await notifyClosedLk(client, {
+      await notifyClosed(client, {
         transferId: row.id,
         publicCode: row.public_code,
         itemTitle: row.item_title,

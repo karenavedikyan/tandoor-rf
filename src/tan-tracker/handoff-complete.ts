@@ -1,14 +1,10 @@
 import type { PoolClient } from "pg";
 import { markFirstCustodyIfUnset } from "./custody-state";
+import { resolveUserIdForParty } from "../tanbot-telegram/outbox";
 import {
-  enqueueTanTrackerAssignmentMax,
-  enqueueTanTrackerAssignmentTelegram,
-  resolveUserIdForParty,
-} from "../tanbot-telegram/outbox";
-import {
-  notifyDeliveredLk,
-  notifyHandoffConfirmedLk,
-  notifyTransferAssignmentLk,
+  notifyHandoffConfirmed,
+  notifyTransferAssignment,
+  notifyTransferDelivered,
 } from "./transfer-lk-notify";
 import { notifyExternalPartyAfterHandoff } from "./transfer-external-messenger-notify";
 
@@ -72,23 +68,24 @@ export async function applyPendingReceiptHandoff(
   const m = meta.rows[0];
 
   if (m) {
-    await notifyHandoffConfirmedLk(client, {
-      transferId: row.id,
-      publicCode: m.public_code,
-      itemTitle: m.item_title,
-      previousHolderPartyId: from,
-      newHolderPartyId: to,
-      creatorPartyId: m.creator_party_id,
-      handoffVersion: newHandoffVersion,
-      delivered: routeComplete,
-    });
     if (routeComplete) {
-      await notifyDeliveredLk(client, {
+      await notifyTransferDelivered(client, {
         transferId: row.id,
         publicCode: m.public_code,
         itemTitle: m.item_title,
         creatorPartyId: m.creator_party_id,
         holderPartyId: to,
+        previousHolderPartyId: from,
+        handoffVersion: newHandoffVersion,
+      });
+    } else {
+      await notifyHandoffConfirmed(client, {
+        transferId: row.id,
+        publicCode: m.public_code,
+        itemTitle: m.item_title,
+        previousHolderPartyId: from,
+        newHolderPartyId: to,
+        creatorPartyId: m.creator_party_id,
         handoffVersion: newHandoffVersion,
       });
     }
@@ -112,26 +109,12 @@ export async function applyPendingReceiptHandoff(
   if (newStatus === "active") {
     const holderUserId = await resolveUserIdForParty(client, to);
     if (holderUserId && m) {
-      await notifyTransferAssignmentLk(client, {
+      await notifyTransferAssignment(client, {
         transferId: row.id,
         publicCode: m.public_code,
         itemTitle: m.item_title,
         holderUserId,
         handoffVersion: newHandoffVersion,
-      });
-      await enqueueTanTrackerAssignmentTelegram(client, {
-        transferId: row.id,
-        publicCode: m.public_code,
-        itemTitle: m.item_title,
-        handoffVersion: newHandoffVersion,
-        holderUserId,
-      });
-      await enqueueTanTrackerAssignmentMax(client, {
-        transferId: row.id,
-        publicCode: m.public_code,
-        itemTitle: m.item_title,
-        handoffVersion: newHandoffVersion,
-        holderUserId,
       });
     }
   }

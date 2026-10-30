@@ -1,60 +1,43 @@
 import type { PoolClient } from "pg";
-import { insertLkNotification } from "./lk-notifications";
-import { resolveUserIdForParty } from "../tanbot-telegram/outbox";
+import {
+  fanoutStaffTransferNotification,
+  transferPayload,
+  uniqueStaffUserIdsFromParties,
+} from "./staff-notify-fanout";
 
-async function partyUserId(client: PoolClient, partyId: string | null | undefined): Promise<string | null> {
-  if (!partyId) return null;
-  return resolveUserIdForParty(client, partyId);
-}
+export { uniqueStaffUserIdsFromParties as uniqueStaffUserIds };
 
-/** Dedupe staff user ids (same person in multiple roles on one transfer). */
-export async function uniqueStaffUserIds(client: PoolClient, partyIds: Array<string | null | undefined>): Promise<string[]> {
-  const out = new Set<string>();
-  for (const pid of partyIds) {
-    const uid = await partyUserId(client, pid);
-    if (uid) out.add(uid);
-  }
-  return [...out];
-}
-
-export async function notifyTransferAssignmentLk(
+export async function notifyTransferAssignment(
   client: PoolClient,
   input: { transferId: string; publicCode: string; itemTitle: string; holderUserId: string; handoffVersion: number },
 ): Promise<void> {
-  await insertLkNotification(client, {
-    userId: input.holderUserId,
-    transferId: input.transferId,
+  await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.assignment",
-    title: "Вам назначена передача",
-    body: `${input.itemTitle} (${input.publicCode})`,
-    idempotencyKey: `tt-lk-assignment:${input.transferId}:hv:${input.handoffVersion}:${input.holderUserId}`,
+    recipientUserIds: [input.holderUserId],
+    payload: transferPayload(input),
   });
 }
 
-export async function notifyCodeGeneratedLk(
+export async function notifyCodeGenerated(
   client: PoolClient,
   input: {
     transferId: string;
     publicCode: string;
     itemTitle: string;
     holderPartyId: string;
-    pendingPartyId: string;
     handoffVersion: number;
   },
 ): Promise<void> {
-  const holderUserId = await partyUserId(client, input.holderPartyId);
-  if (!holderUserId) return;
-  await insertLkNotification(client, {
-    userId: holderUserId,
-    transferId: input.transferId,
+  const userIds = await uniqueStaffUserIdsFromParties(client, [input.holderPartyId]);
+  await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.code_obtained",
-    title: "Получатель запросил код",
-    body: `${input.itemTitle} (${input.publicCode})`,
-    idempotencyKey: `tt-lk-code-obtained:${input.transferId}:hv:${input.handoffVersion}:${holderUserId}`,
+    recipientUserIds: userIds,
+    payload: transferPayload(input),
   });
 }
 
-export async function notifyHandoffConfirmedLk(
+/** Intermediate handoff (not final delivery to route end). */
+export async function notifyHandoffConfirmed(
   client: PoolClient,
   input: {
     transferId: string;
@@ -64,27 +47,22 @@ export async function notifyHandoffConfirmedLk(
     newHolderPartyId: string;
     creatorPartyId: string;
     handoffVersion: number;
-    delivered: boolean;
   },
 ): Promise<void> {
-  const userIds = await uniqueStaffUserIds(client, [
+  const userIds = await uniqueStaffUserIdsFromParties(client, [
     input.previousHolderPartyId,
     input.newHolderPartyId,
     input.creatorPartyId,
   ]);
-  for (const userId of userIds) {
-    await insertLkNotification(client, {
-      userId,
-      transferId: input.transferId,
-      eventType: "tan_tracker.handoff_confirmed",
-      title: input.delivered ? "Доставлено конечному получателю" : "Передача подтверждена",
-      body: `${input.itemTitle} (${input.publicCode})`,
-      idempotencyKey: `tt-lk-handoff-confirmed:${input.transferId}:hv:${input.handoffVersion}:${userId}`,
-    });
-  }
+  await fanoutStaffTransferNotification(client, {
+    eventType: "tan_tracker.handoff_confirmed",
+    recipientUserIds: userIds,
+    payload: transferPayload(input),
+  });
 }
 
-export async function notifyDeliveredLk(
+/** Final delivery to route end — single logical receipt (no duplicate handoff_confirmed). */
+export async function notifyTransferDelivered(
   client: PoolClient,
   input: {
     transferId: string;
@@ -92,47 +70,93 @@ export async function notifyDeliveredLk(
     itemTitle: string;
     creatorPartyId: string;
     holderPartyId: string;
+    previousHolderPartyId: string;
     handoffVersion: number;
   },
 ): Promise<void> {
-  const userIds = await uniqueStaffUserIds(client, [input.creatorPartyId, input.holderPartyId]);
-  for (const userId of userIds) {
-    await insertLkNotification(client, {
-      userId,
-      transferId: input.transferId,
-      eventType: "tan_tracker.delivered",
-      title: "Доставлено",
-      body: `${input.itemTitle} (${input.publicCode})`,
-      idempotencyKey: `tt-lk-delivered:${input.transferId}:hv:${input.handoffVersion}:${userId}`,
-    });
-  }
+  const userIds = await uniqueStaffUserIdsFromParties(client, [
+    input.creatorPartyId,
+    input.holderPartyId,
+    input.previousHolderPartyId,
+  ]);
+  await fanoutStaffTransferNotification(client, {
+    eventType: "tan_tracker.delivered",
+    recipientUserIds: userIds,
+    payload: transferPayload(input),
+  });
 }
 
-export async function notifyContinuedReturnedLk(
+/** Next recipient assigned while holder keeps custody. */
+export async function notifyRouteContinued(
   client: PoolClient,
   input: {
     transferId: string;
     publicCode: string;
     itemTitle: string;
     holderPartyId: string;
-    kind: "continued" | "returned";
+    newPendingPartyId: string;
+    creatorPartyId: string;
     handoffVersion: number;
   },
 ): Promise<void> {
-  const holderUserId = await partyUserId(client, input.holderPartyId);
-  if (!holderUserId) return;
-  const title = input.kind === "continued" ? "Назначен следующий получатель" : "Ожидание передачи отменено";
-  await insertLkNotification(client, {
-    userId: holderUserId,
-    transferId: input.transferId,
-    eventType: input.kind === "continued" ? "tan_tracker.continued" : "tan_tracker.returned",
-    title,
-    body: `${input.itemTitle} (${input.publicCode})`,
-    idempotencyKey: `tt-lk-${input.kind}:${input.transferId}:hv:${input.handoffVersion}:${holderUserId}`,
+  const userIds = await uniqueStaffUserIdsFromParties(client, [
+    input.holderPartyId,
+    input.newPendingPartyId,
+    input.creatorPartyId,
+  ]);
+  await fanoutStaffTransferNotification(client, {
+    eventType: "tan_tracker.continued",
+    recipientUserIds: userIds,
+    payload: transferPayload(input),
   });
 }
 
-export async function notifyClosedLk(
+/** Return route toward creator (pending set to creator). */
+export async function notifyReturnToCreator(
+  client: PoolClient,
+  input: {
+    transferId: string;
+    publicCode: string;
+    itemTitle: string;
+    holderPartyId: string;
+    creatorPartyId: string;
+    handoffVersion: number;
+  },
+): Promise<void> {
+  const userIds = await uniqueStaffUserIdsFromParties(client, [input.holderPartyId, input.creatorPartyId]);
+  await fanoutStaffTransferNotification(client, {
+    eventType: "tan_tracker.returned",
+    recipientUserIds: userIds,
+    payload: transferPayload(input),
+  });
+}
+
+/** Pending invitation cancelled; item stays with holder. */
+export async function notifyPendingCancelled(
+  client: PoolClient,
+  input: {
+    transferId: string;
+    publicCode: string;
+    itemTitle: string;
+    holderPartyId: string;
+    revokedPendingPartyId: string;
+    creatorPartyId: string;
+    handoffVersion: number;
+  },
+): Promise<void> {
+  const userIds = await uniqueStaffUserIdsFromParties(client, [
+    input.holderPartyId,
+    input.revokedPendingPartyId,
+    input.creatorPartyId,
+  ]);
+  await fanoutStaffTransferNotification(client, {
+    eventType: "tan_tracker.pending_cancelled",
+    recipientUserIds: userIds,
+    payload: transferPayload(input),
+  });
+}
+
+export async function notifyClosed(
   client: PoolClient,
   input: {
     transferId: string;
@@ -142,17 +166,41 @@ export async function notifyClosedLk(
     handoffVersion: number;
   },
 ): Promise<void> {
-  const userIds = await uniqueStaffUserIds(client, input.partyIds);
-  for (const userId of userIds) {
-    await insertLkNotification(client, {
-      userId,
-      transferId: input.transferId,
-      eventType: "tan_tracker.closed",
-      title: "Передача завершена",
-      body: `${input.itemTitle} (${input.publicCode})`,
-      idempotencyKey: `tt-lk-closed:${input.transferId}:hv:${input.handoffVersion}:${userId}`,
-    });
-  }
+  const userIds = await uniqueStaffUserIdsFromParties(client, input.partyIds);
+  await fanoutStaffTransferNotification(client, {
+    eventType: "tan_tracker.closed",
+    recipientUserIds: userIds,
+    payload: transferPayload(input),
+  });
+}
+
+export async function notifyExternalCreatedStaff(
+  client: PoolClient,
+  input: { transferId: string; staffUserId: string; itemTitle: string; publicCode: string; handoffVersion: number },
+): Promise<void> {
+  await fanoutStaffTransferNotification(client, {
+    eventType: "tan_tracker.external_created",
+    recipientUserIds: [input.staffUserId],
+    payload: transferPayload(input),
+  });
+}
+
+export async function notifyExternalDeclinedStaff(
+  client: PoolClient,
+  input: {
+    transferId: string;
+    staffUserId: string;
+    itemTitle: string;
+    publicCode: string;
+    reason: string | null;
+    handoffVersion: number;
+  },
+): Promise<void> {
+  await fanoutStaffTransferNotification(client, {
+    eventType: "tan_tracker.external_declined",
+    recipientUserIds: [input.staffUserId],
+    payload: transferPayload({ ...input, reason: input.reason }),
+  });
 }
 
 export async function isExternalParty(client: PoolClient, partyId: string): Promise<boolean> {

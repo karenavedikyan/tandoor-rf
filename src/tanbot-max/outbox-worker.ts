@@ -2,7 +2,11 @@ import type { Pool, PoolClient } from "pg";
 import type { TanbotMaxStage2Config } from "./stage2-config";
 import type { MaxDeliveryTransport } from "./delivery-transport";
 import { findAccountByUserId } from "./link-repository";
-import { canDeliverAssignmentNotification } from "../tanbot-telegram/tan-tracker-access";
+import { canDeliverTanTrackerOutboxNotification } from "../tanbot-telegram/tan-tracker-access";
+import {
+  buildTanTrackerStaffOutboxMessage,
+  isTanTrackerStaffOutboxEvent,
+} from "../tan-tracker/tan-tracker-outbox-messages";
 
 const MAX_ATTEMPTS = 8;
 
@@ -29,13 +33,6 @@ async function loadPendingMax(client: PoolClient, limit: number) {
      FOR UPDATE SKIP LOCKED`,
     [limit],
   );
-}
-
-function buildAssignmentMessage(config: TanbotMaxStage2Config, payload: Record<string, unknown>): string {
-  const code = String(payload.publicCode ?? "");
-  const title = String(payload.itemTitle ?? "Передача");
-  const url = `${config.appOrigin}/tan-tracker`;
-  return `Тан-трекер: вам назначена передача «${title}» (${code}).\nОткрыть в личном кабинете: ${url}`;
 }
 
 export async function processTanbotMaxNotificationOutbox(
@@ -75,10 +72,16 @@ export async function processTanbotMaxNotificationOutbox(
         continue;
       }
 
-      if (row.event_type === "tan_tracker.assignment") {
+      if (isTanTrackerStaffOutboxEvent(row.event_type)) {
         const transferId = String(row.payload.transferId ?? "");
         const hv = Number(row.payload.handoffVersion ?? 0);
-        const allowed = await canDeliverAssignmentNotification(client, row.user_id, transferId, hv);
+        const allowed = await canDeliverTanTrackerOutboxNotification(
+          client,
+          row.user_id,
+          transferId,
+          hv,
+          row.event_type,
+        );
         if (!allowed) {
           await client.query(
             `UPDATE tanbot_notification_outbox SET status = 'cancelled', last_error_code = 'NO_ACCESS' WHERE id = $1::uuid`,
@@ -89,10 +92,9 @@ export async function processTanbotMaxNotificationOutbox(
         }
       }
 
-      const text =
-        row.event_type === "tan_tracker.assignment"
-          ? buildAssignmentMessage(config, row.payload)
-          : "Уведомление Тандор.";
+      const text = isTanTrackerStaffOutboxEvent(row.event_type)
+        ? buildTanTrackerStaffOutboxMessage(row.event_type, row.payload, config.appOrigin)
+        : "Уведомление Тандор.";
 
       const send = await transport({
         token: config.botToken,
