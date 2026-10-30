@@ -338,6 +338,7 @@ describe("invitation own-contact receipt → external person notify (PG)", { con
     const tgUserId = 930010030;
     const vcfRaw = "BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Syn\\r\\nTEL;TYPE=CELL:+79993001003\\r\\nEND:VCARD";
 
+    const { publicCode, pendingPartyId } = await createExternalTransfer(phone, "Dual channel");
     await withTransaction(async (client) => {
       await upsertVerifiedPerson(client, {
         channel: "telegram",
@@ -354,8 +355,6 @@ describe("invitation own-contact receipt → external person notify (PG)", { con
         displayName: "Dual Syn",
       });
     });
-
-    const { publicCode, pendingPartyId } = await createExternalTransfer(phone, "Dual channel");
     const startToken = await mintInvite(publicCode);
     const maxCfg = loadTanbotMaxStage2Config();
     assert.equal(maxCfg.ok, true);
@@ -574,6 +573,7 @@ describe("invitation own-contact receipt → external person notify (PG)", { con
     const maxUserId = 93001013;
     const tgUserId = 930010130;
     const vcfRaw = "BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Syn\\r\\nTEL;TYPE=CELL:+79993001013\\r\\nEND:VCARD";
+    const { publicCode, pendingPartyId } = await createExternalTransfer(phone, "Expired session");
     await withTransaction(async (client) => {
       await upsertVerifiedPerson(client, {
         channel: "telegram",
@@ -583,7 +583,6 @@ describe("invitation own-contact receipt → external person notify (PG)", { con
         displayName: "Stale TG",
       });
     });
-    const { publicCode, pendingPartyId } = await createExternalTransfer(phone, "Expired session");
     const startToken = await mintInvite(publicCode);
     const maxCfg = loadTanbotMaxStage2Config();
     assert.equal(maxCfg.ok, true);
@@ -745,15 +744,27 @@ describe("invitation own-contact receipt → external person notify (PG)", { con
       handleStaffOrExternalMessengerStop(client, { channel: "max", messengerUserId: BigInt(maxUserId) }),
     );
 
-    const worker = await processExternalPersonMessageOutbox(pool, {
+    const outboxAfterStop = await pool.query<{ status: string }>(
+      `SELECT status FROM tt_external_person_message_outbox o
+       JOIN tt_external_persons p ON p.id = o.person_id
+       WHERE p.party_id = $1::uuid AND o.channel = 'max'`,
+      [pendingPartyId],
+    );
+    assert.equal(outboxAfterStop.rowCount, 1);
+    assert.equal(outboxAfterStop.rows[0]!.status, "cancelled");
+
+    let sendToOptOutChat = 0;
+    await processExternalPersonMessageOutbox(pool, {
       channel: "max",
       botToken: MAX_BOT_TOKEN,
       requestTimeoutMs: 5000,
       maxResponseBytes: 65536,
-      transport: async () => ({ ok: true }),
+      transport: async (input) => {
+        if (input.chatId === String(maxUserId)) sendToOptOutChat += 1;
+        return { ok: true };
+      },
     });
-    assert.equal(worker.cancelled, 1);
-    assert.equal(worker.sent, 0);
+    assert.equal(sendToOptOutChat, 0);
     void publicCode;
     void pendingPartyId;
   });

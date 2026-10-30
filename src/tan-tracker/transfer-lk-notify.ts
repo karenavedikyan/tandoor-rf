@@ -203,9 +203,10 @@ export async function notifyExternalDeclinedStaff(
   });
 }
 
+/** External recipient/creator party in tt_parties (not “has tt_external_persons row”). */
 export async function isExternalParty(client: PoolClient, partyId: string): Promise<boolean> {
   const row = await client.query(
-    `SELECT 1 FROM tt_external_persons ep JOIN tt_parties p ON p.id = ep.party_id WHERE ep.party_id = $1::uuid LIMIT 1`,
+    `SELECT 1 FROM tt_parties WHERE id = $1::uuid AND kind = 'external' LIMIT 1`,
     [partyId],
   );
   return (row.rowCount ?? 0) > 0;
