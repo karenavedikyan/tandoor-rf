@@ -14,6 +14,12 @@ var NOTIFICATION_CENTER_QA = await (async () => {
   const bell = () => page.locator("#af-bell").click();
   const closeInbox = () => page.locator('#af-inbox [data-af="close-inbox"]').click();
   const closeProfile = () => page.locator('#af-profile-dialog [data-af="profile-close"]').click();
+  const activatePersonalChannel = async (kind) => {
+    await page.locator(`[data-af="begin-connect-${kind}"]`).click();
+    await page.locator('[data-af="bot-panel"]').waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Start · активировать привязку", exact: true }).click();
+    await page.locator(`[data-af="channel-${kind}"] .af-channel-on`).waitFor({ state: "visible" });
+  };
   const demoNoteLine = () =>
     page.locator(".af-note").filter({ hasText: "срок передачи сегодня" }).locator(".af-muted").last();
 
@@ -77,8 +83,9 @@ var NOTIFICATION_CENTER_QA = await (async () => {
 
   await page.locator("#af-profile-btn").click();
   await page.locator("#af-profile-dialog").waitFor({ state: "visible" });
-  await page.locator('[data-af="connect-telegram"]').click();
-  await page.locator('[data-af="connect-max"]').click();
+  await activatePersonalChannel("telegram");
+  await page.locator('[data-af="demo-max-lk"]').check();
+  await activatePersonalChannel("max");
   await page.evaluate(() => window.AssistantFeedback.flushDemoStore());
   await closeProfile();
 

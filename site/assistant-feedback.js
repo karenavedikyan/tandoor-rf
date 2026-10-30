@@ -6,7 +6,12 @@
   const names={manager:"Менеджер",coordinator:"РОА",director:"Директор",assistant:"Ассистент",rop:"РОП",admin:"Администратор"};
   let source,notes=[],reviews=[],seen=new Set(),previous=new Map(),seq=0,inbox=false,unreadOnly=false,dialog=null;
   let filters={q:"",assistant:"",manager:"",score:"",status:""};
-  let categoryFilter="all",profileDialog=null;
+  let categoryFilter="all",profileDialog=null,connectBot=null,connectBotMsg="";
+  function maxConnectDemoEnabled(){try{return sessionStorage.getItem("tt-demo-max-messenger")==="1";}catch{return false;}}
+  function setMaxConnectDemoEnabled(on){try{sessionStorage.setItem("tt-demo-max-messenger",on?"1":"0");}catch{}}
+  function personalBindToken(user,kind){return `bind_demo_${user}_${kind}`;}
+  function finishChannelConnect(user,kind){const d=deliveryFor(user);d[kind].connected=true;d[kind].label=kind==="telegram"?`@demo_${user}_tg`:`MAX · demo ${user.toUpperCase()}`;persistDelivery(user,d);}
+  function channelLabel(kind){return kind==="telegram"?"Telegram":"MAX";}
   const categoryLabels={all:"Все",tt:"Тан-трекер",assign:"Назначения",system:"Система"};
   const defaults={manager:"m1",coordinator:"c1",director:"d1",assistant:"a1",rop:"r1",admin:"admin"};
   const cloneStore=s=>JSON.parse(JSON.stringify(s));
@@ -287,30 +292,49 @@
     el.querySelector(".af-inbox-list").scrollTop=scroll;
     if(focus)([...el.querySelectorAll("button")].find(b=>b.dataset.af===focus.key&&b.dataset.id===focus.id)||el.querySelector("button")).focus();
   }
-  function closeProfile(){document.getElementById("af-profile-dialog")?.close();document.getElementById("af-profile-dialog")?.remove();profileDialog=null;}
-  function openProfile(fromInbox){
-    closeProfile();inbox=false;
+  function buildProfileHtml(fromInbox){
     const c=inboxContext(),user=inboxUserId(),d=deliveryFor(user);
-    const el=document.createElement("dialog");el.id="af-profile-dialog";el.className="af af-dialog af-profile-dialog";el.setAttribute("aria-labelledby","af-profile-title");
-    const channel=(kind,label)=>{const ch=d[kind];return `<article class="af-channel"><div class="af-line"><h3>${label}</h3><span class="af-channel-state ${ch.connected?"af-channel-on":"af-channel-off"}">${ch.connected?"Подключено (демо)":"Не подключено"}</span></div>
-      <p class="af-muted">${ch.connected?`Канал ${E(ch.label||"привязан")}. Это симуляция — реальная привязка не выполняется.`:"Подключение симулирует личную привязку канала без кодов и внешних ссылок."}</p>
-      <div class="af-actions">${ch.connected?action("disconnect-"+kind,"Отключить (демо)"):action("connect-"+kind,"Подключить (демо)")}</div></article>`;};
-    el.innerHTML=`<div class="af-line"><div><span class="af-eyebrow">Профиль · демо</span><h2 id="af-profile-title">Уведомления и доставка</h2></div>${action("profile-close","Закрыть")}</div>
+    const consent=`<p class="af-connect-consent"><strong>Согласие (демо).</strong> Личная привязка канала включает коды Tan-трекера и дублирование уведомлений ЛК. Отключить канал или тип событий можно здесь же.</p>`;
+    const botPanel=(kind)=>{const token=personalBindToken(user,kind),label=channelLabel(kind);return `<div class="af-bot-sim" data-af="bot-panel">
+      <p class="af-muted">Синтетический чат бота · без реальных сообщений и API</p>
+      <p><strong>Tandoor RF · личные уведомления (${E(label)})</strong></p>
+      <p class="af-muted">Обычный <code>/start</code> в публичном боте <strong>не привязывает</strong> ваш аккаунт сотрудника.</p>
+      <p>Персональная ссылка активации (демо): <code class="af-bind-token">${E(token)}</code></p>
+      <div class="af-actions">${action("bot-start-personal","Start · активировать привязку",kind,"primary")}${action("bot-start-generic","/start (общий бот)",kind)}</div>
+      ${connectBotMsg&&connectBot?.kind===kind?`<p class="af-bot-msg" role="status">${E(connectBotMsg)}</p>`:""}
+    </div>`;};
+    const channel=(kind,label)=>{const ch=d[kind],maxBlocked=kind==="max"&&!maxConnectDemoEnabled();
+      let body=ch.connected?`<p class="af-muted">Канал ${E(ch.label||"привязан")}. Симуляция — без реальных ботов и токенов.</p><div class="af-actions">${action("disconnect-"+kind,"Отключить (демо)")}</div>`:
+        maxBlocked?`<p class="af-muted">MAX в прототипе выключен по умолчанию. Включите демо MAX ниже — это не production-интеграция.</p>`:
+        connectBot?.kind===kind?`${consent}${botPanel(kind)}`:
+        `${consent}<div class="af-actions">${action("begin-connect-"+kind,"Подключить личный "+label,"","primary")}</div>`;
+      return `<article class="af-channel" data-af="channel-${kind}"><div class="af-line"><h3>${label}</h3><span class="af-channel-state ${ch.connected?"af-channel-on":"af-channel-off"}">${ch.connected?"Подключено (демо)":maxBlocked?"Демо MAX выключен":"Не подключено"}</span></div>${body}</article>`;};
+    return `<div class="af-line"><div><span class="af-eyebrow">Профиль · демо</span><h2 id="af-profile-title">Уведомления и доставка</h2></div>${action("profile-close","Закрыть")}</div>
       <p class="af-required-copy"><strong>Единый центр ЛК.</strong> Tan-трекер, назначения и другие события используют одни настройки. История остаётся в личном кабинете, даже если Telegram и MAX отключены или доставка не удалась.</p>
       <p class="af-muted">${E(P.person(c.id))} · ${E(c.label||names[c.role]||c.role)} · настройки демо-сотрудника сохраняются на изолированном preview-сервере (не в браузере).</p>
       <p id="af-profile-store-status" class="af-store-status" role="status"${saveStatusFullMessage()?"":' hidden'}>${E(saveStatusFullMessage())}</p>
+      <label class="af-max-demo-toggle af-pref"><input type="checkbox" data-af="demo-max-lk" ${maxConnectDemoEnabled()?"checked":""}> Разрешить демо-привязку MAX (отдельно от production)</label>
       <fieldset class="af-delivery-prefs"><legend>Какие события дублировать в мессенджеры (демо)</legend>
         ${[["tt","Tan-трекер: передачи и сроки"],["assign","Назначения и доступ"],["system","Системные и служебные"]].map(([k,t])=>`<label class="af-pref"><input type="checkbox" data-af="pref" data-id="${k}" ${d.prefs[k]?"checked":""}> ${E(t)}</label>`).join("")}
       </fieldset>
       ${channel("telegram","Telegram")}${channel("max","MAX")}
       ${d.lastError?`<div class="af-delivery-error" role="status"><strong>Последняя ошибка доставки (демо)</strong><p>${E(d.lastError)}</p><p class="af-muted">${d.lastErrorAt?fmt(d.lastErrorAt)+" МСК":""}</p>${action("delivery-retry","Повторить отправку (демо)")}</div>`:""}
-      <p class="af-muted">Права доступа к разделам ЛК не меняются настройками уведомлений. Ассистент не получает оценки; РОП — только информационные сообщения, как в центре уведомлений.</p>`;
+      <p class="af-muted">Привязка мессенджера для уведомлений не заменяет подтверждение передачи по коду/контакту на экране получателя Tan-трекера.</p>
+      <p class="af-muted">Права доступа к разделам ЛК не меняются настройками уведомлений.</p>`;
+  }
+  function refreshProfileDialog(){if(!profileDialog)return;profileDialog.innerHTML=buildProfileHtml(profileDialog.dataset.fromInbox==="1");}
+  function closeProfile(){connectBot=null;connectBotMsg="";document.getElementById("af-profile-dialog")?.close();document.getElementById("af-profile-dialog")?.remove();profileDialog=null;}
+  function openProfile(fromInbox){
+    closeProfile();inbox=false;
+    const el=document.createElement("dialog");el.id="af-profile-dialog";el.className="af af-dialog af-profile-dialog";el.setAttribute("aria-labelledby","af-profile-title");
+    el.dataset.fromInbox=fromInbox?"1":"0";
+    el.innerHTML=buildProfileHtml(fromInbox);
     document.body.append(el);profileDialog=el;
-    el.addEventListener("cancel",e=>{e.preventDefault();closeProfile();(fromInbox?document.getElementById("af-bell"):document.getElementById("af-profile-btn"))?.focus();});
+    el.addEventListener("cancel",e=>{e.preventDefault();closeProfile();(fromInbox?document.getElementById("af-bell"):document.getElementById("af-profile-btn"))?.focus();paint();});
     el.showModal();el.querySelector("button")?.focus();
     document.getElementById("app").inert=true;if(!S.modal)document.body.style.overflow="hidden";
   }
-  function drawProfile(){if(!profileDialog)return;document.getElementById("app").inert=true;}
+  function drawProfile(){if(!profileDialog)return;refreshProfileDialog();document.getElementById("app").inert=true;}
   function openDialog(a,r){
     document.getElementById("af-review-dialog")?.remove();dialog={id:a.id,readonly:!!r,score:0};
     const el=document.createElement("dialog");el.id="af-review-dialog";el.className="af af-dialog";el.setAttribute("aria-labelledby","af-review-title");
@@ -367,10 +391,13 @@
     if(k.startsWith("cat-")){categoryFilter=k.slice(4);paint();}
     if(k==="profile-open"){openProfile(false);}
     if(k==="profile-close"){closeProfile();document.getElementById("af-profile-btn")?.focus();paint();}
-    if(k==="connect-telegram"||k==="connect-max"){const user=inboxUserId(),d=deliveryFor(user),kind=k.split("-")[1];d[kind].connected=true;d[kind].label=kind==="telegram"?"@demo_"+user+"_tg":"MAX · demo "+user.toUpperCase();persistDelivery(user,d);openProfile(false);}
-    if(k==="disconnect-telegram"||k==="disconnect-max"){const user=inboxUserId(),d=deliveryFor(user),kind=k.split("-")[1];d[kind].connected=false;d[kind].label="";persistDelivery(user,d);openProfile(false);}
+    if(k==="begin-connect-telegram"||k==="begin-connect-max"){const kind=k.slice(14);if(kind==="max"&&!maxConnectDemoEnabled()){connectBotMsg="Сначала включите демо MAX в этом окне.";connectBot={kind};refreshProfileDialog();return;}connectBotMsg="";connectBot={kind};refreshProfileDialog();}
+    if(k==="bot-start-personal"){const kind=id||connectBot?.kind;if(!kind)return;const user=inboxUserId();finishChannelConnect(user,kind);connectBot=null;connectBotMsg="";refreshProfileDialog();paint();}
+    if(k==="bot-start-generic"){connectBotMsg="Общий /start не привязывает личный аккаунт. Используйте персональную ссылку и «Start · активировать привязку».";refreshProfileDialog();}
+    if(k==="disconnect-telegram"||k==="disconnect-max"){const user=inboxUserId(),d=deliveryFor(user),kind=k.split("-")[1];d[kind].connected=false;d[kind].label="";persistDelivery(user,d);connectBot=null;connectBotMsg="";refreshProfileDialog();paint();}
     if(k==="delivery-retry"){const user=inboxUserId(),d=deliveryFor(user);d.lastError="";d.lastErrorAt=0;persistDelivery(user,d);markFailedDeliveriesRetried(user);if(P.routeActive()){S.toast="Демо: повторная отправка выполнена. События в ЛК не изменились.";P.render();}closeProfile();paint();}
     if(b.matches("[data-af=pref]")){const user=inboxUserId(),d=deliveryFor(user);d.prefs[b.dataset.id]=b.checked;persistDelivery(user,d);}
+    if(b.matches('[data-af="demo-max-lk"]')){setMaxConnectDemoEnabled(!!b.checked);if(!b.checked&&connectBot?.kind==="max"){connectBot=null;connectBotMsg="";}refreshProfileDialog();}
     if(k==="open-note"){const n=mine().find(n=>n.key===id);if(n)openNote(n);}
     if(k==="ratings")refreshRatings();
     if(k==="required-rate"){
