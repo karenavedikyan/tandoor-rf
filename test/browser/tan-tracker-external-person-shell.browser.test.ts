@@ -367,7 +367,7 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
         await staffPage.goto(`${fixture.baseUrl}/tan-tracker`);
         await staffPage.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
         await staffPage.locator(`[data-tt-open="${publicCode}"]`).first().click();
-        await staffPage.waitForSelector('[data-tt="attach-download"]', { timeout: 15000 });
+        await staffPage.waitForSelector('[data-tt="attach-download"]', { state: "attached", timeout: 15000 });
 
         const attachments = staffPage.locator("details").filter({ has: staffPage.locator('[data-tt="attach-download"]') });
         if ((await attachments.getAttribute("open")) === null) {
