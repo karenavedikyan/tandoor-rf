@@ -466,6 +466,109 @@ describe("invitation own-contact receipt → external person notify (PG)", { con
     assert.equal(outbox.rows[0]!.c, 1);
   });
 
+  it("webhook: after delivered invitation, own contact falls through to generic shell recovery (MAX)", async () => {
+    const phone = "+79993001009";
+    const maxUserId = 93001009;
+    const vcfRaw = "BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Syn\\r\\nTEL;TYPE=CELL:+79993001009\\r\\nEND:VCARD";
+    const { publicCode } = await createExternalTransfer(phone, "Recovery MAX");
+    const startToken = await mintInvite(publicCode);
+    const maxCfg = loadTanbotMaxStage2Config();
+    assert.equal(maxCfg.ok, true);
+    if (!maxCfg.ok) return;
+    await handleTanbotMaxUpdate(pool, maxCfg.config, {
+      update_type: "bot_started",
+      timestamp: Date.now(),
+      chat_id: maxUserId,
+      user: { user_id: maxUserId, is_bot: false, first_name: "Syn" },
+      payload: startToken,
+    });
+    const firstContact = await handleTanbotMaxUpdate(
+      pool,
+      maxCfg.config,
+      maxContactUpdate({ ts: Date.now() + 7, userId: maxUserId, chatId: maxUserId, mid: "inv-rec-1", vcfRaw }),
+    );
+    await staffVerifyCode(publicCode, extractSixDigitCode(firstContact.reply?.text ?? ""));
+
+    const recovery = await handleTanbotMaxUpdate(
+      pool,
+      maxCfg.config,
+      maxContactUpdate({ ts: Date.now() + 8, userId: maxUserId, chatId: maxUserId, mid: "inv-rec-2", vcfRaw }),
+    );
+    assert.match(recovery.reply?.text ?? "", /tan-tracker\/\?est=/);
+    assert.ok(!/Приглашение недоступно/i.test(recovery.reply?.text ?? ""));
+  });
+
+  it("webhook: active invitation still rejects wrong phone (MAX)", async () => {
+    const phone = "+79993001010";
+    const maxUserId = 93001010;
+    const wrongVcf =
+      "BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Syn\\r\\nTEL;TYPE=CELL:+79993001011\\r\\nEND:VCARD";
+    const { publicCode } = await createExternalTransfer(phone, "Wrong phone");
+    const startToken = await mintInvite(publicCode);
+    const maxCfg = loadTanbotMaxStage2Config();
+    assert.equal(maxCfg.ok, true);
+    if (!maxCfg.ok) return;
+    await handleTanbotMaxUpdate(pool, maxCfg.config, {
+      update_type: "bot_started",
+      timestamp: Date.now(),
+      chat_id: maxUserId,
+      user: { user_id: maxUserId, is_bot: false, first_name: "Syn" },
+      payload: startToken,
+    });
+    const out = await handleTanbotMaxUpdate(
+      pool,
+      maxCfg.config,
+      maxContactUpdate({ ts: Date.now() + 9, userId: maxUserId, chatId: maxUserId, mid: "inv-wrong", vcfRaw: wrongVcf }),
+    );
+    assert.match(out.reply?.text ?? "", /не совпадает/i);
+    void publicCode;
+  });
+
+  it("webhook: after delivered invitation, «Мои передачи» then contact uses generic path (Telegram)", async () => {
+    const phone = "+79993001012";
+    const tgUserId = 93001012;
+    const tgChatId = tgUserId;
+    const { publicCode } = await createExternalTransfer(phone, "Recovery TG");
+    const startToken = await mintInvite(publicCode);
+    const tgCfg = loadTanbotTelegramStage2Config();
+    assert.equal(tgCfg.ok, true);
+    if (!tgCfg.ok) return;
+
+    await handleTanbotTelegramUpdate(pool, tgCfg.config, {
+      update_id: 9300101201,
+      message: {
+        message_id: 1,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: tgChatId, type: "private" },
+        from: { id: tgUserId, is_bot: false, first_name: "Syn" },
+        text: `/start ${startToken}`,
+      },
+    });
+    const first = await handleTanbotTelegramUpdate(pool, tgCfg.config, {
+      update_id: 9300101202,
+      message: {
+        message_id: 2,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: tgChatId, type: "private" },
+        from: { id: tgUserId, is_bot: false, first_name: "Syn" },
+        contact: { phone_number: phone, user_id: tgUserId, first_name: "Syn" },
+      },
+    });
+    await staffVerifyCode(publicCode, extractSixDigitCode(first.reply?.text ?? ""));
+
+    const myTransfers = await handleTanbotTelegramUpdate(pool, tgCfg.config, {
+      update_id: 9300101203,
+      message: {
+        message_id: 3,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: tgChatId, type: "private" },
+        from: { id: tgUserId, is_bot: false, first_name: "Syn" },
+        text: "Мои передачи",
+      },
+    });
+    assert.match(myTransfers.reply?.text ?? "", /tan-tracker\/\?est=/);
+  });
+
   it("opt-out on MAX channel cancels receipt outbox delivery", async () => {
     const phone = "+79993001006";
     const maxUserId = 93001006;

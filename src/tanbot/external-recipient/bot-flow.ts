@@ -99,7 +99,7 @@ export async function handleExternalRecipientTelegramContact(
   }
 
   const session = await lockSessionByTelegramChat(client, input.telegramChatId);
-  if (!session) return { text: "Приглашение недоступно." };
+  if (!session) return null;
   if (
     session.bound_telegram_user_id &&
     session.bound_telegram_user_id !== input.telegramUserId.toString()
@@ -110,11 +110,11 @@ export async function handleExternalRecipientTelegramContact(
     return { text: "Это приглашение открыто в другом мессенджере. Используйте тот канал, который вы выбрали на странице получателя." };
   }
 
+  const open = await assertSessionTransferStillOpen(client, session);
+  if (!open.ok) return null;
+
   const attempt = await recordContactAttempt(client, session.id);
   if (!attempt.allowed) return { text: "Слишком много попыток. Попросите отправителя обновить ссылку." };
-
-  const open = await assertSessionTransferStillOpen(client, session);
-  if (!open.ok) return { text: open.message };
 
   const got = normalizeRuPhoneE164(input.phoneRaw);
   if (!got || !phonesMatch(open.expectedPhoneE164, got)) {
@@ -142,13 +142,16 @@ export async function handleExternalRecipientMaxContact(
   }
 
   const session = await lockSessionByMaxChat(client, input.maxChatId);
-  if (!session) return { text: "Приглашение недоступно." };
+  if (!session) return null;
   if (session.bound_max_user_id && session.bound_max_user_id !== input.maxUserId.toString()) {
     return { text: "Это приглашение привязано к другому пользователю MAX." };
   }
   if (session.channel && session.channel !== "max") {
     return { text: "Это приглашение открыто в другом мессенджере. Используйте тот канал, который вы выбрали на странице получателя." };
   }
+
+  const open = await assertSessionTransferStillOpen(client, session);
+  if (!open.ok) return null;
 
   const cfg = loadTanbotMaxStage2Config();
   if (!cfg.ok) return { text: "MAX временно недоступен." };
@@ -163,9 +166,6 @@ export async function handleExternalRecipientMaxContact(
 
   const attempt = await recordContactAttempt(client, session.id);
   if (!attempt.allowed) return { text: "Слишком много попыток. Попросите отправителя обновить ссылку." };
-
-  const open = await assertSessionTransferStillOpen(client, session);
-  if (!open.ok) return { text: open.message };
 
   const phoneDigits = extractPhoneFromVcf(input.contact.vcfInfo);
   const e164Guess = phoneDigits
