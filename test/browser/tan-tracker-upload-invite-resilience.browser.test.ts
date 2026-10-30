@@ -73,7 +73,7 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
   async function createExternalTransfer(page: Page) {
     await page.goto(`${fixture.baseUrl}/tan-tracker`);
     await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
-    await clickVisibleCreateTransfer(page);
+    await page.locator('[data-tt="create"]:visible, [data-tt="create-fab"]:visible').first().click();
     await page.fill('[data-tt-field="item"]', "Invite regression box");
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-skip-files"]');
@@ -198,27 +198,62 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
   it("late ingest A must not clear busy/abort for ingest B (Chromium)", async (t) => {
     const browser = await launchRequired(chromium, t);
     const context = await browser!.newContext({ baseURL: fixture.baseUrl });
+    await context.addInitScript(() => {
+      const stagingPath = "/api/tan-tracker/staging-attachments";
+      const state = { postCount: 0, firstStarted: false, secondStarted: false };
+      let resolveFirst!: () => void;
+      let resolveSecond!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const secondGate = new Promise<void>((resolve) => {
+        resolveSecond = resolve;
+      });
+      (window as unknown as { __TT_TEST_staging: typeof state & { releaseFirst: () => void; releaseSecond: () => void } }).__TT_TEST_staging =
+        Object.assign(state, {
+          releaseFirst: () => resolveFirst(),
+          releaseSecond: () => resolveSecond(),
+        });
+
+      const origFetch = window.fetch.bind(window);
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+        const method = (
+          init?.method || (input instanceof Request ? input.method : "GET")
+        ).toUpperCase();
+        if (!url.includes(stagingPath) || method !== "POST") {
+          return origFetch(input, init);
+        }
+        state.postCount += 1;
+        if (state.postCount === 1) {
+          state.firstStarted = true;
+          const rest = { ...(init ?? {}) };
+          delete rest.signal;
+          const responsePromise = origFetch(input, rest);
+          await firstGate;
+          return responsePromise;
+        }
+        if (state.postCount === 2) {
+          state.secondStarted = true;
+          await secondGate;
+          return origFetch(input, init);
+        }
+        return origFetch(input, init);
+      };
+    });
+
+    const page = await context.newPage();
     try {
-      const page = await context.newPage();
       await login(page, "tt-browser-admin@test.local");
       await openCreateFilesStep(page);
 
-      let releaseFirstUpload: (() => void) | undefined;
-      const firstUploadGate = new Promise<void>((resolve) => {
-        releaseFirstUpload = resolve;
-      });
-      let uploadPostCount = 0;
-      await page.route("**/api/tan-tracker/staging-attachments", async (route) => {
-        uploadPostCount += 1;
-        if (uploadPostCount === 1) {
-          await firstUploadGate;
-        }
-        await route.continue();
-      });
-
-      const firstUploadReq = waitForStagingUploadRequest(page);
       await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
-      await firstUploadReq;
+      await page.waitForFunction(
+        () => (window as unknown as { __TT_TEST_staging?: { firstStarted: boolean } }).__TT_TEST_staging?.firstStarted,
+        undefined,
+        { timeout: 15000 },
+      );
       assert.equal(await page.locator('[data-tt="attach-busy"]').count(), 1);
 
       await page.click('[data-tt="create-wizard-back"]');
@@ -227,35 +262,47 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
       await page.click('[data-tt="create-wizard-next"]');
       await page.waitForSelector('[data-create-phase="files"]', { timeout: 10000 });
 
-      let releaseSecondUpload: (() => void) | undefined;
-      const secondUploadGate = new Promise<void>((resolve) => {
-        releaseSecondUpload = resolve;
-      });
-      await page.unroute("**/api/tan-tracker/staging-attachments");
-      uploadPostCount = 0;
-      await page.route("**/api/tan-tracker/staging-attachments", async (route) => {
-        uploadPostCount += 1;
-        if (uploadPostCount === 1) {
-          await secondUploadGate;
-        }
-        await route.continue();
-      });
-
-      const secondUploadReq = waitForStagingUploadRequest(page);
       await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
-      await secondUploadReq;
+      await page.waitForFunction(
+        () => (window as unknown as { __TT_TEST_staging?: { secondStarted: boolean } }).__TT_TEST_staging?.secondStarted,
+        undefined,
+        { timeout: 15000 },
+      );
       assert.equal(await page.locator('[data-tt="attach-busy"]').count(), 1);
 
-      releaseFirstUpload?.();
-      await page.waitForFunction(() => document.querySelector('[data-tt="attach-busy"]'), undefined, { timeout: 5000 });
+      await page.evaluate(async () => {
+        const gates = (window as unknown as { __TT_TEST_staging?: { releaseFirst: () => void } }).__TT_TEST_staging;
+        gates?.releaseFirst();
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        });
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0);
+        });
+      });
       assert.equal(await page.locator('[data-tt="attach-busy"]').count(), 1, "stale ingest A must not clear B busy");
 
-      await page.click('[data-tt="create-wizard-back"]');
-      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), undefined, {
-        timeout: 10000,
+      await page.evaluate(() => {
+        (window as unknown as { __TT_TEST_staging?: { releaseSecond: () => void } }).__TT_TEST_staging?.releaseSecond();
       });
-      releaseSecondUpload?.();
+      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), undefined, {
+        timeout: 20000,
+      });
+      assert.equal(await page.locator(".tt-att-item").count(), 1, "only ingest B attachment must remain");
     } finally {
+      try {
+        await page.evaluate(() => {
+          const g = (window as unknown as { __TT_TEST_staging?: { releaseFirst: () => void; releaseSecond: () => void } })
+            .__TT_TEST_staging;
+          g?.releaseSecond();
+          g?.releaseFirst();
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/closed|aborted|Target page|context/i.test(msg)) {
+          throw err;
+        }
+      }
       await context.close();
       await browser!.close();
     }
