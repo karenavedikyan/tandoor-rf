@@ -12,7 +12,12 @@ var TT_SELECTION_QA = await (async () => {
   const batch = (mode) => page.locator(`[data-tt="registry-batch"][data-mode="${mode}"]`);
   const confirm = () => page.locator('[data-tt="cleanup-confirm"]').click();
   const cancel = () => page.locator('[data-tt="cleanup-cancel"]').first().click();
-  const count = async (n) => (await page.locator('[data-tt="registry-selection"]').innerText()).includes(`Выбрано: ${n}`);
+  const count = async (n) => {
+    const host = page.locator('[data-tt="registry-selection"]');
+    if (!n) return !(await host.locator(".tt-registry-selection--active").count()) && !(await host.evaluate((e) => e.classList.contains("tt-registry-selection--active"))) &&
+      !(await page.locator('#tt-registry-body [data-tt="registry-select"]:checked').count());
+    return (await host.innerText()).includes(`Выбрано: ${n}`) && await host.evaluate((e) => e.classList.contains("tt-registry-selection--active"));
+  };
 
   await go("admin", "", true);
   await select("TT-2026-005").check();

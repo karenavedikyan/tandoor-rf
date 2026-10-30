@@ -12,6 +12,12 @@
 - Visual review: 375×812 mobile list and card, 320×640 dark and confirmation, 1440×900 dark registry, 1440×420 scrollable short window. New controls do not open cards, no horizontal overflow, confirmation footer accessible. New dark selection labels measured 12.51:1. Selection is scoped to shown records, clears on actor/view changes and prunes records hidden by filters; viewport changes preserve it.
 - Same deployed asset `63a1e4be-4ac9-4390-b1de-68c6fb8d8b41` updated. Fresh hosted context: checkbox → personal archive → HTTP 200 → reload → own archive → checkbox → restore → HTTP 200. Mixed two-record confirmation contains exactly two chosen IDs, one eligible; mobile resize keeps both selected. Existing create wizard opens normally. No hosted page errors; browser contexts closed. Refinement is ready to include in the previously requested Cursor implementation.
 
+### Selection design pass (2026-10-30)
+- Idle: quiet row — styled select-all checkbox, «Выбрать показанные», muted hint; no box, no actions.
+- Active (≥1 chosen): tinted green bar with «Выбрано N из M», pill action buttons with lucide icons and per-action availability counters, red «Удалить», icon-only «Снять выбор». Mobile (<768px): bar is sticky at top (z-index 6), actions wrap to full-width pills, helper text hidden; desktop: single line, helper text below.
+- Custom checkboxes (`appearance:none`, 22px, green fill, white check / indeterminate dash, hover ring, focus-visible ring, reduced-motion respected). Selected rows: tint + 3px green inset on first cell; selected cards: tint + green ring.
+- QA hooks unchanged (`registry-selection`, `registry-select-all`, `registry-select`, `registry-batch[data-mode]`, `registry-selection-clear`, `.tt-is-selected`); selection suite `count(0)` now checks inactive bar + no checked boxes. Suites rerun: selection 34, cleanup 52, personal 10, ext-request 11, post-code 19, role 19, scope 22, invitation 20 PASS. Screens `/tmp/tandoor-design-*.png` (320/375/1440, light+dark).
+
 ## Registry archival update: 30 October 2026
 
 - Reuse the same unified prototype and site directory. No production changes, real messages, production deletion, new clients or altered employee rights.

@@ -2339,10 +2339,17 @@
   function registryCheckbox(o, card = false) {
     if (cleanupPreviewReadOnly()) return "";
     return `<label class="tt-registry-check${card ? " tt-registry-check--card" : ""}" data-tt="registry-check-label">
-      <input type="checkbox" data-tt="registry-select" value="${E(o.id)}"
+      <input type="checkbox" class="tt-check-input" data-tt="registry-select" value="${E(o.id)}"
         aria-label="Выбрать ${E(o.id)}: ${E(o.item)}" ${state.registrySelection.includes(o.id) ? "checked" : ""}>
       ${card ? '<span class="tt-sr-only">Выбрать передачу</span>' : ""}
     </label>`;
+  }
+
+  function pluralRu(n, forms) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return forms[0];
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return forms[1];
+    return forms[2];
   }
 
   function registrySelectionOrders() {
@@ -2355,32 +2362,44 @@
     const selected = registrySelectionOrders();
     const n = selected.length;
     const all = n > 0 && n === state.registryVisibleIds.length;
-    const action = (mode, label) => {
+    const total = state.registryVisibleIds.length;
+    const action = (mode, label, icon) => {
       const count = selected.filter((o) => cleanupEligible(o, mode)).length;
-      return btn(`${label} (${count})`, `data-tt="registry-batch" data-mode="${mode}" ${count ? "" : "disabled"} title="${count} из ${n} выбранных доступны для действия"`,
-        mode === "delete" ? "tt-cleanup-danger" : "tt-link");
+      const hint = count === n ? `${label}: все выбранные` : `${label}: доступно ${count} из ${n}`;
+      return `<button type="button" class="tt-selbtn${mode === "delete" ? " tt-selbtn--danger" : ""}" data-tt="registry-batch" data-mode="${mode}"
+        ${count ? "" : "disabled"} title="${E(hint)}" aria-label="${E(label)} (${count})">
+        <i data-lucide="${icon}" aria-hidden="true"></i><span>${E(label)}</span><b class="tt-selbtn-count">${count}</b></button>`;
     };
     const personalMode = state.registryPersonalView === "archived" ? "personal-restore" : "personal";
     const generalMode = state.registryPersonalView === "registry-archive" ? "restore" : "archive";
-    return `<div class="tt-registry-selection" data-tt="registry-selection">
+    const canDelete = canManageRegistry() || selected.some((o) => orderCreatorId(o) === registryActorId());
+    const countText = n ? `${n === 1 ? "Выбран" : "Выбрано"} ${n} ${pluralRu(n, ["трек", "трека", "треков"])}` : "";
+    const actions = n ? `<div class="tt-registry-selection-actions" role="group" aria-label="Действия с выбранными треками">
+        ${state.registryPersonalView !== "registry-archive" ? action(personalMode, personalMode === "personal" ? "В мой архив" : "Вернуть мои", personalMode === "personal" ? "archive" : "archive-restore") : ""}
+        ${canManageRegistry() ? action(generalMode, generalMode === "restore" ? "Восстановить общие" : "В общий архив", generalMode === "restore" ? "archive-restore" : "archive") : ""}
+        ${canDelete ? action("delete", "Удалить", "trash-2") : ""}
+      </div>` : "";
+    return `<div class="tt-registry-selection${n ? " tt-registry-selection--active" : ""}" data-tt="registry-selection">
       <div class="tt-registry-selection-top">
-        <label class="tt-registry-select-all"><input type="checkbox" data-tt="registry-select-all" ${all ? "checked" : ""} ${state.registryVisibleIds.length ? "" : "disabled"}>
-          <span>Выбрать показанные</span></label>
-        <span class="tt-registry-selection-count" role="status">Выбрано: ${n}</span>
+        <label class="tt-registry-select-all" title="${all ? "Снять выбор со всех показанных" : "Выбрать все показанные"}">
+          <input type="checkbox" class="tt-check-input" data-tt="registry-select-all" ${all ? "checked" : ""} ${total ? "" : "disabled"}
+            aria-label="${all ? "Снять выбор со всех показанных" : "Выбрать все показанные"}">
+          <span>${n ? `Выбрано <b>${n}</b> из ${total}` : "Выбрать показанные"}</span></label>
+        <span class="tt-registry-selection-count" role="status">${n ? `<span class="tt-sr-only">Выбрано: ${n} · ${E(countText)}</span>` :
+          '<span class="tt-registry-selection-hint">Архив или удаление без открытия карточки</span>'}</span>
+        ${actions}
+        ${n ? `<button type="button" class="tt-selbtn tt-selbtn--icon" data-tt="registry-selection-clear" aria-label="Снять выбор" title="Снять выбор"><i data-lucide="x" aria-hidden="true"></i></button>` : ""}
       </div>
-      ${n ? `<div class="tt-registry-selection-actions" role="group" aria-label="Действия с выбранными треками">
-        ${state.registryPersonalView !== "registry-archive" ? action(personalMode, personalMode === "personal" ? "В мой архив" : "Восстановить мои") : ""}
-        ${canManageRegistry() ? action(generalMode, generalMode === "restore" ? "Восстановить общие" : "В общий архив") : ""}
-        ${canManageRegistry() || selected.some((o) => orderCreatorId(o) === registryActorId()) ? action("delete", "Удалить") : ""}
-        ${btn("Снять выбор", 'data-tt="registry-selection-clear"', "tt-link")}
-      </div><p>Числа на кнопках: доступные треки. Удаление только до первого получения.</p>` :
-        "<p>Отметьте один или несколько треков для архивирования или удаления. Выбор действует только в текущем списке.</p>"}
+      ${n ? `<p>Цифра на кнопке — сколько выбранных треков доступно для действия. Удалить можно только до первого получения.</p>` : ""}
     </div>`;
   }
 
   function paintRegistrySelection() {
     const host = document.querySelector('[data-tt="registry-selection"]');
-    if (host) host.outerHTML = registrySelectionToolbar();
+    if (host) {
+      host.outerHTML = registrySelectionToolbar();
+      if (window.lucide?.createIcons) window.lucide.createIcons();
+    }
     document.querySelectorAll('[data-tt="registry-select"]').forEach((el) => {
       el.checked = state.registrySelection.includes(el.value);
       (el.closest(".tt-selectable-card") || el.closest("tr"))?.classList.toggle("tt-is-selected", el.checked);

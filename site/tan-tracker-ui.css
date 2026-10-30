@@ -1,22 +1,82 @@
 /* Tan-tracker redesign tt52/tt53 — scoped under .tt-work / shells */
 /* Registry cleanup extends the existing shell, without changing its design tokens. */
-.tt-registry-selection { margin:12px 0; padding:8px 12px; border:1px solid var(--line); border-radius:var(--tt-radius-sm,10px); background:var(--surface); color:var(--text); }
-.tt-registry-selection-top,.tt-registry-selection-actions { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; }
-.tt-registry-selection-count { font-weight:650; font-size:14px; }
-.tt-registry-selection p { margin:4px 0; font-size:12px; line-height:1.5; color:var(--text); }
-.tt-registry-selection button { min-height:44px; font-size:14px; }
-.tt-registry-selection .tt-cleanup-danger { padding:8px 12px; }
-.tt-registry-selection button:disabled { color:var(--text) !important; background:var(--bg) !important; opacity:1; border:1px solid var(--line); cursor:not-allowed; }
-.tt-registry-select-all { display:flex; align-items:center; gap:8px; min-height:44px; font-size:14px; cursor:pointer; }
-.tt-registry-check { display:flex; align-items:center; justify-content:center; width:44px; min-height:44px; cursor:pointer; }
-.tt-work .tt-registry-check input,.tt-work .tt-registry-select-all input { width:20px; height:20px; min-height:0; margin:0; flex-shrink:0; accent-color:var(--green,#507f22); }
+/* Direct multi-selection: quiet row when nothing is chosen, tinted action bar when ≥1 chosen. */
+.tt-registry-selection { margin:12px 0; padding:2px 4px; color:var(--text); border:1px solid transparent; border-radius:var(--tt-radius-md,12px);
+  transition:background .18s ease, border-color .18s ease, box-shadow .18s ease, padding .18s ease; }
+.tt-registry-selection--active { padding:10px 14px 12px; background:var(--tint,#eef5e7); border-color:color-mix(in srgb, var(--green,#507f22) 35%, var(--line));
+  box-shadow:0 1px 0 color-mix(in srgb, var(--green,#507f22) 12%, transparent), 0 8px 24px -16px rgba(80,127,34,.35); animation:tt-selbar-in .22s ease; }
+@keyframes tt-selbar-in { from { opacity:.4; transform:translateY(-4px); } to { opacity:1; transform:none; } }
+.tt-registry-selection-top { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; min-height:44px; }
+.tt-registry-selection-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-left:auto; }
+.tt-registry-selection-count { font-size:14px; flex:0 1 auto; min-width:0; }
+.tt-registry-selection-top > .tt-selbtn--icon { margin-left:4px; }
+.tt-registry-select-all b { font-weight:800; color:var(--green,#507f22); }
+[data-theme=dark] .tt-registry-select-all b { color:#9fd36a; }
+.tt-registry-selection-hint { font-weight:400; color:var(--muted); font-size:13px; }
+.tt-registry-select-total { color:var(--muted); font-weight:400; }
+.tt-registry-selection p { margin:6px 0 0; font-size:12px; line-height:1.5; color:var(--muted); }
+.tt-registry-select-all { display:inline-flex; align-items:center; gap:10px; min-height:44px; padding:0 4px; font-size:14px; font-weight:500; cursor:pointer; border-radius:8px; white-space:nowrap; }
+.tt-registry-select-all:hover { color:var(--green,#507f22); }
+.tt-registry-check { display:flex; align-items:center; justify-content:center; width:44px; min-height:44px; cursor:pointer; border-radius:8px; }
+
+/* Custom checkbox (native input, styled) */
+.tt-work .tt-check-input { appearance:none; -webkit-appearance:none; width:22px; height:22px; min-height:0; margin:0; flex-shrink:0; cursor:pointer;
+  border:1.5px solid color-mix(in srgb, var(--text) 35%, var(--line)); border-radius:7px; background:var(--surface);
+  display:inline-grid; place-content:center; transition:background .15s ease, border-color .15s ease, box-shadow .15s ease, transform .1s ease; }
+.tt-work .tt-check-input::after { content:""; width:22px; height:22px; opacity:0; transform:scale(.6); transition:opacity .12s ease, transform .15s cubic-bezier(.2,.9,.3,1.3);
+  background:currentColor; color:#fff; -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/16px no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/16px no-repeat; }
+.tt-work .tt-check-input:hover { border-color:var(--green,#507f22); box-shadow:0 0 0 4px color-mix(in srgb, var(--green,#507f22) 12%, transparent); }
+.tt-work .tt-check-input:active { transform:scale(.92); }
+.tt-work .tt-check-input:focus-visible { outline:none; border-color:var(--green,#507f22); box-shadow:0 0 0 3px color-mix(in srgb, var(--green,#507f22) 35%, transparent); }
+.tt-work .tt-check-input:checked,.tt-work .tt-check-input:indeterminate { background:var(--green,#507f22); border-color:var(--green,#507f22); }
+.tt-work .tt-check-input:checked::after { opacity:1; transform:scale(1); }
+.tt-work .tt-check-input:indeterminate::after { opacity:1; transform:none; -webkit-mask:none; mask:none; background:#fff; width:10px; height:2.5px; border-radius:2px; }
+.tt-work .tt-check-input:disabled { opacity:.45; cursor:not-allowed; box-shadow:none; }
+
+/* Batch action buttons */
+.tt-work .tt-selbtn { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 14px 0 12px; border-radius:999px; font:inherit; font-size:14px; font-weight:600;
+  color:var(--text); background:var(--surface); border:1px solid var(--line); cursor:pointer; transition:background .15s ease, border-color .15s ease, color .15s ease, transform .1s ease; }
+.tt-work .tt-selbtn svg { width:18px; height:18px; flex-shrink:0; color:var(--green,#507f22); }
+.tt-work .tt-selbtn:hover:not(:disabled) { border-color:var(--green,#507f22); background:color-mix(in srgb, var(--green,#507f22) 8%, var(--surface)); }
+.tt-work .tt-selbtn:active:not(:disabled) { transform:translateY(1px); }
+.tt-work .tt-selbtn:focus-visible { outline:none; box-shadow:0 0 0 3px color-mix(in srgb, var(--green,#507f22) 35%, transparent); }
+.tt-work .tt-selbtn-count { display:inline-grid; place-content:center; min-width:22px; height:22px; padding:0 7px; border-radius:999px; font-size:12px; font-weight:700; line-height:1;
+  background:var(--green,#507f22); color:#fff; }
+.tt-work .tt-selbtn--danger { color:var(--bad,#ac4343); }
+.tt-work .tt-selbtn--danger svg { color:var(--bad,#ac4343); }
+.tt-work .tt-selbtn--danger .tt-selbtn-count { background:var(--bad,#ac4343); color:#fff; }
+.tt-work .tt-selbtn--danger:hover:not(:disabled) { border-color:var(--bad,#ac4343); background:color-mix(in srgb, var(--bad,#ac4343) 8%, var(--surface)); }
+.tt-work .tt-selbtn:disabled { cursor:not-allowed; color:var(--muted); background:transparent; border-style:dashed; }
+.tt-work .tt-selbtn:disabled svg { color:var(--muted); }
+.tt-work .tt-selbtn:disabled .tt-selbtn-count { background:var(--line); color:var(--muted); }
+.tt-work .tt-selbtn--icon { width:44px; padding:0; justify-content:center; border-radius:50%; background:transparent; border-color:transparent; }
+.tt-work .tt-selbtn--icon svg { color:var(--muted); width:20px; height:20px; }
+.tt-work .tt-selbtn--icon:hover:not(:disabled) { background:var(--surface); border-color:var(--line); }
+.tt-work .tt-selbtn--icon:hover svg { color:var(--text); }
+
+/* Selected rows and cards */
 .tt-work .tt-table .tt-selection-cell { width:48px; min-width:48px; padding:4px 2px; }
 .tt-selectable-card { position:relative; min-width:0; }
-.tt-selectable-card > .tt-card-v2 { width:100%; height:100%; }
+.tt-selectable-card > .tt-card-v2 { width:100%; height:100%; transition:border-color .15s ease, background .15s ease, box-shadow .15s ease; }
 .tt-selectable-card:has(.tt-registry-check) > .tt-card-v2 { padding-left:52px; }
-.tt-registry-check--card { position:absolute; left:4px; top:4px; z-index:1; }
-.tt-work .tt-table tr.tt-is-selected td { background:var(--tint,#eef5e7); }
-.tt-selectable-card.tt-is-selected > .tt-card-v2 { border-color:var(--green,#507f22); background:var(--tint,#eef5e7); }
+.tt-registry-check--card { position:absolute; left:4px; top:6px; z-index:1; }
+.tt-work .tt-table tr.tt-is-selected td { background:var(--tint,#eef5e7); transition:background .15s ease; }
+.tt-work .tt-table tr.tt-is-selected td:first-child { box-shadow:inset 3px 0 0 var(--green,#507f22); }
+.tt-selectable-card.tt-is-selected > .tt-card-v2 { border-color:var(--green,#507f22); background:var(--tint,#eef5e7); box-shadow:0 0 0 1px var(--green,#507f22); }
+
+@media (max-width:767px) {
+  .tt-registry-selection--active { position:sticky; top:8px; z-index:6; padding:8px 12px 10px; backdrop-filter:blur(6px); }
+  .tt-registry-selection-top { gap:4px 8px; }
+  .tt-registry-selection-top > .tt-selbtn--icon { margin-left:auto; }
+  .tt-registry-selection-actions { order:3; flex:1 0 100%; flex-wrap:wrap; gap:6px; margin:2px 0 0; }
+  .tt-registry-selection-actions .tt-selbtn { flex:1 1 auto; justify-content:center; }
+  .tt-work .tt-selbtn { padding:0 12px 0 10px; font-size:13px; white-space:nowrap; }
+  .tt-registry-selection p { display:none; }
+}
+[data-theme=dark] .tt-registry-selection--active { background:color-mix(in srgb, var(--green,#507f22) 16%, var(--surface)); box-shadow:none; }
+[data-theme=dark] .tt-work .tt-check-input { background:var(--bg); }
+@media (prefers-reduced-motion:reduce) { .tt-registry-selection--active { animation:none; } .tt-work .tt-check-input, .tt-work .tt-check-input::after, .tt-work .tt-selbtn { transition:none; } }
 .tt-cleanup-selected-scope { padding:8px 12px; border:1px solid var(--line); border-radius:8px; }
 .tt-registry-admin-bar { border-top:1px solid var(--line); padding-top:8px; align-items:center; }
 .tt-registry-admin-bar > .tt-muted { font-size:12px; }
