@@ -193,6 +193,7 @@ export function mapTransferToOrderDto(
     activeInvitation,
     attachments: extras?.attachments ?? [],
     rowVersion: row.row_version,
+    fromExternal: row.from_external === true,
   };
 }
 

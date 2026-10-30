@@ -87,6 +87,7 @@ export type TanTrackerOrderDto = {
   /** Holder may edit all creation fields before the first confirmed custody handoff. */
   canEditDraft?: boolean;
   rowVersion?: number;
+  fromExternal?: boolean;
 };
 
 export type TanTrackerContactDto = {

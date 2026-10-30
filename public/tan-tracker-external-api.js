@@ -27,6 +27,16 @@
   }
 
   window.TanTrackerExternal = {
+    fetchIntakeRecipients: function () {
+      var q = new URLSearchParams(window.location.search);
+      var qs = q.get("est") ? "est=" + encodeURIComponent(q.get("est")) : "cap=" + encodeURIComponent(q.get("cap") || window.__TT_EXTERNAL_CAP__ || "");
+      return fetch("/api/tan-tracker/public/external/intake-recipients?" + qs, { credentials: "same-origin" }).then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) throw new Error((data && data.error && data.error.message) || "Список сотрудников недоступен.");
+          return data.recipients || [];
+        });
+      });
+    },
     refreshBootstrap: function () {
       var q = new URLSearchParams(window.location.search);
       var qs = q.get("est") ? "est=" + encodeURIComponent(q.get("est")) : "cap=" + encodeURIComponent(q.get("cap") || window.__TT_EXTERNAL_CAP__ || "");

@@ -41,9 +41,34 @@
   }
 
   function staffOptions(extId) {
-    return contacts().filter(function (c) {
+    var fromContacts = contacts().filter(function (c) {
       return c.kind === "user" && c.id !== extId;
     });
+    if (window.__TT_EXT_INTAKE_RECIPIENTS__ && window.__TT_EXT_INTAKE_RECIPIENTS__.length) {
+      return window.__TT_EXT_INTAKE_RECIPIENTS__.map(function (r) {
+        var c = fromContacts.find(function (x) {
+          return x.userId === r.userId;
+        });
+        return {
+          id: (c && c.id) || "staff-" + r.userId,
+          name: r.fullName,
+          kind: "user",
+          userId: r.userId,
+        };
+      });
+    }
+    return fromContacts;
+  }
+
+  function externalOpenRequestCount(actor) {
+    return orders().filter(function (o) {
+      return (
+        o.fromExternal &&
+        o.createdById === actor &&
+        o.status !== "completed" &&
+        o.status !== "delivered"
+      );
+    }).length;
   }
 
   function externalActionBarHtml() {
@@ -170,8 +195,19 @@
         "</li><li>" +
         (f.duePreset === "tomorrow" ? "Завтра" : "Сегодня") +
         "</li></ul>";
-    } else if (phase === "done") {
-      body = "<p>Заявка " + E(f.createdId || "") + " отправлена.</p>" + btn("Открыть передачу", "ext-request-open-order", "tt-primary");
+    } else     if (phase === "blocked") {
+      return (
+        '<div class="tt-panel tt-ext-request" data-tt="ext-request"><p>Открытых заявок уже 5. Дождитесь завершения хотя бы одной.</p>' +
+        btn("Закрыть", "ext-request-close", "tt-primary tt-btn-block") +
+        "</div>"
+      );
+    }
+    if (phase === "done") {
+      body =
+        "<p>Заявка " +
+        E(f.createdId || "") +
+        " отправлена. Сотрудник получит уведомление; при встрече подтвердите передачу на этой странице.</p>" +
+        btn("Открыть передачу", "ext-request-open-order", "tt-primary");
     }
     return (
       '<div class="tt-panel tt-ext-request" data-tt="ext-request"><h2>Отправить предмет</h2>' +
@@ -214,10 +250,23 @@
       if (!st) return;
       if (action === "ext-request-open") {
         st.view = "list";
-        st.extRequestPhase = "item";
         st.extRequestForm = { item: "", comment: "", recipientId: "", duePreset: "today", draftId: "" };
-        st.view = "ext-request";
-        if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+        if (externalOpenRequestCount(st.actingContactId) >= 5) {
+          st.extRequestPhase = "blocked";
+          st.view = "ext-request";
+          if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+          return;
+        }
+        void (window.TanTrackerExternal && window.TanTrackerExternal.fetchIntakeRecipients
+          ? window.TanTrackerExternal.fetchIntakeRecipients().then(function (rows) {
+              window.__TT_EXT_INTAKE_RECIPIENTS__ = rows;
+            })
+          : Promise.resolve()
+        ).finally(function () {
+          st.extRequestPhase = "item";
+          st.view = "ext-request";
+          if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+        });
         return;
       }
       if (action === "ext-request-close") {

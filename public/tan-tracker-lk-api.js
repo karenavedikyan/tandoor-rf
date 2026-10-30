@@ -457,6 +457,20 @@
         return refreshBootstrap();
       });
     },
+    declineExternalRequest: function (transferId, reason) {
+      return api
+        .apiRequest(
+          "/api/tan-tracker/transfers/" + encodeURIComponent(transferId) + "/external-decline",
+          { method: "POST", body: { reason: reason || "" } },
+        )
+        .then(function (result) {
+          if (result.response.status === 200 && result.data && result.data.bootstrap) {
+            window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
+            return true;
+          }
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось отклонить заявку."));
+        });
+    },
     legacyCompleteTransfer: function (transferId) {
       return api
         .apiRequest(

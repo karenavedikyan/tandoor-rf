@@ -480,6 +480,7 @@
     contactSearch: "",
     newRecipient: false,
     completeConfirmOrderId: null,
+    extDeclineConfirmOrderId: null,
     createPhase: "item",
     createReturnPhase: null,
     attachStaging: [],
@@ -1297,9 +1298,13 @@
             : overdue
               ? "var(--bad,#ac4343)"
               : "var(--line)";
+    const extBadge =
+      o.fromExternal && o.pendingId === actor
+        ? '<span class="tt-badge" data-tt="from-external">от клиента</span> '
+        : "";
     return `<button type="button" class="tt-card-v2${overdue ? " tt-card-v2--overdue" : ""}${done ? " tt-card-v2--completed" : ""}" data-tt-open="${E(o.id)}" style="--tt-card-accent:${accent}">
       <span class="tt-card-v2-accent" aria-hidden="true"></span>
-      <div class="tt-card-v2-top"><h3 class="tt-card-v2-title">${E(o.item)}</h3><i data-lucide="chevron-right"></i></div>
+      <div class="tt-card-v2-top"><h3 class="tt-card-v2-title">${extBadge}${E(o.item)}</h3><i data-lucide="chevron-right"></i></div>
       ${registryRouteLine(o)}
       <div class="tt-card-v2-foot">${statusBadge(o, actor, { compact: true })}<span class="tt-card-v2-due-inline ${due.overdue ? "tt-due-human--over" : ""}">${E(registryCardDuePrimary(o))}</span></div>
       <p class="tt-card-v2-meta">${registryCardMeta(o)}</p>
@@ -3774,10 +3779,26 @@
   }
 
   function pendingRecipientDetailCard(o, holder) {
+    const fromExt = o.fromExternal && lkAuthenticatedCabinet() && lkMutationAllowed();
+    const heading = fromExt ? "Вам передают от клиента" : "Примите передачу";
+    const intro = fromExt
+      ? `Клиент <strong>${E(holder?.name || "—")}</strong> отправил заявку. Примите передачу или отклоните заявку.`
+      : `От <strong>${E(holder?.name || "—")}</strong>. Получите одноразовый код и сообщите его держателю.`;
+    const decline =
+      fromExt && !state.extDeclineConfirmOrderId
+        ? `<div class="tt-detail-primary">${btn("Отклонить заявку", 'data-tt="ext-request-decline"', "tt-btn-ghost")}</div>`
+        : "";
+    const declineConfirm =
+      fromExt && state.extDeclineConfirmOrderId === o.id
+        ? `<div class="tt-detail-primary"><p class="tt-muted">Отклонить заявку ${E(o.id)}?</p>
+          ${btn("Подтвердить отклонение", 'data-tt="ext-decline-confirm"', "tt-primary tt-btn-block")}
+          ${btn("Отмена", 'data-tt="ext-decline-cancel"', "tt-btn-ghost tt-btn-block")}</div>`
+        : "";
     return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-pending-recipient">
-      <h3 class="tt-detail-task-heading">Примите передачу</h3>
-      <p class="tt-detail-task-instructions">От <strong>${E(holder?.name || "—")}</strong>. Получите одноразовый код и сообщите его держателю.</p>
-      ${pendingRecipientCodeBlock(o)}
+      <h3 class="tt-detail-task-heading">${E(heading)}${fromExt ? ' <span class="tt-badge" data-tt="from-external">от клиента</span>' : ""}</h3>
+      <p class="tt-detail-task-instructions">${intro}</p>
+      ${fromExt ? "" : pendingRecipientCodeBlock(o)}
+      ${declineConfirm || decline}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
     </section>`;
   }
@@ -4938,6 +4959,33 @@
       if (tryConfirmCode(o, state.codeInput)) afterCodeSend(o, senderBefore);
       writeUrl();
       renderTracker();
+      return;
+    }
+    if (action === "ext-request-decline" && o) {
+      state.extDeclineConfirmOrderId = o.id;
+      state.error = "";
+      renderTracker();
+      return;
+    }
+    if (action === "ext-decline-cancel") {
+      state.extDeclineConfirmOrderId = null;
+      state.error = "";
+      renderTracker();
+      return;
+    }
+    if (action === "ext-decline-confirm" && o && window.TanTrackerLk?.declineExternalRequest) {
+      state.error = "";
+      void window.TanTrackerLk.declineExternalRequest(o.id, "")
+        .then(function () {
+          state.extDeclineConfirmOrderId = null;
+          state.view = "list";
+          state.orderId = null;
+          renderTracker();
+        })
+        .catch(function (err) {
+          state.error = err instanceof Error ? err.message : "Не удалось отклонить заявку.";
+          renderTracker();
+        });
       return;
     }
     if (action === "complete" && o) {
