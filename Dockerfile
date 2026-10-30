@@ -26,6 +26,7 @@ RUN npm ci --omit=dev
 
 COPY --from=build /app/dist ./dist
 COPY server ./server
+COPY certs/max ./certs/max
 
 USER appuser
 
