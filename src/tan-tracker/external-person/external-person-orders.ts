@@ -2,6 +2,9 @@ import type { Pool } from "pg";
 import type { TanTrackerOrderDto, TanTrackerTimelineRow, TanTrackerTransferRow } from "../types";
 import { listRevokedParties, mapTransferToOrderDto } from "../repository";
 import { listAttachmentsForTransfers } from "../attachments";
+import { holderAccessTtlMs, signHolderAccess } from "../holder-access";
+
+const OPEN_HOLDER_STATUSES = new Set(["active", "waiting", "delivered"]);
 
 export type ExternalHistoricalSummary = {
   id: string;
@@ -57,6 +60,18 @@ export async function loadExternalPersonOrders(
     const dto = mapTransferToOrderDto(row, timeline.rows, revoked, { attachments });
     dto.attachments = attachments;
     dto.timeline = dto.timeline.filter((e) => e.from === partyId || e.to === partyId);
+    if (
+      row.holder_party_id === partyId &&
+      row.status !== "completed" &&
+      OPEN_HOLDER_STATUSES.has(row.status)
+    ) {
+      dto.holderAccessToken = signHolderAccess({
+        transferId: row.id,
+        partyId,
+        hv: row.handoff_version,
+        exp: Date.now() + holderAccessTtlMs(),
+      });
+    }
     orders.push(dto);
   }
   return orders;

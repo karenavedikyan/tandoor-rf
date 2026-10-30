@@ -25,6 +25,17 @@ describe("external person shell hydrate", () => {
     assert.match(js, /externalLkShell/);
   });
 
+  it("syncs holder access token per selected external order", () => {
+    const file = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../public/tan-tracker/tan-tracker.js",
+    );
+    const js = readFileSync(file, "utf8");
+    assert.match(js, /holderAccessTokensByOrderId/);
+    assert.match(js, /syncPublicHolderAccessTokenForOrder/);
+    assert.match(js, /rebuildHolderAccessTokenMap/);
+  });
+
   it("readUrl keeps authoritative external actor and ignores hash tt_act", () => {
     const file = path.join(
       path.dirname(fileURLToPath(import.meta.url)),

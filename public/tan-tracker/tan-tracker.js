@@ -513,6 +513,7 @@
     publicReceipt: null,
     publicInvitationToken: "",
     publicHolderAccessToken: "",
+    holderAccessTokensByOrderId: {},
     externalMessengerEnabled: false,
     messengerInviteBusy: false,
     messengerInviteOrderId: null,
@@ -525,6 +526,31 @@
 
   function isPublicHolderSession() {
     return !!(window.__TT_PUBLIC_HOLDER__ && state.publicHolderAccessToken);
+  }
+
+  function rebuildHolderAccessTokenMap(data) {
+    const map = { ...(data?.holderAccessTokensByOrderId || {}) };
+    for (const o of data?.orders || []) {
+      if (o.holderAccessToken) map[o.id] = o.holderAccessToken;
+    }
+    state.holderAccessTokensByOrderId = map;
+  }
+
+  function holderAccessTokenForOrderId(orderId) {
+    if (!orderId) return state.publicHolderAccessToken || "";
+    return state.holderAccessTokensByOrderId[orderId] || state.publicHolderAccessToken || "";
+  }
+
+  function syncPublicHolderAccessTokenForOrder(orderId) {
+    if (!window.__TT_EXTERNAL_PERSON__) return;
+    const tok = holderAccessTokenForOrderId(orderId);
+    if (tok) {
+      state.publicHolderAccessToken = tok;
+      window.__TT_PUBLIC_HOLDER__ = true;
+    } else {
+      state.publicHolderAccessToken = "";
+      window.__TT_PUBLIC_HOLDER__ = false;
+    }
   }
 
   function lkAuthenticatedCabinet() {
@@ -2533,10 +2559,17 @@
     if (isPublicHolderSession() && window.TanTrackerLk?.publicHolderVerifyCode) {
       if (o._codeBusy) return false;
       o._codeBusy = true;
-      window.TanTrackerLk.publicHolderVerifyCode(state.publicHolderAccessToken, input)
+      window.TanTrackerLk.publicHolderVerifyCode(holderAccessTokenForOrderId(o.id), input)
         .then((data) => {
           o._codeBusy = false;
           state.codeInput = "";
+          if (window.__TT_EXTERNAL_PERSON__ && window.TanTrackerExternal?.refreshBootstrap) {
+            return window.TanTrackerExternal.refreshBootstrap().then(() => {
+              syncPublicHolderAccessTokenForOrder(o.id);
+              state.toast = "Передача подтверждена.";
+              renderTracker();
+            });
+          }
           applyPublicHolderPayload(data);
           state.toast = "Передача подтверждена.";
           renderTracker();
@@ -2688,6 +2721,7 @@
   }
 
   function canActorCloseDeliveredTransfer(o, actor) {
+    if (o.fromExternal && o.createdById === actor) return false;
     return (
       !!actor &&
       o.status === "delivered" &&
@@ -3142,6 +3176,7 @@
     state.recipientMode = recipientFromUrl;
     const oid = p.get("tt_order") || p.get("tt_id");
     if (oid) state.orderId = oid;
+    syncPublicHolderAccessTokenForOrder(state.orderId);
     state.recipientVia = p.get("tt_via") === "qr" ? "qr" : "code";
     if (state.recipientMode && oid) {
       state.recipientTicket = {
@@ -4615,6 +4650,7 @@
       const nextOrderId = b.getAttribute("data-tt-open");
       if (nextOrderId !== state.orderId) clearDetailAttDisclosure();
       state.orderId = nextOrderId;
+      syncPublicHolderAccessTokenForOrder(nextOrderId);
       state.view = "detail";
       state.error = state.toast = "";
       clearCompleteConfirm();
@@ -5689,15 +5725,20 @@
     } else {
       state.actingContactId = data.actorContact?.id || data.actorPartyId || null;
     }
-    if (data.publicHolder || (data.externalPerson && data.holderAccessToken)) {
-      state.publicHolderAccessToken = authoritativeHat || data.holderAccessToken || state.publicHolderAccessToken || "";
-      if (data.publicHolder) state.orderId = data.orders?.[0]?.id || state.orderId;
-      window.__TT_PUBLIC_HOLDER__ = !!state.publicHolderAccessToken;
-    }
     if (data.externalPerson) {
       window.__TT_EXTERNAL_PERSON__ = true;
       window.__TT_EXTERNAL_CAP__ = data.capability || window.__TT_EXTERNAL_CAP__ || "";
       state.historicalSummaries = data.historicalSummaries || [];
+      rebuildHolderAccessTokenMap(data);
+      syncPublicHolderAccessTokenForOrder(state.orderId);
+    }
+    if (data.publicHolder || (data.externalPerson && (data.holderAccessToken || data.publicHolder))) {
+      if (!data.externalPerson || !Object.keys(state.holderAccessTokensByOrderId).length) {
+        state.publicHolderAccessToken =
+          authoritativeHat || data.holderAccessToken || state.publicHolderAccessToken || "";
+      }
+      if (data.publicHolder) state.orderId = data.orders?.[0]?.id || state.orderId;
+      window.__TT_PUBLIC_HOLDER__ = !!state.publicHolderAccessToken;
     }
     if (data.lkMode && data.externalPerson) {
       state.lkCanWrite = data.capabilities?.canWrite !== false;

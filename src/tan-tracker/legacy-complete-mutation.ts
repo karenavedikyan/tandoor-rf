@@ -38,9 +38,10 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
           handoff_version: number;
           public_code: string;
           item_title: string;
+          from_external: boolean;
         }>(
           `SELECT id, status, creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
-                  allow_legacy_complete, row_version, handoff_version, public_code, item_title
+                  allow_legacy_complete, row_version, handoff_version, public_code, item_title, from_external
            FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1 FOR UPDATE`,
           [transferId],
         )
@@ -72,6 +73,13 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
           ok: false,
           http: 403,
           message: "Завершить может текущий держатель или создатель после доставки.",
+        };
+      }
+      if (row.from_external && isCreatorClosingDelivered) {
+        return {
+          ok: false,
+          http: 403,
+          message: "Внешний создатель не может закрыть передачу после доставки.",
         };
       }
       if (

@@ -88,6 +88,8 @@ export type TanTrackerOrderDto = {
   canEditDraft?: boolean;
   rowVersion?: number;
   fromExternal?: boolean;
+  /** Signed public-holder capability scoped to this order (external person bootstrap only). */
+  holderAccessToken?: string | null;
 };
 
 export type TanTrackerContactDto = {

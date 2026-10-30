@@ -1,6 +1,5 @@
 import type { Pool } from "pg";
 import { getAppOrigin } from "../../config";
-import { signHolderAccess, holderAccessTtlMs } from "../holder-access";
 import type { TanTrackerContactDto } from "../types";
 import { loadExternalPersonOrders, loadExternalHistoricalSummaries } from "./external-person-orders";
 import { listEligibleStaffForExternalParty } from "../external-request/intake-handlers";
@@ -25,6 +24,7 @@ export async function buildExternalPersonBootstrapPayload(
   orders: Awaited<ReturnType<typeof loadExternalPersonOrders>>;
   historicalSummaries: Awaited<ReturnType<typeof loadExternalHistoricalSummaries>>;
   holderAccessToken: string | null;
+  holderAccessTokensByOrderId: Record<string, string>;
   publicHolder: boolean;
   navAllowed: false;
   previewReadOnly: false;
@@ -62,22 +62,13 @@ export async function buildExternalPersonBootstrapPayload(
       userId: s.userId,
     } as TanTrackerContactDto & { userId: string });
   }
-  let holderAccessToken: string | null = null;
-  const holderRow = orders.find(
-    (o) =>
-      o.holderId === resolved.partyId &&
-      o.status !== "completed" &&
-      (o.status === "active" || o.status === "waiting" || o.status === "delivered"),
-  );
-  if (holderRow) {
-    const hv = Number(holderRow.handoffVer ?? 1);
-    holderAccessToken = signHolderAccess({
-      transferId: holderRow.id,
-      partyId: resolved.partyId,
-      hv,
-      exp: Date.now() + holderAccessTtlMs(),
-    });
+  const holderAccessTokensByOrderId: Record<string, string> = {};
+  for (const o of orders) {
+    if (o.holderAccessToken) holderAccessTokensByOrderId[o.id] = o.holderAccessToken;
   }
+  const heldOrderIds = Object.keys(holderAccessTokensByOrderId);
+  const holderAccessToken =
+    heldOrderIds.length === 1 ? holderAccessTokensByOrderId[heldOrderIds[0]!]! : null;
   const capability = signExternalPersonCapability(resolved.personId, 24 * 60 * 60 * 1000, resolved.accessEpoch);
   return {
     externalPerson: true,
@@ -94,7 +85,8 @@ export async function buildExternalPersonBootstrapPayload(
     orders,
     historicalSummaries,
     holderAccessToken,
-    publicHolder: !!holderAccessToken,
+    holderAccessTokensByOrderId,
+    publicHolder: heldOrderIds.length > 0,
     navAllowed: false,
     previewReadOnly: false,
     capabilities: { canWrite: true },
