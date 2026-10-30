@@ -108,7 +108,9 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
       await login(page, "tt-browser-admin@test.local");
       await openCreateFilesStep(page);
       await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
-      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 20000 });
+      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), undefined, {
+        timeout: 20000,
+      });
       assert.equal(await page.locator(".tt-att-block .tt-error").count(), 0);
     } finally {
       await context.close();
@@ -130,7 +132,9 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
         await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
         await uploadReq;
         await page.clock.runFor(120001);
-        await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 10000 });
+        await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), undefined, {
+          timeout: 10000,
+        });
         const errText = await page.locator(".tt-att-block .tt-error").textContent();
         assert.match(errText || "", /Превышено время ожидания загрузки файла/i);
         assert.doesNotMatch(errText || "", /Load failed/i);
@@ -156,9 +160,7 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
         await page.click('[data-tt="messenger-invite-create"]');
         await inviteReq;
         await page.clock.runFor(10001);
-        const errText = (await page.locator('[data-tt="messenger-invite-error"]').textContent()) || "";
-        assert.doesNotMatch(errText, /Fetch is aborted/i);
-        assert.equal(errText.trim(), "");
+        assert.equal(await page.locator('[data-tt="messenger-invite-error"]').count(), 0);
       } finally {
         await context.close();
         await browser!.close();
@@ -181,8 +183,9 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
         await page.click('[data-tt="messenger-invite-create"]');
         await inviteReq;
         await page.clock.runFor(45001);
-        const errText =
-          (await page.locator('[data-tt="messenger-invite-error"]').textContent({ timeout: 10000 })) || "";
+        const errLoc = page.locator('[data-tt="messenger-invite-error"]');
+        await errLoc.waitFor({ state: "visible", timeout: 10000 });
+        const errText = (await errLoc.textContent()) || "";
         assert.match(errText, /Превышено время ожидания ответа/i);
         assert.doesNotMatch(errText, /Fetch is aborted/i);
       } finally {
@@ -244,11 +247,13 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
       assert.equal(await page.locator('[data-tt="attach-busy"]').count(), 1);
 
       releaseFirstUpload?.();
-      await page.waitForFunction(() => document.querySelector('[data-tt="attach-busy"]'), { timeout: 5000 });
+      await page.waitForFunction(() => document.querySelector('[data-tt="attach-busy"]'), undefined, { timeout: 5000 });
       assert.equal(await page.locator('[data-tt="attach-busy"]').count(), 1, "stale ingest A must not clear B busy");
 
       await page.click('[data-tt="create-wizard-back"]');
-      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 10000 });
+      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), undefined, {
+        timeout: 10000,
+      });
       releaseSecondUpload?.();
     } finally {
       await context.close();
@@ -268,10 +273,14 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
       await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
       await uploadReq;
       await page.clock.runFor(120001);
-      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 10000 });
+      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), undefined, {
+        timeout: 10000,
+      });
       await page.unroute("**/api/tan-tracker/staging-attachments");
       await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
-      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 20000 });
+      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), undefined, {
+        timeout: 20000,
+      });
       assert.equal(await page.locator(".tt-att-block .tt-error").count(), 0);
     } finally {
       await context.close();
