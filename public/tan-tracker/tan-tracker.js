@@ -668,6 +668,67 @@
     manual();
   }
 
+  function copyTextWithFeedback(text, fallbackSelector, successToast) {
+    if (!text) {
+      renderTracker();
+      return;
+    }
+    const manual = () => {
+      const el = document.querySelector(fallbackSelector);
+      if (el) {
+        el.focus();
+        if (typeof el.select === "function") el.select();
+      }
+      state.toast = "Не удалось скопировать автоматически. Выделите текст и скопируйте вручную.";
+      renderTracker({ soft: true });
+    };
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(text).then(
+        () => {
+          state.toast = successToast || "Текст скопирован";
+          renderTracker({ soft: true });
+        },
+        () => manual(),
+      );
+      return;
+    }
+    manual();
+  }
+
+  function messengerInvitationMessagePlain(o, url) {
+    const from = contactById(o.holderId);
+    const abs = absoluteHandoffUrl(url || o.messengerPortalUrl);
+    return [
+      "Вам передают предмет",
+      "",
+      `Отправитель: ${from?.name || "—"}`,
+      `Предмет: ${o.item || "—"}`,
+      "",
+      "Здесь можно посмотреть детали и подтвердить получение. Регистрация не нужна.",
+      "",
+      `Посмотреть передачу: ${abs}`,
+    ].join("\n");
+  }
+
+  function messengerInvitePreviewHtml(o, portalUrl) {
+    const from = contactById(o.holderId);
+    const abs = absoluteHandoffUrl(portalUrl);
+    const plain = messengerInvitationMessagePlain(o, portalUrl);
+    return `<section class="tt-invite-message-demo" aria-labelledby="tt-messenger-invite-preview-heading">
+      <h4 class="tt-invite-preview-heading" id="tt-messenger-invite-preview-heading">Текст приглашения для получателя</h4>
+      <p class="tt-muted tt-invite-preview-note">В мессенджере вид может отличаться; rich-превью MAX/Telegram здесь не настраиваются.</p>
+      <div class="tt-invite-message-card" data-tt="invite-message-preview">
+        <p class="tt-invite-message-card-title">Вам передают предмет</p>
+        <p class="tt-invite-message-card-line">Отправитель: <strong>${E(from?.name || "—")}</strong></p>
+        <p class="tt-invite-message-card-line">Предмет: <strong>${E(o.item || "—")}</strong></p>
+        <p class="tt-invite-message-card-body">Здесь можно посмотреть детали и подтвердить получение. Регистрация не нужна.</p>
+        <p class="tt-invite-message-card-action">Посмотреть передачу →</p>
+        <p class="tt-invite-message-card-url tt-muted">${E(abs)}</p>
+      </div>
+      <pre class="tt-invite-message-fallback" data-tt="messenger-invite-message-text">${E(plain)}</pre>
+    </section>`;
+  }
+
   function messengerInviteBlockHtml(o) {
     if (!externalMessengerUiEnabled() || !pendingContactIsExternal(o.pendingId)) return "";
     const err =
@@ -681,9 +742,11 @@
         <input class="tt-messenger-invite-url" type="text" readonly data-tt="messenger-invite-url" value="${E(o.messengerPortalUrl)}" />
         <div class="tt-messenger-invite-actions">
           ${btn("Копировать ссылку", 'data-tt="messenger-invite-copy"', "tt-detail-alt-action")}
+          ${btn("Скопировать приглашение", 'data-tt="messenger-invite-copy-message"', "tt-detail-alt-action")}
           ${typeof navigator !== "undefined" && navigator.share ? btn("Поделиться", 'data-tt="messenger-invite-share"', "tt-detail-alt-action") : ""}
           ${btn("Обновить ссылку", busy ? 'data-tt="messenger-invite-create" disabled' : 'data-tt="messenger-invite-create"', "tt-btn-ghost")}
         </div>
+        ${messengerInvitePreviewHtml(o, o.messengerPortalUrl)}
         ${err}
       </div>`;
     }
@@ -4979,6 +5042,25 @@
         return;
       }
       const runCopy = (url) => copyInviteUrlWithFeedback(url, '[data-tt="messenger-invite-url"]');
+      if (messengerPortalUrlValid(o)) {
+        runCopy(o.messengerPortalUrl);
+        return;
+      }
+      void ensureMessengerPortalUrl(o).then((url) => runCopy(url));
+      return;
+    }
+    if (action === "messenger-invite-copy-message") {
+      const o = orders.find((x) => x.id === state.orderId);
+      if (!o) {
+        renderTracker();
+        return;
+      }
+      const runCopy = (url) =>
+        copyTextWithFeedback(
+          messengerInvitationMessagePlain(o, url),
+          '[data-tt="messenger-invite-message-text"]',
+          "Приглашение скопировано",
+        );
       if (messengerPortalUrlValid(o)) {
         runCopy(o.messengerPortalUrl);
         return;

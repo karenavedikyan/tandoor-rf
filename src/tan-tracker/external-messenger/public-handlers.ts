@@ -52,8 +52,15 @@ export async function publicExternalMessengerPortalHandler(req: Request, res: Re
       res.status(410).json(apiError(ERROR_CODES.NOT_FOUND, open.message));
       return;
     }
-    const transfer = await client.query<{ public_code: string; item_title: string }>(
-      `SELECT public_code, item_title FROM tt_transfers WHERE id = $1`,
+    const transfer = await client.query<{
+      public_code: string;
+      item_title: string;
+      sender_display_name: string;
+    }>(
+      `SELECT t.public_code, t.item_title, hp.display_name AS sender_display_name
+       FROM tt_transfers t
+       JOIN tt_parties hp ON hp.id = t.holder_party_id
+       WHERE t.id = $1`,
       [session.transfer_id],
     );
     await client.query("COMMIT");
@@ -81,6 +88,7 @@ export async function publicExternalMessengerPortalHandler(req: Request, res: Re
       featureEnabled: isExternalMessengerFeatureEnabled(),
       transferPublicCode: transfer.rows[0]?.public_code ?? null,
       itemTitle: transfer.rows[0]?.item_title ?? "",
+      senderDisplayName: transfer.rows[0]?.sender_display_name ?? "",
       startToken: mst,
       channels,
       smsAlternative: isPublicRecipientSmsAlternativeAvailable(),

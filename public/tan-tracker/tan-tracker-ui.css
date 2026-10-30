@@ -440,6 +440,7 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 [data-theme=dark] .tt-recipient-card {
   background:linear-gradient(160deg, color-mix(in srgb, var(--green) 14%, var(--surface)) 0%, var(--surface) 58%);
 }
+.tt-recipient-kicker { margin:0 0 8px; font-size:13px; font-weight:600; color:var(--muted); letter-spacing:.02em; }
 .tt-recipient-hero { font-size:15px; font-weight:700; letter-spacing:.02em; text-transform:uppercase; color:var(--green,#507f22); margin:0 0 6px; }
 .tt-recipient-title { font-size:22px; margin:0 0 8px; font-weight:750; }
 .tt-recipient-step { margin:14px 0; }
@@ -462,6 +463,47 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 .tt-messenger-portal-channel--off strong { display:block; font-size:15px; font-weight:700; color:var(--text); margin:0 0 6px; }
 .tt-messenger-portal-reason { display:block; font-size:13px; line-height:1.4; color:var(--muted); }
 .tt-messenger-portal-sms { margin:14px 0 0; font-size:13px; line-height:1.45; color:var(--muted); }
+.tt-recipient-brand { display:flex; align-items:center; gap:10px; margin:0 0 14px; text-align:left; }
+.tt-recipient-logo { display:block; flex-shrink:0; object-fit:contain; max-height:36px; width:auto; }
+.tt-recipient-logo-dark { display:none; }
+[data-theme="dark"] .tt-recipient-logo-light { display:none; }
+[data-theme="dark"] .tt-recipient-logo-dark { display:block; }
+.tt-recipient-brand-name { font-size:17px; font-weight:750; letter-spacing:-.01em; color:var(--text); }
+.tt-recipient-card--welcome { text-align:left; }
+.tt-recipient-welcome-heading { font-size:22px; font-weight:750; margin:0 0 12px; line-height:1.25; }
+.tt-recipient-welcome-lead { margin:0 0 16px; font-size:15px; line-height:1.45; color:var(--text); }
+.tt-recipient-welcome-facts { margin:0 0 14px; display:flex; flex-direction:column; gap:10px; }
+.tt-recipient-welcome-facts div { margin:0; }
+.tt-recipient-welcome-facts dt { font-size:12px; font-weight:600; color:var(--text); margin:0 0 2px; }
+.tt-recipient-welcome-facts dd { margin:0; font-size:15px; font-weight:600; word-break:break-word; }
+.tt-recipient-welcome-cta { min-height:48px; margin:0 0 12px; }
+.tt-recipient-welcome-about { margin-top:8px; border-radius:12px; }
+.tt-recipient-welcome-about-body p { margin:0 0 10px; font-size:14px; line-height:1.45; color:var(--text); }
+.tt-recipient-welcome-about-body p:last-child { margin-bottom:0; }
+.tt-recipient-messenger-preamble {
+  margin:12px 0 14px; padding:12px 14px; font-size:14px; line-height:1.45; text-align:left;
+  background:var(--surface-2,#f4f4f2); border-radius:12px; border:1px solid var(--border,#e2e2de); color:var(--text);
+}
+[data-theme=dark] .tt-recipient-messenger-preamble { background:var(--surface-2,#2a2a28); border-color:var(--border,#3a3a38); }
+.tt-messenger-portal-page .tt-disclosure summary { min-height:44px; }
+.tt-invite-preview-heading { margin:0 0 6px; font-size:14px; font-weight:650; }
+.tt-invite-preview-note { margin:0 0 10px; font-size:12px; }
+.tt-invite-message-demo { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); text-align:left; }
+.tt-invite-message-card {
+  padding:14px 14px 12px; border-radius:14px; border:1px solid var(--line); background:var(--surface);
+  margin:0 0 10px; max-width:100%;
+}
+.tt-invite-message-card-title { margin:0 0 8px; font-size:16px; font-weight:700; }
+.tt-invite-message-card-line { margin:0 0 6px; font-size:14px; word-break:break-word; }
+.tt-invite-message-card-body { margin:8px 0 10px; font-size:13px; line-height:1.4; color:var(--muted); }
+.tt-invite-message-card-action { margin:0 0 8px; font-size:14px; font-weight:650; color:var(--green,#507f22); }
+.tt-invite-message-card-url { margin:0; font-size:11px; word-break:break-all; }
+.tt-invite-message-fallback {
+  margin:0; padding:10px 12px; font-size:12px; line-height:1.45; white-space:pre-wrap; word-break:break-word;
+  border-radius:10px; border:1px dashed var(--line); background:var(--surface-2,#f4f4f2); user-select:all;
+  max-height:12rem; overflow:auto;
+}
+[data-theme=dark] .tt-invite-message-fallback { background:var(--surface-2,#2a2a28); }
 .tt-messenger-invite { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
 .tt-messenger-invite-url {
   display:block; width:100%; box-sizing:border-box; min-height:44px; margin:8px 0 0; padding:10px 12px;

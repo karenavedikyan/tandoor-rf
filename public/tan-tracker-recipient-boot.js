@@ -2,11 +2,16 @@
   "use strict";
 
   var statePanel = document.getElementById("tt-state-panel");
+  var portalUi = { data: null, showDetails: false, listenersBound: false };
 
   function showError(message) {
     if (!statePanel) return;
     statePanel.classList.remove("clients-hidden");
     statePanel.textContent = message;
+  }
+
+  function hideErrorPanel() {
+    if (statePanel) statePanel.classList.add("clients-hidden");
   }
 
   function parseMstFromLocation() {
@@ -193,18 +198,92 @@
     return channel === "max" ? "MAX" : "Telegram";
   }
 
-  function renderMessengerPortal(root, data) {
-    var codeLine = data.transferPublicCode
-      ? '<p class="tt-recipient-kicker">Передача ' + escapeHtml(data.transferPublicCode) + "</p>"
-      : "";
-    var title = data.itemTitle
-      ? '<h2 class="tt-recipient-title">' + escapeHtml(data.itemTitle) + "</h2>"
-      : '<h2 class="tt-recipient-title">Подтверждение получателя</h2>';
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function recipientBrandHeader() {
+    return (
+      '<header class="tt-recipient-brand" data-tt="recipient-brand">' +
+      '<img class="tt-recipient-logo tt-recipient-logo-light" src="/brand/tandoor-logo-official.svg" alt="" width="128" height="36" decoding="async" data-legacy-logo-full />' +
+      '<img class="tt-recipient-logo tt-recipient-logo-dark" src="/brand/tandoor-logo-light.svg" alt="" width="128" height="36" decoding="async" data-legacy-logo-full />' +
+      '<span class="tt-recipient-brand-name">Тандор</span></header>'
+    );
+  }
+
+  function welcomeAboutDisclosure() {
+    return (
+      '<details class="tt-disclosure tt-recipient-welcome-about" data-tt="recipient-welcome-about">' +
+      '<summary><span class="tt-disclosure-title"><span class="tt-disclosure-title-text">Что это за ссылка?</span></span></summary>' +
+      '<div class="tt-disclosure-body tt-recipient-welcome-about-body">' +
+      "<p>Тандор помогает отследить передачу документа или предмета между людьми. Личный кабинет получателю не нужен.</p>" +
+      "<p>Ссылка персональная — рассчитана на получателя. Подтверждение своего номера в боте помогает показать ваши передачи и выдать код получения.</p>" +
+      "<p>Код получения сообщайте отправителю только после того, как предмет реально у вас.</p>" +
+      "</div></details>"
+    );
+  }
+
+  function transferKicker(data) {
+    if (!data.transferPublicCode) return "";
+    return (
+      '<p class="tt-recipient-kicker">Передача ' + escapeHtml(data.transferPublicCode) + "</p>"
+    );
+  }
+
+  function renderWelcomeInvalid(root, message) {
+    hideErrorPanel();
+    var copy = message || "Ссылка приглашения недействительна. Попросите отправителя прислать новую ссылку.";
+    root.innerHTML =
+      '<div class="tt-recipient-wrap"><article class="tt-recipient-card tt-recipient-card--welcome" data-tt="recipient-welcome-invalid">' +
+      recipientBrandHeader() +
+      '<h1 class="tt-recipient-welcome-heading">Приглашение недоступно</h1>' +
+      '<p class="tt-recipient-welcome-lead">' +
+      escapeHtml(copy) +
+      "</p>" +
+      welcomeAboutDisclosure() +
+      "</article></div>";
+    syncRecipientLogos();
+  }
+
+  function renderWelcome(root, data) {
+    hideErrorPanel();
+    var sender = data.senderDisplayName || "—";
+    var item = data.itemTitle || "—";
+    root.innerHTML =
+      '<div class="tt-recipient-wrap"><article class="tt-recipient-card tt-recipient-card--welcome" data-tt="recipient-welcome">' +
+      recipientBrandHeader() +
+      transferKicker(data) +
+      '<h1 class="tt-recipient-welcome-heading">Вам передают предмет</h1>' +
+      '<dl class="tt-recipient-welcome-facts">' +
+      "<div><dt>Отправитель</dt><dd>" +
+      escapeHtml(sender) +
+      "</dd></div>" +
+      "<div><dt>Предмет</dt><dd>" +
+      escapeHtml(item) +
+      "</dd></div></dl>" +
+      '<p class="tt-recipient-welcome-lead">Здесь можно посмотреть детали и подтвердить получение. Регистрация не нужна.</p>' +
+      '<button type="button" class="tt-primary tt-btn-block tt-recipient-welcome-cta" data-tt="recipient-welcome-continue">Посмотреть передачу</button>' +
+      welcomeAboutDisclosure() +
+      "</article></div>";
+    syncRecipientLogos();
+    var cta = root.querySelector('[data-tt="recipient-welcome-continue"]');
+    if (cta) cta.focus();
+  }
+
+  function renderMessengerDetails(root, data) {
+    hideErrorPanel();
+    var preamble =
+      '<p class="tt-recipient-messenger-preamble" data-tt="recipient-messenger-preamble" tabindex="-1">Бот Тандор попросит подтвердить ваш номер, чтобы выдать код получения. Сообщите код отправителю только после того, как получите предмет.</p>';
     var html =
       '<div class="tt-recipient-wrap"><article class="tt-recipient-card" data-tt="messenger-portal">' +
-      '<p class="tt-recipient-hero">Получение передачи</p>' +
-      title +
-      codeLine +
+      recipientBrandHeader() +
+      transferKicker(data) +
+      '<h2 class="tt-recipient-title">Подтверждение получателя</h2>' +
+      preamble +
       '<div class="tt-recipient-step">' +
       '<p class="tt-recipient-step-label">Выберите мессенджер для подтверждения номера</p>' +
       '<div class="tt-messenger-portal-channels">';
@@ -244,14 +323,45 @@
     }
     html += "</article></div>";
     root.innerHTML = html;
+    syncRecipientLogos();
+    var focusEl = root.querySelector('[data-tt="recipient-messenger-preamble"]');
+    if (focusEl && typeof focusEl.focus === "function") focusEl.focus();
   }
 
-  function escapeHtml(text) {
-    return String(text)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+  function syncRecipientLogos() {
+    if (typeof window.syncLegacyLogos === "function") {
+      window.syncLegacyLogos();
+      return;
+    }
+    var theme =
+      document.documentElement.getAttribute("data-theme") ||
+      (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.querySelectorAll("[data-legacy-logo-full]").forEach(function (img) {
+      img.src =
+        theme === "dark" ? "/brand/tandoor-logo-light.svg" : "/brand/tandoor-logo-official.svg";
+    });
+  }
+
+  function renderMessengerPortal(root) {
+    var data = portalUi.data;
+    if (!data) return;
+    if (!portalUi.showDetails) {
+      renderWelcome(root, data);
+      return;
+    }
+    renderMessengerDetails(root, data);
+  }
+
+  function bindPortalListeners(root) {
+    if (portalUi.listenersBound) return;
+    portalUi.listenersBound = true;
+    root.addEventListener("click", function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest('[data-tt="recipient-welcome-continue"]') : null;
+      if (!btn || !portalUi.data) return;
+      ev.preventDefault();
+      portalUi.showDetails = true;
+      renderMessengerPortal(root);
+    });
   }
 
   function bootMessengerPortal(mst) {
@@ -262,6 +372,9 @@
       showError("Не удалось открыть страницу получателя.");
       return;
     }
+    bindPortalListeners(root);
+    portalUi.showDetails = false;
+    portalUi.data = null;
     root.innerHTML = '<p data-tt="messenger-portal-loading">Загрузка…</p>';
     var url =
       "/api/tan-tracker/public/recipient/messenger?mst=" + encodeURIComponent(mst);
@@ -277,11 +390,14 @@
         });
       })
       .then(function (data) {
-        renderMessengerPortal(root, data);
+        portalUi.data = data;
+        renderMessengerPortal(root);
       })
       .catch(function (err) {
-        root.innerHTML = "";
-        showError(err && err.message ? err.message : "Не удалось открыть страницу получателя.");
+        renderWelcomeInvalid(
+          root,
+          err && err.message ? err.message : "Не удалось открыть страницу получателя.",
+        );
       });
   }
 

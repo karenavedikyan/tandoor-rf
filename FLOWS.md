@@ -7,6 +7,15 @@
 - Проверять: реестр/карточка/мастер/получатель на 375/390/1440 light+dark; overflow «⋯»; scope 403; OTP fail-closed без провайдера; attachments только через auth download.
 - Матрица: `docs/tan-tracker-tt56-parity.md`.
 
+### Приглашение внешнего получателя (mst, production)
+
+- **Точка входа:** `public/tan-tracker-recipient.html` + `tan-tracker-recipient-boot.js` при `?mst=er…` (MAX/Telegram portal). Legacy QR/SMS (`tt_tok`), `tt_hat`, external-person `cap`/`est` без welcome на уже полученных/держателе/реестре.
+- **Welcome (валидный mst):** `data-tt="recipient-welcome"` — бренд, код передачи, «Вам передают предмет», отправитель/предмет из `GET /api/tan-tracker/public/recipient/messenger`, disclosure «Что это за ссылка?», CTA «Посмотреть передачу». Открытие/CTA **не** вызывает POST идентичности, consent, код, подтверждение получения.
+- **После CTA:** `data-tt="messenger-portal"` — preamble перед каналами, deep-link MAX/Telegram, disabled-reason; SMS-hint только если backend вернул `smsAlternative`.
+- **Отказ:** 400/410 — `data-tt="recipient-welcome-invalid"`, без каналов и утечки отправителя/предмета.
+- **Держатель (LK):** блок `messenger-invite-block` — URL, «Скопировать ссылку», «Скопировать приглашение», превью текста (`invite-message-preview`); canonical URL/token не менять при копировании текста.
+- **Browser:** `test/browser/tan-tracker-external-messenger-portal.browser.test.ts`. **Integration:** `senderDisplayName` в public messenger handler.
+
 
 ## Меню по прототипу и технический просмотр назначений
 - В шапке администратора «Войти как»: диалог с поиском и фильтром роли, переключение между сотрудниками без паролей. В режиме просмотра меню, клиенты, продажи, назначения, оценки и уведомления используют выбранного сотрудника; видна плашка «Изменения запрещены» и возврат. Плашка `.clients-preview-banner` (нормальная и `--error`) оформляется в `brand/cabinet.css` семантическими токенами `--rf-preview-banner-*` на всех маршрутах с `clients-shell.js`, включая `/profile` без `clients.css`. В светлой и тёмной теме фон, имя/роль, предупреждение и кнопка «Вернуться к администратору» (в т.ч. hover/focus) должны иметь контраст к фактическому фону ≥ 4.5:1; в тёмной теме не допускается светлый прямоугольник с «ghost»-текстом шапки. Проверить менеджера, ассистента, РОА, директора, перезагрузку, смену профиля, смену темы без перезагрузки и отдельные сессии.

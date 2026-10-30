@@ -69,7 +69,17 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
     }
   }
 
-  it("holder QR and copy use mst portal; guest portal styled without SMS hint", async () => {
+  function trackMutatingApi(page: Page) {
+    const posts: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() !== "POST" && req.method() !== "PUT" && req.method() !== "PATCH") return;
+      const url = req.url();
+      if (url.includes("/api/tan-tracker/")) posts.push(url);
+    });
+    return posts;
+  }
+
+  it("holder QR and copy use mst portal; guest welcome then channels without mutating API", async () => {
     const holderContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
     try {
       const holderPage = await holderContext.newPage();
@@ -96,14 +106,31 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       const portalUrl = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
       assert.match(portalUrl, /\/tan-tracker\/recipient\?mst=er/);
 
+      await holderPage.waitForSelector('[data-tt="invite-message-preview"]', { timeout: 10000 });
+      const previewText = await holderPage.locator('[data-tt="messenger-invite-message-text"]').innerText();
+      assert.match(previewText, /Messenger holder UI box/);
+      assert.match(previewText, /Посмотреть передачу:/);
+
       await holderPage.click('[data-tt="messenger-invite-copy"]');
 
       const guestContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
       try {
         const guestPage = await guestContext.newPage();
+        const mutating = trackMutatingApi(guestPage);
         await guestPage.setViewportSize({ width: 375, height: 812 });
         await guestPage.goto(portalUrl);
-        await guestPage.waitForSelector('[data-tt="messenger-portal"]', { timeout: 20000 });
+        await guestPage.waitForSelector('[data-tt="recipient-welcome"]', { timeout: 20000 });
+        assert.equal(await guestPage.locator('[data-tt="messenger-portal"]').count(), 0);
+        const welcomeText = await guestPage.locator('[data-tt="recipient-welcome"]').innerText();
+        assert.match(welcomeText, /Messenger holder UI box/);
+        assert.match(welcomeText, /Отправитель/);
+        assert.deepEqual(mutating, []);
+
+        await guestPage.click('[data-tt="recipient-welcome-continue"]');
+        await guestPage.waitForSelector('[data-tt="messenger-portal"]', { timeout: 15000 });
+        await guestPage.waitForSelector('[data-tt="recipient-messenger-preamble"]', { timeout: 10000 });
+        assert.deepEqual(mutating, []);
+
         await guestPage.waitForSelector(".tt-recipient-card", { timeout: 10000 });
         assert.equal(await guestPage.locator('[data-tt="messenger-sms-hint"]').count(), 0);
         await guestPage.waitForSelector('[data-tt="messenger-channel-unavailable"][data-channel="max"]', {
@@ -126,9 +153,72 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
         const popup = await popupPromise;
         assert.match(popup.url(), /t\.me\//);
         await popup.close();
+        assert.deepEqual(mutating, []);
       } finally {
         await guestContext.close();
       }
+    } finally {
+      await holderContext.close();
+    }
+  });
+
+  it("invalid mst shows branded denial without transfer details", async () => {
+    const guestContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
+    try {
+      const guestPage = await guestContext.newPage();
+      const staleMst = `er${"a".repeat(43)}`;
+      await guestPage.goto(`${fixture.baseUrl}/tan-tracker/recipient?mst=${encodeURIComponent(staleMst)}`);
+      await guestPage.waitForSelector('[data-tt="recipient-welcome-invalid"]', { timeout: 20000 });
+      assert.equal(await guestPage.locator('[data-tt="messenger-portal"]').count(), 0);
+      assert.equal(await guestPage.locator('[data-tt="recipient-welcome-continue"]').count(), 0);
+      const body = await guestPage.locator('[data-tt="recipient-welcome-invalid"]').innerText();
+      assert.match(body, /недоступно/i);
+      assert.doesNotMatch(body, /Messenger holder UI box/);
+    } finally {
+      await guestContext.close();
+    }
+  });
+
+  it("holder copy full invitation uses clipboard fallback path without reissuing invite", async () => {
+    const holderContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
+    try {
+      const holderPage = await holderContext.newPage();
+      await login(holderPage, "tt-browser-admin@test.local");
+      await createExternalTransferViaUi(holderPage);
+
+      const inviteResp = holderPage.waitForResponse(
+        (r) =>
+          r.request().method() === "POST" &&
+          r.url().includes("/messenger-invite") &&
+          r.status() === 201,
+        { timeout: 30000 },
+      );
+      await holderPage.click('[data-tt="messenger-invite-create"]');
+      const invite = await inviteResp;
+      const inviteBody = (await invite.json()) as { startToken?: string; portalUrl?: string };
+      const urlBefore = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
+      assert.ok(inviteBody.startToken);
+
+      await holderPage.evaluate(() => {
+        Object.defineProperty(navigator, "clipboard", {
+          configurable: true,
+          value: {
+            writeText: () => Promise.reject(new Error("denied")),
+          },
+        });
+      });
+
+      let invitePostCount = 0;
+      holderPage.on("request", (req) => {
+        if (req.method() === "POST" && req.url().includes("/messenger-invite")) invitePostCount += 1;
+      });
+      await holderPage.click('[data-tt="messenger-invite-copy-message"]');
+      await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 10000 });
+      const urlAfter = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
+      assert.equal(urlAfter, urlBefore);
+      assert.match(urlAfter, inviteBody.startToken ?? "er");
+      assert.equal(invitePostCount, 0);
+      await holderPage.locator('[data-tt="messenger-invite-message-text"]').focus();
     } finally {
       await holderContext.close();
     }

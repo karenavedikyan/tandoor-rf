@@ -83,6 +83,9 @@ describe("external recipient messenger (telegram, isolated PG)", { concurrency: 
       `/api/tan-tracker/public/recipient/messenger?mst=${encodeURIComponent(startToken)}`,
     );
     assert.equal(res.status, 200, res.text);
+    assert.equal(typeof res.body.senderDisplayName, "string");
+    assert.ok(res.body.senderDisplayName.trim().length > 0);
+    assert.equal(res.body.itemTitle, "External box");
     const tg = res.body.channels.find((c: { channel: string }) => c.channel === "telegram");
     assert.ok(tg?.available);
     assert.ok(tg?.deepLink?.includes("start="));
