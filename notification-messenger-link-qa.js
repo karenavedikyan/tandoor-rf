@@ -45,6 +45,23 @@ var NOTIFICATION_MESSENGER_LINK_QA = await (async () => {
   await page.getByRole("button", { name: "Переключить тему", exact: true }).click({ force: true });
   await page.locator("#af-profile-btn").click();
   ok(await page.locator(".af-connect-consent").first().isVisible(), "consent visible after theme toggle at mobile width");
+  await page.locator('[data-af="profile-close"]').click();
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      get() {
+        throw new DOMException("sessionStorage blocked", "SecurityError");
+      },
+    });
+  });
+  await page.goto(`${base}/#handover?as_role=manager`);
+  await page.locator("#af-profile-btn").click();
+  await page.locator('[data-af="demo-max-lk"]').check();
+  ok(
+    await page.evaluate(() => window.AssistantFeedback.isMaxLkDemoEnabled() === true),
+    "MAX demo toggle works when sessionStorage get/set throws"
+  );
+  ok((await page.locator('[data-af="begin-connect-max"]').count()) === 1, "MAX personal connect available after in-memory demo toggle");
   return { passed: checks.length, checks };
 })();
 console.log(JSON.stringify(NOTIFICATION_MESSENGER_LINK_QA, null, 2));

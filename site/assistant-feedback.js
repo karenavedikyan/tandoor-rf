@@ -7,8 +7,17 @@
   let source,notes=[],reviews=[],seen=new Set(),previous=new Map(),seq=0,inbox=false,unreadOnly=false,dialog=null;
   let filters={q:"",assistant:"",manager:"",score:"",status:""};
   let categoryFilter="all",profileDialog=null,connectBot=null,connectBotMsg="";
-  function maxConnectDemoEnabled(){try{return sessionStorage.getItem("tt-demo-max-messenger")==="1";}catch{return false;}}
-  function setMaxConnectDemoEnabled(on){try{sessionStorage.setItem("tt-demo-max-messenger",on?"1":"0");}catch{}}
+  let maxLkDemoEnabled=false;
+  (function initMaxLkDemoPref(){
+    try{
+      if(sessionStorage.getItem("tt-demo-max-messenger")==="1")maxLkDemoEnabled=true;
+    }catch{}
+  })();
+  function maxConnectDemoEnabled(){return maxLkDemoEnabled;}
+  function setMaxConnectDemoEnabled(on){
+    maxLkDemoEnabled=!!on;
+    try{sessionStorage.setItem("tt-demo-max-messenger",maxLkDemoEnabled?"1":"0");}catch{}
+  }
   function personalBindToken(user,kind){return `bind_demo_${user}_${kind}`;}
   function finishChannelConnect(user,kind){const d=deliveryFor(user);d[kind].connected=true;d[kind].label=kind==="telegram"?`@demo_${user}_tg`:`MAX · demo ${user.toUpperCase()}`;persistDelivery(user,d);}
   function channelLabel(kind){return kind==="telegram"?"Telegram":"MAX";}
@@ -444,6 +453,6 @@
   document.addEventListener("assistant:paint",()=>{const person=noticeUserId();if(person!==paint.person){inbox=false;unreadOnly=false;categoryFilter="all";filters={q:"",assistant:"",manager:"",score:"",status:""};closeDialog();closeProfile();paint.person=person;}paint();});
   const beforeRender=render;render=function(){beforeRender();paint();};
   DS.onStatusChange(()=>paint());
-  window.AssistantFeedback={view,closure,resetDemo,flushDemoStore:()=>DS.flush()};
+  window.AssistantFeedback={view,closure,resetDemo,flushDemoStore:()=>DS.flush(),isMaxLkDemoEnabled:maxConnectDemoEnabled};
   init();P.render();paint();
 })();
