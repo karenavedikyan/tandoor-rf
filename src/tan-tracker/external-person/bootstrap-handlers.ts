@@ -28,6 +28,7 @@ export async function externalPersonBootstrapHandler(req: Request, res: Response
   res.status(200).json({
     externalPerson: true,
     personId: resolved.personId,
+    partyId: resolved.partyId,
     displayName: resolved.displayName,
     phone: resolved.phone,
     capability,

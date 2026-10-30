@@ -63,3 +63,38 @@ body.tt-lk-mode .tt-work #tt-code-demo-help,
 body.tt-lk-mode .tt-work .tt-code-secondary-actions {
   display: none !important;
 }
+
+#tt-notif-mount {
+  position: relative;
+}
+.tt-notif-bell {
+  border: 1px solid var(--rf-border, #d8dce8);
+  background: var(--rf-surface, #fff);
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.tt-notif-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  width: min(320px, 90vw);
+  max-height: 360px;
+  overflow: auto;
+  background: var(--rf-surface, #fff);
+  border: 1px solid var(--rf-border, #d8dce8);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 20;
+}
+.tt-notif-item {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--rf-border, #d8dce8);
+}
+.tt-notif-item:last-child {
+  border-bottom: none;
+}
+body.tt-external-shell #tt-notif-mount {
+  display: none !important;
+}

@@ -54,6 +54,13 @@
     if (typeof window.__ttLkRenderTracker === "function") {
       window.__ttLkRenderTracker();
     }
+    var actions = document.querySelector(".legacy-topbar__actions");
+    if (actions && typeof window.mountTanTrackerNotifications === "function") {
+      var mount = document.createElement("div");
+      mount.id = "tt-notif-mount";
+      actions.insertBefore(mount, actions.firstChild);
+      window.mountTanTrackerNotifications(mount);
+    }
   }
 
   function startTracker(user, reason) {
@@ -76,6 +83,11 @@
 
   function mountPage() {
     if (location.pathname.indexOf("/tan-tracker/recipient") >= 0) {
+      return;
+    }
+    var extQs = new URLSearchParams(window.location.search);
+    if (extQs.get("est") || extQs.get("cap")) {
+      if (rootHost) rootHost.classList.remove("clients-hidden");
       return;
     }
     if (!shell || !shell.ensureAuthenticated) {

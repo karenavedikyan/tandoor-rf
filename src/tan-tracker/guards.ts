@@ -20,6 +20,24 @@ export function rejectTanTrackerWrite(
   res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, message));
 }
 
+/** Read-only Tan-tracker API (bootstrap, notifications list). */
+export function requireTanTrackerNavAccess(
+  req: AccessRequest,
+  res: Response,
+): { user: UserDto; access: AccessContext } | null {
+  if (!req.authUser || !req.accessContext) {
+    setNoStore(res);
+    res.status(401).json(apiError(ERROR_CODES.UNAUTHORIZED, "Требуется авторизация."));
+    return null;
+  }
+  const user = resolveTanTrackerEffectiveUser(req.authUser, req.accessContext);
+  if (!tanTrackerNavAllowed(user.role)) {
+    rejectTanTrackerWrite(res);
+    return null;
+  }
+  return { user, access: req.accessContext };
+}
+
 /** Shared gate for every Tan-tracker mutation. */
 export function requireTanTrackerMutationAccess(
   req: AccessRequest,

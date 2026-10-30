@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { randomUUID } from "node:crypto";
-import { getPool, closePool } from "../../src/db/pool";
+import request from "supertest";
+import { getPool, closePool, resetPoolForTests } from "../../src/db/pool";
 import { upsertVerifiedPerson } from "../../src/tan-tracker/external-person/person-service";
 import { confirmExternalRequestDraft } from "../../src/tan-tracker/external-request/confirm";
-import { declineExternalRequestHandler } from "../../src/tan-tracker/external-request/decline-mutation";
 import { loadExternalPersonOrders } from "../../src/tan-tracker/external-person/external-person-orders";
 import {
   createTestUser,
@@ -15,6 +15,14 @@ import {
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
 
 const databaseUrl = getIntegrationDatabaseUrl();
+const ORIGIN = "http://127.0.0.1:3000";
+const PASSWORD = "StrongPass123!";
+
+async function loadApp() {
+  await resetPoolForTests();
+  const { createApp } = await import("../../src/server");
+  return createApp();
+}
 
 describe("external person blocker fixes", { concurrency: false }, () => {
   before(async () => {
@@ -25,6 +33,37 @@ describe("external person blocker fixes", { concurrency: false }, () => {
 
   after(async () => {
     await closePool();
+  });
+
+  it("rejects employee phone collision on bot verify", async () => {
+    const staff = await createTestUser({
+      databaseUrl,
+      email: "ext-emp-phone@test.local",
+      password: PASSWORD,
+      fullName: "Emp Phone",
+      role: "manager",
+      phone: "+79990003344",
+    });
+    const pool = getPool()!;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await ensurePartyForUserOnWrite(client, staff.id, "Emp Phone", "+79990003344");
+      await assert.rejects(
+        () =>
+          upsertVerifiedPerson(client, {
+            channel: "telegram",
+            messengerUserId: 900002n,
+            messengerChatId: 900002n,
+            phoneRaw: "+79990003344",
+            displayName: "Should Fail",
+          }),
+        (err: Error & { http?: number }) => err.http === 403,
+      );
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
   });
 
   it("rejects unknown phone self-registration on bot verify", async () => {
@@ -47,6 +86,57 @@ describe("external person blocker fixes", { concurrency: false }, () => {
         },
       );
       await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+  });
+
+  it("confirm allows prior relationship when intake flag is off", async () => {
+    const staff = await createTestUser({
+      databaseUrl,
+      email: "ext-prior-rel@test.local",
+      password: PASSWORD,
+      fullName: "Prior Staff",
+      role: "manager",
+    });
+    const pool = getPool()!;
+    const client = await pool.connect();
+    const personId = randomUUID();
+    const draftId = randomUUID();
+    try {
+      await client.query("BEGIN");
+      await client.query(`UPDATE users SET accepts_external_tt_intake = FALSE WHERE id = $1::uuid`, [staff.id]);
+      const staffPartyId = (await ensurePartyForUserOnWrite(client, staff.id, "Prior Staff", "+79995556601")).id;
+      const externalPartyId = (
+        await client.query<{ id: string }>(
+          `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Prior Ext', '+79995556602') RETURNING id::text`,
+        )
+      ).rows[0]!.id;
+      await client.query(
+        `INSERT INTO tt_transfers (id, public_code, item_title, status, from_external, creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version)
+         VALUES ('PRIOR1','PRIOR1','link','completed',TRUE,$1,$2,$2,$2,1)`,
+        [externalPartyId, staffPartyId],
+      );
+      await client.query(
+        `INSERT INTO tt_external_persons (id, phone_e164, display_name, party_id) VALUES ($1::uuid, '+79995556602', 'Prior Ext', $2::uuid)`,
+        [personId, externalPartyId],
+      );
+      await client.query(
+        `INSERT INTO tt_external_request_drafts (id, person_id, channel, messenger_chat_id, step, payload)
+         VALUES ($1::uuid, $2::uuid, 'max', '2', 'summary', $3::jsonb)`,
+        [draftId, personId, JSON.stringify({ item: "Doc", recipientUserId: staff.id, dueMode: "tomorrow" })],
+      );
+      const created = await confirmExternalRequestDraft(client, {
+        personId,
+        externalPartyId,
+        draftId,
+        idempotencyKey: `ext-req:${draftId}`,
+      });
+      assert.ok(created.publicCode);
+      await client.query("ROLLBACK");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
     } finally {
       client.release();
     }
@@ -236,5 +326,91 @@ describe("external person blocker fixes", { concurrency: false }, () => {
     assert.equal(orders.length, 1);
     assert.equal(orders[0]!.id, "VIS");
     assert.ok(orders[0]!.timeline.every((t) => t.from === extParty || t.to === extParty));
+  });
+
+  it("decline writes audit and external messenger outbox (not holder self timeline)", async () => {
+    const staff = await createTestUser({
+      databaseUrl,
+      email: "ext-decline@test.local",
+      password: PASSWORD,
+      fullName: "Decline Staff",
+      role: "manager",
+    });
+    const pool = getPool()!;
+    const client = await pool.connect();
+    const personId = randomUUID();
+    let externalPartyId = "";
+    let transferId = "EXTDECL1";
+    try {
+      await client.query("BEGIN");
+      const staffParty = await ensurePartyForUserOnWrite(client, staff.id, "Decline Staff", "+79997778801");
+      externalPartyId = (
+        await client.query<{ id: string }>(
+          `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Decline Ext', '+79997778802') RETURNING id::text`,
+        )
+      ).rows[0]!.id;
+      await client.query(
+        `INSERT INTO tt_external_persons (id, phone_e164, display_name, party_id) VALUES ($1::uuid, '+79997778802', 'Decline Ext', $2::uuid)`,
+        [personId, externalPartyId],
+      );
+      await client.query(
+        `INSERT INTO tt_external_person_verifications (person_id, channel, messenger_user_id, messenger_chat_id)
+         VALUES ($1::uuid, 'telegram', '7001', '7001')`,
+        [personId],
+      );
+      await client.query(
+        `INSERT INTO tt_external_person_verifications (person_id, channel, messenger_user_id, messenger_chat_id)
+         VALUES ($1::uuid, 'max', '7002', '7002')`,
+        [personId],
+      );
+      await client.query(
+        `INSERT INTO tt_transfers (id, public_code, item_title, status, from_external, creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version)
+         VALUES ($1,$1,'Decline me','waiting',TRUE,$2,$2,$3,$3,1)`,
+        [transferId, externalPartyId, staffParty.id],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    const app = await loadApp();
+    const login = await request(app)
+      .post("/api/auth/login")
+      .set("Origin", ORIGIN)
+      .send({ email: "ext-decline@test.local", password: PASSWORD });
+    assert.equal(login.status, 200);
+    const cookie = login.headers["set-cookie"];
+
+    const declined = await request(app)
+      .post(`/api/tan-tracker/transfers/${transferId}/external-decline`)
+      .set("Origin", ORIGIN)
+      .set("Cookie", cookie)
+      .send({ reason: "Не могу принять" });
+    assert.equal(declined.status, 200);
+
+    const audit = await pool.query(
+      `SELECT action FROM tt_audit_log WHERE transfer_id = $1 AND action = 'external_decline'`,
+      [transferId],
+    );
+    assert.equal(audit.rowCount, 1);
+
+    const badTimeline = await pool.query(
+      `SELECT 1 FROM tt_transfer_timeline WHERE transfer_id = $1 AND from_party_id = to_party_id`,
+      [transferId],
+    );
+    assert.equal(badTimeline.rowCount, 0);
+
+    const outbox = await pool.query(
+      `SELECT channel FROM tt_external_person_message_outbox WHERE person_id = $1::uuid ORDER BY channel`,
+      [personId],
+    );
+    assert.equal(outbox.rowCount, 2);
+    assert.deepEqual(
+      outbox.rows.map((r) => r.channel),
+      ["max", "telegram"],
+    );
   });
 });

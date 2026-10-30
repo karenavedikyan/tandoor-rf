@@ -34,7 +34,10 @@ import {
 import { publicExternalMessengerPortalHandler } from "./external-messenger/public-handlers";
 import { createExternalMessengerInviteHandler } from "./external-messenger/lk-handlers";
 import { externalPersonBootstrapHandler } from "./external-person/bootstrap-handlers";
+import { externalPersonLogoutAllHandler } from "./external-person/logout-handlers";
 import { declineExternalRequestHandler } from "./external-request/decline-mutation";
+import { listLkNotificationsHandler, markLkNotificationsReadHandler } from "./lk-notifications-handlers";
+import { adminRefreshPhoneDedupeHandler } from "./admin-phone-dedupe-handlers";
 import {
   listExternalIntakeRecipientsPublicHandler,
   patchStaffExternalIntakeHandler,
@@ -111,8 +114,20 @@ export function createTanTrackerRouter(): express.Router {
     void getTanTrackerBootstrapHandler(req, res).catch(next);
   });
 
+  router.get("/notifications", ...readChain, (req, res, next) => {
+    void listLkNotificationsHandler(req, res).catch(next);
+  });
+
+  router.post("/notifications/read", csrfProtection, ...writeChain, (req, res, next) => {
+    void markLkNotificationsReadHandler(req, res).catch(next);
+  });
+
   router.get("/public/external/bootstrap", requireDatabaseReady, (req, res, next) => {
     void externalPersonBootstrapHandler(req, res).catch(next);
+  });
+
+  router.post("/public/external/logout-all", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void externalPersonLogoutAllHandler(req, res).catch(next);
   });
 
   router.get("/public/external/intake-recipients", requireDatabaseReady, (req, res, next) => {
@@ -121,6 +136,10 @@ export function createTanTrackerRouter(): express.Router {
 
   router.patch("/admin/users/:userId/external-intake", csrfProtection, ...writeChain, (req, res, next) => {
     void patchStaffExternalIntakeHandler(req, res).catch(next);
+  });
+
+  router.post("/admin/phone-dedupe/refresh", csrfProtection, ...writeChain, (req, res, next) => {
+    void adminRefreshPhoneDedupeHandler(req, res).catch(next);
   });
 
   router.get("/transfers/:id/attachments/:attId", ...readChain, (req, res, next) => {
