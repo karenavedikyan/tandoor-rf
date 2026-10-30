@@ -15,14 +15,47 @@ export type ExternalPersonOutboxProcessResult = {
 
 type DeliverySendResult = { ok: true } | { ok: false; code: string; retryable?: boolean; retryAfterSeconds?: number };
 
+export type ExternalPersonVerificationTarget =
+  | { ok: true; messengerUserId: string; messengerChatId: string }
+  | { ok: false; code: "NO_VERIFICATION" | "INVALID_MESSENGER_USER_ID" };
+
 export type ExternalPersonDeliveryTransport = (input: {
   channel: "telegram" | "max";
   chatId: string;
+  messengerUserId: string;
   text: string;
   botToken: string;
   timeoutMs: number;
   maxResponseBytes: number;
 }) => Promise<DeliverySendResult>;
+
+/** Live verification row must match queued messenger_chat_id (no retargeting). */
+export async function resolveExternalPersonOutboxDeliveryTarget(
+  client: PoolClient,
+  personId: string,
+  channel: string,
+  queuedChatId: string,
+): Promise<ExternalPersonVerificationTarget> {
+  const row = await client.query<{ messenger_user_id: string; messenger_chat_id: string }>(
+    `SELECT messenger_user_id, messenger_chat_id FROM tt_external_person_verifications
+     WHERE person_id = $1::uuid AND channel = $2 AND messenger_chat_id = $3
+       AND notifications_enabled = TRUE AND opted_out_at IS NULL
+     LIMIT 1`,
+    [personId, channel, queuedChatId],
+  );
+  if ((row.rowCount ?? 0) === 0) {
+    return { ok: false, code: "NO_VERIFICATION" };
+  }
+  const messengerUserId = String(row.rows[0]!.messenger_user_id ?? "").trim();
+  if (channel === "max" && (!messengerUserId || !/^\d+$/.test(messengerUserId))) {
+    return { ok: false, code: "INVALID_MESSENGER_USER_ID" };
+  }
+  return {
+    ok: true,
+    messengerUserId,
+    messengerChatId: row.rows[0]!.messenger_chat_id,
+  };
+}
 
 async function loadPending(client: PoolClient, channel: "telegram" | "max", limit: number) {
   return client.query<{
@@ -41,22 +74,6 @@ async function loadPending(client: PoolClient, channel: "telegram" | "max", limi
      FOR UPDATE SKIP LOCKED`,
     [channel, limit],
   );
-}
-
-async function verificationStillValid(
-  client: PoolClient,
-  personId: string,
-  channel: string,
-  chatId: string,
-): Promise<boolean> {
-  const row = await client.query(
-    `SELECT 1 FROM tt_external_person_verifications
-     WHERE person_id = $1::uuid AND channel = $2 AND messenger_chat_id = $3
-       AND notifications_enabled = TRUE AND opted_out_at IS NULL
-     LIMIT 1`,
-    [personId, channel, chatId],
-  );
-  return (row.rowCount ?? 0) > 0;
 }
 
 export async function processExternalPersonMessageOutbox(
@@ -113,11 +130,16 @@ export async function processExternalPersonMessageOutbox(
         continue;
       }
 
-      const okVerify = await verificationStillValid(client, row.person_id, input.channel, row.messenger_chat_id);
-      if (!okVerify) {
+      const target = await resolveExternalPersonOutboxDeliveryTarget(
+        client,
+        row.person_id,
+        input.channel,
+        row.messenger_chat_id,
+      );
+      if (!target.ok) {
         await client.query(
-          `UPDATE tt_external_person_message_outbox SET status = 'cancelled', last_error_code = 'NO_VERIFICATION' WHERE id = $1::uuid`,
-          [row.id],
+          `UPDATE tt_external_person_message_outbox SET status = 'cancelled', last_error_code = $2 WHERE id = $1::uuid`,
+          [row.id, target.code],
         );
         result.cancelled += 1;
         continue;
@@ -126,6 +148,7 @@ export async function processExternalPersonMessageOutbox(
       const send = await input.transport({
         channel: input.channel,
         chatId: row.messenger_chat_id,
+        messengerUserId: target.messengerUserId,
         text: row.body,
         botToken: input.botToken,
         timeoutMs: input.requestTimeoutMs,

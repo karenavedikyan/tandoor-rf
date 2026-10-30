@@ -31,7 +31,7 @@ export async function runTanbotOutboxWorkerOnce(
     requestTimeoutMs: config.requestTimeoutMs,
     maxResponseBytes: config.maxResponseBytes,
     deliveryEnabled,
-    transport: async ({ chatId, text, botToken, timeoutMs, maxResponseBytes }) => {
+    transport: async ({ chatId, messengerUserId: _messengerUserId, text, botToken, timeoutMs, maxResponseBytes }) => {
       const send = await deliveryTransport({
         method: "sendMessage",
         token: botToken,
