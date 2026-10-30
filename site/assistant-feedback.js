@@ -8,15 +8,9 @@
   let filters={q:"",assistant:"",manager:"",score:"",status:""};
   let categoryFilter="all",profileDialog=null,connectBot=null,connectBotMsg="";
   let maxLkDemoEnabled=false;
-  (function initMaxLkDemoPref(){
-    try{
-      if(sessionStorage.getItem("tt-demo-max-messenger")==="1")maxLkDemoEnabled=true;
-    }catch{}
-  })();
   function maxConnectDemoEnabled(){return maxLkDemoEnabled;}
   function setMaxConnectDemoEnabled(on){
     maxLkDemoEnabled=!!on;
-    try{sessionStorage.setItem("tt-demo-max-messenger",maxLkDemoEnabled?"1":"0");}catch{}
   }
   function personalBindToken(user,kind){return `bind_demo_${user}_${kind}`;}
   function finishChannelConnect(user,kind){const d=deliveryFor(user);d[kind].connected=true;d[kind].label=kind==="telegram"?`@demo_${user}_tg`:`MAX · demo ${user.toUpperCase()}`;persistDelivery(user,d);}
