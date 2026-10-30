@@ -111,14 +111,13 @@ describe("messenger invitation single-action UI (browser mocks)", { concurrency:
       await login(page, "tt-browser-admin@test.local");
       await createExternalTransfer(page, "+79991112257");
       await page.evaluate(`Object.defineProperty(navigator, "share", { configurable: true, value: undefined })`);
-      await page.click('[data-tt="messenger-invite-action"]');
-      await page.waitForResponse(
-        (r) =>
-          r.request().method() === "POST" &&
-          r.url().includes("/messenger-invite") &&
-          r.status() === 201,
-        { timeout: 30000 },
-      );
+      await Promise.all([
+        page.waitForResponse(
+          (r) => r.request().method() === "POST" && r.url().includes("/messenger-invite") && r.status() === 201,
+          { timeout: 30000 },
+        ),
+        page.click('[data-tt="messenger-invite-action"]'),
+      ]);
       await page.evaluate(`Object.defineProperty(navigator, "clipboard", {
         configurable: true, value: { writeText: () => Promise.reject(new Error("denied")) }
       })`);
@@ -142,7 +141,6 @@ describe("messenger invitation single-action UI (browser mocks)", { concurrency:
       await login(page, "tt-browser-admin@test.local");
       await createExternalTransfer(page, "+79991112258");
       await page.evaluate(`Object.defineProperty(navigator, "share", { configurable: true, value: undefined })`);
-      await page.evaluate(`delete navigator.share`);
       await page.evaluate(`Object.defineProperty(navigator, "clipboard", {
         configurable: true, value: { writeText: (text) => {
           window.__ttInvitationCopied = text; return Promise.resolve();
@@ -152,14 +150,13 @@ describe("messenger invitation single-action UI (browser mocks)", { concurrency:
       page.on("request", (req) => {
         if (req.method() === "POST" && req.url().includes("/messenger-invite")) posts += 1;
       });
-      await page.click('[data-tt="messenger-invite-action"]');
-      await page.waitForResponse(
-        (r) =>
-          r.request().method() === "POST" &&
-          r.url().includes("/messenger-invite") &&
-          r.status() === 201,
-        { timeout: 30000 },
-      );
+      await Promise.all([
+        page.waitForResponse(
+          (r) => r.request().method() === "POST" && r.url().includes("/messenger-invite") && r.status() === 201,
+          { timeout: 30000 },
+        ),
+        page.click('[data-tt="messenger-invite-action"]'),
+      ]);
       await page.waitForSelector('[data-tt="toast"]', { timeout: 30000 });
       assert.ok(posts >= 1);
       const copied = String(await page.evaluate("window.__ttInvitationCopied"));
@@ -206,11 +203,13 @@ describe("messenger invitation single-action UI (browser mocks)", { concurrency:
       await login(page, "tt-browser-admin@test.local");
       await createExternalTransfer(page, "+79991112256");
 
-      await page.click('[data-tt="messenger-invite-action"]');
-      await page.waitForResponse(
-        (r) => r.request().method() === "POST" && r.url().includes("/messenger-invite") && r.status() === 201,
-        { timeout: 30000 },
-      );
+      await Promise.all([
+        page.waitForResponse(
+          (r) => r.request().method() === "POST" && r.url().includes("/messenger-invite") && r.status() === 201,
+          { timeout: 30000 },
+        ),
+        page.click('[data-tt="messenger-invite-action"]'),
+      ]);
 
       await page.evaluate(`Object.defineProperty(navigator, "share", {
         configurable: true,
