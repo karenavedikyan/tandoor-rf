@@ -84,7 +84,7 @@ describe("tan-tracker large JPEG bounded preview after reload (browser + PG)", {
     await page.goto(`${fixture.baseUrl}/tan-tracker`);
     await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
     await page.locator('[data-tt="create"]:visible, [data-tt="create-fab"]:visible').first().click();
-    await page.fill('[data-tt-field="item"]', "Large JPEG preview box");
+    await page.fill('[data-tt-field="item"]', `Large JPEG preview box ${Date.now()}`);
     await page.click('[data-tt="create-wizard-next"]');
     await page.waitForSelector('[data-create-phase="files"]', { timeout: 10000 });
     await page.locator('[data-tt="attach-input"]').first().setInputFiles(largeJpegPath);
@@ -94,14 +94,15 @@ describe("tan-tracker large JPEG bounded preview after reload (browser + PG)", {
     await page.click('[data-tt="create-wizard-next"]');
     await page.waitForSelector('[data-create-phase="recipient"]', { timeout: 10000 });
     await page.click('[data-tt="create-recipient-browse"]');
-    await page.locator('[data-tt-pick]').first().click();
+    await page.locator('[data-tt-pick]').filter({ hasText: "Browser Fresh Recipient" }).first().click();
     await page.click('[data-tt="create-wizard-next"]');
     const createResp = page.waitForResponse(
-      (r) => r.request().method() === "POST" && r.url().includes("/api/tan-tracker/transfers") && r.status() === 201,
-      { timeout: 120000 },
+      (r) => r.request().method() === "POST" && /\/api\/tan-tracker\/transfers$/.test(r.url()),
+      { timeout: 30000 },
     );
     await page.click('[data-tt="create-wizard-submit"]');
-    await createResp;
+    const response = await createResp;
+    assert.equal(response.status(), 201, await response.text());
     await page.waitForSelector('[data-tt="detail"]', { timeout: 60000 });
   }
 
