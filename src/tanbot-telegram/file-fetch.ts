@@ -1,9 +1,10 @@
 import { readBoundedResponseBody } from "./bounded-body";
+import { fetchBoundedBinary, detectImageMimeFromMagic } from "./bounded-binary-fetch";
 import { TELEGRAM_API_ORIGIN } from "./config";
 import { loadTanbotTelegramStage2Config } from "./stage2-config";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
-const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const META_TIMEOUT_MS = 15_000;
 
 export async function fetchTelegramFileBytes(
   fileId: string,
@@ -14,7 +15,17 @@ export async function fetchTelegramFileBytes(
   }
   const token = loaded.config.botToken;
   const getFileUrl = `${TELEGRAM_API_ORIGIN}/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`;
-  const metaRes = await fetch(getFileUrl, { method: "GET" });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), META_TIMEOUT_MS);
+  let metaRes: Response;
+  try {
+    metaRes = await fetch(getFileUrl, { method: "GET", redirect: "error", signal: controller.signal });
+  } catch {
+    clearTimeout(timer);
+    return { ok: false, message: "Не удалось получить файл." };
+  } finally {
+    clearTimeout(timer);
+  }
   const metaBody = await readBoundedResponseBody(metaRes, 32_768);
   if (!metaRes.ok || !metaBody.ok) return { ok: false, message: "Не удалось получить файл." };
   let meta: { ok?: boolean; result?: { file_path?: string } };
@@ -28,23 +39,13 @@ export async function fetchTelegramFileBytes(
     return { ok: false, message: "Файл недоступен." };
   }
   const downloadUrl = `${TELEGRAM_API_ORIGIN}/file/bot${token}/${filePath}`;
-  const fileRes = await fetch(downloadUrl, { method: "GET" });
-  const fileBytes = await fileRes.arrayBuffer();
-  if (!fileRes.ok || fileBytes.byteLength === 0 || fileBytes.byteLength > MAX_FILE_BYTES) {
+  const file = await fetchBoundedBinary(downloadUrl, MAX_FILE_BYTES);
+  if (!file.ok) {
     return { ok: false, message: "Не удалось скачать файл." };
   }
-  const buf = Buffer.from(fileBytes);
-  const mimeType = guessMime(filePath);
-  if (!ALLOWED_MIME.has(mimeType)) {
+  const mimeType = detectImageMimeFromMagic(file.buffer);
+  if (!mimeType) {
     return { ok: false, message: "Допустимы только изображения JPEG/PNG/WebP/GIF." };
   }
-  return { ok: true, buffer: buf, mimeType };
-}
-
-function guessMime(filePath: string): string {
-  const lower = filePath.toLowerCase();
-  if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".webp")) return "image/webp";
-  if (lower.endsWith(".gif")) return "image/gif";
-  return "image/jpeg";
+  return { ok: true, buffer: file.buffer, mimeType };
 }

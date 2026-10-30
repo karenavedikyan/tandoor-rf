@@ -5,6 +5,7 @@ import {
   hasPriorTransferRelationship,
   MAX_OPEN_EXTERNAL_REQUESTS,
   staffUserAcceptsExternalIntake,
+  isActiveStaffUser,
 } from "./intake";
 import { enqueueExternalCreatedNotifications } from "../lk-notifications";
 import { enqueueTanTrackerAssignmentMax, enqueueTanTrackerAssignmentTelegram } from "../../tanbot-telegram/outbox";
@@ -34,33 +35,68 @@ export async function confirmExternalRequestDraft(
     idempotencyKey: string;
   },
 ): Promise<{ transferId: string; publicCode: string }> {
+  const person = (
+    await client.query<{ party_id: string }>(
+      `SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid FOR UPDATE`,
+      [input.personId],
+    )
+  ).rows[0];
+  if (!person || person.party_id !== input.externalPartyId) {
+    throw Object.assign(new Error("Профиль недоступен."), { http: 403 });
+  }
+
   const draft = (
-    await client.query<{ payload: ExternalDraftPayload; idempotency_key: string | null }>(
-      `SELECT payload, idempotency_key FROM tt_external_request_drafts WHERE id = $1::uuid FOR UPDATE`,
+    await client.query<{
+      payload: ExternalDraftPayload;
+      idempotency_key: string | null;
+      confirmed_transfer_id: string | null;
+      person_id: string | null;
+    }>(
+      `SELECT payload, idempotency_key, confirmed_transfer_id, person_id::text
+       FROM tt_external_request_drafts WHERE id = $1::uuid FOR UPDATE`,
       [input.draftId],
     )
   ).rows[0];
   if (!draft) throw Object.assign(new Error("Черновик не найден."), { http: 404 });
-  if (draft.idempotency_key) {
-    const existing = await client.query<{ id: string; public_code: string }>(
-      `SELECT id, public_code FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1`,
-      [draft.idempotency_key],
-    );
-    if (existing.rows[0]) return { transferId: existing.rows[0].id, publicCode: existing.rows[0].public_code };
+  if (draft.person_id && draft.person_id !== input.personId) {
+    throw Object.assign(new Error("Черновик принадлежит другой сессии."), { http: 403 });
   }
+  if (draft.confirmed_transfer_id) {
+    const existing = await client.query<{ id: string; public_code: string }>(
+      `SELECT id, public_code FROM tt_transfers WHERE id = $1 LIMIT 1`,
+      [draft.confirmed_transfer_id],
+    );
+    if (existing.rows[0]) {
+      return { transferId: existing.rows[0].id, publicCode: existing.rows[0].public_code };
+    }
+  }
+  if (draft.idempotency_key === input.idempotencyKey && draft.confirmed_transfer_id) {
+    const existing = await client.query<{ id: string; public_code: string }>(
+      `SELECT id, public_code FROM tt_transfers WHERE id = $1 LIMIT 1`,
+      [draft.confirmed_transfer_id],
+    );
+    if (existing.rows[0]) {
+      return { transferId: existing.rows[0].id, publicCode: existing.rows[0].public_code };
+    }
+  }
+
+  const open = await countOpenExternalRequests(client, input.externalPartyId);
+  if (open >= MAX_OPEN_EXTERNAL_REQUESTS) {
+    throw Object.assign(new Error("Достигнут лимит открытых заявок (5)."), { http: 409 });
+  }
+
   const payload = draft.payload ?? {};
   const item = String(payload.item ?? "").trim();
   const recipientUserId = String(payload.recipientUserId ?? "").trim();
   if (!item || !recipientUserId) {
     throw Object.assign(new Error("Заполните все шаги заявки."), { http: 409 });
   }
-  const open = await countOpenExternalRequests(client, input.externalPartyId);
-  if (open >= MAX_OPEN_EXTERNAL_REQUESTS) {
-    throw Object.assign(new Error("Достигнут лимит открытых заявок (5)."), { http: 409 });
+  if (!(await isActiveStaffUser(client, recipientUserId))) {
+    throw Object.assign(new Error("Сотрудник недоступен."), { http: 403 });
   }
   const intakeOk = await staffUserAcceptsExternalIntake(client, recipientUserId);
   const related = await hasPriorTransferRelationship(client, input.externalPartyId, recipientUserId);
-  if (!intakeOk || !related) {
+  if (!intakeOk && !related) {
     throw Object.assign(new Error("Выбранный сотрудник недоступен для заявки."), { http: 403 });
   }
   const staffParty = (
@@ -109,8 +145,10 @@ export async function confirmExternalRequestDraft(
     );
   }
   await client.query(
-    `UPDATE tt_external_request_drafts SET idempotency_key = $2, step = 'done', updated_at = NOW() WHERE id = $1::uuid`,
-    [input.draftId, input.idempotencyKey],
+    `UPDATE tt_external_request_drafts
+     SET idempotency_key = $2, confirmed_transfer_id = $3, step = 'done', person_id = COALESCE(person_id, $4::uuid), updated_at = NOW()
+     WHERE id = $1::uuid`,
+    [input.draftId, input.idempotencyKey, publicCode, input.personId],
   );
   await enqueueExternalCreatedNotifications(client, {
     transferId: publicCode,

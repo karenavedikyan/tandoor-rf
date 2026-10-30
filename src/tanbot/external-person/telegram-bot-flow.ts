@@ -19,7 +19,7 @@ export type ExternalPersonBotReply = {
   replyMarkup?: Record<string, unknown>;
 };
 
-const STEPS = ["item", "photo", "comment", "recipient", "due", "summary"] as const;
+const CHANNEL = "telegram" as const;
 
 function menuKeyboard(): Record<string, unknown> {
   return {
@@ -33,8 +33,8 @@ function menuKeyboard(): Record<string, unknown> {
 async function lockDraft(client: PoolClient, chatId: bigint) {
   const row = await client.query<{ id: string; step: string; payload: ExternalDraftPayload; person_id: string | null }>(
     `SELECT id::text, step, payload, person_id::text FROM tt_external_request_drafts
-     WHERE channel = 'telegram' AND messenger_chat_id = $1 FOR UPDATE`,
-    [chatId.toString()],
+     WHERE channel = $2 AND messenger_chat_id = $1 FOR UPDATE`,
+    [chatId.toString(), CHANNEL],
   );
   return row.rows[0] ?? null;
 }
@@ -44,10 +44,10 @@ async function ensureDraft(client: PoolClient, chatId: bigint, personId: string 
   if (existing) return existing;
   const ins = await client.query<{ id: string; step: string; payload: ExternalDraftPayload }>(
     `INSERT INTO tt_external_request_drafts (channel, messenger_chat_id, person_id, step, payload)
-     VALUES ('telegram', $1, $2::uuid, 'item', '{}'::jsonb)
+     VALUES ($3, $1, $2::uuid, 'item', '{}'::jsonb)
      ON CONFLICT (channel, messenger_chat_id) DO UPDATE SET updated_at = NOW()
      RETURNING id::text, step, payload`,
-    [chatId.toString(), personId],
+    [chatId.toString(), personId, CHANNEL],
   );
   return { ...ins.rows[0]!, person_id: personId };
 }

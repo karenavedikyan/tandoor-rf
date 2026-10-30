@@ -2,6 +2,14 @@ import type { Pool, PoolClient } from "pg";
 
 type Db = Pool | PoolClient;
 
+export async function isActiveStaffUser(client: Db, userId: string): Promise<boolean> {
+  const row = await client.query<{ ok: boolean }>(
+    `SELECT TRUE AS ok FROM users WHERE id = $1::uuid AND status = 'active' LIMIT 1`,
+    [userId],
+  );
+  return row.rows[0]?.ok === true;
+}
+
 export async function staffUserAcceptsExternalIntake(client: Db, userId: string): Promise<boolean> {
   const row = await client.query<{ ok: boolean }>(
     `SELECT accepts_external_tt_intake AS ok FROM users WHERE id = $1::uuid AND status = 'active' LIMIT 1`,

@@ -16,6 +16,14 @@ import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-co
 import { handleExternalRecipientMaxContact, handleExternalRecipientStart } from "../tanbot/external-recipient/bot-flow";
 import type { MaxContactAttachmentPayload } from "../tanbot/external-recipient/max-contact-verify";
 import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
+import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
+import {
+  handleExternalPersonMaxContact,
+  handleExternalPersonMaxMessage,
+  handleExternalPersonMaxPhoto,
+} from "../tanbot/external-person/max-bot-flow";
+import { extractPhoneFromVcf, verifyMaxContactVcfHash } from "../tanbot/external-recipient/max-contact-verify";
+import { loadTanbotMaxStage2Config } from "./stage2-config";
 import {
   claimMaxUpdate,
   commitMaxUpdateReply,
@@ -71,12 +79,34 @@ async function processUpdateInTransaction(
 
   try {
     if (contact) {
-      const ext = await handleExternalRecipientMaxContact(client, {
-        maxChatId: update.chatId,
-        maxUserId: update.maxUserId,
-        contact,
-        isForwarded,
-      });
+      let ext =
+        (await handleExternalRecipientMaxContact(client, {
+          maxChatId: update.chatId,
+          maxUserId: update.maxUserId,
+          contact,
+          isForwarded,
+        })) ?? null;
+      if (!ext && isExternalMessengerFeatureEnabled()) {
+        const maxCfg = loadTanbotMaxStage2Config();
+        const token = maxCfg.ok ? maxCfg.config.botToken : "";
+        const phoneDigits = extractPhoneFromVcf(contact.vcfInfo);
+        const phoneRaw = phoneDigits ? (phoneDigits.startsWith("7") ? `+${phoneDigits}` : `+7${phoneDigits}`) : "";
+        if (
+          token &&
+          phoneRaw &&
+          verifyMaxContactVcfHash(token, contact.vcfInfo, contact.contactHash) &&
+          contact.contactUserId === Number(update.maxUserId)
+        ) {
+          ext = await handleExternalPersonMaxContact(client, {
+            chatId: update.chatId,
+            maxUserId: update.maxUserId,
+            phoneRaw,
+            firstName,
+            contactUserId: contact.contactUserId,
+            isForwarded,
+          });
+        }
+      }
       reply = ext
         ? {
             userId: update.maxUserId,
@@ -204,12 +234,44 @@ async function processUpdateInTransaction(
           inlineButtons: handoff.maxInlineButtons,
         };
       }
+    } else if (typeof update.imageDownloadUrl === "string" && update.imageDownloadUrl) {
+      const ext = isExternalMessengerFeatureEnabled()
+        ? await handleExternalPersonMaxPhoto(client, {
+            chatId: update.chatId,
+            maxUserId: update.maxUserId,
+            downloadUrl: update.imageDownloadUrl,
+            fileName: typeof update.imageFileName === "string" ? update.imageFileName : null,
+          })
+        : null;
+      if (ext) {
+        reply = { userId: update.maxUserId, chatId: update.chatId, text: ext.text };
+      }
     } else if (commandText) {
-      reply = {
-        userId: update.maxUserId,
-        chatId: update.chatId,
-        text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",
-      };
+      if (isExternalMessengerFeatureEnabled()) {
+        const ext = await handleExternalPersonMaxMessage(client, {
+          chatId: update.chatId,
+          maxUserId: update.maxUserId,
+          text: commandText,
+          firstName,
+        });
+        if (ext) {
+          reply = {
+            userId: update.maxUserId,
+            chatId: update.chatId,
+            text: ext.text,
+            inlineButtons: ext.requestContact
+              ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
+              : undefined,
+          };
+        }
+      }
+      if (!reply) {
+        reply = {
+          userId: update.maxUserId,
+          chatId: update.chatId,
+          text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",
+        };
+      }
     }
 
     await commitMaxUpdateReply(client, update.dedupKey, reply);

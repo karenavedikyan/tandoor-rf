@@ -28,6 +28,7 @@ export type TanTrackerTransferRow = {
   completed_at: Date | null;
   row_version: number;
   first_custody_at?: Date | null;
+  from_external?: boolean;
 };
 
 export type TanTrackerTimelineRow = {

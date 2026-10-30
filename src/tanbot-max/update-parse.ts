@@ -1,6 +1,7 @@
 import { MAX_START_PAYLOAD_MAX_LEN } from "./stage2-config";
 import { computeMaxUpdateDedupKey } from "./update-dedup-key";
 import { parseMaxContactFromMessage } from "../tanbot/external-recipient/max-contact-verify";
+import { parseMaxImageFromMessage } from "../tanbot/external-person/max-image-parse";
 
 const MAX_MESSAGE_TEXT_LEN = 4096;
 
@@ -14,6 +15,8 @@ export type ParsedMaxWebhookUpdate = {
   startPayload: string | null;
   commandText: string | null;
   callbackPayload: string | null;
+  imageDownloadUrl?: string | null;
+  imageFileName?: string | null;
 };
 
 export type ParsedMaxContactWebhookUpdate = {
@@ -233,11 +236,40 @@ export function parseMaxWebhookUpdate(raw: unknown):
     }
 
     const body = msg.body;
+    const image = parseMaxImageFromMessage(msg);
     const textRaw =
       typeof body === "object" && body && !Array.isArray(body)
         ? (body as Record<string, unknown>).text
         : msg.text;
-    if (typeof textRaw !== "string") return { ok: false, reason: "no_text" };
+    if (typeof textRaw !== "string") {
+      if (image) {
+        const dedupKey = computeMaxUpdateDedupKey({
+          updateType,
+          timestamp,
+          chatId,
+          userId,
+          messageMid: typeof msg.mid === "string" ? msg.mid : String(timestamp),
+        });
+        return {
+          ok: true,
+          update: {
+            dedupKey,
+            updateType,
+            chatId: BigInt(chatId),
+            maxUserId: BigInt(userId),
+            username: normalizeUsername(senderRow.username),
+            firstName:
+              typeof senderRow.first_name === "string" ? senderRow.first_name.trim().slice(0, 128) : null,
+            startPayload: null,
+            commandText: null,
+            callbackPayload: null,
+            imageDownloadUrl: image.downloadUrl,
+            imageFileName: image.fileName,
+          },
+        };
+      }
+      return { ok: false, reason: "no_text" };
+    }
     const text = textRaw.trim().slice(0, MAX_MESSAGE_TEXT_LEN);
     if (!text.length) return { ok: false, reason: "empty_text" };
 

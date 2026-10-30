@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { normalizeRuPhoneE164 } from "../phone-normalize";
 import { mintExternalPersonSessionToken } from "./session-token";
 import { requireHandoffOtpPepper } from "../otp-config";
+import { resolveKnownExternalPartyByPhone } from "./known-party";
 
 export type ExternalPersonRow = {
   id: string;
@@ -44,25 +45,14 @@ export async function upsertVerifiedPerson(
   if (existingByMessenger && existingByMessenger.phone_e164 !== phone) {
     throw Object.assign(new Error("Этот мессенджер уже привязан к другому номеру."), { http: 409 });
   }
-  const extParty = (
-    await client.query<{ id: string }>(
-      `SELECT id::text FROM tt_parties WHERE kind = 'external' AND phone_e164 = $1 ORDER BY created_at ASC LIMIT 1`,
-      [phone],
-    )
-  ).rows[0];
-  let partyId: string;
-  if (extParty) {
-    partyId = extParty.id;
-  } else {
-    const name = (input.displayName || "Клиент").trim().slice(0, 200) || "Клиент";
-    partyId = (
-      await client.query<{ id: string }>(
-        `INSERT INTO tt_parties (kind, display_name, phone_e164, created_by_user_id)
-         VALUES ('external', $1, $2, NULL) RETURNING id::text`,
-        [name, phone],
-      )
-    ).rows[0]!.id;
+  const known = await resolveKnownExternalPartyByPhone(client, phone);
+  if (!known) {
+    throw Object.assign(
+      new Error("Номер не найден среди контактов Тандор. Попросите сотрудника добавить вас в передачу."),
+      { http: 403 },
+    );
   }
+  const partyId = known.partyId;
   let person = (
     await client.query<ExternalPersonRow>(
       `SELECT id::text, phone_e164, display_name, party_id::text FROM tt_external_persons WHERE phone_e164 = $1 LIMIT 1`,
@@ -70,7 +60,7 @@ export async function upsertVerifiedPerson(
     )
   ).rows[0];
   if (!person) {
-    const name = (input.displayName || "Клиент").trim().slice(0, 200) || "Клиент";
+    const name = (known.displayName || input.displayName || "Клиент").trim().slice(0, 200) || "Клиент";
     person = (
       await client.query<ExternalPersonRow>(
         `INSERT INTO tt_external_persons (phone_e164, display_name, party_id)
@@ -94,6 +84,7 @@ export async function upsertVerifiedPerson(
   return person;
 }
 
+/** New browser session: does not bump access_epoch (other devices stay valid). Revoke only this session slot via logout. */
 export async function createPersonBrowserSession(
   client: PoolClient,
   personId: string,
@@ -101,6 +92,16 @@ export async function createPersonBrowserSession(
 ): Promise<string> {
   const pepper = requireHandoffOtpPepper();
   const { raw, hash, exp } = mintExternalPersonSessionToken(personId, 30 * 60_000);
+  await client.query(
+    `INSERT INTO tt_external_person_sessions (token_hash, person_id, channel, expires_at)
+     VALUES ($1, $2::uuid, $3, $4)`,
+    [hash, personId, channel, exp],
+  );
+  return raw;
+}
+
+/** Explicit logout-all: invalidates capability tokens on every device. */
+export async function revokeAllExternalPersonSessions(client: PoolClient, personId: string): Promise<void> {
   await client.query(
     `UPDATE tt_external_persons SET access_epoch = access_epoch + 1, updated_at = NOW() WHERE id = $1::uuid`,
     [personId],
@@ -110,10 +111,4 @@ export async function createPersonBrowserSession(
      WHERE person_id = $1::uuid AND revoked_at IS NULL`,
     [personId],
   );
-  await client.query(
-    `INSERT INTO tt_external_person_sessions (token_hash, person_id, channel, expires_at)
-     VALUES ($1, $2::uuid, $3, $4)`,
-    [hash, personId, channel, exp],
-  );
-  return raw;
 }

@@ -7,6 +7,8 @@ import { resolveTanTrackerAuditUserId } from "../effective-user";
 import { ensurePartyForUserOnWrite } from "../repository";
 import { buildTanTrackerBootstrap } from "../service";
 import { requireTanTrackerMutationAccess } from "../guards";
+import { enqueueExternalPersonMessengerNotice } from "../external-person/external-person-notify";
+import { invalidateOpenHandoffArtifacts } from "../handoff-invalidation";
 
 export async function declineExternalRequestHandler(req: AccessRequest, res: Response): Promise<void> {
   const gate = requireTanTrackerMutationAccess(req, res);
@@ -22,31 +24,63 @@ export async function declineExternalRequestHandler(req: AccessRequest, res: Res
       await client.query<{
         id: string;
         from_external: boolean;
+        creator_party_id: string;
+        holder_party_id: string;
         pending_party_id: string | null;
         status: string;
         row_version: number;
+        handoff_version: number;
         external_declined_at: Date | null;
       }>(
-        `SELECT id, from_external, pending_party_id, status, row_version, external_declined_at FROM tt_transfers
-         WHERE id = $1 OR public_code = $1 LIMIT 1 FOR UPDATE`,
+        `SELECT id, from_external, creator_party_id, holder_party_id, pending_party_id, status, row_version,
+                handoff_version, external_declined_at
+         FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1 FOR UPDATE`,
         [transferId],
       )
     ).rows[0];
     if (!row || !row.from_external) return { ok: false as const, code: 404 };
     if (row.pending_party_id !== party.id) return { ok: false as const, code: 403 };
     if (row.status === "completed" || row.external_declined_at) return { ok: false as const, code: 409 };
+    await invalidateOpenHandoffArtifacts(client, row.id);
     await client.query(
       `UPDATE tt_transfers SET pending_party_id = NULL, status = 'completed',
               external_declined_at = NOW(), external_decline_reason = $2,
-              completed_at = NOW(), row_version = row_version + 1
+              completed_at = NOW(), handoff_version = handoff_version + 1, row_version = row_version + 1
        WHERE id = $1`,
       [row.id, reason || null],
     );
     await client.query(
-      `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
-       VALUES ($1,$2,$2,$3,$4::uuid)`,
-      [row.id, party.id, reason ? `Заявка отклонена: ${reason}` : "Заявка отклонена", auditUserId],
+      `UPDATE tt_transfer_invitations SET superseded_at = NOW() WHERE transfer_id = $1 AND superseded_at IS NULL`,
+      [row.id],
     );
+    await client.query(
+      `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+       VALUES ($1,$2::uuid,$3::uuid,'external_decline',$4::jsonb)`,
+      [
+        row.id,
+        auditUserId,
+        party.id,
+        JSON.stringify({ reason: reason || null, creatorPartyId: row.creator_party_id }),
+      ],
+    );
+    await client.query(
+      `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
+       VALUES ($1,$2,$3,$4,$5::uuid)`,
+      [
+        row.id,
+        row.creator_party_id,
+        party.id,
+        reason ? `Сотрудник отклонил заявку: ${reason}` : "Сотрудник отклонил заявку",
+        auditUserId,
+      ],
+    );
+    await enqueueExternalPersonMessengerNotice(client, {
+      externalPartyId: row.creator_party_id,
+      body: reason
+        ? `Заявка ${row.id} отклонена: ${reason}`
+        : `Заявка ${row.id} отклонена сотрудником.`,
+      idempotencyKey: `tt-ext-decline:${row.id}`,
+    });
     return { ok: true as const };
   });
 
