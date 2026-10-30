@@ -11,6 +11,7 @@ import {
   verifyHolderAccess,
   verifyHolderAccessAllowExpired,
 } from "./holder-access";
+import { loadOpenHolderAccessBinding } from "./holder-access-binding";
 import { applyPendingReceiptHandoff } from "./handoff-complete";
 import { requireHandoffOtpPepper } from "./otp-config";
 import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS } from "./otp-config";
@@ -148,13 +149,7 @@ export async function publicHolderContextHandler(req: Request, res: Response): P
     res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
     return;
   }
-  const row = (
-    await pool.query(`SELECT id FROM tt_transfers WHERE id = $1 AND holder_party_id = $2::uuid AND handoff_version = $3`, [
-      access.transferId,
-      access.partyId,
-      access.hv,
-    ])
-  ).rows[0];
+  const row = await loadOpenHolderAccessBinding(pool, access);
   if (!row) {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Передача недоступна."));

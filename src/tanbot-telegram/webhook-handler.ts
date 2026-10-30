@@ -21,6 +21,12 @@ import {
   handleExternalRecipientTelegramContact,
 } from "../tanbot/external-recipient/bot-flow";
 import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
+import {
+  handleExternalPersonTelegramContact,
+  handleExternalPersonTelegramMessage,
+  handleExternalPersonTelegramPhoto,
+} from "../tanbot/external-person/telegram-bot-flow";
+import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
 
 export type WebhookReply = {
   chatId: bigint;
@@ -51,13 +57,24 @@ async function processParsedUpdate(
     if (claim.kind === "ignore") return null;
     if (claim.kind === "resend") return claim.reply;
     try {
-      const ext = await handleExternalRecipientTelegramContact(client, {
-        telegramChatId: update.chatId,
-        telegramUserId: update.telegramUserId,
-        contactUserId: update.contactUserId,
-        phoneRaw: update.phoneNumber,
-        isForwarded: update.isForwarded,
-      });
+      let ext =
+        (await handleExternalRecipientTelegramContact(client, {
+          telegramChatId: update.chatId,
+          telegramUserId: update.telegramUserId,
+          contactUserId: update.contactUserId,
+          phoneRaw: update.phoneNumber,
+          isForwarded: update.isForwarded,
+        })) ?? null;
+      if (!ext && isExternalMessengerFeatureEnabled()) {
+        ext = await handleExternalPersonTelegramContact(client, {
+          chatId: update.chatId,
+          telegramUserId: update.telegramUserId,
+          phoneRaw: update.phoneNumber,
+          firstName: null,
+          contactUserId: update.contactUserId,
+          isForwarded: update.isForwarded,
+        });
+      }
       const reply: WebhookReply = ext
         ? {
             chatId: update.chatId,
@@ -70,10 +87,37 @@ async function processParsedUpdate(
                 }
               : ext.clearContactKeyboard
                 ? { remove_keyboard: true }
-                : undefined,
+                : "replyMarkup" in ext && ext.replyMarkup
+                  ? (ext.replyMarkup as Record<string, unknown>)
+                  : undefined,
           }
         : { chatId: update.chatId, text: "Контакт не принят." };
       await commitTelegramUpdateReply(client, update.updateId, reply);
+      return reply;
+    } catch (err) {
+      await markTelegramUpdateFailed(client, update.updateId);
+      throw err;
+    }
+  }
+
+  if (parsed.kind === "photo") {
+    const update = parsed.update;
+    const claim = await claimTelegramUpdate(client, update.updateId);
+    if (claim.kind === "ignore") return null;
+    if (claim.kind === "resend") return claim.reply;
+    try {
+      const ext = isExternalMessengerFeatureEnabled()
+        ? await handleExternalPersonTelegramPhoto(client, {
+            chatId: update.chatId,
+            telegramUserId: update.telegramUserId,
+            fileId: update.fileId,
+            fileName: update.fileName,
+          })
+        : null;
+      const reply: WebhookReply = ext
+        ? { chatId: update.chatId, text: ext.text, replyMarkup: ext.replyMarkup }
+        : null;
+      if (reply) await commitTelegramUpdateReply(client, update.updateId, reply);
       return reply;
     } catch (err) {
       await markTelegramUpdateFailed(client, update.updateId);
@@ -227,7 +271,28 @@ async function processParsedUpdate(
             : undefined,
         };
       }
-    } else {
+    } else if (isExternalMessengerFeatureEnabled()) {
+      const ext = await handleExternalPersonTelegramMessage(client, {
+        chatId: update.chatId,
+        telegramUserId: update.telegramUserId,
+        text: update.text,
+        firstName: update.firstName,
+      });
+      if (ext) {
+        reply = {
+          chatId: update.chatId,
+          text: ext.text,
+          replyMarkup: ext.requestContact
+            ? {
+                keyboard: [[{ text: "Отправить мой номер", request_contact: true }]],
+                one_time_keyboard: true,
+                resize_keyboard: true,
+              }
+            : ext.replyMarkup,
+        };
+      }
+    }
+    if (!reply) {
       reply = {
         chatId: update.chatId,
         text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",

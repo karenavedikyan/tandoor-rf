@@ -33,6 +33,13 @@ import {
 } from "./public-recipient-context";
 import { publicExternalMessengerPortalHandler } from "./external-messenger/public-handlers";
 import { createExternalMessengerInviteHandler } from "./external-messenger/lk-handlers";
+import { externalPersonBootstrapHandler } from "./external-person/bootstrap-handlers";
+import { declineExternalRequestHandler } from "./external-request/decline-mutation";
+import {
+  listExternalIntakeRecipientsPublicHandler,
+  patchStaffExternalIntakeHandler,
+} from "./external-request/intake-handlers";
+
 export function createTanTrackerRouter(): express.Router {
   const router = express.Router();
   const readChain = [
@@ -104,6 +111,18 @@ export function createTanTrackerRouter(): express.Router {
     void getTanTrackerBootstrapHandler(req, res).catch(next);
   });
 
+  router.get("/public/external/bootstrap", requireDatabaseReady, (req, res, next) => {
+    void externalPersonBootstrapHandler(req, res).catch(next);
+  });
+
+  router.get("/public/external/intake-recipients", requireDatabaseReady, (req, res, next) => {
+    void listExternalIntakeRecipientsPublicHandler(req, res).catch(next);
+  });
+
+  router.patch("/admin/users/:userId/external-intake", csrfProtection, ...writeChain, (req, res, next) => {
+    void patchStaffExternalIntakeHandler(req, res).catch(next);
+  });
+
   router.get("/transfers/:id/attachments/:attId", ...readChain, (req, res, next) => {
     void downloadAttachmentHandler(req, res).catch(next);
   });
@@ -139,6 +158,10 @@ export function createTanTrackerRouter(): express.Router {
 
   router.post("/transfers/:id/legacy-complete", csrfProtection, ...writeChain, (req, res, next) => {
     void legacyCompleteHandler(req, res).catch(next);
+  });
+
+  router.post("/transfers/:id/external-decline", csrfProtection, ...writeChain, (req, res, next) => {
+    void declineExternalRequestHandler(req, res).catch(next);
   });
 
   router.post("/transfers/:id/attachments", csrfProtection, ...writeChain, (req, res, next) => {

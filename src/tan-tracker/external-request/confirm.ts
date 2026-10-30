@@ -1,0 +1,136 @@
+import type { PoolClient } from "pg";
+import { nextPublicTransferCode } from "../repository";
+import {
+  countOpenExternalRequests,
+  hasPriorTransferRelationship,
+  MAX_OPEN_EXTERNAL_REQUESTS,
+  staffUserAcceptsExternalIntake,
+} from "./intake";
+import { enqueueExternalCreatedNotifications } from "../lk-notifications";
+import { enqueueTanTrackerAssignmentMax, enqueueTanTrackerAssignmentTelegram } from "../../tanbot-telegram/outbox";
+
+export type ExternalDraftPayload = {
+  item?: string;
+  comment?: string;
+  recipientUserId?: string;
+  recipientChoices?: string[];
+  dueMode?: "today" | "tomorrow";
+};
+
+function dueDateFromMode(mode: ExternalDraftPayload["dueMode"]): Date | null {
+  if (!mode) return null;
+  const d = new Date();
+  if (mode === "tomorrow") d.setDate(d.getDate() + 1);
+  d.setHours(23, 59, 0, 0);
+  return d;
+}
+
+export async function confirmExternalRequestDraft(
+  client: PoolClient,
+  input: {
+    personId: string;
+    externalPartyId: string;
+    draftId: string;
+    idempotencyKey: string;
+  },
+): Promise<{ transferId: string; publicCode: string }> {
+  const draft = (
+    await client.query<{ payload: ExternalDraftPayload; idempotency_key: string | null }>(
+      `SELECT payload, idempotency_key FROM tt_external_request_drafts WHERE id = $1::uuid FOR UPDATE`,
+      [input.draftId],
+    )
+  ).rows[0];
+  if (!draft) throw Object.assign(new Error("Черновик не найден."), { http: 404 });
+  if (draft.idempotency_key) {
+    const existing = await client.query<{ id: string; public_code: string }>(
+      `SELECT id, public_code FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1`,
+      [draft.idempotency_key],
+    );
+    if (existing.rows[0]) return { transferId: existing.rows[0].id, publicCode: existing.rows[0].public_code };
+  }
+  const payload = draft.payload ?? {};
+  const item = String(payload.item ?? "").trim();
+  const recipientUserId = String(payload.recipientUserId ?? "").trim();
+  if (!item || !recipientUserId) {
+    throw Object.assign(new Error("Заполните все шаги заявки."), { http: 409 });
+  }
+  const open = await countOpenExternalRequests(client, input.externalPartyId);
+  if (open >= MAX_OPEN_EXTERNAL_REQUESTS) {
+    throw Object.assign(new Error("Достигнут лимит открытых заявок (5)."), { http: 409 });
+  }
+  const intakeOk = await staffUserAcceptsExternalIntake(client, recipientUserId);
+  const related = await hasPriorTransferRelationship(client, input.externalPartyId, recipientUserId);
+  if (!intakeOk || !related) {
+    throw Object.assign(new Error("Выбранный сотрудник недоступен для заявки."), { http: 403 });
+  }
+  const staffParty = (
+    await client.query<{ id: string }>(`SELECT id::text FROM tt_parties WHERE user_id = $1::uuid LIMIT 1`, [
+      recipientUserId,
+    ])
+  ).rows[0];
+  if (!staffParty) throw Object.assign(new Error("Сотрудник недоступен."), { http: 403 });
+
+  const publicCode = await nextPublicTransferCode(client);
+  const dueAt = dueDateFromMode(payload.dueMode);
+  await client.query(
+    `INSERT INTO tt_transfers (
+       id, public_code, item_title, comment_text, status, from_external,
+       creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
+       due_at, handoff_version
+     ) VALUES ($1,$1,$2,$3,'waiting',TRUE,$4,$4,$5,$5,$6,1)`,
+    [
+      publicCode,
+      item,
+      payload.comment?.trim()?.slice(0, 2000) || null,
+      input.externalPartyId,
+      staffParty.id,
+      dueAt,
+    ],
+  );
+  await client.query(
+    `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note)
+     VALUES ($1,$2,$3,$4)`,
+    [publicCode, input.externalPartyId, staffParty.id, "Заявка от внешнего клиента"],
+  );
+  await client.query(
+    `INSERT INTO tt_transfer_invitations (transfer_id, handoff_version, holder_party_id, pending_party_id, item_snapshot)
+     VALUES ($1,1,$2,$3,$4)`,
+    [publicCode, input.externalPartyId, staffParty.id, item],
+  );
+  const files = await client.query<{ storage_key: string; file_name: string; mime_type: string; byte_size: string }>(
+    `SELECT storage_key, file_name, mime_type, byte_size::text FROM tt_external_request_draft_files WHERE draft_id = $1::uuid ORDER BY sort_order`,
+    [input.draftId],
+  );
+  for (const f of files.rows) {
+    await client.query(
+      `INSERT INTO tt_transfer_attachments (transfer_id, storage_key, original_name, mime_type, byte_size, uploaded_by_user_id)
+       VALUES ($1,$2,$3,$4,$5::bigint,NULL)`,
+      [publicCode, f.storage_key, f.file_name, f.mime_type, f.byte_size],
+    );
+  }
+  await client.query(
+    `UPDATE tt_external_request_drafts SET idempotency_key = $2, step = 'done', updated_at = NOW() WHERE id = $1::uuid`,
+    [input.draftId, input.idempotencyKey],
+  );
+  await enqueueExternalCreatedNotifications(client, {
+    transferId: publicCode,
+    staffUserId: recipientUserId,
+    externalPartyId: input.externalPartyId,
+    itemTitle: item,
+  });
+  await enqueueTanTrackerAssignmentTelegram(client, {
+    transferId: publicCode,
+    publicCode,
+    itemTitle: item,
+    handoffVersion: 1,
+    holderUserId: recipientUserId,
+  });
+  await enqueueTanTrackerAssignmentMax(client, {
+    transferId: publicCode,
+    publicCode,
+    itemTitle: item,
+    handoffVersion: 1,
+    holderUserId: recipientUserId,
+  });
+  return { transferId: publicCode, publicCode };
+}

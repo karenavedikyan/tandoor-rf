@@ -29,10 +29,19 @@ export type ParsedTelegramContactUpdate = {
   isForwarded: boolean;
 };
 
+export type ParsedTelegramPhotoUpdate = {
+  updateId: number;
+  chatId: bigint;
+  telegramUserId: bigint;
+  fileId: string;
+  fileName: string | null;
+};
+
 export type ParsedTelegramWebhookUpdate =
   | { kind: "message"; update: ParsedPrivateMessageUpdate }
   | { kind: "contact"; update: ParsedTelegramContactUpdate }
-  | { kind: "callback"; update: ParsedCallbackUpdate };
+  | { kind: "callback"; update: ParsedCallbackUpdate }
+  | { kind: "photo"; update: ParsedTelegramPhotoUpdate };
 
 function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhookUpdate | { ok: false; reason: string } {
   const updateId = row.update_id;
@@ -94,6 +103,25 @@ function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhook
         isForwarded: Boolean(isForwarded),
       },
     };
+  }
+
+  const photos = msg.photo;
+  if (Array.isArray(photos) && photos.length > 0) {
+    const largest = photos[photos.length - 1] as Record<string, unknown>;
+    const fileId = typeof largest.file_id === "string" ? largest.file_id : "";
+    const fileUniqueId = typeof largest.file_unique_id === "string" ? largest.file_unique_id : "photo";
+    if (fileId) {
+      return {
+        kind: "photo",
+        update: {
+          updateId,
+          chatId: BigInt(chatId),
+          telegramUserId: BigInt(userId),
+          fileId,
+          fileName: `${fileUniqueId}.jpg`,
+        },
+      };
+    }
   }
 
   const textRaw = msg.text;

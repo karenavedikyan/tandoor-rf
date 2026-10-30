@@ -2662,6 +2662,25 @@
     state.toast = "Ожидание отменено.";
   }
 
+  function canActorCloseDeliveredTransfer(o, actor) {
+    return (
+      !!actor &&
+      o.status === "delivered" &&
+      !o.pendingId &&
+      o.createdById === actor &&
+      o.holderId !== actor &&
+      (!o.finalRecipientId || o.holderId === o.finalRecipientId)
+    );
+  }
+
+  function canActorCompleteTransfer(o, actor) {
+    if (!actor || o.pendingId || o.status === "completed") return false;
+    if (canActorCloseDeliveredTransfer(o, actor)) return true;
+    if (o.holderId !== actor) return false;
+    if (o.finalRecipientId && o.holderId !== o.finalRecipientId && !o.allowLegacyComplete) return false;
+    return true;
+  }
+
   function completeOrder(o) {
     if (o.status === "completed") return;
     if (o.pendingId) {
@@ -2669,12 +2688,8 @@
       return;
     }
     const actor = actorContactId();
-    if (!actor || o.holderId !== actor) {
-      state.error = "Завершить может только текущий держатель.";
-      return;
-    }
-    if (o.finalRecipientId && o.holderId !== o.finalRecipientId && !o.allowLegacyComplete) {
-      state.error = "Промежуточный держатель не может завершить передачу — передайте конечному получателю.";
+    if (!canActorCompleteTransfer(o, actor)) {
+      state.error = "Завершить может текущий держатель или создатель после доставки.";
       return;
     }
     if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.legacyCompleteTransfer) {
@@ -3513,13 +3528,15 @@
     const actor = actorContactId();
     const isHolder = o.holderId === actor;
     const heroAttr = 'data-tt-detail-hero-primary=""';
-    if (o.status === "completed" || !isHolder) return "";
-    if (o.pendingId) {
+    if (o.status === "completed") return "";
+    if (!isHolder && canActorCloseDeliveredTransfer(o, actor)) {
+      return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Завершить передачу", `data-tt="complete" ${heroAttr}`, "tt-primary")}</div>`;
+    }
+    if (o.pendingId && isHolder) {
       return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Ввести код", `data-tt="enter-code-dock" ${heroAttr}`, "tt-primary")}</div>`;
     }
-    const canComplete =
-      !o.pendingId && (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
-    const mustRelay = o.finalRecipientId && o.holderId !== o.finalRecipientId;
+    const canComplete = canActorCompleteTransfer(o, actor);
+    const mustRelay = isHolder && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "delivered";
     if (mustRelay && !o.pendingId) {
       return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Передать конечному получателю", `data-tt="transfer-final" ${heroAttr}`, "tt-primary")}</div>`;
     }
@@ -3771,17 +3788,29 @@
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
     const actor = actorContactId();
     const isHolder = o.holderId === actor;
-    const canComplete =
-      isHolder &&
-      !o.pendingId &&
-      o.status !== "completed" &&
-      (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
+    const heroAttr = 'data-tt-detail-hero-primary=""';
+    const canComplete = canActorCompleteTransfer(o, actor);
     const mustRelay =
-      isHolder && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
+      isHolder &&
+      o.finalRecipientId &&
+      o.holderId !== o.finalRecipientId &&
+      o.status !== "completed" &&
+      o.status !== "delivered";
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
+    const canContinueDelivered =
+      isHolder && o.status === "delivered" && !o.pendingId && mustRelay === false && o.holderId === o.finalRecipientId;
 
     if (o.status === "completed") return completedTaskCard(o, actor);
     if (o.pendingId === actor && o.status !== "completed") return pendingRecipientDetailCard(o, h);
+    if (!isHolder && canActorCloseDeliveredTransfer(o, actor)) {
+      return `<section class="tt-detail-task-card" data-tt="detail-task-card">
+        <h3 class="tt-detail-task-heading">Доставлено</h3>
+        <p class="tt-detail-task-instructions">Предмет у <strong>${E(fin?.name || contactById(o.holderId)?.name || "получателя")}</strong>. Создатель может явно завершить передачу.</p>
+        <div class="tt-detail-primary" data-tt="detail-primary-actions">
+          ${btn("Завершить передачу", `data-tt="complete" ${heroAttr}`, "tt-primary tt-btn-block")}
+        </div>
+      </section>`;
+    }
     if (!isHolder) {
       if (isFormerHolderAfterHandoff(o, actor)) return formerHolderTaskCard(o);
       const wait = p
@@ -3795,7 +3824,16 @@
       </section>`;
     }
     if (o.pendingId) return pendingHandoffPanel(o, p);
-    const heroAttr = 'data-tt-detail-hero-primary=""';
+    if (canContinueDelivered) {
+      return `<section class="tt-detail-task-card" data-tt="detail-task-card">
+        <h3 class="tt-detail-task-heading">Доставлено</h3>
+        <p class="tt-detail-task-instructions">Предмет у конечного получателя. Можно явно завершить передачу или передать дальше по цепочке.</p>
+        <div class="tt-detail-primary" data-tt="detail-primary-actions">
+          ${btn("Завершить передачу", `data-tt="complete" ${heroAttr}`, "tt-primary tt-btn-block")}
+          ${btn("Передать другому человеку", 'data-tt="transfer"', "tt-detail-alt-action")}
+        </div>
+      </section>`;
+    }
     if (mustRelay) {
       return `<section class="tt-detail-task-card" data-tt="detail-task-card">
         <h3 class="tt-detail-task-heading">Передайте дальше</h3>
@@ -3827,11 +3865,7 @@
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const actor = actorContactId();
     const isHolder = o.holderId === actor;
-    const canComplete =
-      isHolder &&
-      !o.pendingId &&
-      o.status !== "completed" &&
-      (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
+    const canComplete = canActorCompleteTransfer(o, actor);
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
     const dueHuman = humanDueLabel(o);

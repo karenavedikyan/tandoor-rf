@@ -12,7 +12,8 @@ import { invalidateOpenHandoffArtifacts } from "./handoff-invalidation";
 
 async function loadTransfer(client: { query: Function }, id: string) {
   const res = await client.query(
-    `SELECT id, status, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version, item_title
+    `SELECT id, status, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version, item_title,
+            delivered_at
      FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1`,
     [id],
   );
@@ -25,6 +26,7 @@ async function loadTransfer(client: { query: Function }, id: string) {
         final_recipient_party_id: string | null;
         handoff_version: number;
         item_title: string;
+        delivered_at: Date | null;
       }
     | undefined;
 }
@@ -42,10 +44,11 @@ export async function cancelPendingHandler(req: AccessRequest, res: Response): P
     if (!row || !row.pending_party_id) return { ok: false as const, code: 404 };
     if (row.holder_party_id !== party.id) return { ok: false as const, code: 403 };
     const revoked = row.pending_party_id;
+    const revertStatus = row.delivered_at != null ? "delivered" : "active";
     await client.query(
-      `UPDATE tt_transfers SET pending_party_id = NULL, status = 'active',
+      `UPDATE tt_transfers SET pending_party_id = NULL, status = $2,
               handoff_version = handoff_version + 1, row_version = row_version + 1 WHERE id = $1`,
-      [row.id],
+      [row.id, revertStatus],
     );
     await invalidateOpenHandoffArtifacts(client, row.id);
     await client.query(

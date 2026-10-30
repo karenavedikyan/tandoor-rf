@@ -1,12 +1,8 @@
 import crypto from "crypto";
 import { requireHandoffOtpPepper } from "./otp-config";
 
-export type HolderAccessPayload = {
-  transferId: string;
-  partyId: string;
-  hv: number;
-  exp: number;
-};
+export type { HolderAccessPayload } from "./holder-access-binding";
+import type { HolderAccessPayload } from "./holder-access-binding";
 
 export function signHolderAccess(payload: HolderAccessPayload): string {
   const pepper = requireHandoffOtpPepper();
