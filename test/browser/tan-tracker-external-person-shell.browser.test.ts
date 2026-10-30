@@ -4,7 +4,15 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
-import { chromium, devices, webkit, type Browser, type BrowserType, type Page } from "playwright";
+import {
+  chromium,
+  devices,
+  webkit,
+  type Browser,
+  type BrowserContext,
+  type BrowserType,
+  type Page,
+} from "playwright";
 import {
   startBrowserHttpFixture,
   stopBrowserHttpFixture,
@@ -150,6 +158,31 @@ async function loginStaff(page: Page, fixture: BrowserHttpFixture) {
   await page.waitForURL(/\/(clients|profile|work|access|admin|tan-tracker)(\/|\?|$)/, { timeout: 25000 });
 }
 
+function redactAttachmentDownloadPath(href: string, baseUrl: string): string {
+  try {
+    const u = new URL(href, baseUrl);
+    u.searchParams.delete("cap");
+    u.searchParams.delete("est");
+    u.searchParams.delete("tt_hat");
+    return `${u.pathname}${u.search}`;
+  } catch {
+    return href
+      .replace(/([?&]est=)[^&]+/gi, "$1REDACTED")
+      .replace(/([?&]cap=)[^&]+/gi, "$1REDACTED");
+  }
+}
+
+async function fetchAttachmentBytesViaPage(
+  page: Page,
+  href: string,
+): Promise<{ status: number; bytes: number[] }> {
+  return page.evaluate(async (url) => {
+    const res = await fetch(url, { credentials: "same-origin" });
+    const buf = await res.arrayBuffer();
+    return { status: res.status, bytes: Array.from(new Uint8Array(buf)) };
+  }, href);
+}
+
 async function runExternalRequestWizard(page: Page, baseUrl: string, est: string): Promise<string> {
   try {
     await openExternalHome(page, baseUrl, est);
@@ -255,7 +288,8 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
 
       await page.waitForSelector('[data-tt="enter-code"]', { timeout: 15000 });
 
-      const staffPage = await fixture.browser.newPage();
+      const staffContext: BrowserContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
+      const staffPage = await staffContext.newPage();
       try {
         await loginStaff(staffPage, fixture);
         await staffPage.goto(`${fixture.baseUrl}/tan-tracker`);
@@ -314,17 +348,27 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
         );
         assert.equal(await page.locator('[data-tt="complete"]').count(), 0);
 
+        await staffPage.goto(`${fixture.baseUrl}/tan-tracker`);
+        await staffPage.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
+        await staffPage.locator(`[data-tt-open="${publicCode}"]`).first().click();
+        await staffPage.waitForSelector('[data-tt="attach-download"]', { timeout: 15000 });
+
         const attachments = staffPage.locator("details").filter({ has: staffPage.locator('[data-tt="attach-download"]') });
         if ((await attachments.getAttribute("open")) === null) {
           await attachments.locator("summary").first().click();
         }
         const downloadHref = await staffPage.locator('[data-tt="attach-download"]').first().getAttribute("href");
         assert.ok(downloadHref);
-        const downloadResponse = await staffPage.request.get(`${fixture.baseUrl}${downloadHref}`);
-        assert.equal(downloadResponse.status(), 200);
-        assert.ok(Buffer.from(await downloadResponse.body()).equals(pngBytes));
+        const downloadResult = await fetchAttachmentBytesViaPage(staffPage, downloadHref);
+        assert.equal(
+          downloadResult.status,
+          200,
+          `attachment download path=${redactAttachmentDownloadPath(downloadHref, fixture.baseUrl)} status=${downloadResult.status}`,
+        );
+        assert.ok(Buffer.from(downloadResult.bytes).equals(pngBytes));
       } finally {
         await staffPage.close();
+        await staffContext.close();
       }
     } catch (err) {
       const shot = await saveBrowserDiagnostic(page, "chromium-wizard-failure");

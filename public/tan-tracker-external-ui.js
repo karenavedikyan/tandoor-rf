@@ -571,6 +571,9 @@
       if (action === "open-order") {
         st.orderId = t.getAttribute("data-order-id");
         st.view = "detail";
+        if (window.TanTrackerPrototype && window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder) {
+          window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder(st.orderId);
+        }
         if (window.TanTrackerPrototype && window.TanTrackerPrototype.writeUrl) window.TanTrackerPrototype.writeUrl();
         if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
         return;
@@ -650,6 +653,9 @@
               window.TanTrackerPrototype.hydrateFromServer(res.data.bootstrap);
             }
             f.createdId = res.data && res.data.publicCode;
+            if (f.createdId && window.TanTrackerPrototype && window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder) {
+              window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder(f.createdId);
+            }
             st.extRequestPhase = "done";
             st.error = "";
             if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
@@ -660,6 +666,9 @@
         st.orderId = f.createdId;
         st.view = "detail";
         st.extRequestPhase = null;
+        if (window.TanTrackerPrototype && window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder) {
+          window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder(st.orderId);
+        }
         if (window.TanTrackerPrototype && window.TanTrackerPrototype.writeUrl) window.TanTrackerPrototype.writeUrl();
         if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
       }

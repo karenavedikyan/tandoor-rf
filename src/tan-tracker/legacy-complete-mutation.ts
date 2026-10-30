@@ -10,6 +10,13 @@ import { requireTanTrackerMutationAccess } from "./guards";
 import { notifyClosed } from "./transfer-lk-notify";
 import { notifyExternalPartyAfterHandoff } from "./transfer-external-messenger-notify";
 
+export function isExternalCreatorDeliveredCloseDenied(input: {
+  creatorPartyKind: string | null | undefined;
+  isCreatorClosingDelivered: boolean;
+}): boolean {
+  return input.isCreatorClosingDelivered && input.creatorPartyKind === "external";
+}
+
 export async function legacyCompleteHandler(req: AccessRequest, res: Response): Promise<void> {
   const gate = requireTanTrackerMutationAccess(req, res);
   if (!gate) return;
@@ -38,10 +45,9 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
           handoff_version: number;
           public_code: string;
           item_title: string;
-          from_external: boolean;
         }>(
           `SELECT id, status, creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
-                  allow_legacy_complete, row_version, handoff_version, public_code, item_title, from_external
+                  allow_legacy_complete, row_version, handoff_version, public_code, item_title
            FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1 FOR UPDATE`,
           [transferId],
         )
@@ -75,7 +81,18 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
           message: "Завершить может текущий держатель или создатель после доставки.",
         };
       }
-      if (row.from_external && isCreatorClosingDelivered) {
+      const creatorPartyKind = (
+        await client.query<{ kind: string }>(
+          `SELECT kind FROM tt_parties WHERE id = $1::uuid LIMIT 1`,
+          [row.creator_party_id],
+        )
+      ).rows[0]?.kind;
+      if (
+        isExternalCreatorDeliveredCloseDenied({
+          creatorPartyKind,
+          isCreatorClosingDelivered,
+        })
+      ) {
         return {
           ok: false,
           http: 403,

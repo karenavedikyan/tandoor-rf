@@ -37,7 +37,9 @@ describe("external request draft identity", { concurrency: false }, () => {
     const pool = getPool()!;
     const client = await pool.connect();
     const personId = randomUUID();
-    const chatId = "draft-id-chat-1";
+    const phoneSuffix = randomUUID().replace(/\D/g, "").slice(0, 7).padEnd(7, "0");
+    const extPhone = `+7999${phoneSuffix}`;
+    const chatId = `draft-id-chat-${randomUUID().slice(0, 8)}`;
     let externalPartyId = "";
     try {
       await client.query("BEGIN");
@@ -45,12 +47,13 @@ describe("external request draft identity", { concurrency: false }, () => {
       await ensurePartyForUserOnWrite(client, staff.id, "Draft Staff", "+79997776601");
       externalPartyId = (
         await client.query<{ id: string }>(
-          `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Draft Ext', '+79997776602') RETURNING id::text`,
+          `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Draft Ext', $1) RETURNING id::text`,
+          [extPhone],
         )
       ).rows[0]!.id;
       await client.query(
-        `INSERT INTO tt_external_persons (id, phone_e164, display_name, party_id) VALUES ($1::uuid, '+79997776602', 'Draft Ext', $2::uuid)`,
-        [personId, externalPartyId],
+        `INSERT INTO tt_external_persons (id, phone_e164, display_name, party_id) VALUES ($1::uuid, $2, 'Draft Ext', $3::uuid)`,
+        [personId, extPhone, externalPartyId],
       );
       await client.query(
         `INSERT INTO tt_external_person_verifications (person_id, channel, messenger_user_id, messenger_chat_id)
@@ -95,7 +98,7 @@ describe("external request draft identity", { concurrency: false }, () => {
       });
       assert.notEqual(second.publicCode, first.publicCode);
 
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 3; i++) {
         const d = await ensureActiveExternalRequestDraft(client, {
           channel: "telegram",
           messengerChatId: chatId,

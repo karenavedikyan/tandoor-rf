@@ -547,7 +547,7 @@
     if (tok) {
       state.publicHolderAccessToken = tok;
       window.__TT_PUBLIC_HOLDER__ = true;
-    } else {
+    } else if (orderId) {
       state.publicHolderAccessToken = "";
       window.__TT_PUBLIC_HOLDER__ = false;
     }
@@ -2556,7 +2556,18 @@
 
   function tryConfirmCode(o, input) {
     state.error = "";
-    if (isPublicHolderSession() && window.TanTrackerLk?.publicHolderVerifyCode) {
+    if (window.__TT_EXTERNAL_PERSON__) {
+      syncPublicHolderAccessTokenForOrder(o.id);
+    }
+    const usePublicHolderVerify =
+      window.TanTrackerLk?.publicHolderVerifyCode &&
+      (isPublicHolderSession() ||
+        (window.__TT_EXTERNAL_PERSON__ && !!holderAccessTokenForOrderId(o.id)));
+    if (window.__TT_EXTERNAL_PERSON__ && !holderAccessTokenForOrderId(o.id)) {
+      state.error = "Нет доступа к подтверждению этой передачи.";
+      return false;
+    }
+    if (usePublicHolderVerify) {
       if (o._codeBusy) return false;
       o._codeBusy = true;
       window.TanTrackerLk.publicHolderVerifyCode(holderAccessTokenForOrderId(o.id), input)
@@ -2579,6 +2590,10 @@
           state.error = err?.message || "Неверный код.";
           renderTracker();
         });
+      return false;
+    }
+    if (window.__TT_EXTERNAL_PERSON__) {
+      state.error = state.error || "Нет доступа к подтверждению этой передачи.";
       return false;
     }
     if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.verifyHandoffCode) {
@@ -2721,7 +2736,8 @@
   }
 
   function canActorCloseDeliveredTransfer(o, actor) {
-    if (o.fromExternal && o.createdById === actor) return false;
+    const actorContact = actor && contactById(actor);
+    if (actorContact?.kind === "external" && o.createdById === actor) return false;
     return (
       !!actor &&
       o.status === "delivered" &&
@@ -5783,6 +5799,7 @@
     registryCardHtml: (o, actor) => registryCardHtml(o, actor),
     registryGroupOrders: (rows, actor) => registryGroupOrders(rows, actor),
     writeUrl,
+    syncPublicHolderAccessTokenForOrder,
     seed: () => {
       seedContacts();
       seedOrders();

@@ -140,7 +140,8 @@ describe("external person multi-holder tokens", { concurrency: false }, () => {
     assert.equal(changeB.body.orders[0].id, codeB);
     assert.equal(changeB.body.orders[0].status, "waiting");
 
-    const rowB = await pool.query(`SELECT pending_party_id, status FROM tt_transfers WHERE id = $1`, [transferB]);
+    const poolAfterApp = getPool()!;
+    const rowB = await poolAfterApp.query(`SELECT pending_party_id, status FROM tt_transfers WHERE id = $1`, [transferB]);
     assert.equal(rowB.rows[0].pending_party_id, staffPartyId);
     assert.equal(rowB.rows[0].status, "waiting");
 

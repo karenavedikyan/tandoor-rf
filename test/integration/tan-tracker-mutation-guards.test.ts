@@ -94,7 +94,9 @@ describe("tan-tracker HTTP mutation guards", { concurrency: false }, () => {
       });
     assert.equal(byPhone.status, 201, byPhone.text);
 
-    const rows = await pool.query<{ final_recipient_party_id: string; display_name: string }>(
+    const poolAfterApp = getPool();
+    assert.ok(poolAfterApp);
+    const rows = await poolAfterApp.query<{ final_recipient_party_id: string; display_name: string }>(
       `SELECT t.final_recipient_party_id::text, p.display_name
        FROM tt_transfers t
        JOIN tt_parties p ON p.id = t.final_recipient_party_id
