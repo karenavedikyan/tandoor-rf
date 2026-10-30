@@ -18,10 +18,9 @@ body.legacy-body #tt-root-host .tt-work {
   --text: #ecf0e9;
   --muted: #a7b2a9;
   --green: #a8cb78;
-}
-
-[data-theme="dark"] body.legacy-body .legacy-content .tt-work,
-[data-theme="dark"] body.legacy-body #tt-root-host .tt-work {
+  --surface: var(--rf-surface);
+  --bg: var(--rf-bg);
+  --line: var(--rf-border);
   --tt-panel: var(--rf-surface);
   --tt-ink: var(--rf-text);
 }

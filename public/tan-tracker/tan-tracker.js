@@ -4096,7 +4096,7 @@
       </details>
       </div>
       <aside class="tt-detail-aside">
-      ${desktopDetail ? detailFactsCard(o, actor) : ""}
+      ${desktopDetail || isExternalShell() ? detailFactsCard(o, actor) : ""}
       ${detailHistoryHtml(o, tl, desktopDetail)}
       ${
         confirmingComplete
