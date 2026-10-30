@@ -2,10 +2,9 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
-RUN apk add --no-cache python3 make g++
-
 COPY package.json package-lock.json ./
-RUN npm ci
+# Dev deps (node-pty, playwright, esbuild via tsx) run heavy postinstalls; compile is tsc-only.
+RUN npm ci --ignore-scripts --no-audit --no-fund
 
 COPY tsconfig.json ./
 COPY scripts ./scripts
