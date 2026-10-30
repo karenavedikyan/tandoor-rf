@@ -1,5 +1,16 @@
 # Main flows
 
+## Direct registry selection
+
+- Before editing: opened existing administrator registry at 1440×900; 21 rows, screenshot `/tmp/tandoor-selection-before.png`. No row selection yet.
+- Add separate labelled checkboxes in desktop rows, mobile cards and limited external cards; checking never opens the detail. Ordinary title/card click still opens it.
+- Select one/many or explicitly all shown records; show count, clear selection and role-appropriate archive/restore/delete actions. Carry exactly these records into confirmation, without silently expanding to the whole registry. Ineligible records are explained and excluded.
+- Filtered-out selections are dropped; account/role/archive-view changes clear the selection. Resize preserves selection. Read-only preview has no selection mutations.
+- Check direct personal/general archive and restore, creator deletion before first receipt, cancellation, received-record prohibition, mixed eligible/ineligible batches, filter scope, external shell, mobile/desktop/dark/short window and existing main-flow regressions. Production/Cursor implementation is paused pending this prototype refinement.
+- Final local results: direct-selection suite 34 PASS; cleanup 52 PASS; existing external request 11, continuation 5, personal registry 10, invitation 20, attachments 30, wizard review-route 18, scope 22, role 19, post-code external 19, notifications 39 PASS. Logs `/tmp/tandoor-selection-qa.log`, `/tmp/tandoor-selection-cleanup-regression.log`, `/tmp/tandoor-selection-regression.log`, `/tmp/tandoor-selection-security-regression.log`. Syntax and diff checks passed.
+- Separate legacy `wizard-review-hierarchy` script expects the new-name field before the existing phone-first recipient step and times out; it is not part of final signoff and no wizard behavior was changed. The current review-route and create/attachment flows passed. A lost local static server was restarted only after confirming no listener, then affected checks were rerun.
+- Visual review: 375×812 mobile list and card, 320×640 dark and confirmation, 1440×900 dark registry, 1440×420 scrollable short window. New controls do not open cards, no horizontal overflow, confirmation footer accessible. New dark selection labels measured 12.51:1. Selection is scoped to shown records, clears on actor/view changes and prunes records hidden by filters; viewport changes preserve it.
+
 ## Registry archival update: 30 October 2026
 
 - Reuse the same unified prototype and site directory. No production changes, real messages, production deletion, new clients or altered employee rights.

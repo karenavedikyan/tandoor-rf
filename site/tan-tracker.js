@@ -519,6 +519,9 @@
     registryFilterSheet: false,
     registryPersonalView: "main",
     registryConfirmRemoveOrderId: null,
+    registrySelection: [],
+    registrySelectionKey: null,
+    registryVisibleIds: [],
     editOrderId: null,
     extRequestPhase: null,
     extRequestForm: null,
@@ -1180,13 +1183,14 @@
       o.fromExternal && !isExternalShell()
         ? ` <span class="tt-badge" data-tt="from-external">От внешнего</span>`
         : "";
-    return `<button type="button" class="tt-card-v2${overdue ? " tt-card-v2--overdue" : ""}${done ? " tt-card-v2--completed" : ""}" data-tt-open="${E(o.id)}" style="--tt-card-accent:${accent}">
+    return `<div class="tt-selectable-card${state.registrySelection.includes(o.id) ? " tt-is-selected" : ""}">${registryCheckbox(o, true)}
+    <button type="button" class="tt-card-v2${overdue ? " tt-card-v2--overdue" : ""}${done ? " tt-card-v2--completed" : ""}" data-tt-open="${E(o.id)}" style="--tt-card-accent:${accent}">
       <span class="tt-card-v2-accent" aria-hidden="true"></span>
       <div class="tt-card-v2-top"><h3 class="tt-card-v2-title">${E(o.item)}${extBadge}</h3><i data-lucide="chevron-right"></i></div>
       ${registryRouteLine(o)}
       <div class="tt-card-v2-foot">${statusBadge(o, actor, { compact: true })}<span class="tt-card-v2-due-inline ${due.overdue ? "tt-due-human--over" : ""}">${E(registryCardDuePrimary(o))}</span></div>
       <p class="tt-card-v2-meta">${registryCardMeta(o)}</p>
-    </button>`;
+    </button></div>`;
   }
 
   function registryCounts() {
@@ -1254,7 +1258,8 @@
           o.fromExternal && !isExternalShell()
             ? ` <span class="tt-badge" data-tt="from-external">От внешнего</span>`
             : "";
-        return `<tr data-tt-open="${E(o.id)}" class="${overdue ? "tt-row--overdue" : ""}">
+        return `<tr data-tt-open="${E(o.id)}" class="${overdue ? "tt-row--overdue" : ""}${state.registrySelection.includes(o.id) ? " tt-is-selected" : ""}">
+          ${!cleanupPreviewReadOnly() ? `<td class="tt-selection-cell">${registryCheckbox(o)}</td>` : ""}
           <td><strong>${E(o.item)}</strong>${extBadge}<small>${E(o.id)}${o.qty ? ` · ${E(o.qty)}` : ""}</small></td>
           <td>${registryRouteLine(o)}</td>
           <td>${statusBadge(o, actor)}</td>
@@ -1315,6 +1320,7 @@
 
   function patchRegistry() {
     const rows = visibleOrders();
+    syncRegistrySelection(rows);
     const tbody = document.querySelector("#tt-registry-body");
     const cardsHost = document.querySelector('[data-tt="cards"]');
     const sectionsHost = document.querySelector('[data-tt="registry-sections"]');
@@ -1334,6 +1340,7 @@
       if (sectionsHost) sectionsHost.innerHTML = "";
       if (!empty) document.getElementById("tt-content")?.insertAdjacentHTML("beforeend", registryEmptyHtml());
     }
+    paintRegistrySelection();
     return true;
   }
 
@@ -2315,6 +2322,74 @@
     return state.actingContactId || employeeContact(state.employeeId)?.id;
   }
 
+  function syncRegistrySelection(rows) {
+    const key = `${registryActorId()}|${state.ttPrototypeRole}|${state.registryPersonalView}|${cleanupPreviewReadOnly()}`;
+    if (state.registrySelectionKey !== key) state.registrySelection = [];
+    state.registrySelectionKey = key;
+    state.registryVisibleIds = rows.map((o) => o.id);
+    state.registrySelection = state.registrySelection.filter((id) =>
+      !cleanupPreviewReadOnly() && state.registryVisibleIds.includes(id));
+    queueMicrotask(() => {
+      const all = document.querySelector('[data-tt="registry-select-all"]');
+      if (all) all.indeterminate = state.registrySelection.length > 0 &&
+        state.registrySelection.length < state.registryVisibleIds.length;
+    });
+  }
+
+  function registryCheckbox(o, card = false) {
+    if (cleanupPreviewReadOnly()) return "";
+    return `<label class="tt-registry-check${card ? " tt-registry-check--card" : ""}" data-tt="registry-check-label">
+      <input type="checkbox" data-tt="registry-select" value="${E(o.id)}"
+        aria-label="Выбрать ${E(o.id)}: ${E(o.item)}" ${state.registrySelection.includes(o.id) ? "checked" : ""}>
+      ${card ? '<span class="tt-sr-only">Выбрать передачу</span>' : ""}
+    </label>`;
+  }
+
+  function registrySelectionOrders() {
+    return state.registrySelection.filter((id) => state.registryVisibleIds.includes(id))
+      .map((id) => orders.find((o) => o.id === id)).filter((o) => o && orderVisible(o));
+  }
+
+  function registrySelectionToolbar() {
+    if (cleanupPreviewReadOnly()) return "";
+    const selected = registrySelectionOrders();
+    const n = selected.length;
+    const all = n > 0 && n === state.registryVisibleIds.length;
+    const action = (mode, label) => {
+      const count = selected.filter((o) => cleanupEligible(o, mode)).length;
+      return btn(`${label} (${count})`, `data-tt="registry-batch" data-mode="${mode}" ${count ? "" : "disabled"} title="${count} из ${n} выбранных доступны для действия"`,
+        mode === "delete" ? "tt-cleanup-danger" : "tt-link");
+    };
+    const personalMode = state.registryPersonalView === "archived" ? "personal-restore" : "personal";
+    const generalMode = state.registryPersonalView === "registry-archive" ? "restore" : "archive";
+    return `<div class="tt-registry-selection" data-tt="registry-selection">
+      <div class="tt-registry-selection-top">
+        <label class="tt-registry-select-all"><input type="checkbox" data-tt="registry-select-all" ${all ? "checked" : ""} ${state.registryVisibleIds.length ? "" : "disabled"}>
+          <span>Выбрать показанные</span></label>
+        <span class="tt-registry-selection-count" role="status">Выбрано: ${n}</span>
+      </div>
+      ${n ? `<div class="tt-registry-selection-actions" role="group" aria-label="Действия с выбранными треками">
+        ${state.registryPersonalView !== "registry-archive" ? action(personalMode, personalMode === "personal" ? "В мой архив" : "Восстановить мои") : ""}
+        ${canManageRegistry() ? action(generalMode, generalMode === "restore" ? "Восстановить общие" : "В общий архив") : ""}
+        ${canManageRegistry() || selected.some((o) => orderCreatorId(o) === registryActorId()) ? action("delete", "Удалить") : ""}
+        ${btn("Снять выбор", 'data-tt="registry-selection-clear"', "tt-link")}
+      </div><p>Числа на кнопках: доступные треки. Удаление только до первого получения.</p>` :
+        "<p>Отметьте один или несколько треков для архивирования или удаления. Выбор действует только в текущем списке.</p>"}
+    </div>`;
+  }
+
+  function paintRegistrySelection() {
+    const host = document.querySelector('[data-tt="registry-selection"]');
+    if (host) host.outerHTML = registrySelectionToolbar();
+    document.querySelectorAll('[data-tt="registry-select"]').forEach((el) => {
+      el.checked = state.registrySelection.includes(el.value);
+      (el.closest(".tt-selectable-card") || el.closest("tr"))?.classList.toggle("tt-is-selected", el.checked);
+    });
+    const all = document.querySelector('[data-tt="registry-select-all"]');
+    if (all) all.indeterminate = state.registrySelection.length > 0 &&
+      state.registrySelection.length < state.registryVisibleIds.length;
+  }
+
   function cleanupPreviewReadOnly() {
     const p = new URLSearchParams(location.hash.split("?")[1] || "");
     return state.recipientMode || state.ttRoleUnsupported ||
@@ -2376,15 +2451,19 @@
     return (ids || []).map((id) => orders.find((o) => o.id === id)).filter(Boolean);
   }
 
-  function openCleanup(mode, order) {
+  function openCleanup(mode, order, selectedIds) {
     if (cleanupPreviewReadOnly()) return;
     if (["archive", "restore"].includes(mode) && !canManageRegistry()) return;
-    if (mode === "delete" && !canManageRegistry() && !canDeleteTrack(order)) return;
+    const preselected = selectedIds ? registrySelectionOrders().filter((o) => selectedIds.includes(o.id)) : null;
+    if (preselected && !preselected.some((o) => cleanupEligible(o, mode))) return;
+    if (mode === "delete" && !canManageRegistry() && !canDeleteTrack(order) &&
+      !preselected?.some((o) => canDeleteTrack(o))) return;
     state.archiveReturnFocus = document.activeElement?.getAttribute("data-tt") || null;
     state.archiveDialog = mode;
     state.archiveActorKey = `${registryActorId()}|${state.ttPrototypeRole}`;
-    state.archiveCandidateIds = order ? [order.id] : cleanupCandidates(mode).map((o) => o.id);
-    state.archiveSelection = order ? [order.id] : [];
+    state.archiveCandidateIds = preselected ? preselected.map((o) => o.id) : order ? [order.id] : cleanupCandidates(mode).map((o) => o.id);
+    state.archiveSelection = preselected ? preselected.filter((o) => cleanupEligible(o, mode)).map((o) => o.id) : order ? [order.id] : [];
+    state.archiveFromRegistry = !!preselected;
     state.archiveSingle = !!order;
     state.archiveScope = "selected";
     state.archiveReason = state.archiveError = state.archiveTypedAck = "";
@@ -2427,13 +2506,14 @@
       <header class="tt-cleanup-head"><h2 id="tt-cleanup-title">${E(cleanupTitle(mode))}</h2>
         ${btn("Закрыть", 'data-tt="cleanup-cancel" autofocus', "tt-link")}</header>
       <div class="tt-cleanup-body">
-        ${canManageRegistry() && !state.archiveSingle && ["archive", "delete"].includes(mode) ? `<div class="tt-cleanup-mode" role="group" aria-label="Способ очистки">
+        ${canManageRegistry() && !state.archiveSingle && !state.archiveFromRegistry && ["archive", "delete"].includes(mode) ? `<div class="tt-cleanup-mode" role="group" aria-label="Способ очистки">
           ${btn("Архивирование", `data-tt="cleanup-mode" data-mode="archive" aria-pressed="${mode === "archive"}"`, "tt-link")}
           ${btn("Удаление", `data-tt="cleanup-mode" data-mode="delete" aria-pressed="${mode === "delete"}"`, "tt-link")}
         </div>` : ""}
         <p id="tt-cleanup-description">${E(description)}</p>
         <p class="tt-muted">${personal ? "Демо: личный архив относится только к вашему демонстрационному профилю." : "Демо: изменения треков действуют до обновления страницы."} Боевой реестр не меняется.</p>
-        ${!state.archiveSingle ? `<fieldset class="tt-cleanup-scope"><legend>Какие треки</legend>
+        ${state.archiveFromRegistry ? `<p class="tt-cleanup-selected-scope">Выбрано в реестре: <strong>${candidates.length}</strong>. Только эти треки; неподходящих: <strong>${candidates.filter((o) => !cleanupEligible(o, mode)).length}</strong>.</p>` : ""}
+        ${!state.archiveSingle && !state.archiveFromRegistry ? `<fieldset class="tt-cleanup-scope"><legend>Какие треки</legend>
           <label><input type="radio" name="tt-cleanup-scope" data-tt="cleanup-scope" value="selected" ${!all ? "checked" : ""}> Выбранные</label>
           <label><input type="radio" name="tt-cleanup-scope" data-tt="cleanup-scope" value="all" ${all ? "checked" : ""}> ${personal ? "Все в моей области" : "Весь реестр"} (${candidates.length})</label>
         </fieldset><p class="tt-muted">Поиск и фильтры основного реестра не ограничивают список ниже.</p>` : ""}
@@ -2517,6 +2597,7 @@
       }
     });
     const count = targets.length;
+    state.registrySelection = state.registrySelection.filter((id) => !targets.some((o) => o.id === id));
     const skipped = selected.length - count;
     state.archiveDialog = null;
     state.toast = `${mode === "delete" ? "Удалено" : mode.includes("restore") ? "Восстановлено" : "В архиве"}: ${count}.${skipped ? ` Пропущено: ${skipped}.` : ""} ${mode === "delete" ? "Старые ссылки, коды и QR недействительны." : "История и файлы сохранены."}`;
@@ -2969,15 +3050,17 @@
 
   function registryView() {
     const rows = visibleOrders();
+    syncRegistrySelection(rows);
     return `<div class="tt-registry tt-view-enter" data-tt="registry-shell" data-tt-registry-personal-ready="true">
       ${registryStatTiles()}
+      ${registrySelectionToolbar()}
       ${state.toast ? `<p class="tt-success" data-tt="cleanup-result" role="status">${E(state.toast)}</p>` : ""}
       ${state.registryPersonalView === "registry-archive" ? '<p class="tt-muted">Общий архив. История и файлы доступны в рамках ваших обычных прав; восстановление доступно администратору.</p>' : ""}
       ${state.registryPersonalView === "archived" ? '<p class="tt-muted">Только ваш архив. Другие участники видят передачи как прежде; историю и файлы можно открыть в карточке.</p>' : ""}
       ${
         rows.length
           ? `<div class="tt-table-scroll" tabindex="0" aria-label="Реестр передач"><table class="tt-table tt-table-v2" data-tt="registry"><thead><tr>
-      <th>Передача</th><th>Маршрут</th><th>Статус</th><th>Срок</th>
+      ${!cleanupPreviewReadOnly() ? '<th class="tt-selection-cell"><span class="tt-sr-only">Выбор</span></th>' : ""}<th>Передача</th><th>Маршрут</th><th>Статус</th><th>Срок</th>
     </tr></thead><tbody id="tt-registry-body">${registryRowsHtml(rows)}</tbody></table></div>
     <div class="tt-cards" data-tt="cards"><div data-tt="registry-sections">${registryCardsHtml(rows)}</div></div>`
           : registryEmptyHtml()
@@ -3942,6 +4025,7 @@
             : g
       )
       .filter((g) => g.items.length);
+    syncRegistrySelection(groups.flatMap((g) => g.items));
     const cards = groups.length
       ? `<div class="tt-ext-groups" data-tt="external-order-list">${groups
           .map(
@@ -3954,6 +4038,7 @@
       : `<div class="tt-empty tt-ext-empty" data-tt="external-empty"><i data-lucide="package-open"></i><p>Пока нет передач.</p><p class="tt-muted">Когда сотрудник Тандор назначит вам передачу или вы отправите предмет через бота, она появится здесь.</p></div>`;
     return `<div class="tt-external-home" data-tt="external-home">
       ${registryPersonalToolbar()}
+      ${registrySelectionToolbar()}
       ${state.toast ? `<p class="tt-success" role="status">${E(state.toast)}</p>` : ""}
       ${state.registryPersonalView === "archived" ? '<p class="tt-muted">Ваш архив выполненных передач. История и файлы сохранены; списки других участников не изменены.</p>' : ""}
       ${cards}</div>`;
@@ -4856,6 +4941,7 @@
   }
 
   document.addEventListener("click", (e) => {
+    if (current === ROUTE && e.target.closest('[data-tt="registry-check-label"]')) return;
     const b = e.target.closest("[data-tt], [data-tt-open], [data-tt-pick], [data-tt-ext-pick]");
     if (!b || current !== ROUTE) return;
 
@@ -4904,6 +4990,19 @@
       return;
     }
     const action = b.getAttribute("data-tt");
+    if (action === "registry-select-all" || action === "registry-select") return;
+    if (action === "registry-selection-clear") {
+      state.registrySelection = [];
+      paintRegistrySelection();
+      document.querySelector('[data-tt="registry-select-all"]')?.focus();
+      return;
+    }
+    if (action === "registry-batch") {
+      const mode = b.getAttribute("data-mode");
+      if (!cleanupPreviewReadOnly() && ["personal", "personal-restore", "archive", "restore", "delete"].includes(mode))
+        openCleanup(mode, null, [...state.registrySelection]);
+      return;
+    }
     if (cleanupPreviewReadOnly() && [
       "registry-archive", "registry-unarchive", "registry-remove-ask",
       "registry-remove-confirm", "registry-restore-removed", "registry-unremove",
@@ -6039,6 +6138,17 @@
 
   document.addEventListener("change", (e) => {
     if (current !== ROUTE) return;
+    if (e.target.matches('[data-tt="registry-select"], [data-tt="registry-select-all"]')) {
+      if (cleanupPreviewReadOnly()) return;
+      if (e.target.matches('[data-tt="registry-select-all"]')) {
+        state.registrySelection = e.target.checked ? [...state.registryVisibleIds] : [];
+      } else if (state.registryVisibleIds.includes(e.target.value)) {
+        state.registrySelection = e.target.checked ? [...new Set([...state.registrySelection, e.target.value])] :
+          state.registrySelection.filter((id) => id !== e.target.value);
+      }
+      paintRegistrySelection();
+      return;
+    }
     if (e.target.matches('[data-tt="cleanup-select"]')) {
       const id = e.target.value;
       if (e.target.checked) state.archiveSelection = [...new Set([...state.archiveSelection, id])];
