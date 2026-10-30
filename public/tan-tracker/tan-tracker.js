@@ -790,7 +790,18 @@
     else if (isDetailAttDisclosureOpen(o)) clearDetailAttDisclosure();
   }
 
+  let attachInFlightAbort = null;
+
+  function abortAttachInFlight() {
+    if (!attachInFlightAbort) return;
+    try {
+      attachInFlightAbort.abort();
+    } catch (_) {}
+    attachInFlightAbort = null;
+  }
+
   function bumpAttachOpGen() {
+    if (state.attachBusy) abortAttachInFlight();
     state.attachOpGen += 1;
   }
 
@@ -818,10 +829,16 @@
     if (state.attachBusyGen === opGen) {
       state.attachBusy = false;
       state.attachBusyGen = null;
+      return;
+    }
+    if (state.attachBusy && state.attachOpGen > opGen) {
+      state.attachBusy = false;
+      state.attachBusyGen = null;
     }
   }
 
   function invalidateAttachContext() {
+    abortAttachInFlight();
     bumpAttachOpGen();
     if (Att()) {
       Att().revokeStaging(state.attachStaging);
@@ -1973,6 +1990,9 @@
     state.attachBusy = true;
     state.attachBusyGen = opGen;
     state.attachError = "";
+    abortAttachInFlight();
+    attachInFlightAbort = new AbortController();
+    const uploadSignal = attachInFlightAbort.signal;
     renderTracker();
     const order = target === "create" ? null : orders.find((x) => x.id === state.orderId);
     const existing = target === "create" ? [] : Att().listForOrder(order);
@@ -2003,22 +2023,39 @@
               const uploaded = await window.TanTrackerLk.publicHolderUploadStagingFile(
                 state.publicHolderAccessToken,
                 file,
+                { signal: uploadSignal },
               );
+              if (!attachSnapValid(snap)) {
+                Att().revokeStagingItem(r.item);
+                break;
+              }
               r.item.serverStagingId = uploaded.id;
             } catch (upErr) {
               Att().revokeStagingItem(r.item);
+              if (!attachSnapValid(snap)) break;
+              if (upErr?.message === "Загрузка отменена.") continue;
               errors.push(upErr?.message || "Не удалось загрузить файл.");
               continue;
             }
           } else if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.uploadStagingFile) {
             try {
-              const uploaded = await window.TanTrackerLk.uploadStagingFile(file);
+              const uploaded = await window.TanTrackerLk.uploadStagingFile(file, { signal: uploadSignal });
+              if (!attachSnapValid(snap)) {
+                Att().revokeStagingItem(r.item);
+                break;
+              }
               r.item.serverStagingId = uploaded.id;
             } catch (upErr) {
               Att().revokeStagingItem(r.item);
+              if (!attachSnapValid(snap)) break;
+              if (upErr?.message === "Загрузка отменена.") continue;
               errors.push(upErr?.message || "Не удалось загрузить файл.");
               continue;
             }
+          }
+          if (!attachSnapValid(snap)) {
+            Att().revokeStagingItem(r.item);
+            break;
           }
           accepted.push(r.item);
         }
@@ -2068,6 +2105,7 @@
         if (errors.length) state.attachError = errors.slice(0, 3).join(" ");
       } else Att().revokeStagingItems(accepted);
     } finally {
+      attachInFlightAbort = null;
       finishAttachIngest(opGen);
       renderTracker();
     }

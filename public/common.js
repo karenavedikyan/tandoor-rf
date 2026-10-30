@@ -86,8 +86,19 @@
       });
   }
 
+  function isAbortLikeError(err) {
+    if (!err) {
+      return false;
+    }
+    if (err.name === "AbortError") {
+      return true;
+    }
+    var msg = String(err.message || "");
+    return /fetch is aborted|loading aborted|operation was aborted|aborter signal|request aborted/i.test(msg);
+  }
+
   function mapRequestError(err, timeoutSec) {
-    if (err && err.name === "AbortError") {
+    if (isAbortLikeError(err)) {
       return "Превышено время ожидания ответа (" + timeoutSec + " с).";
     }
     if (err instanceof TypeError) {
@@ -106,5 +117,6 @@
     apiRequest: apiRequest,
     extractErrorMessage: extractErrorMessage,
     mapRequestError: mapRequestError,
+    isAbortLikeError: isAbortLikeError,
   };
 })();

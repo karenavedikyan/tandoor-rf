@@ -70,8 +70,12 @@
   }
 
   let rasterDelayMs = 0;
+  let rasterProbeTimeoutMs = 20000;
   function setRasterDelayForTests(ms) {
     rasterDelayMs = Math.max(0, Number(ms) || 0);
+  }
+  function setRasterProbeTimeoutForTests(ms) {
+    rasterProbeTimeoutMs = Math.max(1, Number(ms) || rasterProbeTimeoutMs);
   }
 
   function makeDemoPng(label, hue) {
@@ -209,8 +213,13 @@
     if (PREVIEW_MIME.has(mime)) {
       try {
         if (rasterDelayMs) await new Promise((r) => setTimeout(r, rasterDelayMs));
-        const ok = await rasterProbe(blobUrl);
-        if (!ok) {
+        const probed = await rasterProbe(blobUrl);
+        if (probed === "timeout") {
+          untrackUrl(blobUrl);
+          const sec = Math.round(rasterProbeTimeoutMs / 1000);
+          return { error: `${file.name}: превышено время проверки изображения (${sec} с).` };
+        }
+        if (!probed) {
           untrackUrl(blobUrl);
           return { error: `${file.name}: файл не похож на допустимое изображение.` };
         }
@@ -241,9 +250,19 @@
 
   function rasterProbe(url) {
     return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timerId);
+        img.onload = null;
+        img.onerror = null;
+        resolve(value);
+      };
+      const timerId = setTimeout(() => finish("timeout"), rasterProbeTimeoutMs);
       const img = new Image();
-      img.onload = () => resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
-      img.onerror = () => resolve(false);
+      img.onload = () => finish(img.naturalWidth > 0 && img.naturalHeight > 0);
+      img.onerror = () => finish(false);
       img.src = url;
     });
   }
@@ -412,6 +431,7 @@
     revokeStagingItems,
     revokeStagingItem,
     setRasterDelayForTests,
+    setRasterProbeTimeoutForTests,
     trackUrl,
     untrackUrl,
     canPreview,
