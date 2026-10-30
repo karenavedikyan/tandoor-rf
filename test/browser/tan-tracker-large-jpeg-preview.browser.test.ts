@@ -125,6 +125,13 @@ describe("tan-tracker large JPEG bounded preview after reload (browser + PG)", {
           { timeout: 120000 },
         );
         await page.reload({ waitUntil: "networkidle" });
+        const attachments = page.locator("details").filter({
+          has: page.locator("summary", { hasText: "Фото и файлы" }),
+        }).first();
+        if ((await attachments.getAttribute("open")) === null) {
+          await attachments.locator("summary").click();
+        }
+        await page.locator(".tt-att-thumb img").first().scrollIntoViewIfNeeded();
         const thumbResponse = await thumbPreview;
         const thumbBytes = (await thumbResponse.body()).length;
         assert.ok(thumbBytes < originalByteSize / 5, "thumb response must be much smaller than original file");
