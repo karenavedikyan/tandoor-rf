@@ -5,6 +5,8 @@ import type { TanbotTelegramStage2Config } from "./stage2-config";
 import { parseTelegramWebhookUpdate, type ParsedTelegramWebhookUpdate } from "./update-parse";
 import { consumeStartTokenForTelegramUser } from "./link-service";
 import { findAccountByTelegramUserId, cancelActiveLinkAttempts, insertLinkAudit } from "./link-repository";
+import { lockTanbotTelegramLkUser } from "../tanbot/link-advisory-locks";
+import { buildMessengerLinkSuccessReply, buildMessengerPlainStartReply } from "../tanbot/link-bot-replies";
 import type { TelegramDeliveryTransport, TelegramDeliveryResult } from "./delivery-transport";
 import {
   claimTelegramUpdate,
@@ -28,6 +30,7 @@ export type WebhookReply = {
 } | null;
 
 async function disconnectTelegramAccountOnClient(client: PoolClient, userId: string): Promise<void> {
+  await lockTanbotTelegramLkUser(client, userId);
   await client.query(
     `UPDATE tanbot_telegram_accounts SET stopped_at = NOW(), notifications_enabled = FALSE WHERE user_id = $1::uuid`,
     [userId],
@@ -166,9 +169,15 @@ async function processParsedUpdate(
     } else if (command.startsWith("/start")) {
       const lkUrl = `${config.appOrigin}/profile`;
       if (!update.startPayload) {
+        const account = await findAccountByTelegramUserId(client, update.telegramUserId);
         reply = {
           chatId: update.chatId,
-          text: `Подключение Telegram выполняется из личного кабинета Тандор.\nОткройте профиль: ${lkUrl}`,
+          text: buildMessengerPlainStartReply({
+            channelLabel: "Telegram",
+            linked: !!account,
+            notificationsEnabled: account?.notifications_enabled ?? false,
+            profileUrl: lkUrl,
+          }),
         };
       } else {
         const outcome = await consumeStartTokenForTelegramUser(
@@ -194,10 +203,13 @@ async function processParsedUpdate(
             text: "Ссылка недействительна или истекла. Запросите новую в личном кабинете.",
           };
         } else {
+          const account = await findAccountByTelegramUserId(client, update.telegramUserId);
           reply = {
             chatId: update.chatId,
-            text:
-              "Telegram подключён к личному кабинету. Коды и уведомления Тан-трекера доступны в этом чате. Отключить уведомления: /stop или профиль.",
+            text: buildMessengerLinkSuccessReply({
+              channelLabel: "Telegram",
+              notificationsEnabled: account?.notifications_enabled ?? true,
+            }),
           };
         }
       }

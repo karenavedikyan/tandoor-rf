@@ -8,6 +8,8 @@ import {
   cancelActiveLinkAttempts,
   insertLinkAudit,
 } from "./link-repository";
+import { lockTanbotMaxLkUser } from "../tanbot/link-advisory-locks";
+import { buildMessengerLinkSuccessReply, buildMessengerPlainStartReply } from "../tanbot/link-bot-replies";
 import type { MaxDeliveryTransport, MaxDeliveryResult, MaxInlineButton } from "./delivery-transport";
 import { buildHandoffCodeBotReply } from "../tanbot/handoff-code-bot-flow";
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
@@ -29,6 +31,7 @@ export type WebhookReply = {
 } | null;
 
 async function disconnectMaxAccountOnClient(client: PoolClient, userId: string): Promise<void> {
+  await lockTanbotMaxLkUser(client, userId);
   await client.query(
     `UPDATE tanbot_max_accounts SET stopped_at = NOW(), notifications_enabled = FALSE WHERE user_id = $1::uuid`,
     [userId],
@@ -132,10 +135,16 @@ async function processUpdateInTransaction(
               text: "Приглашение недоступно.",
             };
       } else if (!startPayload) {
+        const account = await findAccountByMaxUserId(client, update.maxUserId);
         reply = {
           userId: update.maxUserId,
           chatId: update.chatId,
-          text: `Подключение MAX выполняется из личного кабинета Тандор.\nОткройте профиль: ${lkUrl}`,
+          text: buildMessengerPlainStartReply({
+            channelLabel: "MAX",
+            linked: !!account,
+            notificationsEnabled: account?.notifications_enabled ?? false,
+            profileUrl: lkUrl,
+          }),
         };
       } else {
         const outcome = await consumeStartTokenForMaxUser(
@@ -163,11 +172,14 @@ async function processUpdateInTransaction(
             text: "Ссылка недействительна или истекла. Запросите новую в личном кабинете.",
           };
         } else {
+          const account = await findAccountByMaxUserId(client, update.maxUserId);
           reply = {
             userId: update.maxUserId,
             chatId: update.chatId,
-            text:
-              "MAX подключён к личному кабинету. Коды и уведомления Тан-трекера доступны в этом чате. Отключить уведомления: /stop или профиль.",
+            text: buildMessengerLinkSuccessReply({
+              channelLabel: "MAX",
+              notificationsEnabled: account?.notifications_enabled ?? true,
+            }),
           };
         }
       }

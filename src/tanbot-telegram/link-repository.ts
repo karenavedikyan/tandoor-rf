@@ -134,6 +134,23 @@ export async function findAccountByTelegramUserId(
   return row.rows[0] ?? null;
 }
 
+export async function findTelegramAccountByMessengerIdIncludingStopped(
+  client: PoolClient,
+  telegramUserId: bigint,
+): Promise<{
+  user_id: string;
+  telegram_user_id: string;
+  notifications_enabled: boolean;
+  stopped_at: Date | null;
+} | null> {
+  const row = await client.query(
+    `SELECT user_id::text, telegram_user_id::text, notifications_enabled, stopped_at
+     FROM tanbot_telegram_accounts WHERE telegram_user_id = $1 LIMIT 1`,
+    [telegramUserId.toString()],
+  );
+  return row.rows[0] ?? null;
+}
+
 export async function findAccountByUserId(
   client: PoolClient,
   userId: string,

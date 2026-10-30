@@ -29,8 +29,7 @@
   var tanbotMaxNotifToggle = document.getElementById("tanbot-max-notifications-toggle");
   var tanbotMaxConfirmNotifWrap = document.getElementById("tanbot-max-confirm-notifications-wrap");
   var tanbotMaxConfirmNotifToggle = document.getElementById("tanbot-max-confirm-notifications");
-  var TG_LINK_STORAGE_KEY = "tanbot_telegram_deep_link";
-  var MAX_LINK_STORAGE_KEY = "tanbot_max_deep_link";
+  var pendingTanbotDeepLinks = { telegram: "", max: "" };
   var tgLinkFallback = document.getElementById("tanbot-telegram-link-fallback");
   var tgLinkUrlInput = document.getElementById("tanbot-telegram-link-url");
   var tgLinkCopyBtn = document.getElementById("tanbot-telegram-link-copy");
@@ -101,9 +100,8 @@
     });
   }
 
-  function showStoredDeepLink(fallbackEl, inputEl, storageKey, linked) {
+  function showPendingDeepLink(fallbackEl, inputEl, url, linked) {
     if (!fallbackEl || !inputEl) return;
-    var url = sessionStorage.getItem(storageKey) || "";
     if (linked || !url) {
       fallbackEl.hidden = true;
       return;
@@ -114,10 +112,20 @@
 
   function copyInputValue(inputEl, label) {
     if (!inputEl || !inputEl.value) return;
+    function showManualFallback() {
+      inputEl.focus();
+      inputEl.select();
+      api.setStatus(statusEl, "Не удалось скопировать автоматически — выделите ссылку и скопируйте вручную.", "error");
+    }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(inputEl.value).then(function () {
-        api.setStatus(statusEl, label + " скопирована.", "success");
-      });
+      navigator.clipboard.writeText(inputEl.value).then(
+        function () {
+          api.setStatus(statusEl, label + " скопирована.", "success");
+        },
+        function () {
+          showManualFallback();
+        },
+      );
       return;
     }
     inputEl.select();
@@ -125,7 +133,25 @@
       document.execCommand("copy");
       api.setStatus(statusEl, label + " скопирована.", "success");
     } catch (_) {
-      api.setStatus(statusEl, "Скопируйте ссылку вручную.", "error");
+      showManualFallback();
+    }
+  }
+
+  function openMessengerDeepLink(deepLink, channelKey, fallbackEl, inputEl) {
+    pendingTanbotDeepLinks[channelKey] = deepLink;
+    showPendingDeepLink(fallbackEl, inputEl, deepLink, false);
+    var popup = null;
+    try {
+      popup = window.open(deepLink, "_blank", "noopener,noreferrer");
+    } catch (_) {
+      popup = null;
+    }
+    if (!popup) {
+      api.setStatus(
+        statusEl,
+        "Браузер заблокировал новое окно — откройте ссылку ниже или скопируйте её.",
+        "error",
+      );
     }
   }
 
@@ -143,7 +169,7 @@
       }
       tanbotSection.hidden = false;
       if (d.linked) {
-        sessionStorage.removeItem(TG_LINK_STORAGE_KEY);
+        pendingTanbotDeepLinks.telegram = "";
         tanbotStatus.textContent =
           "Telegram подключён" + (d.telegramUsername ? " (@" + d.telegramUsername + ")" : "") + ".";
         tanbotNotifWrap.hidden = false;
@@ -154,7 +180,7 @@
       }
       tanbotPending.hidden = true;
       if (tanbotConfirmNotifWrap) tanbotConfirmNotifWrap.hidden = true;
-      showStoredDeepLink(tgLinkFallback, tgLinkUrlInput, TG_LINK_STORAGE_KEY, d.linked);
+      showPendingDeepLink(tgLinkFallback, tgLinkUrlInput, pendingTanbotDeepLinks.telegram, d.linked);
       tanbotActions.innerHTML = "";
       if (!d.linked) {
         var startBtn = document.createElement("button");
@@ -180,8 +206,7 @@
       .apiRequest("/api/profile/tanbot/telegram/link/start", { method: "POST", body: {} })
       .then(function (result) {
         if (result.response.status === 200 && result.data && result.data.deepLink) {
-          sessionStorage.setItem(TG_LINK_STORAGE_KEY, result.data.deepLink);
-          window.open(result.data.deepLink, "_blank", "noopener,noreferrer");
+          openMessengerDeepLink(result.data.deepLink, "telegram", tgLinkFallback, tgLinkUrlInput);
           api.setStatus(
             statusEl,
             "Откройте Telegram и нажмите Start — привязка завершится в боте. Статус обновится на этой странице.",
@@ -209,7 +234,7 @@
       }
       tanbotMaxSection.hidden = false;
       if (d.linked) {
-        sessionStorage.removeItem(MAX_LINK_STORAGE_KEY);
+        pendingTanbotDeepLinks.max = "";
         tanbotMaxStatus.textContent =
           "MAX подключён" + (d.maxUsername ? " (@" + d.maxUsername + ")" : "") + ".";
         tanbotMaxNotifWrap.hidden = false;
@@ -220,7 +245,7 @@
       }
       tanbotMaxPending.hidden = true;
       if (tanbotMaxConfirmNotifWrap) tanbotMaxConfirmNotifWrap.hidden = true;
-      showStoredDeepLink(maxLinkFallback, maxLinkUrlInput, MAX_LINK_STORAGE_KEY, d.linked);
+      showPendingDeepLink(maxLinkFallback, maxLinkUrlInput, pendingTanbotDeepLinks.max, d.linked);
       tanbotMaxActions.innerHTML = "";
       if (!d.linked) {
         var startBtn = document.createElement("button");
@@ -246,8 +271,7 @@
       .apiRequest("/api/profile/tanbot/max/link/start", { method: "POST", body: {} })
       .then(function (result) {
         if (result.response.status === 200 && result.data && result.data.deepLink) {
-          sessionStorage.setItem(MAX_LINK_STORAGE_KEY, result.data.deepLink);
-          window.open(result.data.deepLink, "_blank", "noopener,noreferrer");
+          openMessengerDeepLink(result.data.deepLink, "max", maxLinkFallback, maxLinkUrlInput);
           api.setStatus(
             statusEl,
             "Откройте MAX и нажмите Start — привязка завершится в боте. Статус обновится на этой странице.",
@@ -290,7 +314,7 @@
   function disconnectTanbotMax() {
     api.apiRequest("/api/profile/tanbot/max/disconnect", { method: "POST", body: {} }).then(function (result) {
       if (result.response.status === 200) {
-        sessionStorage.removeItem(MAX_LINK_STORAGE_KEY);
+        pendingTanbotDeepLinks.max = "";
         api.setStatus(statusEl, "MAX отключён.", "success");
         loadTanbotMax();
       }
@@ -334,7 +358,7 @@
   function disconnectTanbot() {
     api.apiRequest("/api/profile/tanbot/telegram/disconnect", { method: "POST", body: {} }).then(function (result) {
       if (result.response.status === 200) {
-        sessionStorage.removeItem(TG_LINK_STORAGE_KEY);
+        pendingTanbotDeepLinks.telegram = "";
         api.setStatus(statusEl, "Telegram отключён.", "success");
         loadTanbotTelegram();
       }

@@ -134,6 +134,23 @@ export async function findAccountByMaxUserId(
   return row.rows[0] ?? null;
 }
 
+export async function findMaxAccountByMessengerIdIncludingStopped(
+  client: PoolClient,
+  maxUserId: bigint,
+): Promise<{
+  user_id: string;
+  max_user_id: string;
+  notifications_enabled: boolean;
+  stopped_at: Date | null;
+} | null> {
+  const row = await client.query(
+    `SELECT user_id::text, max_user_id::text, notifications_enabled, stopped_at
+     FROM tanbot_max_accounts WHERE max_user_id = $1 LIMIT 1`,
+    [maxUserId.toString()],
+  );
+  return row.rows[0] ?? null;
+}
+
 export async function findAccountByUserId(
   client: PoolClient,
   userId: string,

@@ -1,5 +1,5 @@
 /**
- * Profile UI: start from button → synthetic webhook → focus refresh → confirm (no forced reload).
+ * Profile UI: one-step link, focus/pageshow refresh, in-memory deep-link fallback, opt-out preserved.
  * Run: TANBOT_STAGE2_BROWSER_SMOKE=1 npm run test:browser -- test/browser/tanbot-telegram-profile-link.browser.test.ts
  */
 import assert from "node:assert/strict";
@@ -67,7 +67,7 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
     });
   });
 
-  it("profile shows Telegram section and confirm links account after return refresh", async () => {
+  it("profile links Telegram after webhook without profile confirm", async () => {
     const { createApp } = await import("../../src/server");
     const app = createApp();
     const context = await browser.newContext({ baseURL: baseUrl });
@@ -114,11 +114,92 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
     await page.evaluate(() => {
       document.dispatchEvent(new Event("visibilitychange"));
       window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("pageshow"));
     });
-    await page.waitForSelector("button:text('Подтвердить привязку')", { timeout: 10000 });
-    await page.check("#tanbot-confirm-notifications");
-    await page.click("button:text('Подтвердить привязку')");
     await page.waitForSelector("button:text('Отключить Telegram')", { timeout: 10000 });
+    await context.close();
+  });
+
+  it("shows copyable link when popup is blocked and keeps notification opt-out", async () => {
+    await createTestUser({
+      databaseUrl,
+      email: "tanbot-browser2@test.local",
+      password: PASSWORD,
+      fullName: "Browser Tanbot Two",
+      role: "manager",
+    });
+    const { createApp } = await import("../../src/server");
+    const app = createApp();
+    const context = await browser.newContext({ baseURL: baseUrl });
+    const page = await context.newPage();
+    let startToken: string | null = null;
+    page.on("response", async (res) => {
+      if (
+        res.url().includes("/api/profile/tanbot/telegram/link/start") &&
+        res.request().method() === "POST" &&
+        res.status() === 200
+      ) {
+        const body = (await res.json()) as { deepLink?: string };
+        if (body.deepLink) startToken = new URL(body.deepLink).searchParams.get("start");
+      }
+    });
+
+    await page.goto("/login");
+    await page.fill("#email", "tanbot-browser2@test.local");
+    await page.fill("#password", PASSWORD);
+    await page.click("#login-button");
+    await page.goto("/profile");
+    await page.waitForSelector("#tanbot-telegram-section:not([hidden])", { timeout: 15000 });
+
+    await page.evaluate(() => {
+      window.open = () => null;
+    });
+    await page.click("button:text('Подключить Telegram')");
+    for (let i = 0; i < 30 && !startToken; i += 1) {
+      await page.waitForTimeout(100);
+    }
+    assert.ok(startToken);
+    await page.waitForSelector("#tanbot-telegram-link-fallback:not([hidden])", { timeout: 5000 });
+    const fallbackUrl = await page.inputValue("#tanbot-telegram-link-url");
+    assert.match(fallbackUrl, /start=/);
+
+    await request(app)
+      .post("/api/tanbot-telegram/webhook")
+      .set("X-Telegram-Bot-Api-Secret-Token", WEBHOOK_SECRET)
+      .send({
+        update_id: 88002,
+        message: {
+          message_id: 1,
+          from: { id: 88002, is_bot: false, username: "browser_user2" },
+          chat: { id: 88002, type: "private" },
+          date: 1,
+          text: `/start ${startToken}`,
+        },
+      });
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await page.waitForSelector("#tanbot-notifications-toggle", { timeout: 10000 });
+    await page.uncheck("#tanbot-notifications-toggle");
+    await page.waitForTimeout(300);
+
+    await request(app)
+      .post("/api/tanbot-telegram/webhook")
+      .set("X-Telegram-Bot-Api-Secret-Token", WEBHOOK_SECRET)
+      .send({
+        update_id: 88003,
+        message: {
+          message_id: 2,
+          from: { id: 88002, is_bot: false, username: "browser_user2" },
+          chat: { id: 88002, type: "private" },
+          date: 1,
+          text: `/start ${startToken}`,
+        },
+      });
+
+    const notifChecked = await page.isChecked("#tanbot-notifications-toggle");
+    assert.equal(notifChecked, false);
     await context.close();
   });
 });

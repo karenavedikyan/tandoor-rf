@@ -2,11 +2,18 @@ import type { Pool, PoolClient } from "pg";
 import { withTransaction } from "../access/db";
 import type { TanbotTelegramStage2Config } from "./stage2-config";
 import {
+  assertLkUserActiveForTanbotLink,
+  lockTanbotTelegramLkUser,
+  lockTanbotTelegramMessenger,
+} from "../tanbot/link-advisory-locks";
+import {
   attachTelegramToLinkAttempt,
   cancelActiveLinkAttempts,
   findAccountByTelegramUserId,
   findAccountByUserId,
+  findLinkAttemptByTokenHash,
   findPendingLinkAttemptForUser,
+  findTelegramAccountByMessengerIdIncludingStopped,
   insertLinkAttempt,
   insertLinkAudit,
   lockLinkAttemptByTokenHash,
@@ -68,6 +75,8 @@ export async function startTanbotLink(
   const expiresAt = new Date(Date.now() + config.linkTokenTtlMinutes * 60_000);
 
   const attemptId = await withTransaction(async (client) => {
+    await lockTanbotTelegramLkUser(client, userId);
+    await assertLkUserActiveForTanbotLink(client, userId);
     const existing = await findAccountByUserId(client, userId);
     if (existing && !existing.stopped_at) {
       throw Object.assign(new Error("Telegram уже подключён."), { http: 409 });
@@ -94,8 +103,11 @@ async function finalizeTelegramLinkAttemptOnClient(
   client: PoolClient,
   attemptId: string,
   userId: string,
-  enableNotifications: boolean,
-): Promise<void> {
+  options: { enableNotifications: boolean; preserveNotificationPreference?: boolean },
+): Promise<{ notificationsEnabled: boolean }> {
+  await lockTanbotTelegramLkUser(client, userId);
+  await assertLkUserActiveForTanbotLink(client, userId);
+
   const attemptRow = await client.query(
     `SELECT id::text, user_id::text, expires_at, consumed_at, cancelled_at,
             telegram_user_id::text, telegram_chat_id::text, telegram_username
@@ -130,35 +142,53 @@ async function finalizeTelegramLinkAttemptOnClient(
   }
 
   const tgUserId = BigInt(attempt.telegram_user_id);
-  await client.query(`SELECT pg_advisory_xact_lock(845001, hashtext($1::text))`, [tgUserId.toString()]);
+  await lockTanbotTelegramMessenger(client, tgUserId);
 
-  const other = await findAccountByTelegramUserId(client, tgUserId);
-  if (other && other.user_id !== userId) {
+  const ownRow = await findAccountByUserId(client, userId);
+  if (ownRow && !ownRow.stopped_at && ownRow.telegram_user_id !== attempt.telegram_user_id) {
+    throw Object.assign(new Error("Сначала отключите текущий Telegram в профиле."), { http: 409 });
+  }
+
+  const messengerRow = await findTelegramAccountByMessengerIdIncludingStopped(client, tgUserId);
+  if (messengerRow && messengerRow.user_id !== userId) {
     throw Object.assign(new Error("Этот Telegram уже привязан к другому сотруднику."), { http: 409 });
   }
 
-  await client.query(`DELETE FROM tanbot_telegram_accounts WHERE user_id = $1::uuid`, [userId]);
-  const inserted = await client.query<{ user_id: string }>(
-    `INSERT INTO tanbot_telegram_accounts (user_id, telegram_user_id, telegram_chat_id, telegram_username, notifications_enabled, stopped_at)
-     VALUES ($1::uuid, $2, $3, $4, $5, NULL)
-     ON CONFLICT (telegram_user_id) DO UPDATE SET
-       telegram_chat_id = EXCLUDED.telegram_chat_id,
-       telegram_username = EXCLUDED.telegram_username,
-       notifications_enabled = EXCLUDED.notifications_enabled,
-       stopped_at = NULL,
-       linked_at = NOW()
-     WHERE tanbot_telegram_accounts.user_id = EXCLUDED.user_id
-     RETURNING user_id::text`,
-    [userId, attempt.telegram_user_id, attempt.telegram_chat_id, attempt.telegram_username, enableNotifications],
-  );
-  if (!inserted.rows[0] || inserted.rows[0].user_id !== userId) {
-    throw Object.assign(new Error("Этот Telegram уже привязан к другому сотруднику."), { http: 409 });
+  const preserve = options.preserveNotificationPreference === true;
+  const nextNotifications =
+    preserve && messengerRow && messengerRow.user_id === userId
+      ? messengerRow.notifications_enabled
+      : options.enableNotifications;
+
+  if (ownRow || messengerRow) {
+    const updated = await client.query<{ notifications_enabled: boolean }>(
+      `UPDATE tanbot_telegram_accounts
+       SET telegram_user_id = $2,
+           telegram_chat_id = $3,
+           telegram_username = $4,
+           notifications_enabled = $5,
+           stopped_at = NULL,
+           linked_at = NOW()
+       WHERE user_id = $1::uuid
+       RETURNING notifications_enabled`,
+      [userId, attempt.telegram_user_id, attempt.telegram_chat_id, attempt.telegram_username, nextNotifications],
+    );
+    if (!updated.rowCount) {
+      throw Object.assign(new Error("Не удалось обновить привязку Telegram."), { http: 409 });
+    }
+  } else {
+    await client.query(
+      `INSERT INTO tanbot_telegram_accounts (user_id, telegram_user_id, telegram_chat_id, telegram_username, notifications_enabled, stopped_at)
+       VALUES ($1::uuid, $2, $3, $4, $5, NULL)`,
+      [userId, attempt.telegram_user_id, attempt.telegram_chat_id, attempt.telegram_username, nextNotifications],
+    );
   }
 
   await client.query(
     `UPDATE tanbot_telegram_link_attempts SET consumed_at = NOW(), confirmed_at = NOW() WHERE id = $1::uuid`,
     [attemptId],
   );
+  return { notificationsEnabled: nextNotifications };
 }
 
 export async function confirmTanbotLink(
@@ -169,7 +199,7 @@ export async function confirmTanbotLink(
 ): Promise<{ linked: true }> {
   const enableNotifications = options.enableNotifications === true;
   await withTransaction(async (client) => {
-    await finalizeTelegramLinkAttemptOnClient(client, attemptId, userId, enableNotifications);
+    await finalizeTelegramLinkAttemptOnClient(client, attemptId, userId, { enableNotifications });
     await insertLinkAudit(client, { userId, actorUserId: userId, action: "link_confirm", detail: { attemptId } });
   });
   return { linked: true };
@@ -177,6 +207,7 @@ export async function confirmTanbotLink(
 
 export async function disconnectTanbotLink(pool: Pool, userId: string): Promise<void> {
   await withTransaction(async (client) => {
+    await lockTanbotTelegramLkUser(client, userId);
     await client.query(
       `UPDATE tanbot_telegram_accounts SET stopped_at = NOW(), notifications_enabled = FALSE WHERE user_id = $1::uuid`,
       [userId],
@@ -237,8 +268,14 @@ export async function consumeStartTokenForTelegramUser(
 ): Promise<"linked" | "invalid" | "conflict"> {
   const tokenHash = hashLinkStartToken(input.startToken, config.linkTokenPepper);
   const run = async (client: PoolClient) => {
+    const peek = await findLinkAttemptByTokenHash(client, tokenHash);
+    if (!peek) {
+      return "invalid";
+    }
+    await lockTanbotTelegramLkUser(client, peek.user_id);
+
     const attempt = await lockLinkAttemptByTokenHash(client, tokenHash);
-    if (!attempt) {
+    if (!attempt || attempt.user_id !== peek.user_id) {
       return "invalid";
     }
 
@@ -253,6 +290,12 @@ export async function consumeStartTokenForTelegramUser(
     }
     if (existingAccount && existingAccount.user_id !== attempt.user_id) {
       return "conflict";
+    }
+
+    try {
+      await assertLkUserActiveForTanbotLink(client, attempt.user_id);
+    } catch {
+      return "invalid";
     }
 
     const ok = await attachTelegramToLinkAttempt(client, {
@@ -271,7 +314,20 @@ export async function consumeStartTokenForTelegramUser(
       action: "telegram_start",
       detail: { attemptId: attempt.id },
     });
-    await finalizeTelegramLinkAttemptOnClient(client, attempt.id, attempt.user_id, true);
+    try {
+      const alreadyActive =
+        existingAccount &&
+        existingAccount.user_id === attempt.user_id &&
+        attempt.telegram_user_id === input.telegramUserId.toString();
+      await finalizeTelegramLinkAttemptOnClient(client, attempt.id, attempt.user_id, {
+        enableNotifications: true,
+        preserveNotificationPreference: !!alreadyActive,
+      });
+    } catch (err: unknown) {
+      const http = (err as { http?: number }).http;
+      if (http === 409) return "conflict";
+      throw err;
+    }
     await insertLinkAudit(client, {
       userId: attempt.user_id,
       actorUserId: null,
