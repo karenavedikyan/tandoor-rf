@@ -175,6 +175,71 @@ describe("tan-tracker registry cleanup (isolated PG)", { concurrency: false }, (
     assert.deepEqual(archive.body.applied, [memberCode]);
   });
 
+  it("bootstrap canDeleteBeforeReceipt is false after first_custody_at", async () => {
+    const adminUserId = (
+      await pool.query<{ id: string }>(`SELECT id FROM users WHERE email = $1`, [
+        "registry-cleanup-admin@test.local",
+      ])
+    ).rows[0]!.id;
+    const client = await pool.connect();
+    const code = "REGRCVD1";
+    try {
+      const party = await ensurePartyForUserOnWrite(client, adminUserId, "Registry Admin", null);
+      const other = (
+        await client.query<{ id: string }>(
+          `INSERT INTO tt_parties (kind, display_name, phone_e164, created_by_user_id)
+           VALUES ('external', 'Holder ext', '+79990003344', $1::uuid) RETURNING id::text`,
+          [adminUserId],
+        )
+      ).rows[0]!.id;
+      await client.query(
+        `INSERT INTO tt_transfers (id, public_code, item_title, status, creator_party_id, holder_party_id,
+          handoff_version, row_version, first_custody_at)
+         VALUES ($1, $2, 'Received track', 'active', $3, $4, 1, 1, NOW())`,
+        ["tt-reg-rcvd-1", code, party.id, other],
+      );
+    } finally {
+      client.release();
+    }
+    const boot = await request(app)
+      .get("/api/tan-tracker/bootstrap")
+      .set({ Origin: ORIGIN, Cookie: adminCookie });
+    const order = boot.body.orders.find((o: { id: string }) => o.id === code);
+    assert.equal(order?.canDeleteBeforeReceipt, false);
+  });
+
+  it("bootstrap canDeleteBeforeReceipt is false for legacy audit without first_custody_at", async () => {
+    const adminUserId = (
+      await pool.query<{ id: string }>(`SELECT id FROM users WHERE email = $1`, [
+        "registry-cleanup-admin@test.local",
+      ])
+    ).rows[0]!.id;
+    const client = await pool.connect();
+    const code = "REGLEG1";
+    const transferId = "tt-reg-leg-audit-1";
+    try {
+      const party = await ensurePartyForUserOnWrite(client, adminUserId, "Registry Admin", null);
+      await client.query(
+        `INSERT INTO tt_transfers (id, public_code, item_title, status, creator_party_id, holder_party_id,
+          handoff_version, row_version, first_custody_at)
+         VALUES ($1, $2, 'Legacy audit', 'active', $3, $3, 1, 1, NULL)`,
+        [transferId, code, party.id],
+      );
+      await client.query(
+        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+         VALUES ($1, $2::uuid, $3, 'code_verify_ok', '{}'::jsonb)`,
+        [transferId, adminUserId, party.id],
+      );
+    } finally {
+      client.release();
+    }
+    const boot = await request(app)
+      .get("/api/tan-tracker/bootstrap")
+      .set({ Origin: ORIGIN, Cookie: adminCookie });
+    const order = boot.body.orders.find((o: { id: string }) => o.id === code);
+    assert.equal(order?.canDeleteBeforeReceipt, false);
+  });
+
   it("admin can delete pending transfer before first receipt (bootstrap hint + API)", async () => {
     const adminUserId = (
       await pool.query<{ id: string }>(`SELECT id FROM users WHERE email = $1`, [

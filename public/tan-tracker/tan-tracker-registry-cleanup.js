@@ -165,16 +165,15 @@
     );
   }
 
+  function usesServerDeleteEligibility() {
+    return (deps.isLkRuntime && deps.isLkRuntime()) || deps.isExternalShell();
+  }
+
   function canDeleteTrack(o) {
     if (cleanupPreviewReadOnly() || !o || !deps.orderVisible(o)) return false;
+    if (usesServerDeleteEligibility()) return o.canDeleteBeforeReceipt === true;
     if (typeof o.canDeleteBeforeReceipt === "boolean") return o.canDeleteBeforeReceipt;
-    var actor = registryActorId();
-    var creator = orderCreatorId(o);
-    var roleOk = canManageRegistry() || (creator && creator === actor);
-    if (!roleOk) return false;
-    if (orderIsCompleted(o)) return false;
-    if (deps.hasConfirmedHandoff && deps.hasConfirmedHandoff(o)) return false;
-    return true;
+    return false;
   }
 
   function cleanupEligible(o, mode) {

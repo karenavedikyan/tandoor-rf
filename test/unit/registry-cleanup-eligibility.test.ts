@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canShowDeleteBeforeReceipt } from "../../src/tan-tracker/registry-cleanup/eligibility";
+import {
+  canShowDeleteBeforeReceipt,
+  computeCanDeleteBeforeReceiptDto,
+} from "../../src/tan-tracker/registry-cleanup/eligibility";
 import type { TanTrackerOrderDto } from "../../src/tan-tracker/types";
 
 describe("registry cleanup eligibility", () => {
@@ -38,6 +41,24 @@ describe("registry cleanup eligibility", () => {
         previewReadOnly: false,
         isAdmin: true,
       },
+    );
+    assert.equal(ok, false);
+  });
+
+  it("computeCanDeleteBeforeReceiptDto is false when legacy audit confirms custody", () => {
+    const o = { id: "LEG1", createdById: "c", status: "active" } as TanTrackerOrderDto;
+    const actor = {
+      userId: "u1",
+      role: "admin",
+      partyId: "a",
+      previewReadOnly: false,
+      isAdmin: true,
+    };
+    const ok = computeCanDeleteBeforeReceiptDto(
+      o,
+      { id: "tt-leg-1", status: "active", first_custody_at: null },
+      actor,
+      new Set(["tt-leg-1"]),
     );
     assert.equal(ok, false);
   });

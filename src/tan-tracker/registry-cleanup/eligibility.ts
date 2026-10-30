@@ -93,6 +93,19 @@ export function canShowDeleteBeforeReceipt(
   return true;
 }
 
+/** Authoritative DTO hint — same rules as `canDeleteOrder`, including legacy audit. */
+export function computeCanDeleteBeforeReceiptDto(
+  o: TanTrackerOrderDto,
+  row: Pick<TanTrackerTransferRow, "id" | "status" | "first_custody_at">,
+  actor: RegistryCleanupActor | null,
+  auditConfirmedTransferIds: Set<string>,
+): boolean {
+  if (!actor) return false;
+  if (!canShowDeleteBeforeReceipt(o, row, actor)) return false;
+  if (auditConfirmedTransferIds.has(row.id)) return false;
+  return true;
+}
+
 export async function canDeleteOrder(
   client: PoolClient,
   o: TanTrackerOrderDto,

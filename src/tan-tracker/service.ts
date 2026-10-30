@@ -13,7 +13,9 @@ import {
   partyToContact,
 } from "./repository";
 import { canViewOrder, tanTrackerNavAllowed } from "./scope";
-import { isBeforeFirstConfirmedCustody } from "./custody-state";
+import { isBeforeFirstConfirmedCustody, transferIdsWithConfirmedFirstCustodyAudit } from "./custody-state";
+import { computeCanDeleteBeforeReceiptDto } from "./registry-cleanup/eligibility";
+import type { RegistryCleanupActor } from "./registry-cleanup/context";
 import { loadTanTrackerTeamEmployeeGuids } from "./team-scope";
 import type { TanTrackerContactDto, TanTrackerOrderDto, TanTrackerScopeContext } from "./types";
 import { loadPartyEmployeeMap } from "./party-employee-map";
@@ -144,6 +146,21 @@ export async function buildTanTrackerBootstrap(
     contacts = mergeTanTrackerContactLists(contacts, catalog);
   }
 
+  const auditConfirmedIds = await transferIdsWithConfirmedFirstCustodyAudit(
+    pool,
+    visibleTransferIds,
+  );
+  const deleteActor: RegistryCleanupActor | null =
+    actorPartyId && !ctx.previewReadOnly
+      ? {
+          userId: user.id,
+          role: user.role,
+          partyId: actorPartyId,
+          previewReadOnly: false,
+          isAdmin: user.role === "admin",
+        }
+      : null;
+
   const orders: TanTrackerOrderDto[] = [];
   for (const { row, timeline, revoked } of transferBundles) {
     if (!visibleTransferIds.includes(row.id)) continue;
@@ -159,14 +176,12 @@ export async function buildTanTrackerBootstrap(
       ) {
         dto.canEditDraft = true;
       }
-      if (
-        actorPartyId &&
-        !ctx.previewReadOnly &&
-        (user.role === "admin" || row.creator_party_id === actorPartyId) &&
-        isBeforeFirstConfirmedCustody(row)
-      ) {
-        dto.canDeleteBeforeReceipt = true;
-      }
+      dto.canDeleteBeforeReceipt = computeCanDeleteBeforeReceiptDto(
+        dto,
+        row,
+        deleteActor,
+        auditConfirmedIds,
+      );
       orders.push(dto);
     }
   }

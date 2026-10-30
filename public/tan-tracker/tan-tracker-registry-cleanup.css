@@ -354,8 +354,8 @@
   color: #fff8f8;
 }
 [data-theme="dark"] .tt-work .tt-selbtn:disabled .tt-selbtn-count {
-  background: color-mix(in srgb, var(--muted) 35%, var(--line));
-  color: var(--text);
+  background: #2a332f;
+  color: #eef3ea;
 }
 @media (prefers-reduced-motion: reduce) {
   .tt-registry-selection--active {

@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 import type { TanTrackerOrderDto, TanTrackerTimelineRow, TanTrackerTransferRow } from "../types";
-import { isBeforeFirstConfirmedCustody } from "../custody-state";
+import { transferIdsWithConfirmedFirstCustodyAudit } from "../custody-state";
+import { computeCanDeleteBeforeReceiptDto } from "../registry-cleanup/eligibility";
+import { registryCleanupActorFromExternalParty } from "../registry-cleanup/context";
 import { listRevokedParties, mapTransferToOrderDto } from "../repository";
 import { listAttachmentsForTransfers } from "../attachments";
 import { holderAccessTtlMs, signHolderAccess } from "../holder-access";
@@ -32,6 +34,9 @@ export async function loadExternalPersonOrders(
      LIMIT 100`,
     [partyId],
   );
+  const transferIds = rows.rows.map((r) => r.id);
+  const auditConfirmedIds = await transferIdsWithConfirmedFirstCustodyAudit(pool, transferIds);
+  const deleteActor = registryCleanupActorFromExternalParty(partyId);
   const orders: TanTrackerOrderDto[] = [];
   for (const row of rows.rows) {
     const timeline = await pool.query<TanTrackerTimelineRow>(
@@ -73,9 +78,12 @@ export async function loadExternalPersonOrders(
         exp: Date.now() + holderAccessTtlMs(),
       });
     }
-    if (row.creator_party_id === partyId && isBeforeFirstConfirmedCustody(row)) {
-      dto.canDeleteBeforeReceipt = true;
-    }
+    dto.canDeleteBeforeReceipt = computeCanDeleteBeforeReceiptDto(
+      dto,
+      row,
+      deleteActor,
+      auditConfirmedIds,
+    );
     orders.push(dto);
   }
   return orders;

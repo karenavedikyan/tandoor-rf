@@ -1,4 +1,4 @@
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 export type TransferCustodyRow = {
   id: string;
@@ -34,6 +34,22 @@ export async function loadTransferForCustodyCheck(
     [transferId],
   );
   return res.rows[0];
+}
+
+type Db = Pool | PoolClient;
+
+/** Transfer internal ids with canonical first-custody audit (legacy rows without first_custody_at). */
+export async function transferIdsWithConfirmedFirstCustodyAudit(
+  client: Db,
+  transferIds: string[],
+): Promise<Set<string>> {
+  if (transferIds.length === 0) return new Set();
+  const res = await client.query<{ transfer_id: string }>(
+    `SELECT DISTINCT transfer_id FROM tt_audit_log
+     WHERE transfer_id = ANY($1::text[]) AND action = ANY($2::text[])`,
+    [transferIds, FIRST_CUSTODY_AUDIT_ACTIONS],
+  );
+  return new Set(res.rows.map((r) => r.transfer_id));
 }
 
 export async function transferHasConfirmedFirstCustody(
