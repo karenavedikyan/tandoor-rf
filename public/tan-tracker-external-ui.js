@@ -83,6 +83,32 @@
     return fromContacts;
   }
 
+  function selectedRecipient(f, actingContactId) {
+    if (!f) return null;
+    var opts = staffOptions(actingContactId);
+    if (f.recipientUserId) {
+      var byUser = opts.find(function (c) {
+        return String(c.userId || "") === String(f.recipientUserId);
+      });
+      if (byUser) return byUser;
+      var fromContacts = contacts().find(function (c) {
+        return (
+          c.kind === "user" &&
+          (String(c.userId || "") === String(f.recipientUserId) || c.id === f.recipientUserId)
+        );
+      });
+      if (fromContacts) return fromContacts;
+    }
+    if (f.recipientId) {
+      var byPickId = opts.find(function (c) {
+        return c.id === f.recipientId;
+      });
+      if (byPickId) return byPickId;
+      return contactById(f.recipientId) || null;
+    }
+    return null;
+  }
+
   function externalOpenRequestCount(actor) {
     return orders().filter(function (o) {
       return (
@@ -239,8 +265,10 @@
     if (idx > 0 && f.item) rows.push(extRequestChatRow("Предмет", f.item));
     if (idx > 1) rows.push(extRequestChatRow("Фото", f.photoCount ? f.photoCount + " шт." : "без фото"));
     if (idx > 2) rows.push(extRequestChatRow("Комментарий", (f.comment && f.comment.trim()) || "—"));
-    if (idx > 3 && f.recipientId) {
-      rows.push(extRequestChatRow("Кому", contactById(f.recipientId)?.name || "—"));
+    if (idx > 3 && (f.recipientId || f.recipientUserId)) {
+      var stAct = state();
+      var recAnswer = selectedRecipient(f, stAct && stAct.actingContactId);
+      rows.push(extRequestChatRow("Кому", recAnswer?.name || "—"));
     }
     if (idx > 4) rows.push(extRequestChatRow("Срок", f.duePreset === "tomorrow" ? "Завтра" : "Сегодня"));
     return rows.length ? '<div class="tt-ext-chat-answers">' + rows.join("") + "</div>" : "";
@@ -295,7 +323,7 @@
     }
 
     if (phase === "done") {
-      var staff = contactById(f.recipientId);
+      var staff = selectedRecipient(f, st.actingContactId);
       var photos = f.photoCount || 0;
       return extRequestFrame(
         extRequestBotBubble(
@@ -365,11 +393,7 @@
         btn("Завтра", "ext-due-tomorrow", f.duePreset === "tomorrow" ? "tt-primary" : "") +
         "</div>";
     } else if (phase === "summary") {
-      var staffSum =
-        contactById(f.recipientId) ||
-        staffOptions(st.actingContactId).find(function (c) {
-          return c.id === f.recipientId;
-        });
+      var staffSum = selectedRecipient(f, st.actingContactId);
       body =
         extRequestBotBubble("Проверьте заявку. Если всё верно — создаю передачу и сообщаю сотруднику.") +
         '<dl class="tt-ext-chat-summary">' +

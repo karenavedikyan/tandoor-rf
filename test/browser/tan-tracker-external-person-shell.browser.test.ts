@@ -127,6 +127,8 @@ async function advanceExternalWizardToSummary(page: Page): Promise<void> {
   await page.click('[data-tt="ext-request-next"]');
   assert.equal((await draftDue).status(), 200);
   await page.waitForSelector(".tt-ext-chat-summary", { timeout: 15000 });
+  const summaryText = (await page.locator(".tt-ext-chat-summary").textContent()) || "";
+  assert.match(summaryText, /Shell Staff/);
 }
 
 async function launchRequired(engine: BrowserType<Browser>, t: { skip: (message?: string) => void }) {
@@ -169,6 +171,8 @@ async function runExternalRequestWizard(page: Page, baseUrl: string, est: string
   const confirmJson = (await confirmResp.json()) as { publicCode?: string };
   assert.ok(confirmJson.publicCode);
   await page.waitForSelector('[data-tt="ext-request-open-order"]', { timeout: 15000 });
+  const doneText = (await page.locator('[data-tt="ext-request"]').textContent()) || "";
+  assert.match(doneText, /Shell Staff/);
   return confirmJson.publicCode!;
 }
 
