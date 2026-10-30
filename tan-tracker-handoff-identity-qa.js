@@ -18,6 +18,7 @@ var TT_HANDOFF_IDENTITY_QA = await (async () => {
   await page.getByRole("button", { name: "Смотреть как текущий держатель (демо)", exact: true }).click();
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
@@ -46,7 +47,8 @@ var TT_HANDOFF_IDENTITY_QA = await (async () => {
   const qrRaw = await page.locator('[data-tt="qr-host"]').getAttribute("data-payload");
   const recipientHash = qrRaw.includes("#") ? qrRaw.slice(qrRaw.indexOf("#")) : "#" + qrRaw;
   await navHash(recipientHash);
-  await page.locator('[data-tt="recipient-screen"]').waitFor({ state: "visible" });
+  await page.locator('[data-tt="recipient-welcome"]').waitFor({ state: "visible" });
+  await ttAckRecipientWelcome();
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   await page.getByRole("button", { name: "Подтвердить получение", exact: true }).click();

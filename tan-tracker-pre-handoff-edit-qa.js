@@ -11,6 +11,7 @@ var TT_PRE_HANDOFF_EDIT_QA = await (async () => {
   ok(await page.evaluate(() => window.TanTrackerPrototype.canFullEditOrder("TT-2026-001")), "initiator holder can full-edit before confirm");
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
@@ -52,6 +53,7 @@ var TT_PRE_HANDOFF_EDIT_QA = await (async () => {
   await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();

@@ -112,6 +112,13 @@ try {
     if (await fab.isVisible()) await fab.click();
     else await page.locator('.tt-head-cta-desktop [data-tt="create"], [data-tt="create"]').first().click();
   };
+  globalThis.ttAckRecipientWelcome = async () => {
+    const welcome = page.locator('[data-tt="recipient-welcome"]');
+    if ((await welcome.count()) === 0) return;
+    await welcome.waitFor({ state: "visible" });
+    await page.locator('[data-tt="recipient-welcome-continue"]').click();
+    await page.locator('[data-tt="recipient-screen"]').waitFor({ state: "visible" });
+  };
   globalThis.ttWizardRecipientToReview = async () => {
     await page.locator('[data-create-phase="recipient"]').waitFor({ state: "visible" });
     if ((await page.locator('[data-tt="recipient-selected"]').count()) === 0) {

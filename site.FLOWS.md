@@ -68,6 +68,13 @@
 - **Doc:** `docs/prototype/unified-notification-center.md` (decision, privacy, LK vs delivery).
 - QA: `notification-demo-api-qa.mjs` (visitor isolation, validation, optional `registryPersonal` flags); `notification-center-qa.js` (39 checks incl. gated two-PUT save status); `run-browser-qa.mjs` starts demo backend + static `:4317`. Regression: `assistant-feedback-qa.js`, `tan-tracker-inbox-route-qa.js`.
 
+### Recipient invitation welcome (prototype QA target)
+- **Valid personal link/QR** (`tt_view=recipient`, token when issued): first screen **`data-tt="recipient-welcome"`** in existing limited recipient shell — logo/«Тандор», track id, heading **«Вам передают предмет»**, sender + item, short explanation, one green **«Посмотреть передачу»** (`data-tt="recipient-welcome-continue"`). Native **«Что это за ссылка?»** disclosure (`data-tt="recipient-welcome-about"`). Welcome click does **not** verify phone, generate receipt code, or bind messenger.
+- **After continue**: existing recipient flow (`data-tt="recipient-screen"`) — messenger pick / contact demo / code or QR receive; preamble **`data-tt="recipient-messenger-preamble"`** before channel step; channel-specific labels after pick. Intermediate-holder reminder, deadline, received/expired/stale/invalid semantics unchanged.
+- **Invalid/stale/expired token**: **`data-tt="recipient-welcome-invalid"`** — calm copy, ask sender for new link, **no** active CTA or receive controls, minimal exposure (no sender/item leak on blocked invite).
+- **Holder detail**: **`invitationLinkBlock`** adds labeled **demo message preview** (`data-tt="invite-message-preview"`), selectable fallback text (`data-tt="invite-message-text"`), **«Скопировать приглашение»** (`copy-invite-message`) + separate **«Скопировать ссылку»**; canonical URL unchanged. Generic non-personal OG/title on recipient entry only.
+- QA: `tan-tracker-invitation-welcome-qa.js`; `run-browser-qa.mjs` helper **`ttAckRecipientWelcome`**; existing recipient suites click through welcome before flow assertions.
+
 ### External recipient messengers (Telegram / MAX, prototype)
 - Recipient shell: choose **Telegram** or **MAX** (MAX disabled until demo config); simulated bot **share contact**; code only on recipient UI; holder enters code (no demo-code leak for external pending). Personal link/QR includes `tt_st` token. See `docs/prototype/external-recipient-messengers.md`.
 - QA: `tan-tracker-external-messenger-qa.js`, updated `tan-tracker-handoff-identity-qa.js`.

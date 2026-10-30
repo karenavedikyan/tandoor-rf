@@ -67,6 +67,7 @@ var TT_ATT_QA = await (async () => {
 
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   ok((await page.locator('[data-tt="attachments"]').count()) === 0, "recipient hides attachments before messenger verify");
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();

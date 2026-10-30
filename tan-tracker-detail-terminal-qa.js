@@ -10,6 +10,7 @@ var TT_DETAIL_TERMINAL_QA = await (async () => {
   await page.reload();
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();

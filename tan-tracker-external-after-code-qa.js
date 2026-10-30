@@ -14,6 +14,7 @@ var TT_EXTERNAL_AFTER_CODE_QA = await (async () => {
     await page.locator("#tt-root, [data-tt='recipient-received']").first().waitFor({ state: "visible" });
     await ttOpenDetailDemo();
     await page.locator('[data-tt="open-recipient"]').click();
+    await ttAckRecipientWelcome();
     await page.locator('[data-tt="recipient-screen"]').waitFor({ state: "visible" });
     const recipientHash = await page.evaluate(() => location.hash);
     await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();

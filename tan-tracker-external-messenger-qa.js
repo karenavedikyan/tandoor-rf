@@ -16,6 +16,7 @@ var TT_EXTERNAL_MESSENGER_QA = await (async () => {
   ok(invite.includes("tt_st="), "invite carries start token");
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
@@ -35,6 +36,7 @@ var TT_EXTERNAL_MESSENGER_QA = await (async () => {
   await page.reload();
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   ok(await page.locator('[data-tt="pick-channel"][data-channel="max"]').isDisabled(), "MAX disabled without demo checkbox");
   await ttOpenDemoSettings();
   await page.locator('[data-tt="demo-max-enabled"]').check();

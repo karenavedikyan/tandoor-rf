@@ -69,6 +69,7 @@ var TT_RELAY_QA = await (async () => {
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   if (await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').count()) {
     await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
     await page.getByRole("button", { name: /Поделиться контактом/ }).click();
@@ -122,6 +123,7 @@ var TT_RELAY_QA = await (async () => {
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   await page.locator('[data-tt="recipient-screen"], [data-tt="pick-channel"]').first().waitFor({ state: "visible" });
   if (await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').count()) {
     await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();

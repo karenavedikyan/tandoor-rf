@@ -180,12 +180,28 @@ var TT_REDESIGN_QA = await (async () => {
   ok(wizardTop < 120, "1440 wizard card near top of main (not vertically centered)");
 
   await page.setViewportSize({ width: 390, height: 812 });
-  await page.goto(
-    `${base}/#tan-tracker?role=manager&tt_view=recipient&tt_order=TT-2026-001&tt_via=qr&tt_rcv=ext_01&tt_hv=1`
-  );
+  await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
   await page.reload();
-  await page.locator('[data-tt="recipient-screen"]').waitFor({ state: "visible" });
-  await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  await page.locator("#tt-root").waitFor({ state: "visible" });
+  const recipientUrl = await page.evaluate(() => {
+    const o = window.TanTrackerPrototype.orders().find((x) => x.id === "TT-2026-001");
+    const inv = o?.activeInvitation;
+    const p = new URLSearchParams({
+      role: "manager",
+      tt_view: "recipient",
+      tt_order: o.id,
+      tt_hv: String(inv.hv),
+      tt_rcv: inv.pendingId,
+      tt_via: "qr",
+      tt_st: inv.startTokenPlain,
+    });
+    return `#tan-tracker?${p}`;
+  });
+  await page.goto(`${base}/${recipientUrl}`);
+  await page.reload();
+  await ttAckRecipientWelcome();
+  await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
+  await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   ok((await page.locator('[data-tt="qr-host"]').count()) === 0, "recipient QR flow has no empty qr-host block");
 
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
