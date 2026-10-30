@@ -1,7 +1,9 @@
-/** MAX message image attachment (platform API body.attachments). */
+import { validateMaxMediaDownloadUrl } from "../../tanbot-max/max-media-url";
+
+/** Incoming MAX `message_created` image attachment (PhotoAttachmentPayload). */
 export function parseMaxImageFromMessage(
   message: Record<string, unknown>,
-): { downloadUrl: string; fileName: string } | null {
+): { downloadUrl: string; fileName: string; mediaToken: string | null } | null {
   const body = message.body;
   const attachmentsRaw =
     body && typeof body === "object" && !Array.isArray(body)
@@ -12,21 +14,23 @@ export function parseMaxImageFromMessage(
     if (!att || typeof att !== "object") continue;
     const row = att as Record<string, unknown>;
     const type = typeof row.type === "string" ? row.type.toLowerCase() : "";
-    if (type !== "image" && type !== "photo") continue;
+    if (type !== "image") continue;
     const payload = row.payload;
     if (!payload || typeof payload !== "object") continue;
     const p = payload as Record<string, unknown>;
-    const url =
-      (typeof p.url === "string" && p.url) ||
-      (typeof p.download_url === "string" && p.download_url) ||
-      (typeof p.photo_url === "string" && p.photo_url) ||
-      "";
-    if (!url.startsWith("https://")) continue;
+    const token = typeof p.token === "string" && p.token.trim() ? p.token.trim() : null;
+    const urlRaw = typeof p.url === "string" && p.url.trim() ? p.url.trim() : "";
+    if (token && !urlRaw) {
+      return { downloadUrl: "", fileName: "photo.jpg", mediaToken: token };
+    }
+    if (!urlRaw) continue;
+    const allowed = validateMaxMediaDownloadUrl(urlRaw);
+    if (!allowed.ok) continue;
     const fileName =
       (typeof p.file_name === "string" && p.file_name) ||
       (typeof p.filename === "string" && p.filename) ||
       "photo.jpg";
-    return { downloadUrl: url, fileName };
+    return { downloadUrl: allowed.url.href, fileName, mediaToken: token };
   }
   return null;
 }

@@ -27,6 +27,19 @@ export async function resolveKnownExternalPartyByPhone(
     throw Object.assign(new Error("Этот номер принадлежит сотруднику. Используйте личный кабинет."), { http: 403 });
   }
 
+  const canonical = await client.query<{ party_id: string }>(
+    `SELECT party_id::text FROM tt_phone_canonical_parties WHERE phone_e164 = $1 LIMIT 1`,
+    [phoneE164],
+  );
+  if (canonical.rows[0]) {
+    const party = await client.query<{ id: string; display_name: string }>(
+      `SELECT id::text, display_name FROM tt_parties WHERE id = $1::uuid AND kind = 'external' LIMIT 1`,
+      [canonical.rows[0].party_id],
+    );
+    if (party.rows[0]) {
+      return { partyId: party.rows[0].id, displayName: party.rows[0].display_name };
+    }
+  }
   const row = await client.query<{ id: string; display_name: string }>(
     `SELECT id::text, display_name FROM tt_parties
      WHERE kind = 'external' AND phone_e164 = $1
@@ -36,5 +49,15 @@ export async function resolveKnownExternalPartyByPhone(
   );
   const party = row.rows[0];
   if (!party) return null;
+  const dup = await client.query<{ c: number }>(
+    `SELECT COUNT(*)::int AS c FROM tt_parties WHERE kind = 'external' AND phone_e164 = $1`,
+    [phoneE164],
+  );
+  if ((dup.rows[0]?.c ?? 0) > 1) {
+    throw Object.assign(
+      new Error("Для номера найдено несколько контактов. Администратор должен выбрать основной."),
+      { http: 409 },
+    );
+  }
   return { partyId: party.id, displayName: party.display_name };
 }

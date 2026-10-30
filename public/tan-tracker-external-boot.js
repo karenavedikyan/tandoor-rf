@@ -22,24 +22,9 @@
 
   function applyExternal(data) {
     window.__TT_EXTERNAL_PERSON__ = true;
-    window.__TT_LK_BOOTSTRAP__ = {
-      externalPerson: true,
-      lkMode: false,
-      actorPartyId: data.partyId || null,
-      contacts: [
-        {
-          id: data.partyId || data.personId,
-          kind: "external",
-          name: data.displayName,
-          phone: data.phone,
-        },
-      ],
-      orders: data.orders || [],
-      capability: data.capability,
-      navAllowed: false,
-      previewReadOnly: false,
-      prototypeRole: "manager",
-    };
+    window.__TT_EXTERNAL_CAP__ = data.capability || "";
+    window.__TT_LK_BOOTSTRAP__ = data;
+    if (!window.__TT_LK_BOOTSTRAP__.lkMode) window.__TT_LK_BOOTSTRAP__.lkMode = true;
     if (window.TanTrackerPrototype && window.TanTrackerPrototype.hydrateFromServer) {
       window.TanTrackerPrototype.hydrateFromServer(window.__TT_LK_BOOTSTRAP__);
     }

@@ -326,6 +326,12 @@ describe("external person blocker fixes", { concurrency: false }, () => {
     assert.equal(orders.length, 1);
     assert.equal(orders[0]!.id, "VIS");
     assert.ok(orders[0]!.timeline.every((t) => t.from === extParty || t.to === extParty));
+    const { loadExternalHistoricalSummaries } = await import(
+      "../../src/tan-tracker/external-person/external-person-orders"
+    );
+    const hist = await loadExternalHistoricalSummaries(pool, extParty);
+    assert.equal(hist.length, 1);
+    assert.equal(hist[0]!.id, "HID");
   });
 
   it("decline writes audit and external messenger outbox (not holder self timeline)", async () => {
@@ -336,10 +342,9 @@ describe("external person blocker fixes", { concurrency: false }, () => {
       fullName: "Decline Staff",
       role: "manager",
     });
-    const pool = getPool()!;
-    const client = await pool.connect();
+    const setupPool = getPool()!;
+    const client = await setupPool.connect();
     const personId = randomUUID();
-    let externalPartyId = "";
     let transferId = "EXTDECL1";
     try {
       await client.query("BEGIN");
@@ -377,6 +382,7 @@ describe("external person blocker fixes", { concurrency: false }, () => {
     }
 
     const app = await loadApp();
+    const pool = getPool()!;
     const login = await request(app)
       .post("/api/auth/login")
       .set("Origin", ORIGIN)

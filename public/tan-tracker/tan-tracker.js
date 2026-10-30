@@ -4123,7 +4123,11 @@
     if (state.view === "transfer" && o) return transferView(o);
     if (state.view === "code" && o) return codeView(o);
     if (state.view === "detail" && o) return detailView(o);
+    if (isExternalShell() && state.view === "ext-request" && window.TtExternalUi?.extRequestView) {
+      return window.TtExternalUi.extRequestView();
+    }
     if (isExternalShell() && o) return detailView(o);
+    if (isExternalShell() && window.TtExternalUi?.externalShellHomeHtml) return window.TtExternalUi.externalShellHomeHtml();
     if (isExternalShell()) return `<div class="tt-empty"><p>Нет доступных передач для этого участника.</p></div>`;
     return registryView();
   }
@@ -4208,9 +4212,11 @@
       inDetailFocus || inCreateWizard || state.view === "code" || state.view === "transfer" || isExternalShell();
     const chrome = inCreateWizard
       ? ""
-      : ext
-        ? `<div class="tt-external-bar"><strong>${E(contactById(state.actingContactId)?.name || "Внешний участник")}</strong>${btn("Выйти из демо-профиля", 'data-tt="clear-act"')}</div>`
-        : `<label>Текущий сотрудник (демо)<select data-tt="employee">${Object.keys(employees)
+      : ext && window.TtExternalUi?.externalActionBarHtml
+        ? window.TtExternalUi.externalActionBarHtml()
+        : ext
+          ? `<div class="tt-external-bar"><strong>${E(contactById(state.actingContactId)?.name || "Внешний участник")}</strong>${btn("Выйти из демо-профиля", 'data-tt="clear-act"')}</div>`
+          : `<label>Текущий сотрудник (демо)<select data-tt="employee">${Object.keys(employees)
             .map((id) => {
               const label = Sc()?.employeeDemoOptionLabel?.(id, employees) || employees[id].name;
               return `<option value="${id}" ${state.employeeId === id ? "selected" : ""}>${E(label)}</option>`;
@@ -5419,12 +5425,24 @@
       if (!copy.activeInvitation && copy.pendingId) syncInvitation(copy);
       if (copy.attachments && copy.attachments.length) {
         copy.attachments = copy.attachments.map((a) => {
-          const previewUrl = Att()?.lkAttachmentThumbUrl
-            ? Att().lkAttachmentThumbUrl(copy.id, a.id)
-            : `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}?preview=thumb`;
-          const downloadUrl = Att()?.lkAttachmentDownloadUrl
-            ? Att().lkAttachmentDownloadUrl(copy.id, a.id)
-            : `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}?download=1`;
+          const extUrl =
+            data.externalPerson && window.TanTrackerExternal?.attachmentUrl
+              ? window.TanTrackerExternal.attachmentUrl(copy.id, a.id, true)
+              : null;
+          const extDl =
+            data.externalPerson && window.TanTrackerExternal?.attachmentUrl
+              ? window.TanTrackerExternal.attachmentUrl(copy.id, a.id, false)
+              : null;
+          const previewUrl =
+            extUrl ||
+            (Att()?.lkAttachmentThumbUrl
+              ? Att().lkAttachmentThumbUrl(copy.id, a.id)
+              : `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}?preview=thumb`);
+          const downloadUrl =
+            extDl ||
+            (Att()?.lkAttachmentDownloadUrl
+              ? Att().lkAttachmentDownloadUrl(copy.id, a.id)
+              : `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}?download=1`);
           return {
             id: a.id,
             name: a.name,
@@ -5467,10 +5485,18 @@
     } else {
       state.actingContactId = data.actorContact?.id || data.actorPartyId || null;
     }
-    if (data.publicHolder) {
-      state.publicHolderAccessToken = authoritativeHat || state.publicHolderAccessToken || "";
-      state.orderId = data.orders?.[0]?.id || state.orderId;
-      window.__TT_PUBLIC_HOLDER__ = true;
+    if (data.publicHolder || (data.externalPerson && data.holderAccessToken)) {
+      state.publicHolderAccessToken = authoritativeHat || data.holderAccessToken || state.publicHolderAccessToken || "";
+      if (data.publicHolder) state.orderId = data.orders?.[0]?.id || state.orderId;
+      window.__TT_PUBLIC_HOLDER__ = !!state.publicHolderAccessToken;
+    }
+    if (data.externalPerson) {
+      window.__TT_EXTERNAL_PERSON__ = true;
+      window.__TT_EXTERNAL_CAP__ = data.capability || window.__TT_EXTERNAL_CAP__ || "";
+      state.historicalSummaries = data.historicalSummaries || [];
+    }
+    if (data.lkMode && data.externalPerson) {
+      state.lkCanWrite = data.capabilities?.canWrite !== false;
     }
     if (!skipUrlRead) {
       if (window.__TT_PUBLIC_RECIPIENT__) {

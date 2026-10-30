@@ -253,6 +253,9 @@ export async function handleExternalPersonMaxPhoto(
   if ((count.rows[0]?.c ?? 0) >= 5) {
     return { text: "Не более 5 фото. Напишите «пропустить» или продолжите на следующем шаге." };
   }
+  if (!input.downloadUrl?.trim()) {
+    return { text: "Изображение принимается только с серверов MAX. Отправьте фото заново из чата." };
+  }
   const bytes = await fetchMaxImageBytes(input.downloadUrl);
   if (!bytes.ok) return { text: bytes.message };
   const key = `external-draft/${draft.id}/${crypto.randomUUID()}-${input.fileName ?? "photo.jpg"}`;

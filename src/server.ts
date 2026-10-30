@@ -37,6 +37,7 @@ import { createTanbotMaxProfileRouter } from "./tanbot-max/profile-router";
 import { createTanbotMaxWebhookRouter } from "./tanbot-max/webhook-router";
 import { stageAttachmentHandler } from "./tan-tracker/attachments";
 import { publicHolderStageAttachmentHandler } from "./tan-tracker/public-holder";
+import { uploadExternalWebDraftPhotoHandler } from "./tan-tracker/external-person/web-draft-handlers";
 import { attachAccessContext, blockPreviewWrites } from "./access/middleware";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
 import { changePasswordHandler } from "./profile/password-handlers";
@@ -172,6 +173,16 @@ export function createApp(): express.Application {
     csrfOriginProtection,
     (req, res, next) => {
       void publicHolderStageAttachmentHandler(req, res).catch(next);
+    },
+  );
+
+  app.post(
+    "/api/tan-tracker/public/external/request/photo",
+    express.raw({ type: "*/*", limit: "11mb" }),
+    requireDatabaseReady,
+    csrfOriginProtection,
+    (req, res, next) => {
+      void uploadExternalWebDraftPhotoHandler(req, res).catch(next);
     },
   );
 

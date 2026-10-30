@@ -2,9 +2,8 @@ import type { Request, Response } from "express";
 import { getPool } from "../../db/pool";
 import { setNoStore } from "../../http/no-store";
 import { apiError, ERROR_CODES } from "../../shared/errors";
-import { signExternalPersonCapability } from "./session-token";
 import { resolveExternalPersonAuth } from "./resolve-auth";
-import { loadExternalPersonOrders } from "./external-person-orders";
+import { buildExternalPersonBootstrapPayload } from "./bootstrap-build";
 
 export async function externalPersonBootstrapHandler(req: Request, res: Response): Promise<void> {
   const pool = getPool();
@@ -22,18 +21,7 @@ export async function externalPersonBootstrapHandler(req: Request, res: Response
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Сессия недоступна или истекла."));
     return;
   }
-  const orders = await loadExternalPersonOrders(pool, resolved.partyId);
-  const capability = signExternalPersonCapability(resolved.personId, 24 * 60 * 60 * 1000, resolved.accessEpoch);
+  const payload = await buildExternalPersonBootstrapPayload(pool, resolved);
   setNoStore(res);
-  res.status(200).json({
-    externalPerson: true,
-    personId: resolved.personId,
-    partyId: resolved.partyId,
-    displayName: resolved.displayName,
-    phone: resolved.phone,
-    capability,
-    orders,
-    navAllowed: false,
-    previewReadOnly: false,
-  });
+  res.status(200).json(payload);
 }

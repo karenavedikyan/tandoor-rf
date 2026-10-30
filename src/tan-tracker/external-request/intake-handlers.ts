@@ -23,16 +23,18 @@ export async function listExternalIntakeRecipientsPublicHandler(req: Request, re
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Сессия недоступна или истекла."));
     return;
   }
-  const rows = await pool.query<{ user_id: string; full_name: string }>(
-    `SELECT u.id::text AS user_id, u.full_name
+  const rows = await pool.query<{ user_id: string; full_name: string; accepts_external_tt_intake: boolean }>(
+    `SELECT u.id::text AS user_id, u.full_name, u.accepts_external_tt_intake
      FROM users u
-     WHERE u.status = 'active' AND u.accepts_external_tt_intake = TRUE
+     WHERE u.status = 'active'
      ORDER BY u.full_name ASC
-     LIMIT 200`,
+     LIMIT 500`,
   );
   const recipients = [];
   for (const row of rows.rows) {
-    if (await hasPriorTransferRelationship(pool, person.partyId, row.user_id)) {
+    const intakeOk = row.accepts_external_tt_intake === true;
+    const related = await hasPriorTransferRelationship(pool, person.partyId, row.user_id);
+    if (intakeOk || related) {
       recipients.push({ userId: row.user_id, fullName: row.full_name });
     }
   }
@@ -73,18 +75,18 @@ export async function listEligibleStaffForExternalParty(
   client: import("pg").Pool | import("pg").PoolClient,
   externalPartyId: string,
 ): Promise<Array<{ userId: string; fullName: string }>> {
-  const rows = await client.query<{ user_id: string; full_name: string }>(
-    `SELECT u.id::text AS user_id, u.full_name
+  const rows = await client.query<{ user_id: string; full_name: string; accepts_external_tt_intake: boolean }>(
+    `SELECT u.id::text AS user_id, u.full_name, u.accepts_external_tt_intake
      FROM users u
-     WHERE u.status = 'active' AND u.accepts_external_tt_intake = TRUE
+     WHERE u.status = 'active'
      ORDER BY u.full_name ASC
-     LIMIT 200`,
+     LIMIT 500`,
   );
   const out: Array<{ userId: string; fullName: string }> = [];
   for (const row of rows.rows) {
-    if (await hasPriorTransferRelationship(client, externalPartyId, row.user_id)) {
-      out.push({ userId: row.user_id, fullName: row.full_name });
-    }
+    const intakeOk = row.accepts_external_tt_intake === true;
+    const related = await hasPriorTransferRelationship(client, externalPartyId, row.user_id);
+    if (intakeOk || related) out.push({ userId: row.user_id, fullName: row.full_name });
   }
   return out;
 }

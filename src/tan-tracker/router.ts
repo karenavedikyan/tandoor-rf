@@ -35,9 +35,16 @@ import { publicExternalMessengerPortalHandler } from "./external-messenger/publi
 import { createExternalMessengerInviteHandler } from "./external-messenger/lk-handlers";
 import { externalPersonBootstrapHandler } from "./external-person/bootstrap-handlers";
 import { externalPersonLogoutAllHandler } from "./external-person/logout-handlers";
+import { publicExternalAttachmentHandler } from "./external-person/public-attachment-handlers";
+import {
+  confirmExternalWebDraftHandler,
+  getExternalWebDraftHandler,
+  uploadExternalWebDraftPhotoHandler,
+  upsertExternalWebDraftHandler,
+} from "./external-person/web-draft-handlers";
 import { declineExternalRequestHandler } from "./external-request/decline-mutation";
 import { listLkNotificationsHandler, markLkNotificationsReadHandler } from "./lk-notifications-handlers";
-import { adminRefreshPhoneDedupeHandler } from "./admin-phone-dedupe-handlers";
+import { adminRefreshPhoneDedupeHandler, adminSetPhoneCanonicalHandler } from "./admin-phone-dedupe-handlers";
 import {
   listExternalIntakeRecipientsPublicHandler,
   patchStaffExternalIntakeHandler,
@@ -130,6 +137,22 @@ export function createTanTrackerRouter(): express.Router {
     void externalPersonLogoutAllHandler(req, res).catch(next);
   });
 
+  router.get("/public/external/request/draft", requireDatabaseReady, (req, res, next) => {
+    void getExternalWebDraftHandler(req, res).catch(next);
+  });
+
+  router.post("/public/external/request/draft", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void upsertExternalWebDraftHandler(req, res).catch(next);
+  });
+
+  router.post("/public/external/request/confirm", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
+    void confirmExternalWebDraftHandler(req, res).catch(next);
+  });
+
+  router.get("/public/external/attachments/:attId", requireDatabaseReady, (req, res, next) => {
+    void publicExternalAttachmentHandler(req, res).catch(next);
+  });
+
   router.get("/public/external/intake-recipients", requireDatabaseReady, (req, res, next) => {
     void listExternalIntakeRecipientsPublicHandler(req, res).catch(next);
   });
@@ -140,6 +163,10 @@ export function createTanTrackerRouter(): express.Router {
 
   router.post("/admin/phone-dedupe/refresh", csrfProtection, ...writeChain, (req, res, next) => {
     void adminRefreshPhoneDedupeHandler(req, res).catch(next);
+  });
+
+  router.post("/admin/phone-dedupe/canonical", csrfProtection, ...writeChain, (req, res, next) => {
+    void adminSetPhoneCanonicalHandler(req, res).catch(next);
   });
 
   router.get("/transfers/:id/attachments/:attId", ...readChain, (req, res, next) => {

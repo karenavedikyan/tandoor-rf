@@ -19,6 +19,20 @@ export async function insertLkNotification(
   );
 }
 
+export async function enqueueExternalDeclinedNotification(
+  client: PoolClient,
+  input: { transferId: string; staffUserId: string; itemTitle: string; reason: string | null },
+): Promise<void> {
+  await insertLkNotification(client, {
+    userId: input.staffUserId,
+    transferId: input.transferId,
+    eventType: "tan_tracker.external_declined",
+    title: "Заявка отклонена",
+    body: input.reason ? input.itemTitle + ": " + input.reason : input.itemTitle,
+    idempotencyKey: `tt-ext-decline-lk:${input.transferId}:${input.staffUserId}`,
+  });
+}
+
 export async function enqueueExternalCreatedNotifications(
   client: PoolClient,
   input: { transferId: string; staffUserId: string; externalPartyId: string; itemTitle: string },

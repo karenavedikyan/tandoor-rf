@@ -234,17 +234,28 @@ async function processUpdateInTransaction(
           inlineButtons: handoff.maxInlineButtons,
         };
       }
-    } else if (typeof update.imageDownloadUrl === "string" && update.imageDownloadUrl) {
-      const ext = isExternalMessengerFeatureEnabled()
-        ? await handleExternalPersonMaxPhoto(client, {
-            chatId: update.chatId,
-            maxUserId: update.maxUserId,
-            downloadUrl: update.imageDownloadUrl,
-            fileName: typeof update.imageFileName === "string" ? update.imageFileName : null,
-          })
-        : null;
-      if (ext) {
-        reply = { userId: update.maxUserId, chatId: update.chatId, text: ext.text };
+    } else if (
+      (typeof update.imageDownloadUrl === "string" && update.imageDownloadUrl) ||
+      (typeof update.imageMediaToken === "string" && update.imageMediaToken)
+    ) {
+      if (!update.imageDownloadUrl && update.imageMediaToken) {
+        reply = {
+          userId: update.maxUserId,
+          chatId: update.chatId,
+          text: "Не удалось загрузить изображение по токену. Отправьте фото ещё раз из галереи MAX.",
+        };
+      } else if (typeof update.imageDownloadUrl === "string" && update.imageDownloadUrl) {
+        const ext = isExternalMessengerFeatureEnabled()
+          ? await handleExternalPersonMaxPhoto(client, {
+              chatId: update.chatId,
+              maxUserId: update.maxUserId,
+              downloadUrl: update.imageDownloadUrl,
+              fileName: typeof update.imageFileName === "string" ? update.imageFileName : null,
+            })
+          : null;
+        if (ext) {
+          reply = { userId: update.maxUserId, chatId: update.chatId, text: ext.text };
+        }
       }
     } else if (commandText) {
       if (isExternalMessengerFeatureEnabled()) {

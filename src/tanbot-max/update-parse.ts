@@ -17,6 +17,7 @@ export type ParsedMaxWebhookUpdate = {
   callbackPayload: string | null;
   imageDownloadUrl?: string | null;
   imageFileName?: string | null;
+  imageMediaToken?: string | null;
 };
 
 export type ParsedMaxContactWebhookUpdate = {
@@ -263,8 +264,9 @@ export function parseMaxWebhookUpdate(raw: unknown):
             startPayload: null,
             commandText: null,
             callbackPayload: null,
-            imageDownloadUrl: image.downloadUrl,
+            imageDownloadUrl: image.downloadUrl || null,
             imageFileName: image.fileName,
+            imageMediaToken: image.mediaToken,
           },
         };
       }
