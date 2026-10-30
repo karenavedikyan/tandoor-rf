@@ -7,6 +7,7 @@ import { apiError, ERROR_CODES } from "../../shared/errors";
 import { resolveExternalPersonAuth } from "./resolve-auth";
 import { requirePersonMessengerProvenance } from "./messenger-provenance";
 import { confirmExternalRequestDraft } from "../external-request/confirm";
+import { ensureActiveExternalRequestDraft, loadActiveExternalRequestDraft } from "../external-request/draft-store";
 import { buildExternalPersonBootstrapPayload } from "./bootstrap-build";
 import { writeAttachmentBytes } from "../attachments";
 import { detectImageMimeFromMagic } from "../../tanbot-telegram/bounded-binary-fetch";
@@ -33,6 +34,7 @@ export async function getExternalWebDraftHandler(req: Request, res: Response): P
   const draft = await pool.query<{ id: string; step: string; payload: Record<string, unknown> }>(
     `SELECT id::text, step, payload FROM tt_external_request_drafts
      WHERE channel = $1 AND messenger_chat_id = $2 AND person_id = $3::uuid
+       AND confirmed_transfer_id IS NULL
      ORDER BY updated_at DESC LIMIT 1`,
     [provenance.channel, provenance.messengerChatId, person.personId],
   );
@@ -51,19 +53,28 @@ export async function upsertExternalWebDraftHandler(req: Request, res: Response)
   const payload = (req.body as { payload?: Record<string, unknown> })?.payload ?? {};
   const pool = getPool()!;
   const provenance = await requirePersonMessengerProvenance(pool, person.personId);
-  const row = await pool.query<{ id: string }>(
-    `INSERT INTO tt_external_request_drafts (channel, messenger_chat_id, person_id, step, payload)
-     VALUES ($1, $2, $3::uuid, $4, $5::jsonb)
-     ON CONFLICT (channel, messenger_chat_id) DO UPDATE SET
-       person_id = EXCLUDED.person_id,
-       step = EXCLUDED.step,
-       payload = EXCLUDED.payload,
-       updated_at = NOW()
-     RETURNING id::text`,
-    [provenance.channel, provenance.messengerChatId, person.personId, step, JSON.stringify(payload)],
-  );
+  const row = await withTransaction(async (client) => {
+    const active = await loadActiveExternalRequestDraft(client, provenance.channel, provenance.messengerChatId);
+    if (active) {
+      await client.query(
+        `UPDATE tt_external_request_drafts
+         SET person_id = $2::uuid, step = $3, payload = $4::jsonb, updated_at = NOW()
+         WHERE id = $1::uuid`,
+        [active.id, person.personId, step, JSON.stringify(payload)],
+      );
+      return { id: active.id };
+    }
+    const created = await ensureActiveExternalRequestDraft(client, {
+      channel: provenance.channel,
+      messengerChatId: provenance.messengerChatId,
+      personId: person.personId,
+      step,
+      payload: payload as Record<string, unknown>,
+    });
+    return { id: created.id };
+  });
   setNoStore(res);
-  res.status(200).json({ draftId: row.rows[0]!.id, step });
+  res.status(200).json({ draftId: row.id, step });
 }
 
 export async function uploadExternalWebDraftPhotoHandler(req: Request, res: Response): Promise<void> {

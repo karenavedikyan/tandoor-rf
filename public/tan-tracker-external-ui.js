@@ -365,7 +365,11 @@
         btn("Завтра", "ext-due-tomorrow", f.duePreset === "tomorrow" ? "tt-primary" : "") +
         "</div>";
     } else if (phase === "summary") {
-      var staffSum = contactById(f.recipientId);
+      var staffSum =
+        contactById(f.recipientId) ||
+        staffOptions(st.actingContactId).find(function (c) {
+          return c.id === f.recipientId;
+        });
       body =
         extRequestBotBubble("Проверьте заявку. Если всё верно — создаю передачу и сообщаю сотруднику.") +
         '<dl class="tt-ext-chat-summary">' +

@@ -35,6 +35,8 @@ function setBotEnv(): void {
   process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = "true";
   process.env.TANBOT_MAX_ENABLED = "true";
   process.env.TANBOT_MAX_BOT_TOKEN = SYNTH_TOKEN;
+  process.env.TANBOT_MAX_BOT_USERNAME = "id231100522180_bot";
+  process.env.TANBOT_MAX_LINK_TOKEN_PEPPER = LINK_PEPPER;
   process.env.TANBOT_MAX_DELIVERY_ENABLED = "true";
 }
 

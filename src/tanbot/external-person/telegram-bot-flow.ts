@@ -8,6 +8,7 @@ import {
 import { isExternalMessengerFeatureEnabled } from "../../tan-tracker/external-messenger/config";
 import { findAccountByTelegramUserId } from "../../tanbot-telegram/link-repository";
 import { confirmExternalRequestDraft, type ExternalDraftPayload } from "../../tan-tracker/external-request/confirm";
+import { ensureActiveExternalRequestDraft, loadActiveExternalRequestDraft } from "../../tan-tracker/external-request/draft-store";
 import { listEligibleStaffForExternalParty } from "../../tan-tracker/external-request/intake-handlers";
 import { writeAttachmentBytes } from "../../tan-tracker/attachments";
 import crypto from "crypto";
@@ -31,25 +32,19 @@ function menuKeyboard(): Record<string, unknown> {
 }
 
 async function lockDraft(client: PoolClient, chatId: bigint) {
-  const row = await client.query<{ id: string; step: string; payload: ExternalDraftPayload; person_id: string | null }>(
-    `SELECT id::text, step, payload, person_id::text FROM tt_external_request_drafts
-     WHERE channel = $2 AND messenger_chat_id = $1 FOR UPDATE`,
-    [chatId.toString(), CHANNEL],
-  );
-  return row.rows[0] ?? null;
+  return loadActiveExternalRequestDraft(client, CHANNEL, chatId.toString());
 }
 
 async function ensureDraft(client: PoolClient, chatId: bigint, personId: string | null) {
   const existing = await lockDraft(client, chatId);
   if (existing) return existing;
-  const ins = await client.query<{ id: string; step: string; payload: ExternalDraftPayload }>(
-    `INSERT INTO tt_external_request_drafts (channel, messenger_chat_id, person_id, step, payload)
-     VALUES ($3, $1, $2::uuid, 'item', '{}'::jsonb)
-     ON CONFLICT (channel, messenger_chat_id) DO UPDATE SET updated_at = NOW()
-     RETURNING id::text, step, payload`,
-    [chatId.toString(), personId, CHANNEL],
-  );
-  return { ...ins.rows[0]!, person_id: personId };
+  return ensureActiveExternalRequestDraft(client, {
+    channel: CHANNEL,
+    messengerChatId: chatId.toString(),
+    personId,
+    step: "item",
+    payload: {},
+  });
 }
 
 export async function handleExternalPersonTelegramContact(

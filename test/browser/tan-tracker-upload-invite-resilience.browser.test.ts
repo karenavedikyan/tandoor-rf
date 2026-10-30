@@ -70,7 +70,12 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
     await page.waitForSelector('[data-create-phase="files"]', { timeout: 10000 });
   }
 
+  let externalTransferPhoneSeq = 0;
+
   async function createExternalTransfer(page: Page) {
+    externalTransferPhoneSeq += 1;
+    const phoneSuffix = String(2000 + externalTransferPhoneSeq).padStart(4, "0");
+    const newPhone = `+7999111${phoneSuffix}`;
     await page.goto(`${fixture.baseUrl}/tan-tracker`);
     await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
     await page.locator('[data-tt="create"]:visible, [data-tt="create-fab"]:visible').first().click();
@@ -79,7 +84,7 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
     await page.click('[data-tt="create-skip-files"]');
     await page.click('[data-tt="create-new-recipient"]');
     await page.waitForSelector('[data-create-phase="recipient-new-phone"]', { timeout: 15000 });
-    await page.fill('[data-tt-field="newPhone"]', "+79991112233");
+    await page.fill('[data-tt-field="newPhone"]', newPhone);
     await page.click('[data-tt="create-wizard-next"]');
     await page.waitForSelector('[data-create-phase="recipient-new-name"]', { timeout: 15000 });
     await page.fill('[data-tt-field="newName"]', "Ext Regression Recipient");

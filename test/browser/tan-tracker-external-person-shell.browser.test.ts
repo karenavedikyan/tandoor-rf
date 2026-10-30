@@ -295,6 +295,20 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
           publicCode,
           { timeout: 20000 },
         );
+        await page.waitForFunction(
+          () => {
+            const w = window as unknown as {
+              __TT_EXTERNAL_PERSON__?: boolean;
+              TanTrackerPrototype?: { state?: { actingContactId?: string }; contacts?: () => Array<{ id: string; kind: string }> };
+            };
+            const actor = w.TanTrackerPrototype?.state?.actingContactId;
+            const c = w.TanTrackerPrototype?.contacts?.().find((x) => x.id === actor);
+            return !!w.__TT_EXTERNAL_PERSON__ && c?.kind === "external";
+          },
+          undefined,
+          { timeout: 10000 },
+        );
+        assert.equal(await page.locator('[data-tt="complete"]').count(), 0);
 
         const attachments = staffPage.locator("details").filter({ has: staffPage.locator('[data-tt="attach-download"]') });
         if ((await attachments.getAttribute("open")) === null) {
@@ -343,13 +357,40 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
       const confirmResp = await confirmReq;
       assert.equal(confirmResp.status(), 200);
       const confirmJson = (await confirmResp.json()) as { publicCode?: string };
-      assert.ok(confirmJson.publicCode);
+      const firstCode = confirmJson.publicCode;
+      assert.ok(firstCode);
+      await page.click('[data-tt="ext-request-open-order"]');
+      await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 15000 });
+
+      await page.click('[data-tt="back-list"]');
+      await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 15000 });
+      await advanceExternalWizardToSummary(page);
+      const confirmReq2 = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/confirm") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-request-next"]');
+      const confirmResp2 = await confirmReq2;
+      assert.equal(confirmResp2.status(), 200);
+      const secondCode = ((await confirmResp2.json()) as { publicCode?: string }).publicCode;
+      assert.ok(secondCode);
+      assert.notEqual(secondCode, firstCode);
+
       await page.click('[data-tt="ext-request-open-order"]');
       await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 15000 });
 
       await captureVisualMatrix(page, "pending-detail", async () => {
         await page.waitForSelector('[data-tt="enter-code"]', { timeout: 10000 });
         assert.ok(await page.locator('[data-tt="enter-code"]').isVisible());
+        await page.waitForFunction(
+          (code) => {
+            const proto = (window as unknown as { TanTrackerPrototype?: { state?: { orderId?: string } } })
+              .TanTrackerPrototype;
+            return proto?.state?.orderId === code;
+          },
+          secondCode,
+          { timeout: 10000 },
+        );
       });
     } catch (err) {
       const shot = await saveBrowserDiagnostic(page, "visual-acceptance-failure");

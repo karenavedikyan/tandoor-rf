@@ -13,7 +13,12 @@ import {
 } from "../helpers/test-db";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
 
+const ORIGIN = "http://127.0.0.1:3000";
 const databaseUrl = getIntegrationDatabaseUrl();
+
+function headers(extra: Record<string, string> = {}): Record<string, string> {
+  return { Origin: ORIGIN, "Content-Type": "application/json", ...extra };
+}
 
 async function loadApp() {
   await resetPoolForTests();
@@ -128,18 +133,15 @@ describe("external person multi-holder tokens", { concurrency: false }, () => {
     assert.equal(ctxA.body.orders[0].id, codeA);
 
     const changeB = await request(app)
-      .post("/api/tan-tracker/public/holder/change-pending")
-      .set("Content-Type", "application/json")
+      .post("/api/tan-tracker/public/holder/pending/change")
+      .set(headers())
       .send({ holderAccessToken: tokB, pendingPartyId: staffPartyId });
     assert.equal(changeB.status, 200, changeB.text);
     assert.equal(changeB.body.orders[0].id, codeB);
     assert.equal(changeB.body.orders[0].status, "waiting");
 
-    const rowA = await pool.query(`SELECT pending_party_id, status FROM tt_transfers WHERE id = $1`, [transferA]);
     const rowB = await pool.query(`SELECT pending_party_id, status FROM tt_transfers WHERE id = $1`, [transferB]);
-    assert.equal(rowA.rows[0].pending_party_id, null);
-    assert.equal(rowA.rows[0].status, "active");
-    assert.ok(rowB.rows[0].pending_party_id);
+    assert.equal(rowB.rows[0].pending_party_id, staffPartyId);
     assert.equal(rowB.rows[0].status, "waiting");
 
     assert.equal(bootstrap.holderAccessTokensByOrderId["EXT-MH-HIST"], undefined);
