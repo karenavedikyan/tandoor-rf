@@ -79,18 +79,27 @@ export function canGeneralRestoreOrder(row: TanTrackerTransferRow, actor: Regist
   return actor.isAdmin && !actor.previewReadOnly && !!row.general_archived_at;
 }
 
+export function canShowDeleteBeforeReceipt(
+  o: TanTrackerOrderDto,
+  row: Pick<TanTrackerTransferRow, "status" | "first_custody_at">,
+  actor: RegistryCleanupActor,
+): boolean {
+  if (actor.previewReadOnly) return false;
+  const creator = orderCreatorPartyId(o);
+  const allowedRole = actor.isAdmin || (creator != null && creator === actor.partyId);
+  if (!allowedRole) return false;
+  if (row.status === "completed") return false;
+  if (row.first_custody_at != null) return false;
+  return true;
+}
+
 export async function canDeleteOrder(
   client: PoolClient,
   o: TanTrackerOrderDto,
   row: TanTrackerTransferRow,
   actor: RegistryCleanupActor,
 ): Promise<boolean> {
-  if (actor.previewReadOnly) return false;
-  const creator = orderCreatorPartyId(o);
-  const allowedRole = actor.isAdmin || (creator != null && creator === actor.partyId);
-  if (!allowedRole) return false;
-  if (!isBeforeFirstConfirmedCustody(row)) return false;
+  if (!canShowDeleteBeforeReceipt(o, row, actor)) return false;
   if (await transferHasConfirmedFirstCustody(client, row.id)) return false;
-  if (row.status === "completed") return false;
   return true;
 }

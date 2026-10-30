@@ -91,6 +91,8 @@ export type TanTrackerOrderDto = {
   rowVersion?: number;
   fromExternal?: boolean;
   generalArchived?: boolean;
+  /** Server hint for registry delete before first confirmed receipt (authoritative for UI). */
+  canDeleteBeforeReceipt?: boolean;
   /** Signed public-holder capability scoped to this order (external person bootstrap only). */
   holderAccessToken?: string | null;
 };

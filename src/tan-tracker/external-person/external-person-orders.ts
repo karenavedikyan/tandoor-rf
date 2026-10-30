@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import type { TanTrackerOrderDto, TanTrackerTimelineRow, TanTrackerTransferRow } from "../types";
+import { isBeforeFirstConfirmedCustody } from "../custody-state";
 import { listRevokedParties, mapTransferToOrderDto } from "../repository";
 import { listAttachmentsForTransfers } from "../attachments";
 import { holderAccessTtlMs, signHolderAccess } from "../holder-access";
@@ -71,6 +72,9 @@ export async function loadExternalPersonOrders(
         hv: row.handoff_version,
         exp: Date.now() + holderAccessTtlMs(),
       });
+    }
+    if (row.creator_party_id === partyId && isBeforeFirstConfirmedCustody(row)) {
+      dto.canDeleteBeforeReceipt = true;
     }
     orders.push(dto);
   }

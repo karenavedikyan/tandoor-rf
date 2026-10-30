@@ -1,0 +1,44 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { canShowDeleteBeforeReceipt } from "../../src/tan-tracker/registry-cleanup/eligibility";
+import type { TanTrackerOrderDto } from "../../src/tan-tracker/types";
+
+describe("registry cleanup eligibility", () => {
+  it("canShowDeleteBeforeReceipt allows admin on waiting pending transfer", () => {
+    const o = {
+      id: "P1",
+      createdById: "creator-party",
+      status: "waiting",
+      pendingId: "pending-party",
+    } as TanTrackerOrderDto;
+    const row = {
+      status: "waiting",
+      first_custody_at: null,
+      creator_party_id: "creator-party",
+    };
+    const ok = canShowDeleteBeforeReceipt(o, row, {
+      userId: "u1",
+      role: "admin",
+      partyId: "admin-party",
+      previewReadOnly: false,
+      isAdmin: true,
+    });
+    assert.equal(ok, true);
+  });
+
+  it("canShowDeleteBeforeReceipt denies after first_custody_at", () => {
+    const o = { id: "P2", createdById: "c", status: "active" } as TanTrackerOrderDto;
+    const ok = canShowDeleteBeforeReceipt(
+      o,
+      { status: "active", first_custody_at: new Date(), creator_party_id: "c" },
+      {
+        userId: "u1",
+        role: "admin",
+        partyId: "a",
+        previewReadOnly: false,
+        isAdmin: true,
+      },
+    );
+    assert.equal(ok, false);
+  });
+});

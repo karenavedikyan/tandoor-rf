@@ -159,6 +159,14 @@ export async function buildTanTrackerBootstrap(
       ) {
         dto.canEditDraft = true;
       }
+      if (
+        actorPartyId &&
+        !ctx.previewReadOnly &&
+        (user.role === "admin" || row.creator_party_id === actorPartyId) &&
+        isBeforeFirstConfirmedCustody(row)
+      ) {
+        dto.canDeleteBeforeReceipt = true;
+      }
       orders.push(dto);
     }
   }

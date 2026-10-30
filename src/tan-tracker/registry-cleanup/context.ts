@@ -37,11 +37,14 @@ export function registryCleanupActorFromExternalParty(partyId: string): Registry
   };
 }
 
-export function scopeContextFromActor(actor: RegistryCleanupActor): TanTrackerScopeContext {
+export function scopeContextFromActor(
+  actor: RegistryCleanupActor,
+  access?: Pick<AccessContext, "employeeId"> | null,
+): TanTrackerScopeContext {
   return {
     userId: actor.userId ?? "",
     role: actor.role,
-    employeeId: null,
+    employeeId: access?.employeeId ?? null,
     actorPartyId: actor.partyId,
     previewReadOnly: actor.previewReadOnly,
   };

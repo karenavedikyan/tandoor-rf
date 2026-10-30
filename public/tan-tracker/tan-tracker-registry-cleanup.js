@@ -167,15 +167,14 @@
 
   function canDeleteTrack(o) {
     if (cleanupPreviewReadOnly() || !o || !deps.orderVisible(o)) return false;
+    if (typeof o.canDeleteBeforeReceipt === "boolean") return o.canDeleteBeforeReceipt;
     var actor = registryActorId();
     var creator = orderCreatorId(o);
     var roleOk = canManageRegistry() || (creator && creator === actor);
     if (!roleOk) return false;
     if (orderIsCompleted(o)) return false;
     if (deps.hasConfirmedHandoff && deps.hasConfirmedHandoff(o)) return false;
-    if (o.canEditDraft && creator === actor) return true;
-    if (canManageRegistry() && creator === o.holderId && !o.pendingId) return true;
-    return false;
+    return true;
   }
 
   function cleanupEligible(o, mode) {

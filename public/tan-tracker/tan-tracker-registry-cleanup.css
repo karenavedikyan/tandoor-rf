@@ -334,6 +334,29 @@
 [data-theme="dark"] .tt-work .tt-check-input {
   background: var(--bg);
 }
+[data-theme="dark"] .tt-work .tt-check-input:checked,
+[data-theme="dark"] .tt-work .tt-check-input:indeterminate {
+  background: #3f6620;
+  border-color: #3f6620;
+}
+[data-theme="dark"] .tt-work .tt-selbtn-count {
+  background: #3f6620;
+  color: #f4fbea;
+}
+[data-theme="dark"] .tt-work .tt-selbtn--danger {
+  color: #f4b4b4;
+}
+[data-theme="dark"] .tt-work .tt-selbtn--danger svg {
+  color: #f4b4b4;
+}
+[data-theme="dark"] .tt-work .tt-selbtn--danger .tt-selbtn-count {
+  background: #9a3535;
+  color: #fff8f8;
+}
+[data-theme="dark"] .tt-work .tt-selbtn:disabled .tt-selbtn-count {
+  background: color-mix(in srgb, var(--muted) 35%, var(--line));
+  color: var(--text);
+}
 @media (prefers-reduced-motion: reduce) {
   .tt-registry-selection--active {
     animation: none;

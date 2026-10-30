@@ -4,8 +4,17 @@ import { withTransaction } from "../../access/db";
 import { getPool } from "../../db/pool";
 import { setNoStore } from "../../http/no-store";
 import { apiError, ERROR_CODES } from "../../shared/errors";
-import { findPartyByUserId, listAllTransferRows, listRevokedParties, listTimelineForTransfer, mapTransferToOrderDto } from "../repository";
-import { canViewOrder } from "../scope";
+import {
+  ensurePartyForUserOnWrite,
+  findPartyByUserId,
+  listAllTransferRows,
+  listRevokedParties,
+  listTimelineForTransfer,
+  mapTransferToOrderDto,
+} from "../repository";
+import { requireTanTrackerMutationAccess } from "../guards";
+import { resolveTanTrackerEffectiveUser } from "../effective-user";
+import { canViewOrder, orderParticipantIds } from "../scope";
 import { loadPartyEmployeeMap } from "../party-employee-map";
 import { loadTanTrackerTeamEmployeeGuids } from "../team-scope";
 import type { AccessContext } from "../../access/types";
@@ -52,16 +61,17 @@ async function buildOrderContext(actor: RegistryCleanupActor, access: AccessCont
   if (!pool) throw new Error("no pool");
   const teamGuids = access ? await loadTanTrackerTeamEmployeeGuids(access) : new Set<string>();
   const transfers = await listAllTransferRows(pool);
-  const partyEmployeeMap = new Map<string, string | null>();
+  const partyIds = new Set<string>();
   const orders: Array<{ row: (typeof transfers)[0]; dto: TanTrackerOrderDto }> = [];
-  const ctx = scopeContextFromActor(actor);
+  const ctx = scopeContextFromActor(actor, access);
   for (const row of transfers) {
     const timeline = await listTimelineForTransfer(pool, row.id);
     const revoked = await listRevokedParties(pool, row.id);
     const dto = mapTransferToOrderDto(row, timeline, revoked);
     orders.push({ row, dto });
-    partyEmployeeMap.set(row.holder_party_id, null);
+    for (const pid of orderParticipantIds(dto)) partyIds.add(pid);
   }
+  const partyEmployeeMap = await loadPartyEmployeeMap(pool, [...partyIds]);
   return { orders, ctx, teamGuids, partyEmployeeMap, contacts: [] as TanTrackerContactDto[] };
 }
 
@@ -184,24 +194,29 @@ async function runCleanup(
 }
 
 export async function lkRegistryCleanupHandler(req: AccessRequest, res: Response): Promise<void> {
+  const gate = requireTanTrackerMutationAccess(req, res);
+  if (!gate) return;
   setNoStore(res);
-  if (!req.authUser || !req.accessContext) {
-    res.status(401).json(apiError(ERROR_CODES.UNAUTHORIZED, "Требуется авторизация."));
-    return;
-  }
   const pool = getPool();
   if (!pool) {
     res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
     return;
   }
-  const party = await findPartyByUserId(pool, req.authUser.id);
-  const actor = registryCleanupActorFromAccess(req.authUser, req.accessContext, party?.id ?? null);
+  const user = resolveTanTrackerEffectiveUser(req.authUser!, gate.access);
+  let partyId = (await findPartyByUserId(pool, user.id))?.id ?? null;
+  if (!partyId) {
+    const ensured = await withTransaction((client) =>
+      ensurePartyForUserOnWrite(client, user.id, user.fullName, user.phone),
+    );
+    partyId = ensured.id;
+  }
+  const actor = registryCleanupActorFromAccess(req.authUser!, gate.access, partyId);
   if (!actor || actor.previewReadOnly) {
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Действие недоступно."));
     return;
   }
   try {
-    const result = await runCleanup(actor, req.body as CleanupBody, req.accessContext, null);
+    const result = await runCleanup(actor, req.body as CleanupBody, gate.access, null);
     res.status(200).json({ ok: true, ...result });
   } catch (e) {
     if (e instanceof Error && e.message === "DELETE_ACK") {
