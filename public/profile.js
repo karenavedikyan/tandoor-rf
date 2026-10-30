@@ -18,8 +18,6 @@
   var tanbotActions = document.getElementById("tanbot-telegram-actions");
   var tanbotNotifWrap = document.getElementById("tanbot-notifications-toggle-wrap");
   var tanbotNotifToggle = document.getElementById("tanbot-notifications-toggle");
-  var tanbotConfirmNotifWrap = document.getElementById("tanbot-confirm-notifications-wrap");
-  var tanbotConfirmNotifToggle = document.getElementById("tanbot-confirm-notifications");
   var tanbotRefreshTimer = null;
   var tanbotMaxSection = document.getElementById("tanbot-max-section");
   var tanbotMaxStatus = document.getElementById("tanbot-max-status");
@@ -27,8 +25,6 @@
   var tanbotMaxActions = document.getElementById("tanbot-max-actions");
   var tanbotMaxNotifWrap = document.getElementById("tanbot-max-notifications-toggle-wrap");
   var tanbotMaxNotifToggle = document.getElementById("tanbot-max-notifications-toggle");
-  var tanbotMaxConfirmNotifWrap = document.getElementById("tanbot-max-confirm-notifications-wrap");
-  var tanbotMaxConfirmNotifToggle = document.getElementById("tanbot-max-confirm-notifications");
   var pendingTanbotDeepLinks = { telegram: "", max: "" };
   var tgLinkFallback = document.getElementById("tanbot-telegram-link-fallback");
   var tgLinkUrlInput = document.getElementById("tanbot-telegram-link-url");
@@ -179,7 +175,6 @@
         tanbotNotifWrap.hidden = true;
       }
       tanbotPending.hidden = true;
-      if (tanbotConfirmNotifWrap) tanbotConfirmNotifWrap.hidden = true;
       showPendingDeepLink(tgLinkFallback, tgLinkUrlInput, pendingTanbotDeepLinks.telegram, d.linked);
       tanbotActions.innerHTML = "";
       if (!d.linked) {
@@ -244,7 +239,6 @@
         tanbotMaxNotifWrap.hidden = true;
       }
       tanbotMaxPending.hidden = true;
-      if (tanbotMaxConfirmNotifWrap) tanbotMaxConfirmNotifWrap.hidden = true;
       showPendingDeepLink(maxLinkFallback, maxLinkUrlInput, pendingTanbotDeepLinks.max, d.linked);
       tanbotMaxActions.innerHTML = "";
       if (!d.linked) {
@@ -293,24 +287,6 @@
     }, 400);
   }
 
-  function confirmTanbotMaxLink(attemptId) {
-    var enableNotifications =
-      tanbotMaxConfirmNotifToggle && !tanbotMaxConfirmNotifToggle.hidden && tanbotMaxConfirmNotifToggle.checked;
-    api
-      .apiRequest("/api/profile/tanbot/max/link/confirm", {
-        method: "POST",
-        body: { attemptId: attemptId, enableNotifications: !!enableNotifications },
-      })
-      .then(function (result) {
-        if (result.response.status === 200) {
-          api.setStatus(statusEl, "MAX подключён.", "success");
-          loadTanbotMax();
-        } else {
-          api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось подтвердить."), "error");
-        }
-      });
-  }
-
   function disconnectTanbotMax() {
     api.apiRequest("/api/profile/tanbot/max/disconnect", { method: "POST", body: {} }).then(function (result) {
       if (result.response.status === 200) {
@@ -335,24 +311,6 @@
           }
         });
     });
-  }
-
-  function confirmTanbotLink(attemptId) {
-    var enableNotifications =
-      tanbotConfirmNotifToggle && !tanbotConfirmNotifToggle.hidden && tanbotConfirmNotifToggle.checked;
-    api
-      .apiRequest("/api/profile/tanbot/telegram/link/confirm", {
-        method: "POST",
-        body: { attemptId: attemptId, enableNotifications: !!enableNotifications },
-      })
-      .then(function (result) {
-        if (result.response.status === 200) {
-          api.setStatus(statusEl, "Telegram подключён.", "success");
-          loadTanbotTelegram();
-        } else {
-          api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось подтвердить."), "error");
-        }
-      });
   }
 
   function disconnectTanbot() {

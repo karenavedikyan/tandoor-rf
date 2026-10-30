@@ -1,0 +1,10 @@
+/* Profile tanbot blocks: .field { display: grid } overrides native [hidden] on labels. */
+#tanbot-telegram-section[hidden],
+#tanbot-max-section[hidden] {
+  display: none !important;
+}
+
+#tanbot-telegram-section [hidden],
+#tanbot-max-section [hidden] {
+  display: none !important;
+}

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { after, before, describe, it } from "node:test";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 import request from "supertest";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import {
@@ -21,6 +21,21 @@ const PASSWORD = "StrongPass123!";
 const WEBHOOK_SECRET = "browser-max-webhook-sec16";
 const LINK_PEPPER = "browser-max-link-pepper16";
 const SYNTH_TOKEN = "SYNTH_MAX_TEST_TOKEN_0123456789abcdef";
+
+async function assertMaxNotificationControls(page: Page, linked: boolean): Promise<void> {
+  assert.equal(await page.locator("#tanbot-max-confirm-notifications").count(), 0);
+  assert.equal(await page.locator("#tanbot-max-confirm-notifications-wrap").count(), 0);
+  const checkboxes = page.locator("#tanbot-max-section input[type='checkbox']");
+  assert.equal(await checkboxes.count(), 1, "exactly one preference checkbox in MAX section");
+  const wrap = page.locator("#tanbot-max-notifications-toggle-wrap");
+  if (linked) {
+    assert.equal(await wrap.isVisible(), true);
+    assert.equal(await page.locator("#tanbot-max-notifications-toggle").isVisible(), true);
+  } else {
+    assert.equal(await wrap.isHidden(), true);
+    assert.equal(await page.locator("#tanbot-max-notifications-toggle").isHidden(), true);
+  }
+}
 
 describe("tanbot max profile link browser smoke", { concurrency: false, skip: !RUN }, () => {
   let browser: Browser;
@@ -91,6 +106,7 @@ describe("tanbot max profile link browser smoke", { concurrency: false, skip: !R
     await page.waitForURL(/\/(clients|profile)(\/|\?|$)/, { timeout: 20000 });
     await page.goto("/profile");
     await page.waitForSelector("#tanbot-max-section:not([hidden])", { timeout: 15000 });
+    await assertMaxNotificationControls(page, false);
     await page.click("button:text('Подключить MAX')");
     for (let i = 0; i < 30 && !startToken; i += 1) {
       await page.waitForTimeout(100);
@@ -113,6 +129,7 @@ describe("tanbot max profile link browser smoke", { concurrency: false, skip: !R
       window.dispatchEvent(new Event("focus"));
     });
     await page.waitForSelector("button:text('Отключить MAX')", { timeout: 10000 });
+    await assertMaxNotificationControls(page, true);
     await context.close();
   });
 });
