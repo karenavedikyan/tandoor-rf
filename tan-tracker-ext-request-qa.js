@@ -17,7 +17,18 @@ var TT_EXT_REQUEST_QA = await (async () => {
   await page.locator('[data-tt="ext-request"]').waitFor({ state: "visible" });
   await page.locator('[data-tt-field="extItem"]').fill("Заявка от клиента QA");
   await page.getByRole("button", { name: "Далее", exact: true }).click();
+  ok((await page.locator(".tt-ext-chat-step").textContent()).includes("Шаг 2"), "photo step is second");
+  await page.locator('[data-tt="attach-input"]').setInputFiles({
+    name: "ext-photo.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      "base64"
+    ),
+  });
+  await page.locator(".tt-att-item").first().waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await page.getByRole("button", { name: "Пропустить", exact: true }).click();
   const recipients = await page.locator('[data-tt-ext-pick]').count();
   ok(recipients >= 1 && recipients <= 8, "short staff recipient list");
   await page.locator('[data-tt-ext-pick]').first().click();
@@ -31,6 +42,7 @@ var TT_EXT_REQUEST_QA = await (async () => {
   });
   ok(createdId && createdId.startsWith("TT-2026-"), "order created with id");
   ok(await page.evaluate(() => window.TanTrackerPrototype.orders().find((x) => x.item === "Заявка от клиента QA").fromExternal), "fromExternal flag");
+  ok(await page.evaluate(() => (window.TanTrackerPrototype.orders().find((x) => x.item === "Заявка от клиента QA").attachments || []).length === 1), "photo from bot attached to order");
 
   await page.getByRole("button", { name: "Открыть мою передачу", exact: true }).click();
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });

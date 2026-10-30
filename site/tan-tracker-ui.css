@@ -511,3 +511,7 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
   z-index:45; max-width:min(420px,calc(100% - 32px)); padding:12px 16px; border-radius:var(--tt-radius-md);
   background:var(--text); color:var(--surface); font-size:14px; box-shadow:var(--tt-shadow);
 }
+
+/* Code entry (flow3): actions sit under the cells, nothing fixed over the keyboard */
+.tt-code-dock.tt-code-dock--inline { position:static; margin:16px 0 0; padding:0; background:transparent; border:0; backdrop-filter:none; max-width:none; }
+.tt-code-screen.tt-code-screen { padding-bottom:20px; }

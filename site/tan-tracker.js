@@ -564,7 +564,7 @@
   function attachSnapValid(snap) {
     if (!snap || snap.gen !== state.attachOpGen) return false;
     if (snap.target === "create") {
-      return state.view === "create";
+      return state.view === "create" || (state.view === "ext-request" && state.extRequestPhase === "photo");
     }
     return state.view === "detail" && snap.orderId === state.orderId;
   }
@@ -683,7 +683,29 @@
 
   function externalActionBarHtml() {
     if (!isExternalShell()) return "";
-    return `<div class="tt-external-bar tt-external-bar--page"><strong>${E(contactById(state.actingContactId)?.name || "Внешний участник")}</strong>${btn("Отправить предмет (бот, демо)", 'data-tt="ext-request-open"', "tt-btn-ghost")}${btn("Выйти из демо-профиля", 'data-tt="clear-act"')}</div>`;
+    const c = contactById(state.actingContactId);
+    const name = c?.name || "Внешний участник";
+    const phone = c?.phone ? fmtPhone(c.phone) : "";
+    const onHome = !state.orderId && state.view !== "ext-request";
+    if (!onHome) {
+      return `<div class="tt-ext-bar tt-ext-bar--compact" data-tt="external-bar">
+        ${btn("← Мои передачи", 'data-tt="back-list"', "tt-ext-bar-back")}
+        <span class="tt-ext-bar-name">${E(name)}</span>
+        ${btn("Выйти", 'data-tt="clear-act"', "tt-ext-bar-exit")}
+      </div>`;
+    }
+    return `<header class="tt-ext-head" data-tt="external-bar">
+      <div class="tt-ext-head-row">
+        <div class="tt-ext-head-id">
+          <p class="tt-ext-kicker">Мои передачи</p>
+          <h1 class="tt-ext-name">${E(name)}</h1>
+          <p class="tt-ext-sub">${phone ? `${E(phone)} · ` : ""}вход через Telegram или MAX</p>
+        </div>
+        ${btn("Выйти", 'data-tt="clear-act"', "tt-ext-bar-exit")}
+      </div>
+      ${btn("Отправить предмет", 'data-tt="ext-request-open"', "tt-primary tt-btn-block tt-ext-cta")}
+      <p class="tt-ext-cta-hint">Как в боте: что передаёте → фото → кому → срок. Сотрудник получит уведомление.</p>
+    </header>`;
   }
 
   function handoffUrl(o, inv) {
@@ -1296,7 +1318,7 @@
     });
   }
 
-  function createAttachmentsSection() {
+  function createAttachmentsSection(opts = {}) {
     if (!Att()) return "";
     const staged = [...state.attachStaging];
     return Att().blockHtml({
@@ -1306,9 +1328,9 @@
       inputKey: "create",
       omitTitle: true,
       pickerMode: "button",
-      pickerLabel: "Выбрать файл на устройстве",
+      pickerLabel: opts.pickerLabel || "Выбрать файл на устройстве",
       error: state.attachError,
-      hint: "Можно пропустить этот шаг, если фото не нужны.",
+      hint: opts.hint || "Можно пропустить этот шаг, если фото не нужны.",
     });
   }
 
@@ -2439,6 +2461,10 @@
     state.recipientMode = p.get("tt_view") === "recipient";
     const oid = p.get("tt_order") || p.get("tt_id");
     if (oid) state.orderId = oid;
+    else if (urlExternalActing && !p.get("tt_screen") && !state.recipientMode) {
+      state.orderId = null;
+      if (state.view !== "ext-request") state.view = "list";
+    }
     state.recipientVia = p.get("tt_via") === "qr" ? "qr" : "code";
     if (state.recipientMode && oid) {
       state.recipientTicket = {
@@ -3146,6 +3172,31 @@
         ${btn("Сканировать QR (демо)", 'data-tt="scan-qr-demo"', "tt-detail-alt-action")} ${btn("Скрыть QR", 'data-tt="tab-code"', "tt-detail-alt-action")}
       </div>`
         : "";
+    if (isExternalShell() && o.holderId === actor && !pendingIsExternal(o)) {
+      // Внешний держатель передаёт сотруднику: без персональной ссылки и правки трека — только код/QR и смена получателя.
+      return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-card">
+        <h3 class="tt-detail-task-heading">Передайте предмет</h3>
+        <p class="tt-detail-task-receiver">Кому: <strong>${E(p?.name || "—")}</strong>${p?.phone ? ` · ${E(fmtPhone(p.phone))}` : ""}</p>
+        <p class="tt-detail-task-instructions">${
+          o.dueAt ? `Срок: до ${E(dt(o.dueAt))}. ` : ""
+        }Сотрудник уже уведомлён. При встрече он назовёт 6-значный код или покажет QR — введите код здесь, и ответственность за предмет перейдёт ему.</p>
+        <div class="tt-handoff" data-tt="handoff-panel">
+          <div class="tt-handoff-actions">
+            ${btn("Ввести код", `data-tt="enter-code" ${heroAttr}`, "tt-primary tt-btn-block")}
+            ${tab === "qr" ? "" : btn("QR-код", 'data-tt="tab-qr"', "tt-detail-alt-action")}
+          </div>
+          ${qrBlock}
+        </div>
+        ${
+          fullEdit
+            ? `<div class="tt-handoff-recover" data-tt="handoff-recover">
+          ${btn("Сменить получателя", 'data-tt="change-pending"', "tt-detail-alt-action")}
+          <p class="tt-muted">Пока код не подтверждён, предмет числится за вами.</p>
+        </div>`
+            : ""
+        }
+      </section>`;
+    }
     return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-card">
       <h3 class="tt-detail-task-heading">Подтвердите передачу</h3>
       <p class="tt-detail-task-receiver">Получатель: <strong>${E(p?.name || "—")}</strong></p>
@@ -3512,10 +3563,61 @@
   function externalShellHomeHtml() {
     const actor = state.actingContactId;
     const rows = externalOrdersForActor(actor).filter((o) => orderVisible(o));
-    const cards = rows.length
-      ? `<div class="tt-cards" data-tt="external-order-list">${rows.map((o) => registryCardHtml(o, actor)).join("")}</div>`
-      : `<div class="tt-empty" data-tt="external-empty"><p>Нет активных передач для этого участника.</p></div>`;
+    const cutoff = now() - 30 * 86400000;
+    const groups = registryGroupOrders(rows, actor)
+      .map((g) =>
+        g.id === "done"
+          ? { ...g, title: "Недавно завершённые", items: g.items.filter((o) => (o.timeline?.[o.timeline.length - 1]?.at || 0) >= cutoff) }
+          : g.id === "progress"
+            ? { ...g, title: "В пути" }
+            : g
+      )
+      .filter((g) => g.items.length);
+    const cards = groups.length
+      ? `<div class="tt-ext-groups" data-tt="external-order-list">${groups
+          .map(
+            (g) => `<section class="tt-ext-group" data-tt-ext-group="${g.id}">
+          <h2 class="tt-ext-group-title">${E(g.title)} <span class="tt-ext-group-count">${g.items.length}</span></h2>
+          <div class="tt-cards">${g.items.map((o) => registryCardHtml(o, actor)).join("")}</div>
+        </section>`
+          )
+          .join("")}</div>`
+      : `<div class="tt-empty tt-ext-empty" data-tt="external-empty"><i data-lucide="package-open"></i><p>Пока нет передач.</p><p class="tt-muted">Когда сотрудник Тандор назначит вам передачу или вы отправите предмет через бота, она появится здесь.</p></div>`;
     return `<div class="tt-external-home" data-tt="external-home">${cards}</div>`;
+  }
+
+  const EXT_REQUEST_PHASES = ["item", "photo", "comment", "recipient", "due", "summary"];
+
+  function extRequestChatRow(label, value) {
+    return `<div class="tt-ext-chat-answer"><span class="tt-ext-chat-answer-label">${E(label)}</span><strong>${E(value)}</strong></div>`;
+  }
+
+  function extRequestAnswersHtml(f, phase) {
+    const idx = EXT_REQUEST_PHASES.indexOf(phase);
+    const rows = [];
+    if (idx > 0 && f.item) rows.push(extRequestChatRow("Предмет", f.item));
+    if (idx > 1) rows.push(extRequestChatRow("Фото", state.attachStaging.length ? `${state.attachStaging.length} шт.` : "без фото"));
+    if (idx > 2) rows.push(extRequestChatRow("Комментарий", f.comment?.trim() || "—"));
+    if (idx > 3 && f.recipientId) rows.push(extRequestChatRow("Кому", contactById(f.recipientId)?.name || "—"));
+    if (idx > 4) rows.push(extRequestChatRow("Срок", f.duePreset === "tomorrow" ? "Завтра" : "Сегодня"));
+    return rows.length ? `<div class="tt-ext-chat-answers">${rows.join("")}</div>` : "";
+  }
+
+  function extRequestFrame(inner, { step, total } = {}) {
+    const progress = step ? `<span class="tt-ext-chat-step">Шаг ${step} из ${total}</span>` : "";
+    return `<div class="tt-panel tt-ext-request" data-tt="ext-request">
+      <div class="tt-ext-chat-head">
+        <span class="tt-ext-chat-avatar" aria-hidden="true"><i data-lucide="bot"></i></span>
+        <div><h2>Отправить предмет</h2><p class="tt-ext-chat-sub">Бот Тан-трекера · демо диалога</p></div>
+        ${progress}
+      </div>
+      ${
+        step
+          ? `<div class="tt-ext-chat-progress" aria-hidden="true"><span style="width:${Math.round((step / total) * 100)}%"></span></div>`
+          : ""
+      }
+      ${inner}
+    </div>`;
   }
 
   function extRequestView() {
@@ -3524,10 +3626,8 @@
     const f = state.extRequestForm || { item: "", comment: "", recipientId: "", duePreset: "today" };
     state.extRequestForm = f;
     if (phase === "blocked") {
-      return `<div class="tt-panel tt-ext-request" data-tt="ext-request">
-        ${extRequestBotBubble("Открытых заявок уже 5 — дождитесь завершения.")}
-        <div class="tt-actions">${btn("Закрыть", 'data-tt="ext-request-close"')}</div>
-      </div>`;
+      return extRequestFrame(`${extRequestBotBubble("Открытых заявок уже 5 — дождитесь завершения хотя бы одной, затем попробуйте снова.")}
+        <div class="tt-ext-chat-actions">${btn("Закрыть", 'data-tt="ext-request-close"', "tt-primary tt-btn-block")}</div>`);
     }
     if (phase === "done") {
       const staff = contactById(f.recipientId);
@@ -3535,47 +3635,65 @@
       const dueText = createdOrder?.dueAt
         ? `${f.duePreset === "tomorrow" ? "завтра" : "сегодня"} до ${dt(createdOrder.dueAt).split(", ").pop()}`
         : f.duePreset === "tomorrow" ? "завтра" : "сегодня";
-      return `<div class="tt-panel tt-ext-request" data-tt="ext-request">
-        ${extRequestBotBubble(
-          `Заявка ${f.createdId} создана. Передайте «${f.item}» ${staff?.name || "—"} ${dueText}. При встрече он назовёт код из SMS или покажет QR — введите код на вашей странице.`
-        )}
-        <div class="tt-actions">${btn("Открыть мою передачу", 'data-tt="ext-request-open-order"', "tt-primary")}${btn("Закрыть", 'data-tt="ext-request-close"')}</div>
-      </div>`;
+      const photos = createdOrder?.attachments?.length || 0;
+      return extRequestFrame(`${extRequestBotBubble(
+        `Заявка ${f.createdId} создана${photos ? `, фото приложено (${photos})` : ""}. Передайте «${f.item}» — ${staff?.name || "—"} ${dueText}. При встрече сотрудник назовёт код из SMS или покажет QR — введите код на вашей странице передачи.`
+      )}
+        <div class="tt-ext-chat-actions">${btn("Открыть мою передачу", 'data-tt="ext-request-open-order"', "tt-primary tt-btn-block")}${btn("К списку", 'data-tt="ext-request-close"', "tt-btn-ghost tt-btn-block")}</div>`);
     }
+    const step = EXT_REQUEST_PHASES.indexOf(phase) + 1;
     let body = "";
+    let nextLabel = "Далее";
     if (phase === "item") {
-      body = `${extRequestBotBubble("Что передаёте?")}<label class="tt-wizard-field">Предмет<input data-tt-field="extItem" value="${E(f.item)}" autocomplete="off"></label>`;
+      body = `${extRequestBotBubble("Что передаёте?")}<label class="tt-wizard-field tt-ext-chat-field"><span class="tt-visually-hidden">Предмет</span><input data-tt-field="extItem" value="${E(f.item)}" autocomplete="off" placeholder="Например: ключи, договор, образцы"></label>`;
+    } else if (phase === "photo") {
+      body = `${extRequestBotBubble("Пришлите фото предмета — так сотруднику проще его узнать. Можно пропустить.")}<div class="tt-ext-chat-attach">${createAttachmentsSection({
+        pickerLabel: "Прикрепить фото",
+        hint: "Фото попадёт в карточку передачи, его увидит сотрудник-получатель.",
+      })}</div>`;
+      if (!state.attachStaging.length) nextLabel = "Пропустить";
     } else if (phase === "comment") {
-      body = `${extRequestBotBubble("Комментарий (необязательно)")}<label class="tt-wizard-field">Комментарий<input data-tt-field="extComment" value="${E(f.comment)}"></label>`;
+      body = `${extRequestBotBubble("Добавите комментарий? Например, «срочно» или «передать до обеда». Можно пропустить.")}<label class="tt-wizard-field tt-ext-chat-field"><span class="tt-visually-hidden">Комментарий</span><input data-tt-field="extComment" value="${E(f.comment)}" placeholder="Комментарий (необязательно)"></label>`;
+      if (!f.comment?.trim()) nextLabel = "Пропустить";
     } else if (phase === "recipient") {
       const opts = extRequestStaffOptions(extId);
-      body = `${extRequestBotBubble("Кому передать?")}<div class="tt-contact-pick" data-tt="ext-request-recipients">${opts
+      body = `${extRequestBotBubble("Кому передать? Это сотрудники, с которыми вы уже работали, и точки приёма Тандор.")}<div class="tt-contact-pick tt-ext-chat-pick" data-tt="ext-request-recipients">${opts
         .map(
           (c) =>
-            `<button type="button" data-tt-ext-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}">${E(c.name)}<br><small>${E(
+            `<button type="button" data-tt-ext-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}"><span class="tt-ext-pick-name">${E(c.name)}</span><small>${E(
               fmtPhone(c.phone)
             )}</small></button>`
         )
         .join("")}</div>`;
     } else if (phase === "due") {
-      body = `${extRequestBotBubble("До какого срока?")}<div class="tt-actions">${btn("Сегодня", 'data-tt="ext-due-today"', f.duePreset === "today" ? "tt-primary" : "")}${btn(
+      body = `${extRequestBotBubble("До какого срока нужно передать?")}<div class="tt-ext-chat-chips">${btn("Сегодня", 'data-tt="ext-due-today"', f.duePreset === "today" ? "tt-primary" : "")}${btn(
         "Завтра",
         'data-tt="ext-due-tomorrow"',
         f.duePreset === "tomorrow" ? "tt-primary" : ""
       )}</div>`;
     } else if (phase === "summary") {
       const staff = contactById(f.recipientId);
-      body = `${extRequestBotBubble("Проверьте заявку")}
-        <ul class="tt-muted"><li>${E(f.item)}</li><li>${E(f.comment || "—")}</li><li>${E(staff?.name || "—")}</li><li>${f.duePreset === "tomorrow" ? "Завтра" : "Сегодня"}</li></ul>`;
+      body = `${extRequestBotBubble("Проверьте заявку. Если всё верно — создаю передачу и сообщаю сотруднику.")}
+        <dl class="tt-ext-chat-summary">
+          <div><dt>Предмет</dt><dd>${E(f.item)}</dd></div>
+          <div><dt>Фото</dt><dd>${state.attachStaging.length ? `${state.attachStaging.length} шт.` : "без фото"}</dd></div>
+          <div><dt>Комментарий</dt><dd>${E(f.comment?.trim() || "—")}</dd></div>
+          <div><dt>Кому</dt><dd>${E(staff?.name || "—")}${staff?.phone ? `<small>${E(fmtPhone(staff.phone))}</small>` : ""}</dd></div>
+          <div><dt>Срок</dt><dd>${f.duePreset === "tomorrow" ? "Завтра" : "Сегодня"}</dd></div>
+        </dl>`;
+      nextLabel = "Создать заявку";
     }
-    const nextLabel = phase === "summary" ? "Создать заявку" : "Далее";
     const nextAction = phase === "summary" ? "ext-request-create" : "ext-request-next";
-    return `<div class="tt-panel tt-ext-request" data-tt="ext-request">
-      <h2>Отправить предмет (бот, демо)</h2>
+    return extRequestFrame(
+      `${extRequestAnswersHtml(f, phase)}
       ${body}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
-      <div class="tt-actions">${btn(nextLabel, `data-tt="${nextAction}"`, "tt-primary")}${btn("Назад", 'data-tt="ext-request-back"')}${btn("Отмена", 'data-tt="ext-request-close"')}</div>
-    </div>`;
+      <div class="tt-ext-chat-actions">
+        ${btn(nextLabel, `data-tt="${nextAction}"`, "tt-primary tt-btn-block")}
+        <div class="tt-ext-chat-secondary">${btn(step > 1 ? "Назад" : "К списку", 'data-tt="ext-request-back"', "tt-link")}${btn("Отмена", 'data-tt="ext-request-close"', "tt-link")}</div>
+      </div>`,
+      { step, total: EXT_REQUEST_PHASES.length }
+    );
   }
 
   function syncExtRequestFieldsFromDom() {
@@ -3627,6 +3745,11 @@
       attachments: [],
     };
     syncInvitation(order);
+    if (Att() && state.attachStaging.length) {
+      Att().mergeToOrder(order, state.attachStaging, extId);
+      state.attachStaging = [];
+      state.attachError = "";
+    }
     orders.unshift(order);
     f.createdId = id;
     state.extRequestPhase = "done";
@@ -3891,7 +4014,7 @@
           : "Демо без СМС: нажмите «Получить демо-код», затем введите цифры и «Подтвердить»."
       }</p>
       ${state.error ? `<p class="tt-error" data-tt="code-error">${E(state.error)}</p>` : ""}
-      <div class="tt-code-dock">${btn("Подтвердить", 'data-tt="confirm-code"', "tt-primary tt-btn-block")}${btn("Назад", 'data-tt="detail"', "tt-btn-ghost tt-btn-block")}</div>
+      <div class="tt-code-dock tt-code-dock--inline">${btn("Подтвердить", 'data-tt="confirm-code"', "tt-primary tt-btn-block")}${btn("Назад", 'data-tt="detail"', "tt-btn-ghost tt-btn-block")}</div>
     </div>`;
   }
 
@@ -4951,6 +5074,7 @@
         state.extRequestForm = { item: "", comment: "", recipientId: "", duePreset: "today" };
         state.view = "ext-request";
         state.error = "";
+        clearAttachStaging();
       }
       writeUrl();
       renderTracker();
@@ -4961,16 +5085,19 @@
       state.extRequestForm = null;
       state.view = "list";
       state.error = "";
+      if (state.attachStaging.length) clearAttachStaging();
       writeUrl();
       renderTracker();
       return;
     }
     if (action === "ext-request-back") {
-      const order = ["item", "comment", "recipient", "due", "summary"];
+      const order = EXT_REQUEST_PHASES;
       const idx = order.indexOf(state.extRequestPhase || "item");
       if (idx <= 0) {
         state.view = "list";
         state.extRequestPhase = null;
+        state.extRequestForm = null;
+        if (state.attachStaging.length) clearAttachStaging();
       } else state.extRequestPhase = order[idx - 1];
       state.error = "";
       writeUrl();
@@ -4992,8 +5119,8 @@
         renderTracker();
         return;
       }
-      const next = { item: "comment", comment: "recipient", recipient: "due", due: "summary" };
-      state.extRequestPhase = next[phase] || "summary";
+      const idx = EXT_REQUEST_PHASES.indexOf(phase);
+      state.extRequestPhase = EXT_REQUEST_PHASES[Math.min(idx + 1, EXT_REQUEST_PHASES.length - 1)];
       writeUrl();
       renderTracker();
       return;
@@ -5329,6 +5456,11 @@
         state.form.newPhoneStep = "phone";
         state.error = "";
         renderTracker({ soft: true });
+      }
+      if (e.target.getAttribute("data-tt-field") === "extComment" && state.extRequestForm) {
+        state.extRequestForm.comment = e.target.value;
+        const next = document.querySelector('[data-tt="ext-request"] [data-tt="ext-request-next"]');
+        if (next) next.textContent = e.target.value.trim() ? "Далее" : "Пропустить";
       }
     }
     if (e.target.matches('[data-tt="search"]')) {
