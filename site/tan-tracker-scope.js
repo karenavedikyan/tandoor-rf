@@ -7,6 +7,7 @@
   };
 
   const ROLE_EMPLOYEE = {
+    admin: "ad1",
     director: "d1",
     rop: "r1",
     regional: "r1",
@@ -16,6 +17,7 @@
   };
 
   const EMPLOYEE_PROTOTYPE_ROLE = {
+    ad1: "admin",
     d1: "director",
     r1: "rop",
     r2: "rop",
@@ -27,6 +29,7 @@
   };
 
   const DEMO_ROLE_LABEL = {
+    admin: "Администратор",
     director: "Директор",
     rop: "РОП",
     manager: "Менеджер",
@@ -139,7 +142,7 @@
     }
     const role = ctx.prototypeRole || "manager";
     const actor = ctx.actorContactId;
-    if (role === "director") return true;
+    if (role === "director" || role === "admin") return true;
     if (actor && [o.holderId, o.pendingId, o.finalRecipientId].includes(actor)) return true;
     const participants = orderParticipantIds(o);
     if (participants.has(actor)) return true;

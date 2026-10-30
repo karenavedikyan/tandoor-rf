@@ -8,6 +8,7 @@
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
     );
   const employees = {
+    ad1: { id: "ad1", name: "Администратор · демо", phone: "79001234999", team: null },
     d1: { id: "d1", name: "Андрей Власов", phone: "79001234090", team: null },
     r1: { id: "r1", name: "Елена Волкова", phone: "79001234040", team: "volkova" },
     r2: { id: "r2", name: "Дмитрий Орлов", phone: "79001234041", team: "orlov" },
@@ -63,6 +64,10 @@
   let contacts = [];
   let orders = [];
   let nextTrack = 21;
+  // Demo-only registry metadata, separate from custody, files and order timelines.
+  const registryArchive = new Map();
+  const registryArchiveAudit = new Map();
+  const deletedTrackIds = new Set();
 
   function seedContacts() {
     contacts = [
@@ -134,7 +139,7 @@
 
   function unsupportedRoleView() {
     const label = state.ttRequestedRole ? `«${state.ttRequestedRole}»` : "не указана";
-    return `<div class="tt-panel tt-denied" data-tt="unsupported-role"><h2>Роль не поддерживается в Тан-трекере</h2><p>Запрошена роль ${E(label)}. Здесь доступны только демо-роли участника передач: менеджер, РОП, директор, ассистент, координатор.</p><p class="tt-muted">Область не расширяется до директора и не подменяется другой ролью автоматически.</p>${btn("← К реестру", 'data-tt="back-list"')}</div>`;
+    return `<div class="tt-panel tt-denied" data-tt="unsupported-role"><h2>Роль не поддерживается в Тан-трекере</h2><p>Запрошена роль ${E(label)}. Здесь доступны демо-роли: менеджер, РОП, директор, ассистент, координатор, администратор.</p><p class="tt-muted">Область не расширяется до директора и не подменяется другой ролью автоматически.</p>${btn("← К реестру", 'data-tt="back-list"')}</div>`;
   }
 
   function seedOrders() {
@@ -518,6 +523,14 @@
     extRequestPhase: null,
     extRequestForm: null,
     extDeclineConfirmOrderId: null,
+    archiveDialog: null,
+    archiveSelection: [],
+    archiveScope: "selected",
+    archiveReason: "",
+    archiveAllAck: false,
+    archiveReturnFocus: null,
+    archiveError: "",
+    archiveTypedAck: "",
   };
 
   const Att = () => window.TanTrackerAttachments;
@@ -1178,7 +1191,7 @@
 
   function registryCounts() {
     const actor = registryActorId();
-    const scopeVisible = orders.filter((o) => orderVisible(o));
+    const scopeVisible = orders.filter((o) => orderVisible(o) && !registryArchive.has(o.id));
     let base = scopeVisible;
     if (state.registryPersonalView === "main") {
       base = base.filter((o) => !registryPersonallyHidden(o, actor));
@@ -1252,6 +1265,13 @@
   }
 
   function registryEmptyHtml() {
+    if (["archived", "registry-archive"].includes(state.registryPersonalView)) {
+      const personal = state.registryPersonalView === "archived";
+      return `<div class="tt-empty-v2 tt-empty" data-tt="empty"><i data-lucide="archive" aria-hidden="true"></i>
+        <p><strong>${personal ? "Мой архив пока пуст" : "Общий архив пока пуст"}</strong></p>
+        <p class="tt-muted">${personal ? "Выполненные передачи можно убрать сюда из карточки или кнопкой «В мой архив»." : "Здесь появятся треки, которые администратор уберёт из общего реестра с сохранением истории."}</p>
+        ${btn("К актуальным передачам", 'data-tt="registry-empty-main"', "tt-link")}</div>`;
+    }
     return `<div class="tt-empty-v2 tt-empty" data-tt="empty">
       <svg viewBox="0 0 120 80" aria-hidden="true"><rect x="20" y="24" width="80" height="48" rx="10" fill="var(--tint,#eef5e7)" stroke="var(--green,#507f22)" stroke-width="2"/><path d="M40 44h40M40 54h28" stroke="var(--green,#507f22)" stroke-width="2" stroke-linecap="round"/></svg>
       <p><strong>Нет передач по фильтрам</strong></p>
@@ -2295,6 +2315,235 @@
     return state.actingContactId || employeeContact(state.employeeId)?.id;
   }
 
+  function cleanupPreviewReadOnly() {
+    const p = new URLSearchParams(location.hash.split("?")[1] || "");
+    return state.recipientMode || state.ttRoleUnsupported ||
+      p.has("as_role") || p.has("as_person") || p.get("preview") === "1";
+  }
+
+  function canManageRegistry() {
+    return !cleanupPreviewReadOnly() && !isExternalShell() &&
+      !state.actingContactId && state.ttPrototypeRole === "admin";
+  }
+
+  function trackNotYetReceived(o) {
+    if (!o || !orderCreatorId(o) || o.holderId !== orderCreatorId(o) ||
+      orderIsCompleted(o) || orderIsDelivered(o) || hasFirstConfirmedCustodyHandoff(o)) return false;
+    // Old demo tracks contain narrative custody events instead of canonical receipts.
+    // Treat unknown history conservatively, never as permission to erase it.
+    return o.timeline.every((t) =>
+      /^(Создана передача|Ожидает подтверждения получателем|Назначен следующий получатель|Ожидание передачи отменено|Изменён|Отредактирована)/.test(t.note || ""));
+  }
+
+  function canDeleteTrack(o) {
+    return !cleanupPreviewReadOnly() && !!o && orderVisible(o) &&
+      trackNotYetReceived(o) &&
+      (registryActorId() === orderCreatorId(o) || canManageRegistry());
+  }
+
+  function cleanupEligible(o, mode) {
+    if (!o || !orderVisible(o) || cleanupPreviewReadOnly()) return false;
+    const actor = registryActorId();
+    if (mode === "delete") return canDeleteTrack(o);
+    if (mode === "restore") return canManageRegistry() && registryArchive.has(o.id);
+    if (mode === "personal-restore") return !!RegPersonal()?.isArchived(o.id, actor);
+    if (mode === "personal") return canPersonalArchive(o, actor) &&
+      !RegPersonal()?.isArchived(o.id, actor) && !registryArchive.has(o.id);
+    return canManageRegistry() && !registryArchive.has(o.id) && !o.pendingId &&
+      (orderIsCompleted(o) || orderIsDelivered(o));
+  }
+
+  function cleanupCandidates(mode) {
+    return orders.filter((o) => orderVisible(o) &&
+      (mode === "restore" ? registryArchive.has(o.id) :
+        mode === "personal-restore" ? RegPersonal()?.isArchived(o.id, registryActorId()) :
+          mode === "personal" ? !RegPersonal()?.isArchived(o.id, registryActorId()) :
+            !registryArchive.has(o.id)));
+  }
+
+  function cleanupTitle(mode) {
+    return {
+      archive: "Архивировать треки",
+      restore: "Вернуть из общего архива",
+      personal: "В мой архив",
+      "personal-restore": "Вернуть из моего архива",
+      delete: "Удалить до первого получения",
+    }[mode];
+  }
+
+  function cleanupSelection() {
+    const ids = state.archiveScope === "all" ? state.archiveCandidateIds : state.archiveSelection;
+    return (ids || []).map((id) => orders.find((o) => o.id === id)).filter(Boolean);
+  }
+
+  function openCleanup(mode, order) {
+    if (cleanupPreviewReadOnly()) return;
+    if (["archive", "restore"].includes(mode) && !canManageRegistry()) return;
+    if (mode === "delete" && !canManageRegistry() && !canDeleteTrack(order)) return;
+    state.archiveReturnFocus = document.activeElement?.getAttribute("data-tt") || null;
+    state.archiveDialog = mode;
+    state.archiveActorKey = `${registryActorId()}|${state.ttPrototypeRole}`;
+    state.archiveCandidateIds = order ? [order.id] : cleanupCandidates(mode).map((o) => o.id);
+    state.archiveSelection = order ? [order.id] : [];
+    state.archiveSingle = !!order;
+    state.archiveScope = "selected";
+    state.archiveReason = state.archiveError = state.archiveTypedAck = "";
+    state.archiveAllAck = false;
+    renderTracker();
+  }
+
+  function closeCleanup() {
+    const focus = state.archiveReturnFocus;
+    state.archiveDialog = null;
+    state.archiveError = "";
+    renderTracker();
+    const targets = [...document.querySelectorAll("[data-tt]")];
+    (targets.find((el) => el.getAttribute("data-tt") === focus) ||
+      document.querySelector('[data-tt="detail-overflow"] > summary') ||
+      document.querySelector('[data-tt="cleanup-open"]'))?.focus();
+  }
+
+  function cleanupDialogHtml() {
+    const mode = state.archiveDialog;
+    if (!mode) return "";
+    const candidates = (state.archiveCandidateIds || [])
+      .map((id) => orders.find((o) => o.id === id)).filter(Boolean);
+    const selected = cleanupSelection();
+    const eligible = selected.filter((o) => cleanupEligible(o, mode));
+    const skipped = selected.length - eligible.length;
+    const personal = mode.startsWith("personal");
+    const restoring = mode.includes("restore");
+    const deleting = mode === "delete";
+    const verb = deleting ? "Удалить" : restoring ? "Восстановить" : "Архивировать";
+    const all = state.archiveScope === "all";
+    const disabled = !eligible.length || (all && !state.archiveAllAck) ||
+      (deleting && state.archiveTypedAck !== "УДАЛИТЬ");
+    const description = deleting
+      ? "Только до первого подтверждённого получения кем-либо, включая промежуточного получателя. Трек и его файлы не попадут в архив; ссылка, код и QR перестанут действовать. Восстановить удалённое нельзя."
+      : restoring ? (personal ? "Треки вернутся в ваш основной список. Реестры других участников не изменятся." : "Треки вернутся в общий реестр. Статусы, маршрут и история останутся прежними.")
+        : personal ? "Уберите выполненные передачи из своего рабочего списка. Другие участники продолжат видеть их как прежде; история и файлы сохранятся."
+          : "Выполненные треки уйдут в общий архив. История и файлы сохранятся; восстановление доступно администратору. Активные передачи будут пропущены.";
+    return `<dialog class="tt-cleanup-dialog tt-work" data-tt="cleanup-dialog" aria-labelledby="tt-cleanup-title" aria-describedby="tt-cleanup-description">
+      <header class="tt-cleanup-head"><h2 id="tt-cleanup-title">${E(cleanupTitle(mode))}</h2>
+        ${btn("Закрыть", 'data-tt="cleanup-cancel" autofocus', "tt-link")}</header>
+      <div class="tt-cleanup-body">
+        ${canManageRegistry() && !state.archiveSingle && ["archive", "delete"].includes(mode) ? `<div class="tt-cleanup-mode" role="group" aria-label="Способ очистки">
+          ${btn("Архивирование", `data-tt="cleanup-mode" data-mode="archive" aria-pressed="${mode === "archive"}"`, "tt-link")}
+          ${btn("Удаление", `data-tt="cleanup-mode" data-mode="delete" aria-pressed="${mode === "delete"}"`, "tt-link")}
+        </div>` : ""}
+        <p id="tt-cleanup-description">${E(description)}</p>
+        <p class="tt-muted">${personal ? "Демо: личный архив относится только к вашему демонстрационному профилю." : "Демо: изменения треков действуют до обновления страницы."} Боевой реестр не меняется.</p>
+        ${!state.archiveSingle ? `<fieldset class="tt-cleanup-scope"><legend>Какие треки</legend>
+          <label><input type="radio" name="tt-cleanup-scope" data-tt="cleanup-scope" value="selected" ${!all ? "checked" : ""}> Выбранные</label>
+          <label><input type="radio" name="tt-cleanup-scope" data-tt="cleanup-scope" value="all" ${all ? "checked" : ""}> ${personal ? "Все в моей области" : "Весь реестр"} (${candidates.length})</label>
+        </fieldset><p class="tt-muted">Поиск и фильтры основного реестра не ограничивают список ниже.</p>` : ""}
+        <div class="tt-cleanup-list" role="group" aria-label="Треки для действия">
+        ${candidates.length ? candidates.map((o) => {
+          const allowed = cleanupEligible(o, mode);
+          const checked = all || state.archiveSelection.includes(o.id);
+          const why = allowed ? deleting ? "Получение ещё не подтверждалось" : restoring ? "Можно восстановить" : "Выполнено, без ожидаемой передачи" :
+            deleting ? "Удаление недоступно: получение уже было или история не подтверждает его отсутствие" :
+              registryArchive.has(o.id) ? "Будет пропущен: уже в общем архиве" :
+              o.pendingId ? "Будет пропущен: ожидается получение" : "Будет пропущен: передача ещё в работе";
+          return `<label class="tt-cleanup-track${allowed ? "" : " tt-cleanup-track--skip"}">
+            <input type="checkbox" data-tt="cleanup-select" value="${E(o.id)}" ${checked ? "checked" : ""} ${all || !allowed ? "disabled" : ""}>
+            <span><strong>${E(o.item)}</strong><span class="tt-cleanup-track-id">${E(o.id)}</span><small>${E(why)}</small></span>
+          </label>`;
+        }).join("") : '<p class="tt-muted">Подходящих записей пока нет.</p>'}
+        </div>
+        <p class="tt-cleanup-summary" data-tt="cleanup-summary" role="status">${verb}: <strong>${eligible.length}</strong>${skipped ? ` · Будет пропущено: <strong>${skipped}</strong>` : ""}</p>
+        ${!deleting && !personal && !restoring ? `<label class="tt-cleanup-field">Причина (необязательно)<textarea data-tt="cleanup-reason" maxlength="300" rows="2" placeholder="Например, тестирование завершено">${E(state.archiveReason)}</textarea></label>` : ""}
+        ${all ? `<label class="tt-cleanup-ack"><input type="checkbox" data-tt="cleanup-ack" ${state.archiveAllAck ? "checked" : ""}><span>Подтверждаю действие для ${personal ? "всех подходящих треков в моей области" : "всего реестра"}, независимо от текущих фильтров. Неподходящие записи останутся без изменений.</span></label>` : ""}
+        ${deleting ? `<label class="tt-cleanup-field">Для подтверждения введите УДАЛИТЬ<input data-tt="cleanup-delete-ack" value="${E(state.archiveTypedAck)}" autocomplete="off" spellcheck="false"></label>` : ""}
+        ${state.archiveError ? `<p class="tt-error" role="alert">${E(state.archiveError)}</p>` : ""}
+      </div>
+      <footer class="tt-cleanup-footer">${btn("Отмена", 'data-tt="cleanup-cancel"', "tt-link")}
+        ${btn(`${verb} (${eligible.length})`, `data-tt="cleanup-confirm" ${disabled ? "disabled" : ""}`, deleting ? "tt-cleanup-danger" : "tt-primary")}</footer>
+    </dialog>`;
+  }
+
+  function updateCleanupSummary() {
+    const mode = state.archiveDialog;
+    if (!mode) return;
+    const selected = cleanupSelection();
+    const count = selected.filter((o) => cleanupEligible(o, mode)).length;
+    const skipped = selected.length - count;
+    const verb = mode === "delete" ? "Удалить" : mode.includes("restore") ? "Восстановить" : "Архивировать";
+    const summary = document.querySelector('[data-tt="cleanup-summary"]');
+    if (summary) summary.textContent = `${verb}: ${count}${skipped ? ` · Будет пропущено: ${skipped}` : ""}`;
+    const button = document.querySelector('[data-tt="cleanup-confirm"]');
+    if (button) {
+      button.textContent = `${verb} (${count})`;
+      button.disabled = !count || (state.archiveScope === "all" && !state.archiveAllAck) ||
+        (mode === "delete" && state.archiveTypedAck !== "УДАЛИТЬ");
+    }
+  }
+
+  function confirmCleanup() {
+    const mode = state.archiveDialog;
+    if (!mode || cleanupPreviewReadOnly() ||
+      state.archiveActorKey !== `${registryActorId()}|${state.ttPrototypeRole}`) return;
+    const selected = cleanupSelection();
+    const targets = selected.filter((o) => cleanupEligible(o, mode));
+    if (!targets.length || (state.archiveScope === "all" && !state.archiveAllAck) ||
+      (mode === "delete" && state.archiveTypedAck !== "УДАЛИТЬ")) return;
+    // Revalidate the complete selected batch immediately before changing demo state.
+    if (state.archiveScope !== "all" && targets.length !== state.archiveSelection.length) {
+      state.archiveError = "Состояние или доступ изменились. Закройте окно и выберите треки заново.";
+      renderTracker();
+      return;
+    }
+    const actor = registryActorId();
+    targets.forEach((o) => {
+      if (mode === "delete") {
+        o.code = null;
+        o.activeInvitation = null;
+        o.pastInvitations = [];
+        o.handoffVer = (o.handoffVer || 1) + 1;
+        (o.attachments || []).forEach((a) => Att()?.untrackUrl(a.url));
+        o.attachments = [];
+        deletedTrackIds.add(o.id);
+        registryArchive.delete(o.id);
+        registryArchiveAudit.delete(o.id);
+        RegPersonal()?.forgetOrder?.(o.id);
+        orders = orders.filter((x) => x.id !== o.id);
+      } else if (mode === "personal") RegPersonal()?.addArchived(o.id, actor);
+      else if (mode === "personal-restore") RegPersonal()?.removeArchived(o.id, actor);
+      else {
+        const entry = { at: now(), actor, action: mode, reason: state.archiveReason.trim() };
+        if (mode === "restore") registryArchive.delete(o.id);
+        else registryArchive.set(o.id, entry);
+        registryArchiveAudit.set(o.id, [...(registryArchiveAudit.get(o.id) || []), entry]);
+      }
+    });
+    const count = targets.length;
+    const skipped = selected.length - count;
+    state.archiveDialog = null;
+    state.toast = `${mode === "delete" ? "Удалено" : mode.includes("restore") ? "Восстановлено" : "В архиве"}: ${count}.${skipped ? ` Пропущено: ${skipped}.` : ""} ${mode === "delete" ? "Старые ссылки, коды и QR недействительны." : "История и файлы сохранены."}`;
+    state.error = "";
+    if (mode === "delete" || state.view === "list") {
+      state.view = "list";
+      state.orderId = null;
+      if (mode === "personal") state.registryPersonalView = "main";
+      writeUrl();
+    }
+    renderTracker();
+  }
+
+  function registryArchiveHistory(o) {
+    const entries = registryArchiveAudit.get(o.id) || [];
+    if (!entries.length) return "";
+    return `<details class="tt-disclosure" data-tt="registry-archive-history">
+      ${disclosureSummary("История архива", { icon: "archive", count: entries.length })}
+      <div class="tt-disclosure-body">${entries.map((t) => `<p><strong>${t.action === "restore" ? "Восстановлено" : "Архивировано"}</strong><br>${E(dt(t.at))} · ${E(contactById(t.actor)?.name || "Администратор")}${t.reason ? `<br>${E(t.reason)}` : ""}</p>`).join("")}</div>
+    </details>`;
+  }
+
+  function archivedTrackNotice(o) {
+    if (!registryArchive.has(o.id)) return "";
+    return `<section class="tt-archive-notice" data-tt="archive-notice"><h3>Трек в общем архиве</h3><p>История, маршрут и файлы сохранены. Для продолжения передачи администратор должен вернуть трек в реестр.</p>${canManageRegistry() ? btn("Восстановить трек", 'data-tt="cleanup-restore-one"', "tt-primary") : ""}</section>`;
+  }
+
   function actorHasRegistryObligation(o, actor) {
     if (!o || !actor || orderIsCompleted(o) || orderIsDelivered(o)) return false;
     if (o.holderId === actor && o.pendingId) return true;
@@ -2330,8 +2579,9 @@
   function registryPersonallyHidden(o, actor) {
     const RP = RegPersonal();
     if (!RP || !actor) return false;
+    if (state.registryPersonalView === "main" && RP.isArchived(o.id, actor) &&
+      !o.pendingId && (orderIsCompleted(o) || orderIsDelivered(o))) return true;
     if (!isGeneralMainRegistry()) return false;
-    if (RP.isArchived(o.id, actor)) return true;
     if (RP.isRemoved(o.id, actor) && isRegistryInitiator(o, actor)) return true;
     return false;
   }
@@ -2347,9 +2597,11 @@
   function applyRegistryPersonalView(list, actor) {
     const RP = RegPersonal();
     const view = state.registryPersonalView || "main";
+    if (view === "registry-archive") return list;
     if (!RP || !actor) return list;
     if (view === "archived") {
-      return list.filter((o) => actorRegistrySeesOrder(o, actor) && RP.isArchived(o.id, actor));
+      return list.filter((o) => actorRegistrySeesOrder(o, actor) && RP.isArchived(o.id, actor) &&
+        !o.pendingId && (orderIsCompleted(o) || orderIsDelivered(o)));
     }
     if (view === "removed") {
       return list.filter((o) => isRegistryInitiator(o, actor) && RP.isRemoved(o.id, actor));
@@ -2362,12 +2614,15 @@
   }
 
   function canPersonalArchive(o, actor) {
-    return !!(o && actor && o.status === "completed" && actorRegistrySeesOrder(o, actor));
+    return !!(o && actor && !cleanupPreviewReadOnly() && !o.pendingId &&
+      (orderIsCompleted(o) || orderIsDelivered(o)) && actorRegistrySeesOrder(o, actor));
   }
 
   function visibleOrders() {
     const actor = registryActorId();
     let list = orders.filter((o) => orderVisible(o));
+    list = list.filter((o) => state.registryPersonalView === "registry-archive"
+      ? registryArchive.has(o.id) : !registryArchive.has(o.id));
     if (state.actingContactId) {
       list = list.filter((o) => {
         const parts = [o.holderId, o.pendingId, ...o.timeline.flatMap((t) => [t.from, t.to])];
@@ -2613,17 +2868,28 @@
     const actor = registryActorId();
     const RP = RegPersonal();
     const counts = RP?.counts?.(actor) || { archived: 0, removed: 0 };
+    counts.archived = orders.filter((o) => orderVisible(o) && !registryArchive.has(o.id) &&
+      RP?.isArchived(o.id, actor) && !o.pendingId && (orderIsCompleted(o) || orderIsDelivered(o))).length;
     const view = state.registryPersonalView || "main";
     const link = (label, action, active) =>
       btn(label, `data-tt="${action}"`, active ? "tt-link tt-registry-personal-active" : "tt-link");
     const parts = [link(view === "main" ? "Мой реестр" : "← Основной реестр", "registry-view-main", view === "main")];
-    if (counts.archived > 0 || view === "archived") {
-      parts.push(link(`Архив (${counts.archived})`, "registry-view-archived", view === "archived"));
-    }
+    parts.push(link(`Мой архив (${counts.archived})`, "registry-view-archived", view === "archived"));
+    if (!cleanupPreviewReadOnly()) parts.push(link(
+      view === "archived" ? "Вернуть в мой реестр" : "В мой архив",
+      view === "archived" ? "cleanup-personal-restore" : "cleanup-personal-open", false));
     if (counts.removed > 0 || view === "removed") {
       parts.push(link(`Удалённые (${counts.removed})`, "registry-view-removed", view === "removed"));
     }
-    return `<div class="tt-registry-personal-bar" data-tt="registry-personal-bar">${parts.join("")}</div>`;
+    const archivedCount = orders.filter((o) => orderVisible(o) && registryArchive.has(o.id)).length;
+    const general = archivedCount || canManageRegistry()
+      ? `<div class="tt-registry-personal-bar tt-registry-admin-bar" data-tt="registry-admin-bar">
+        ${link(`Архив реестра (${archivedCount})`, "registry-view-general-archive", view === "registry-archive")}
+        ${canManageRegistry() ? link(view === "registry-archive" ? "Восстановить треки" : "Очистить реестр",
+          view === "registry-archive" ? "cleanup-restore-open" : "cleanup-open", false) : ""}
+        ${canManageRegistry() && view !== "registry-archive" ? '<span class="tt-muted">Только администратор · общий реестр</span>' : ""}
+      </div>` : "";
+    return `<div class="tt-registry-personal-bar" data-tt="registry-personal-bar">${parts.join("")}</div>${general}`;
   }
 
   function registryStatTiles() {
@@ -2705,6 +2971,9 @@
     const rows = visibleOrders();
     return `<div class="tt-registry tt-view-enter" data-tt="registry-shell" data-tt-registry-personal-ready="true">
       ${registryStatTiles()}
+      ${state.toast ? `<p class="tt-success" data-tt="cleanup-result" role="status">${E(state.toast)}</p>` : ""}
+      ${state.registryPersonalView === "registry-archive" ? '<p class="tt-muted">Общий архив. История и файлы доступны в рамках ваших обычных прав; восстановление доступно администратору.</p>' : ""}
+      ${state.registryPersonalView === "archived" ? '<p class="tt-muted">Только ваш архив. Другие участники видят передачи как прежде; историю и файлы можно открыть в карточке.</p>' : ""}
       ${
         rows.length
           ? `<div class="tt-table-scroll" tabindex="0" aria-label="Реестр передач"><table class="tt-table tt-table-v2" data-tt="registry"><thead><tr>
@@ -3451,7 +3720,7 @@
 
     const initiatorBtns = [];
     const RP = RegPersonal();
-    if (actor && RP) {
+    if (actor && RP && !cleanupPreviewReadOnly()) {
       if (canPersonalArchive(o, actor) && !RP.isArchived(o.id, actor)) {
         initiatorBtns.push(overflowActionBtn("В мой архив", "registry-archive", "archive"));
       }
@@ -3459,7 +3728,7 @@
         initiatorBtns.push(overflowActionBtn("Убрать из моего реестра", "registry-remove-ask", "trash-2"));
       }
       if (RP.isArchived(o.id, actor)) {
-        initiatorBtns.push(overflowActionBtn("Вернуть из архива", "registry-unarchive", "archive-restore"));
+        initiatorBtns.push(overflowActionBtn("Вернуть из моего архива", "registry-unarchive", "archive-restore"));
       }
       if (RP.isRemoved(o.id, actor)) {
         initiatorBtns.push(overflowActionBtn("Восстановить в реестре", "registry-unremove", "undo-2"));
@@ -3467,17 +3736,24 @@
     }
 
     const overflowGroups = [];
+    const cleanupBtns = [];
+    if (canDeleteTrack(o)) cleanupBtns.push(overflowActionBtn("Удалить до первого получения", "cleanup-delete-one", "trash-2"));
+    if (canManageRegistry() && cleanupEligible(o, "archive"))
+      cleanupBtns.push(overflowActionBtn("В общий архив", "cleanup-archive-one", "archive"));
+    if (canManageRegistry() && registryArchive.has(o.id))
+      cleanupBtns.push(overflowActionBtn("Вернуть из общего архива", "cleanup-restore-one", "archive-restore"));
+    if (cleanupBtns.length) overflowGroups.push(`<div class="tt-detail-overflow-group" data-tt="cleanup-actions"><p class="tt-detail-overflow-label">Управление треком</p>${cleanupBtns.join("")}</div>`);
     if (initiatorBtns.length) {
       overflowGroups.push(
         `<div class="tt-detail-overflow-group" data-tt="registry-personal-actions"><p class="tt-detail-overflow-label">Мой реестр</p>${initiatorBtns.join("")}</div>`
       );
     }
-    if (otherActionBtns) {
+    if (otherActionBtns && !registryArchive.has(o.id)) {
       overflowGroups.push(
         `<div class="tt-detail-overflow-group" data-tt="other-actions"><p class="tt-detail-overflow-label">Другие действия</p>${otherActionBtns}</div>`
       );
     }
-    if (demoBtns.length) {
+    if (demoBtns.length && !registryArchive.has(o.id)) {
       overflowGroups.push(
         `<div class="tt-detail-overflow-group" data-tt="detail-demo"><p class="tt-detail-overflow-label">Демо-сценарии</p><div data-tt="detail-secondary-actions">${demoBtns.join("")}</div></div>`
       );
@@ -3488,12 +3764,13 @@
       : "";
 
     const mobileDock =
-      typeof window !== "undefined" && window.innerWidth <= 767 ? detailMobilePrimaryDock(o) : "";
+      !registryArchive.has(o.id) && typeof window !== "undefined" && window.innerWidth <= 767 ? detailMobilePrimaryDock(o) : "";
     const metaBlock = desktopDetail
       ? ""
       : `<div class="tt-detail-meta">${statusBadge(o, actor)}<span class="${dueCls}">${E(dueLabel)}</span></div>`;
     const extShellHolder = isExternalShell() && isHolder && !o.pendingId;
-    const taskBlock = extShellHolder ? externalHolderShellBlocks(o) : detailTaskSection(o);
+    const taskBlock = registryArchive.has(o.id) ? archivedTrackNotice(o) :
+      extShellHolder ? externalHolderShellBlocks(o) : detailTaskSection(o);
     const previewRecipientBtn = recipientPreviewDemoBtn(o);
     return `<div class="tt-panel tt-detail-panel tt-view-enter${mobileDock ? " tt-detail-panel--has-dock" : ""}" data-tt="detail">
       <header class="tt-detail-head tt-detail-head-v2">
@@ -3515,8 +3792,8 @@
       <details class="tt-disclosure tt-detail-att-wrap" data-tt="detail-attachments-disclosure"${isDetailAttDisclosureOpen(o) ? " open" : ""}>
         ${disclosureSummary("Фото и файлы", { icon: "paperclip", count: attCount ? attCount : null })}
         <div class="tt-disclosure-body">${attachmentsSection(o, {
-          readonly: !isHolder || o.status === "completed",
-          showPicker: isHolder && o.status !== "completed",
+          readonly: registryArchive.has(o.id) || !isHolder || o.status === "completed",
+          showPicker: !registryArchive.has(o.id) && isHolder && o.status !== "completed",
           compact: true,
           omitTitle: true,
           inputKey: "detail",
@@ -3527,6 +3804,7 @@
       <aside class="tt-detail-aside">
       ${desktopDetail ? detailFactsCard(o, actor) : ""}
       ${detailHistoryHtml(o, tl, desktopDetail)}
+      ${registryArchiveHistory(o)}
       ${
         confirmingComplete
           ? `<div class="tt-complete-confirm" data-tt="complete-confirm">
@@ -3648,12 +3926,17 @@
 
   function externalShellHomeHtml() {
     const actor = state.actingContactId;
-    const rows = externalOrdersForActor(actor).filter((o) => orderVisible(o));
+    let rows = externalOrdersForActor(actor).filter((o) => orderVisible(o));
+    rows = rows.filter((o) => state.registryPersonalView === "registry-archive"
+      ? registryArchive.has(o.id) : !registryArchive.has(o.id));
+    rows = applyRegistryPersonalView(rows, actor);
     const cutoff = now() - 30 * 86400000;
     const groups = registryGroupOrders(rows, actor)
       .map((g) =>
         g.id === "done"
-          ? { ...g, title: "Недавно завершённые", items: g.items.filter((o) => (o.timeline?.[o.timeline.length - 1]?.at || 0) >= cutoff) }
+          ? { ...g, title: ["archived", "registry-archive"].includes(state.registryPersonalView) ? "В архиве" : "Недавно завершённые",
+            items: ["archived", "registry-archive"].includes(state.registryPersonalView) ? g.items :
+              g.items.filter((o) => (o.timeline?.[o.timeline.length - 1]?.at || 0) >= cutoff) }
           : g.id === "progress"
             ? { ...g, title: "В пути" }
             : g
@@ -3669,7 +3952,11 @@
           )
           .join("")}</div>`
       : `<div class="tt-empty tt-ext-empty" data-tt="external-empty"><i data-lucide="package-open"></i><p>Пока нет передач.</p><p class="tt-muted">Когда сотрудник Тандор назначит вам передачу или вы отправите предмет через бота, она появится здесь.</p></div>`;
-    return `<div class="tt-external-home" data-tt="external-home">${cards}</div>`;
+    return `<div class="tt-external-home" data-tt="external-home">
+      ${registryPersonalToolbar()}
+      ${state.toast ? `<p class="tt-success" role="status">${E(state.toast)}</p>` : ""}
+      ${state.registryPersonalView === "archived" ? '<p class="tt-muted">Ваш архив выполненных передач. История и файлы сохранены; списки других участников не изменены.</p>' : ""}
+      ${cards}</div>`;
   }
 
   const EXT_REQUEST_PHASES = ["item", "photo", "comment", "recipient", "due", "summary"];
@@ -3907,6 +4194,7 @@
   }
 
   function externalHolderShellBlocks(o) {
+    if (registryArchive.has(o.id)) return archivedTrackNotice(o);
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
     const mustRelay =
       o.finalRecipientId && o.holderId !== o.finalRecipientId && orderTrackOpen(o) && !orderIsDelivered(o);
@@ -4230,6 +4518,10 @@
   function bodyHtml() {
     if (state.ttRoleUnsupported) return unsupportedRoleView();
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
+    if (!o && state.orderId && deletedTrackIds.has(state.orderId))
+      return `<div class="tt-panel" data-tt="deleted-track"><h2>Передача недоступна</h2><p>Она удалена до первого получения. Прежние ссылка, код и QR больше не действуют.</p>${btn("К реестру", 'data-tt="back-list"')}</div>`;
+    if (o && registryArchive.has(o.id) && orderVisible(o) && state.view !== "list")
+      return detailView(o);
     if (state.view === "handoff-receipt") {
       if (!o || !handoffReceiptValid(o)) return deniedView();
       return handoffReceiptView(o);
@@ -4272,12 +4564,12 @@
           ? resolveInvitation(o, state.recipientTicket.hv, rcv)
           : { inv: o?.activeInvitation, stale: false };
       const staleInvite = !!(resolvedInv?.stale && resolvedInv?.inv && !receivedHandoff);
-      const rcvOk =
+      const rcvOk = o && (
         receivedHandoff ||
         staleInvite ||
         !rcv ||
         o.pendingId === rcv ||
-        o.activeInvitation?.pendingId === rcv;
+        o.activeInvitation?.pendingId === rcv);
       const scopeOk =
         staleInvite ||
         !Sc() ||
@@ -4289,7 +4581,7 @@
       main.innerHTML =
         o && allowed
           ? `<div class="tt-work tt-work-recipient"><div class="tt-head tt-head-compact tt-head-compact-demo"><span class="tt-head-compact-label">Тан-трекер</span>${recipDemo}</div>${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
-          : `<div class="tt-work tt-recipient"><p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
+          : `<div class="tt-work tt-recipient"><p class="tt-error" data-tt="recipient-unavailable">${deletedTrackIds.has(state.orderId) ? "Передача недоступна. Прежние ссылка, код и QR больше не действуют." : o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
       document.title = "Tandoor RF · Приглашение к передаче";
       let metaDesc = document.querySelector('meta[name="description"]');
       if (!metaDesc) {
@@ -4414,7 +4706,11 @@
     }
 
     const content = document.getElementById("tt-content");
-    if (content) content.innerHTML = `${externalActionBarHtml()}${bodyHtml()}`;
+    if (state.archiveDialog && (cleanupPreviewReadOnly() ||
+      state.archiveActorKey !== `${registryActorId()}|${state.ttPrototypeRole}`)) state.archiveDialog = null;
+    if (content) content.innerHTML = `${externalActionBarHtml()}${bodyHtml()}${cleanupDialogHtml()}`;
+    const cleanupDialog = document.querySelector('[data-tt="cleanup-dialog"]');
+    if (cleanupDialog && !cleanupDialog.open) cleanupDialog.showModal();
     paintQrHosts();
     paintCodeCells();
     document.title = "Tandoor RF · Тан-трекер";
@@ -4608,6 +4904,32 @@
       return;
     }
     const action = b.getAttribute("data-tt");
+    if (cleanupPreviewReadOnly() && [
+      "registry-archive", "registry-unarchive", "registry-remove-ask",
+      "registry-remove-confirm", "registry-restore-removed", "registry-unremove",
+    ].includes(action)) return;
+    if (action?.startsWith("cleanup-")) {
+      if (action === "cleanup-cancel") closeCleanup();
+      else if (action === "cleanup-confirm") confirmCleanup();
+      else if (action === "cleanup-mode") openCleanup(b.getAttribute("data-mode") === "delete" ? "delete" : "archive");
+      else if (action === "cleanup-open") openCleanup("archive");
+      else if (action === "cleanup-personal-open") openCleanup("personal");
+      else if (action === "cleanup-personal-restore") openCleanup("personal-restore");
+      else if (action === "cleanup-restore-open") openCleanup("restore");
+      else if (action === "cleanup-delete-one" && o) openCleanup("delete", o);
+      else if (action === "cleanup-archive-one" && o) openCleanup("archive", o);
+      else if (action === "cleanup-restore-one" && o) openCleanup("restore", o);
+      return;
+    }
+    if (o && registryArchive.has(o.id) && [
+      "transfer", "confirm-transfer", "transfer-final", "change-pending", "cancel-pending",
+      "edit-draft", "complete", "complete-confirm", "confirm-complete", "enter-code", "confirm-code",
+      "confirm-qr-receive", "gen-code", "gen-code-reissue", "attach-delete", "attach-remove", "demo-expire",
+    ].includes(action)) {
+      state.error = "Трек в общем архиве. Сначала администратор должен восстановить его.";
+      renderTracker();
+      return;
+    }
     if (action === "item-suggest") {
       if (!state.form) state.form = defaultCreateForm();
       const s = b.getAttribute("data-suggest") || "";
@@ -5376,8 +5698,15 @@
       renderTracker();
       return;
     }
-    if (action === "registry-view-main") {
+    if (action === "registry-view-main" || action === "registry-empty-main") {
       state.registryPersonalView = "main";
+      renderTracker();
+      return;
+    }
+    if (action === "registry-view-general-archive") {
+      state.registryPersonalView = "registry-archive";
+      state.statusFilter = state.mineFilter = "all";
+      state.query = "";
       renderTracker();
       return;
     }
@@ -5441,7 +5770,7 @@
       const actor = registryActorId();
       const RP = RegPersonal();
       if (!RP || !canPersonalArchive(o, actor)) {
-        state.error = "В архив можно отправить только завершённую передачу из вашей области видимости.";
+        state.error = "В мой архив можно убрать только выполненную передачу без ожидаемого получения, из вашей области видимости.";
         renderTracker();
         return;
       }
@@ -5459,6 +5788,7 @@
     }
     if (action === "registry-unarchive" && o) {
       const actor = registryActorId();
+      if (cleanupPreviewReadOnly() || !actorRegistrySeesOrder(o, actor)) return;
       RegPersonal()?.removeArchived(o.id, actor);
       state.toast = "Передача снова в основном реестре.";
       renderTracker();
@@ -5638,6 +5968,15 @@
 
   document.addEventListener("input", (e) => {
     if (current !== ROUTE) return;
+    if (e.target.matches('[data-tt="cleanup-reason"]')) {
+      state.archiveReason = e.target.value;
+      return;
+    }
+    if (e.target.matches('[data-tt="cleanup-delete-ack"]')) {
+      state.archiveTypedAck = e.target.value;
+      updateCleanupSummary();
+      return;
+    }
     if (e.target.matches("[data-tt-field]")) {
       if (!state.form) state.form = {};
       state.form[e.target.getAttribute("data-tt-field")] = e.target.value;
@@ -5700,6 +6039,24 @@
 
   document.addEventListener("change", (e) => {
     if (current !== ROUTE) return;
+    if (e.target.matches('[data-tt="cleanup-select"]')) {
+      const id = e.target.value;
+      if (e.target.checked) state.archiveSelection = [...new Set([...state.archiveSelection, id])];
+      else state.archiveSelection = state.archiveSelection.filter((x) => x !== id);
+      updateCleanupSummary();
+      return;
+    }
+    if (e.target.matches('[data-tt="cleanup-scope"]')) {
+      state.archiveScope = e.target.value === "all" ? "all" : "selected";
+      state.archiveAllAck = false;
+      renderTracker();
+      return;
+    }
+    if (e.target.matches('[data-tt="cleanup-ack"]')) {
+      state.archiveAllAck = e.target.checked;
+      updateCleanupSummary();
+      return;
+    }
     if (e.target.matches('[data-tt="filter"]')) {
       state.statusFilter = e.target.value;
       renderTracker();
@@ -5752,6 +6109,13 @@
     if (wizardAdvance()) writeUrl();
     renderTracker();
   });
+
+  document.addEventListener("cancel", (e) => {
+    if (e.target.matches?.('[data-tt="cleanup-dialog"]')) {
+      e.preventDefault();
+      closeCleanup();
+    }
+  }, true);
 
   add("tan-tracker", "Тан-трекер", "Передача документов и предметов", "Менеджер", "tan-tracker", "", "");
   const priorNav = roleNav;
@@ -5819,6 +6183,9 @@
     seed: () => {
       seedContacts();
       seedOrders();
+      registryArchive.clear();
+      registryArchiveAudit.clear();
+      deletedTrackIds.clear();
     },
     routeActive: () => current === ROUTE,
     async simulateMessengerContact(scenario, payloadExtra) {

@@ -92,6 +92,13 @@
     removeRemoved,
     addArchived,
     removeArchived,
+    forgetOrder(orderId) {
+      Object.values(cache).forEach((rec) => {
+        rec.archived = (rec.archived || []).filter((id) => id !== orderId);
+        rec.removed = (rec.removed || []).filter((id) => id !== orderId);
+      });
+      persist();
+    },
     counts(actorId) {
       const rec = lists(actorId);
       return { removed: rec.removed.length, archived: rec.archived.length };

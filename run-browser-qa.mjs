@@ -23,10 +23,14 @@ const server = createServer(async (req, res) => {
 
 let browser;
 try {
-  await new Promise((r) => server.listen(4317, "127.0.0.1", r));
+  if (process.env.QA_REUSE_SERVER !== "1")
+    await new Promise((r) => server.listen(4317, "127.0.0.1", r));
 
-  browser = await chromium.launch();
+  browser = await chromium.launch({ channel: "chromium" });
   const page = await browser.newPage();
+  await page.addInitScript((visitor) => {
+    window.__NOTIFICATION_DEMO_VISITOR__ = visitor;
+  }, `qa-${Date.now()}-${process.pid}`);
   await page.setViewportSize({ width: 1440, height: 900 });
   page.setDefaultTimeout(8000);
   page.on("pageerror", (e) => console.error("PAGEERROR:", e.message));
@@ -142,6 +146,10 @@ try {
   await writeFile(tmpQa, qaSource);
   try {
     await import(pathToFileURL(tmpQa).href);
+  } catch (error) {
+    await page.screenshot({path: `/tmp/tandoor-qa-failure-${script.replace(/[^a-z0-9.-]/gi,"_")}.png`}).catch(()=>{});
+    console.error("QA_FAILURE_URL",page.url());
+    throw error;
   } finally {
     await unlink(tmpQa).catch(() => {});
   }

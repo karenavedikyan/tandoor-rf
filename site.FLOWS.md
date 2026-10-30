@@ -1,5 +1,25 @@
 # Main flows
 
+## Registry archival update: 30 October 2026
+
+- Reuse the same unified prototype and site directory. No production changes, real messages, production deletion, new clients or altered employee rights.
+- Add a distinct synthetic administrator demo role, not a promotion of the director. Admin reads all tracks; custody/proof actions still require the original holder.
+- Admin can open «Архивировать треки» in the registry or archive one eligible track from its detail menu. Select one/many, or explicitly choose the whole registry independent of filters.
+- Eligibility: completed or delivered, no pending handoff. Explain and count skipped active tracks. No implicit completion, receipt or handoff cancellation.
+- In-page confirmation shows exact track IDs, counts, optional reason and whole-registry acknowledgement. Cancel / Escape changes nothing; empty selection cannot submit.
+- Move eligible tracks out of the normal registry, keep scoped archival view, original status, custody, files and timeline. Archive is read-only until admin restores it, with separate audit history of archive/restore actions.
+- Read-only preview (`as_role` / `as_person`) cannot mutate cleanup state. Non-admin roles cannot archive/restore the general registry even with injected action controls. Every ordinary participant can manage their own personal archive; original personal archives remain separate.
+- Demo archive state lasts only while this page is open, like the transfer demo data; explicitly disclose this. No production backend claim.
+- QA: one/many/all, cancellation, empty selection, active skip, archive detail/history/files, restore, role boundaries, both themes, 320/375/1440px, short-height dialog, keyboard and desktop-mobile-desktop resize.
+- Recheck registry search/filters, wizard, recipient invitation/contact/code/handoff/relay, notifications and clients via existing browser QA. Inspect returned deployed URL in a fresh browser context.
+- Baseline opened in Chromium at 1440×900, director view, existing «Мой реестр» toolbar; screenshot `/tmp/tandoor-archive-before.png` outside deployment.
+- Additional user decisions: creator and admin may permanently remove an erroneous/unneeded track only before anyone first receives it. Confirmation revokes invitation/code/QR and removes demo files, without archiving; a generic unavailable page is shown on old links. After any confirmed receipt, including a return to creator, deletion is forbidden.
+- Every participant may archive their own completed/delivered-without-pending tracks in «Мой архив», independently of others' lists. Personal restoration remains available. Personal and general archives are clearly named and never conflated.
+- If a personally archived delivered track is continued with a new pending recipient, it appears in the active list again rather than hiding a new obligation.
+- Local QA complete: cleanup suite 52 assertions; regression suites external request 11, delivery continuation 5, personal registry 10, invitation welcome 20, attachments 30, wizard review 18, scope 22, role 19, external post-code chain 19, notification center 39. Total 245 browser assertions in 11 suites; syntax checks and `git diff --check` also passed.
+- New cleanup suite uses two explicit synthetic pre-receipt fixtures for bulk-deletion testing and one synthetic returned-to-creator receipt marker for the prohibition case. These are isolated test fixtures outside the deployed site, not production records. UI clicks perform the cleanup operations.
+- Visual inspection: light 375×812, dark 320×640, desktop 1440×900, short-height 1440×420. Confirmation footer fits and stays accessible, disabled action is visibly disabled. Dark secondary-label contrast sampled at 6.59:1 or higher. External-shell cards now remain visible at desktop widths, without exposing unrelated LK sections.
+
 ## Requested invitation update: 30 October 2026
 
 - Valid recipient link first shows branded invitation: actual synthetic sender/item, concise purpose, no registration promise beyond LK account, and one primary «Посмотреть передачу».
