@@ -3062,16 +3062,27 @@
     history.replaceState(null, "", `#${ROUTE}?${p}`);
   }
 
+  function lkBootstrapAuthoritativeExternalActor(boot) {
+    return !!(boot && (boot.externalPerson || boot.publicHolder || boot.publicRecipient));
+  }
+
+  function authoritativeExternalActorFromBootstrap(boot) {
+    if (!lkBootstrapAuthoritativeExternalActor(boot)) return null;
+    return boot.actorContact?.id || boot.actorPartyId || null;
+  }
+
   function readUrl() {
     const p = new URLSearchParams(location.hash.split("?")[1] || "");
-    if (TT_LK && window.__TT_LK_BOOTSTRAP__) {
+    const lkBoot = TT_LK && window.__TT_LK_BOOTSTRAP__ ? window.__TT_LK_BOOTSTRAP__ : null;
+    if (lkBoot) {
       state.ttRoleUnsupported = false;
       state.ttRequestedRole = "";
-      state.ttPrototypeRole = window.__TT_LK_BOOTSTRAP__.prototypeRole || "manager";
-      state.lkActorPartyId = window.__TT_LK_BOOTSTRAP__.actorPartyId || null;
-      state.lkLinkedEmployeeId = window.__TT_LK_BOOTSTRAP__.linkedEmployeeId || null;
-      state.actingContactId = null;
-      applyLkCapabilitiesFromBootstrap(window.__TT_LK_BOOTSTRAP__);
+      state.ttPrototypeRole = lkBoot.prototypeRole || "manager";
+      state.lkActorPartyId = lkBoot.actorPartyId || null;
+      state.lkLinkedEmployeeId = lkBoot.linkedEmployeeId || null;
+      const authExt = authoritativeExternalActorFromBootstrap(lkBoot);
+      state.actingContactId = authExt || null;
+      applyLkCapabilitiesFromBootstrap(lkBoot);
       enforceReadOnlyRouteGuards();
     }
     const resolved = TT_LK && window.__TT_LK_BOOTSTRAP__
@@ -3086,8 +3097,10 @@
     state.ttRoleUnsupported = resolved.unsupported;
     state.ttRequestedRole = resolved.requested || "";
     if (TT_LK) {
-      const act = p.get("tt_act");
-      state.actingContactId = act && contactById(act)?.kind === "external" ? act : null;
+      if (!lkBootstrapAuthoritativeExternalActor(lkBoot)) {
+        const act = p.get("tt_act");
+        state.actingContactId = act && contactById(act)?.kind === "external" ? act : null;
+      }
     } else state.actingContactId = p.get("tt_act") || null;
     const hat = p.get("tt_hat");
     if (hat && isPublicGuestPage()) {
@@ -5660,7 +5673,7 @@
     state.lkActorPartyId = data.actorPartyId || null;
     state.lkLinkedEmployeeId = data.linkedEmployeeId || null;
     state.externalMessengerEnabled = !!data.externalMessengerEnabled;
-    if (data.publicHolder || data.publicRecipient) {
+    if (data.publicHolder || data.publicRecipient || data.externalPerson) {
       state.actingContactId = data.actorContact?.id || data.actorPartyId || null;
     } else if (data.lkMode) {
       state.actingContactId = null;

@@ -1,0 +1,82 @@
+import type { PoolClient } from "pg";
+import { buildExternalPersonMessengerBody } from "./external-person/messenger-copy";
+import { enqueueExternalPersonMessengerEvent } from "./external-person/external-person-notify";
+import { signExternalPersonMessengerLinks } from "./external-person/holder-links";
+import type { ExternalMessengerChannel } from "./external-person/messenger-provenance";
+import { isExternalParty } from "./transfer-lk-notify";
+
+async function transferMeta(client: PoolClient, transferId: string) {
+  return (
+    await client.query<{ public_code: string; item_title: string }>(
+      `SELECT public_code, item_title FROM tt_transfers WHERE id = $1 LIMIT 1`,
+      [transferId],
+    )
+  ).rows[0];
+}
+
+export async function notifyExternalPartyAfterHandoff(
+  client: PoolClient,
+  input: {
+    externalPartyId: string;
+    transferId: string;
+    handoffVersion: number;
+    event: "after_code" | "after_receipt" | "delivered" | "closed";
+    preferredChannel?: ExternalMessengerChannel;
+    singleChannel?: boolean;
+  },
+): Promise<void> {
+  if (!(await isExternalParty(client, input.externalPartyId))) return;
+  const meta = await transferMeta(client, input.transferId);
+  if (!meta) return;
+  const links = await signExternalPersonMessengerLinks(client, {
+    externalPartyId: input.externalPartyId,
+    transferId: input.transferId,
+    handoffVersion: input.handoffVersion,
+  });
+  const body = buildExternalPersonMessengerBody({
+    event: input.event === "after_code" ? "after_code" : input.event,
+    publicCode: meta.public_code,
+    itemTitle: meta.item_title,
+    holderUrl: links?.holderUrl,
+    shellUrl: links?.shellUrl,
+  });
+  await enqueueExternalPersonMessengerEvent(client, {
+    externalPartyId: input.externalPartyId,
+    publicCode: meta.public_code,
+    event: input.event,
+    body,
+    idempotencyKey: `tt-ext-msg:${input.event}:${input.transferId}:hv:${input.handoffVersion}`,
+    preferredChannel: input.preferredChannel,
+    singleChannel: input.singleChannel ?? input.event === "after_receipt",
+  });
+}
+
+export async function notifyExternalPartyHandoffCode(
+  client: PoolClient,
+  input: {
+    externalPartyId: string;
+    transferId: string;
+    handoffVersion: number;
+    code: string;
+    preferredChannel: ExternalMessengerChannel;
+  },
+): Promise<void> {
+  if (!(await isExternalParty(client, input.externalPartyId))) return;
+  const meta = await transferMeta(client, input.transferId);
+  if (!meta) return;
+  const body = buildExternalPersonMessengerBody({
+    event: "handoff_code",
+    publicCode: meta.public_code,
+    itemTitle: meta.item_title,
+    extraLine: input.code,
+  });
+  await enqueueExternalPersonMessengerEvent(client, {
+    externalPartyId: input.externalPartyId,
+    publicCode: meta.public_code,
+    event: "handoff_code",
+    body,
+    idempotencyKey: `tt-ext-msg:handoff_code:${input.transferId}:hv:${input.handoffVersion}:${input.preferredChannel}`,
+    preferredChannel: input.preferredChannel,
+    singleChannel: true,
+  });
+}

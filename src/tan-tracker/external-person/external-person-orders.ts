@@ -79,8 +79,10 @@ export async function loadExternalHistoricalSummaries(
      JOIN tt_transfers t ON t.id = tl.transfer_id
      WHERE (tl.from_party_id = $1::uuid OR tl.to_party_id = $1::uuid)
        AND NOT (
-         t.creator_party_id = $1::uuid OR t.holder_party_id = $1::uuid
-         OR t.pending_party_id = $1::uuid OR t.final_recipient_party_id = $1::uuid
+         t.creator_party_id = $1::uuid
+         OR t.holder_party_id = $1::uuid
+         OR (t.pending_party_id IS NOT NULL AND t.pending_party_id = $1::uuid)
+         OR (t.final_recipient_party_id IS NOT NULL AND t.final_recipient_party_id = $1::uuid)
        )
      ORDER BY tl.occurred_at DESC
      LIMIT 50`,

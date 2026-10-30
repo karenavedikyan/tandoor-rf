@@ -63,7 +63,9 @@
 
   function loadPublicReceipt(token) {
     var url =
-      "/api/tan-tracker/public/recipient/receipt?invitationToken=" + encodeURIComponent(token);
+      "/api/tan-tracker/public/recipient/receipt?invitationToken=" +
+      encodeURIComponent(token) +
+      "&refresh=1";
     return fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } }).then(
       function (response) {
         return response.json().then(function (data) {

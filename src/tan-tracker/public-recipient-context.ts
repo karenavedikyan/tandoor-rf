@@ -119,22 +119,27 @@ export async function publicRecipientReceiptHandler(req: Request, res: Response)
     res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Сервис недоступен."));
     return;
   }
-  const row = (
-    await pool.query(
-      `SELECT t.id, t.public_code, t.item_title, t.status, t.holder_party_id, t.completed_at
-       FROM tt_transfers t
-       WHERE (t.id = $1 OR t.public_code = $1)
-         AND t.status = 'completed'
-         AND t.holder_party_id = $2::uuid
-       LIMIT 1`,
-      [invite.transferId, invite.pendingPartyId],
-    )
-  ).rows[0];
-  if (!row) {
+  const refresh = String(req.query.refresh ?? "") === "1";
+  const { loadBoundedPublicRecipientOrder, recipientMayRefreshAfterReceipt } = await import("./public-recipient-bounded");
+  const bounded = await loadBoundedPublicRecipientOrder(pool, {
+    transferId: invite.transferId,
+    recipientPartyId: invite.pendingPartyId,
+  });
+  if (!bounded) {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Результат получения недоступен."));
     return;
   }
+  const { row, dto, contacts } = bounded;
+  if (!recipientMayRefreshAfterReceipt(invite, row.holder_party_id) && row.status !== "completed") {
+    setNoStore(res);
+    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Результат получения недоступен."));
+    return;
+  }
+  const routeComplete =
+    row.status === "completed" ||
+    row.status === "delivered" ||
+    (row.final_recipient_party_id != null && row.holder_party_id === row.final_recipient_party_id);
   const appOrigin = getAppOrigin() ?? null;
   setNoStore(res);
   res.status(200).json({
@@ -146,11 +151,23 @@ export async function publicRecipientReceiptHandler(req: Request, res: Response)
       publicCode: row.public_code,
       item: row.item_title,
       status: row.status,
-      routeComplete: true,
+      routeComplete,
       transferStatus: row.status,
       completedAt: row.completed_at ? new Date(row.completed_at).getTime() : null,
+      deliveredAt: row.delivered_at ? new Date(row.delivered_at).getTime() : null,
       recipientPartyId: invite.pendingPartyId,
     },
+    ...(refresh
+      ? {
+          boundedRefresh: true,
+          lkMode: true,
+          actorPartyId: invite.pendingPartyId,
+          actorContact: { id: invite.pendingPartyId, kind: "external" as const, employeeId: null },
+          contacts,
+          orders: [dto],
+          capabilities: { canWrite: false },
+        }
+      : {}),
   });
 }
 

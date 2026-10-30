@@ -5,6 +5,7 @@ import { createDefaultTelegramDeliveryTransport } from "./delivery-transport";
 import { processTanbotNotificationOutbox } from "./outbox-worker";
 import { isTanbotTelegramDeliveryEnabled } from "./stage2-config";
 import { processUndeliveredTelegramWebhookReplies } from "./reply-retry";
+import { processExternalPersonMessageOutbox } from "../tan-tracker/external-person/outbox-worker";
 
 const DEFAULT_INTERVAL_MS = 15_000;
 
@@ -24,6 +25,29 @@ export async function runTanbotOutboxWorkerOnce(
     deliveryEnabled,
   });
   await processUndeliveredTelegramWebhookReplies(pool, config, deliveryTransport, { deliveryEnabled });
+  await processExternalPersonMessageOutbox(pool, {
+    channel: "telegram",
+    botToken: config.botToken,
+    requestTimeoutMs: config.requestTimeoutMs,
+    maxResponseBytes: config.maxResponseBytes,
+    deliveryEnabled,
+    transport: async ({ chatId, text, botToken, timeoutMs, maxResponseBytes }) => {
+      const send = await deliveryTransport({
+        method: "sendMessage",
+        token: botToken,
+        body: { chat_id: chatId, text, disable_web_page_preview: true },
+        timeoutMs,
+        maxResponseBytes,
+      });
+      if (send.ok) return { ok: true };
+      return {
+        ok: false,
+        code: send.code,
+        retryable: send.retryable,
+        retryAfterSeconds: send.retryAfterSeconds,
+      };
+    },
+  });
 }
 
 export function startTanbotTelegramOutboxWorker(

@@ -5,6 +5,12 @@ import {
   enqueueTanTrackerAssignmentTelegram,
   resolveUserIdForParty,
 } from "../tanbot-telegram/outbox";
+import {
+  notifyDeliveredLk,
+  notifyHandoffConfirmedLk,
+  notifyTransferAssignmentLk,
+} from "./transfer-lk-notify";
+import { notifyExternalPartyAfterHandoff } from "./transfer-external-messenger-notify";
 
 type TransferRow = {
   id: string;
@@ -58,30 +64,75 @@ export async function applyPendingReceiptHandoff(
   await markFirstCustodyIfUnset(client, row.id);
 
   const newHandoffVersion = row.handoff_version + 1;
+  const meta = await client.query<{
+    public_code: string;
+    item_title: string;
+    creator_party_id: string;
+  }>(`SELECT public_code, item_title, creator_party_id FROM tt_transfers WHERE id = $1`, [row.id]);
+  const m = meta.rows[0];
+
+  if (m) {
+    await notifyHandoffConfirmedLk(client, {
+      transferId: row.id,
+      publicCode: m.public_code,
+      itemTitle: m.item_title,
+      previousHolderPartyId: from,
+      newHolderPartyId: to,
+      creatorPartyId: m.creator_party_id,
+      handoffVersion: newHandoffVersion,
+      delivered: routeComplete,
+    });
+    if (routeComplete) {
+      await notifyDeliveredLk(client, {
+        transferId: row.id,
+        publicCode: m.public_code,
+        itemTitle: m.item_title,
+        creatorPartyId: m.creator_party_id,
+        holderPartyId: to,
+        handoffVersion: newHandoffVersion,
+      });
+    }
+    const extEvent = routeComplete ? "delivered" : "after_receipt";
+    await notifyExternalPartyAfterHandoff(client, {
+      externalPartyId: to,
+      transferId: row.id,
+      handoffVersion: newHandoffVersion,
+      event: extEvent,
+      singleChannel: true,
+    });
+    await notifyExternalPartyAfterHandoff(client, {
+      externalPartyId: from,
+      transferId: row.id,
+      handoffVersion: newHandoffVersion,
+      event: "after_code",
+      singleChannel: false,
+    });
+  }
+
   if (newStatus === "active") {
     const holderUserId = await resolveUserIdForParty(client, to);
-    if (holderUserId) {
-      const meta = await client.query<{ public_code: string; item_title: string }>(
-        `SELECT public_code, item_title FROM tt_transfers WHERE id = $1`,
-        [row.id],
-      );
-      const m = meta.rows[0];
-      if (m) {
-        await enqueueTanTrackerAssignmentTelegram(client, {
-          transferId: row.id,
-          publicCode: m.public_code,
-          itemTitle: m.item_title,
-          handoffVersion: newHandoffVersion,
-          holderUserId,
-        });
-        await enqueueTanTrackerAssignmentMax(client, {
-          transferId: row.id,
-          publicCode: m.public_code,
-          itemTitle: m.item_title,
-          handoffVersion: newHandoffVersion,
-          holderUserId,
-        });
-      }
+    if (holderUserId && m) {
+      await notifyTransferAssignmentLk(client, {
+        transferId: row.id,
+        publicCode: m.public_code,
+        itemTitle: m.item_title,
+        holderUserId,
+        handoffVersion: newHandoffVersion,
+      });
+      await enqueueTanTrackerAssignmentTelegram(client, {
+        transferId: row.id,
+        publicCode: m.public_code,
+        itemTitle: m.item_title,
+        handoffVersion: newHandoffVersion,
+        holderUserId,
+      });
+      await enqueueTanTrackerAssignmentMax(client, {
+        transferId: row.id,
+        publicCode: m.public_code,
+        itemTitle: m.item_title,
+        handoffVersion: newHandoffVersion,
+        holderUserId,
+      });
     }
   }
 

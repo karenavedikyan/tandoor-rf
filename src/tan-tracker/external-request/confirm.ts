@@ -9,6 +9,7 @@ import {
 } from "./intake";
 import { enqueueExternalCreatedNotifications } from "../lk-notifications";
 import { enqueueTanTrackerAssignmentMax, enqueueTanTrackerAssignmentTelegram } from "../../tanbot-telegram/outbox";
+import { notifyTransferAssignmentLk } from "../transfer-lk-notify";
 
 export type ExternalDraftPayload = {
   item?: string;
@@ -155,6 +156,13 @@ export async function confirmExternalRequestDraft(
     staffUserId: recipientUserId,
     externalPartyId: input.externalPartyId,
     itemTitle: item,
+  });
+  await notifyTransferAssignmentLk(client, {
+    transferId: publicCode,
+    publicCode,
+    itemTitle: item,
+    holderUserId: recipientUserId,
+    handoffVersion: 1,
   });
   await enqueueTanTrackerAssignmentTelegram(client, {
     transferId: publicCode,

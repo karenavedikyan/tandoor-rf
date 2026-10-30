@@ -7,6 +7,8 @@ import { resolveTanTrackerAuditUserId } from "./effective-user";
 import { ensurePartyForUserOnWrite } from "./repository";
 import { buildTanTrackerBootstrap } from "./service";
 import { requireTanTrackerMutationAccess } from "./guards";
+import { notifyClosedLk } from "./transfer-lk-notify";
+import { notifyExternalPartyAfterHandoff } from "./transfer-external-messenger-notify";
 
 export async function legacyCompleteHandler(req: AccessRequest, res: Response): Promise<void> {
   const gate = requireTanTrackerMutationAccess(req, res);
@@ -34,9 +36,11 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
           allow_legacy_complete: boolean;
           row_version: number;
           handoff_version: number;
+          public_code: string;
+          item_title: string;
         }>(
           `SELECT id, status, creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
-                  allow_legacy_complete, row_version, handoff_version
+                  allow_legacy_complete, row_version, handoff_version, public_code, item_title
            FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1 FOR UPDATE`,
           [transferId],
         )
@@ -109,6 +113,28 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
          VALUES ($1,$2::uuid,$3,'legacy_complete','{}'::jsonb)`,
         [row.id, auditUserId, party.id],
       );
+      const closedHv = row.handoff_version + 1;
+      await notifyClosedLk(client, {
+        transferId: row.id,
+        publicCode: row.public_code,
+        itemTitle: row.item_title,
+        partyIds: [row.creator_party_id, row.holder_party_id, row.final_recipient_party_id].filter(
+          (id): id is string => !!id,
+        ),
+        handoffVersion: closedHv,
+      });
+      await notifyExternalPartyAfterHandoff(client, {
+        externalPartyId: row.holder_party_id,
+        transferId: row.id,
+        handoffVersion: closedHv,
+        event: "closed",
+      });
+      await notifyExternalPartyAfterHandoff(client, {
+        externalPartyId: row.creator_party_id,
+        transferId: row.id,
+        handoffVersion: closedHv,
+        event: "closed",
+      });
       return { ok: true };
     });
   } catch {

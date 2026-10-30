@@ -9,17 +9,19 @@ import { buildTanTrackerBootstrap } from "./service";
 import { requireTanTrackerMutationAccess } from "./guards";
 import { assertPartyEligibleAsRecipient } from "./party-eligibility";
 import { invalidateOpenHandoffArtifacts } from "./handoff-invalidation";
+import { notifyContinuedReturnedLk } from "./transfer-lk-notify";
 
 async function loadTransfer(client: { query: Function }, id: string) {
   const res = await client.query(
-    `SELECT id, status, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version, item_title,
-            delivered_at
+    `SELECT id, public_code, status, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version,
+            item_title, delivered_at
      FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1`,
     [id],
   );
   return res.rows[0] as
     | {
         id: string;
+        public_code: string;
         status: string;
         holder_party_id: string;
         pending_party_id: string | null;
@@ -44,6 +46,7 @@ export async function cancelPendingHandler(req: AccessRequest, res: Response): P
     if (!row || !row.pending_party_id) return { ok: false as const, code: 404 };
     if (row.holder_party_id !== party.id) return { ok: false as const, code: 403 };
     const revoked = row.pending_party_id;
+    const nextHandoffVersion = row.handoff_version + 1;
     const revertStatus = row.delivered_at != null ? "delivered" : "active";
     await client.query(
       `UPDATE tt_transfers SET pending_party_id = NULL, status = $2,
@@ -61,6 +64,14 @@ export async function cancelPendingHandler(req: AccessRequest, res: Response): P
        VALUES ($1,$2,$3,$4,$5::uuid)`,
       [row.id, row.holder_party_id, revoked, "Ожидание передачи отменено", auditUserId],
     );
+    await notifyContinuedReturnedLk(client, {
+      transferId: row.id,
+      publicCode: row.public_code,
+      itemTitle: row.item_title,
+      holderPartyId: row.holder_party_id,
+      kind: "returned",
+      handoffVersion: nextHandoffVersion,
+    });
     return { ok: true as const };
   });
 
@@ -123,6 +134,14 @@ export async function changePendingHandler(req: AccessRequest, res: Response): P
        VALUES ($1,$2,$3,$4,$5::uuid)`,
       [row.id, row.holder_party_id, pendingPartyId, "Назначен следующий получатель", auditUserId],
     );
+    await notifyContinuedReturnedLk(client, {
+      transferId: row.id,
+      publicCode: row.public_code,
+      itemTitle: row.item_title,
+      holderPartyId: row.holder_party_id,
+      kind: "continued",
+      handoffVersion: nextVer,
+    });
     return { ok: true as const };
     });
   } catch (err: unknown) {

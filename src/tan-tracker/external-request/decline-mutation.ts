@@ -9,6 +9,8 @@ import { buildTanTrackerBootstrap } from "../service";
 import { requireTanTrackerMutationAccess } from "../guards";
 import { enqueueExternalPersonMessengerNotice } from "../external-person/external-person-notify";
 import { invalidateOpenHandoffArtifacts } from "../handoff-invalidation";
+import { enqueueExternalDeclinedNotification } from "../lk-notifications";
+import { buildExternalPersonMessengerBody } from "../external-person/messenger-copy";
 
 export async function declineExternalRequestHandler(req: AccessRequest, res: Response): Promise<void> {
   const gate = requireTanTrackerMutationAccess(req, res);
@@ -31,9 +33,11 @@ export async function declineExternalRequestHandler(req: AccessRequest, res: Res
         row_version: number;
         handoff_version: number;
         external_declined_at: Date | null;
+        public_code: string;
+        item_title: string;
       }>(
         `SELECT id, from_external, creator_party_id, holder_party_id, pending_party_id, status, row_version,
-                handoff_version, external_declined_at
+                handoff_version, external_declined_at, public_code, item_title
          FROM tt_transfers WHERE id = $1 OR public_code = $1 LIMIT 1 FOR UPDATE`,
         [transferId],
       )
@@ -74,12 +78,22 @@ export async function declineExternalRequestHandler(req: AccessRequest, res: Res
         auditUserId,
       ],
     );
+    await enqueueExternalDeclinedNotification(client, {
+      transferId: row.id,
+      staffUserId: user.id,
+      itemTitle: row.item_title,
+      reason: reason || null,
+    });
     await enqueueExternalPersonMessengerNotice(client, {
       externalPartyId: row.creator_party_id,
-      body: reason
-        ? `Заявка ${row.id} отклонена: ${reason}`
-        : `Заявка ${row.id} отклонена сотрудником.`,
+      body: buildExternalPersonMessengerBody({
+        event: "declined",
+        publicCode: row.public_code,
+        itemTitle: row.item_title,
+        extraLine: reason ? `Причина: ${reason}` : undefined,
+      }),
       idempotencyKey: `tt-ext-decline:${row.id}`,
+      eventType: "external_person.declined",
     });
     return { ok: true as const };
   });

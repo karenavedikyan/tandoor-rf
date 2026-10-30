@@ -81,6 +81,23 @@ export async function generateHandoffCodeForPendingParty(
     [row.id, input.auditUserId, input.auditPartyId, input.auditAction ?? "code_generate"],
   );
 
+  const holderParty = (
+    await client.query<{ holder_party_id: string }>(`SELECT holder_party_id::text FROM tt_transfers WHERE id = $1`, [
+      row.id,
+    ])
+  ).rows[0]?.holder_party_id;
+  if (holderParty) {
+    const { notifyCodeGeneratedLk } = await import("./transfer-lk-notify");
+    await notifyCodeGeneratedLk(client, {
+      transferId: row.id,
+      publicCode: row.public_code,
+      itemTitle: row.item_title,
+      holderPartyId: holderParty,
+      pendingPartyId: row.pending_party_id!,
+      handoffVersion: row.handoff_version,
+    });
+  }
+
   return {
     ok: true,
     code,

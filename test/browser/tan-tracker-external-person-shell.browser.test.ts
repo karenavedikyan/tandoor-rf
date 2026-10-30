@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
@@ -17,8 +17,18 @@ import { createTestUser } from "../helpers/test-db";
 const FIXTURE_PNG = path.join(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/tan-tracker-admin-wizard.png");
 const IPHONE_13 = devices["iPhone 13"];
 const STAFF_EMAIL = "ext-shell-staff@test.local";
+const DIAG_DIR = path.join(process.cwd(), "var/browser-diagnostics");
 
 type ExtFixture = BrowserHttpFixture & { estToken?: string };
+
+async function saveBrowserDiagnostic(page: Page, label: string): Promise<string> {
+  await mkdir(DIAG_DIR, { recursive: true });
+  const file = path.join(DIAG_DIR, `tan-tracker-external-shell-${label}-${Date.now()}.png`);
+  await page.screenshot({ path: file, fullPage: true });
+  const meta = path.join(DIAG_DIR, `tan-tracker-external-shell-${label}-${Date.now()}.url.txt`);
+  await writeFile(meta, page.url(), "utf8");
+  return file;
+}
 
 async function launchRequired(engine: BrowserType<Browser>, t: { skip: (message?: string) => void }) {
   try {
@@ -42,7 +52,14 @@ async function loginStaff(page: Page, fixture: BrowserHttpFixture) {
 async function runExternalRequestWizard(page: Page, baseUrl: string, est: string): Promise<string> {
   await page.goto(`${baseUrl}/tan-tracker?est=${encodeURIComponent(est)}`);
   await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 30000 });
-  await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 15000 });
+  try {
+    await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 15000 });
+  } catch (err) {
+    const shot = await saveBrowserDiagnostic(page, "missing-ext-request-open");
+    throw new Error(
+      `${err instanceof Error ? err.message : String(err)} (diagnostic screenshot: ${shot})`,
+    );
+  }
   await page.click('[data-tt="ext-request-open"]');
   await page.waitForSelector('[data-tt-field="extItem"]', { timeout: 10000 });
 
@@ -199,6 +216,11 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
       } finally {
         await staffPage.close();
       }
+    } catch (err) {
+      const shot = await saveBrowserDiagnostic(page, "chromium-wizard-failure");
+      throw new Error(
+        `${err instanceof Error ? err.message : String(err)} (diagnostic screenshot: ${shot})`,
+      );
     } finally {
       await page.close();
     }
@@ -209,12 +231,21 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
     assert.ok(est);
     const browser = await launchRequired(webkit, t);
     const context = await browser!.newContext({ ...IPHONE_13, baseURL: fixture.baseUrl });
+    let page: Page | undefined;
     try {
-      const page = await context.newPage();
+      page = await context.newPage();
       const publicCode = await runExternalRequestWizard(page, fixture.baseUrl, est);
       assert.ok(publicCode.length >= 4);
       await page.click('[data-tt="ext-request-open-order"]');
       await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 15000 });
+    } catch (err) {
+      if (page) {
+        const shot = await saveBrowserDiagnostic(page, "webkit-wizard-failure");
+        throw new Error(
+          `${err instanceof Error ? err.message : String(err)} (diagnostic screenshot: ${shot})`,
+        );
+      }
+      throw err;
     } finally {
       await context.close();
       await browser!.close();
