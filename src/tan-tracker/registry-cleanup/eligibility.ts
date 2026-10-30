@@ -79,14 +79,24 @@ export function canGeneralRestoreOrder(row: TanTrackerTransferRow, actor: Regist
   return actor.isAdmin && !actor.previewReadOnly && !!row.general_archived_at;
 }
 
+export function canAdminForceDeleteTransfer(actor: RegistryCleanupActor): boolean {
+  return actor.isAdmin && !actor.previewReadOnly;
+}
+
+export function computeCanAdminDeleteTransferDto(actor: RegistryCleanupActor | null): boolean {
+  if (!actor) return false;
+  return canAdminForceDeleteTransfer(actor);
+}
+
 export function canShowDeleteBeforeReceipt(
   o: TanTrackerOrderDto,
   row: Pick<TanTrackerTransferRow, "status" | "first_custody_at">,
   actor: RegistryCleanupActor,
 ): boolean {
   if (actor.previewReadOnly) return false;
+  if (canAdminForceDeleteTransfer(actor)) return false;
   const creator = orderCreatorPartyId(o);
-  const allowedRole = actor.isAdmin || (creator != null && creator === actor.partyId);
+  const allowedRole = creator != null && creator === actor.partyId;
   if (!allowedRole) return false;
   if (row.status === "completed") return false;
   if (row.first_custody_at != null) return false;
@@ -112,6 +122,7 @@ export async function canDeleteOrder(
   row: TanTrackerTransferRow,
   actor: RegistryCleanupActor,
 ): Promise<boolean> {
+  if (canAdminForceDeleteTransfer(actor)) return true;
   if (!canShowDeleteBeforeReceipt(o, row, actor)) return false;
   if (await transferHasConfirmedFirstCustody(client, row.id)) return false;
   return true;

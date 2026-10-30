@@ -6,14 +6,18 @@ export async function deleteTransferBeforeFirstCustody(
   client: PoolClient,
   transferId: string,
   actor: { userId: string | null; partyId: string },
+  options?: { adminForceDelete?: boolean },
 ): Promise<{ ok: true; publicCode: string } | { ok: false; reason: string }> {
+  const adminForceDelete = options?.adminForceDelete === true;
   const row = await loadTransferForCustodyCheck(client, transferId, true);
   if (!row) return { ok: false, reason: "Передача не найдена." };
-  if (row.status === "completed") {
-    return { ok: false, reason: "Нельзя удалить завершённую передачу." };
-  }
-  if (await transferHasConfirmedFirstCustody(client, row.id)) {
-    return { ok: false, reason: "Получение уже подтверждалось — удаление недоступно." };
+  if (!adminForceDelete) {
+    if (row.status === "completed") {
+      return { ok: false, reason: "Нельзя удалить завершённую передачу." };
+    }
+    if (await transferHasConfirmedFirstCustody(client, row.id)) {
+      return { ok: false, reason: "Получение уже подтверждалось — удаление недоступно." };
+    }
   }
   const meta = await client.query<{ public_code: string }>(
     `SELECT public_code FROM tt_transfers WHERE id = $1 FOR UPDATE`,

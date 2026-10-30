@@ -26,6 +26,7 @@ import {
   type RegistryCleanupActor,
 } from "./context";
 import {
+  canAdminForceDeleteTransfer,
   canDeleteOrder,
   canGeneralArchiveOrder,
   canGeneralRestoreOrder,
@@ -175,10 +176,15 @@ async function runCleanup(
           skipped.push({ id: pub, reason: "Удаление недоступно." });
           continue;
         }
-        const out = await deleteTransferBeforeFirstCustody(client, internalId, {
-          userId: actor.userId,
-          partyId: actor.partyId,
-        });
+        const out = await deleteTransferBeforeFirstCustody(
+          client,
+          internalId,
+          {
+            userId: actor.userId,
+            partyId: actor.partyId,
+          },
+          { adminForceDelete: canAdminForceDeleteTransfer(actor) },
+        );
         if (!out.ok) {
           skipped.push({ id: pub, reason: out.reason });
           continue;

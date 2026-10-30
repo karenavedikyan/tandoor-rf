@@ -88,14 +88,26 @@ describe("tan-tracker registry cleanup (isolated PG)", { concurrency: false }, (
     assert.ok(boot.body.registryPersonal?.archivedTransferIds?.includes(transferPublicCode));
   });
 
-  it("delete rejected after legacy complete", async () => {
+  it("technical admin deletes completed track with durable audit", async () => {
+    const adminUserId = (
+      await pool.query<{ id: string }>(`SELECT id FROM users WHERE email = $1`, [
+        "registry-cleanup-admin@test.local",
+      ])
+    ).rows[0]!.id;
     const del = await request(app)
       .post("/api/tan-tracker/registry/cleanup")
       .set({ Origin: ORIGIN, Cookie: adminCookie, "Content-Type": "application/json" })
       .send({ action: "delete", transferIds: [transferPublicCode], deleteAck: "УДАЛИТЬ" });
-    assert.equal(del.status, 200);
-    assert.equal(del.body.applied.length, 0);
-    assert.ok(del.body.skipped?.length >= 1);
+    assert.equal(del.status, 200, del.text);
+    assert.deepEqual(del.body.applied, [transferPublicCode]);
+    const gone = await pool.query(`SELECT 1 FROM tt_transfers WHERE public_code = $1`, [transferPublicCode]);
+    assert.equal(gone.rowCount, 0);
+    const audit = await pool.query<{ actor_user_id: string; transfer_public_code: string }>(
+      `SELECT actor_user_id::text, transfer_public_code FROM tt_transfer_delete_audit WHERE transfer_public_code = $1`,
+      [transferPublicCode],
+    );
+    assert.equal(audit.rowCount, 1);
+    assert.equal(audit.rows[0]!.actor_user_id, adminUserId);
   });
 
   it("ROP personal-archives team member completed transfer in team scope", async () => {
@@ -270,7 +282,7 @@ describe("tan-tracker registry cleanup (isolated PG)", { concurrency: false }, (
       .get("/api/tan-tracker/bootstrap")
       .set({ Origin: ORIGIN, Cookie: adminCookie });
     const order = boot.body.orders.find((o: { id: string }) => o.id === pendingCode);
-    assert.ok(order?.canDeleteBeforeReceipt, "bootstrap must expose delete eligibility for pending track");
+    assert.ok(order?.canAdminDeleteTransfer, "admin bootstrap must expose force delete eligibility");
     const del = await request(app)
       .post("/api/tan-tracker/registry/cleanup")
       .set({ Origin: ORIGIN, Cookie: adminCookie, "Content-Type": "application/json" })

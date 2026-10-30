@@ -92,7 +92,13 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       const qrPayload = await holderPage.getAttribute('[data-tt="handoff-qr"] [data-tt="qr-host"]', "data-payload");
       assert.ok(qrPayload);
       assert.match(qrPayload, /\/tan-tracker\/recipient\?mst=er/);
+      assert.equal(await holderPage.locator('[data-tt="handoff-qr"] [data-tt="scan-qr-demo"]').count(), 0);
 
+      await holderPage.evaluate(`Object.defineProperty(navigator, "clipboard", {
+        configurable: true, value: { writeText: (text) => {
+          window.__ttInvitationCopied = text; return Promise.resolve();
+        } }
+      })`);
       const inviteResp = holderPage.waitForResponse(
         (r) =>
           r.request().method() === "POST" &&
@@ -100,18 +106,16 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
           r.status() === 201,
         { timeout: 30000 },
       );
-      await holderPage.click('[data-tt="messenger-invite-create"]');
+      await holderPage.click('[data-tt="messenger-invite-action"]');
       await inviteResp;
-      await holderPage.waitForSelector('[data-tt="messenger-invite-url"]', { timeout: 15000 });
-      const portalUrl = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
-      assert.match(portalUrl, /\/tan-tracker\/recipient\?mst=er/);
-
-      await holderPage.waitForSelector('[data-tt="invite-message-preview"]', { timeout: 10000 });
-      const previewText = await holderPage.inputValue('[data-tt="messenger-invite-message-text"]');
-      assert.match(previewText, /Messenger holder UI box/);
-      assert.match(previewText, /Посмотреть передачу:/);
-
-      await holderPage.click('[data-tt="messenger-invite-copy"]');
+      await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 15000 });
+      const copiedMessage = await holderPage.evaluate("window.__ttInvitationCopied");
+      assert.match(String(copiedMessage), /Messenger holder UI box/);
+      assert.match(String(copiedMessage), /Посмотреть передачу: https?:\/\//);
+      const urlMatches = String(copiedMessage).match(/https?:\/\/[^\s]+/g) || [];
+      assert.equal(urlMatches.length, 1);
+      assert.match(urlMatches[0]!, /\/tan-tracker\/recipient\?mst=er/);
+      assert.equal(await holderPage.locator('[data-tt="messenger-invite-message-text"]').count(), 0);
 
       const guestContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
       try {
@@ -192,7 +196,7 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
     );
   }
 
-  it("holder clipboard fallback selects full invitation text and URL without reissuing invite", async () => {
+  it("holder clipboard fallback selects full invitation text without reissuing invite", async () => {
     const holderContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
     try {
       const holderPage = await holderContext.newPage();
@@ -206,10 +210,9 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
           r.status() === 201,
         { timeout: 30000 },
       );
-      await holderPage.click('[data-tt="messenger-invite-create"]');
+      await holderPage.click('[data-tt="messenger-invite-action"]');
       const invite = await inviteResp;
       const inviteBody = (await invite.json()) as { startToken?: string; portalUrl?: string };
-      const urlBefore = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
       assert.ok(inviteBody.startToken);
 
       let invitePostCount = 0;
@@ -217,38 +220,29 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
         if (req.method() === "POST" && req.url().includes("/messenger-invite")) invitePostCount += 1;
       });
 
-      // Keep browser-injected nested functions out of tsx/esbuild's __name transform.
       await holderPage.evaluate(`Object.defineProperty(navigator, "clipboard", {
         configurable: true, value: { writeText: () => Promise.reject(new Error("denied")) }
       })`);
-      await holderPage.click('[data-tt="messenger-invite-copy-message"]');
+      await holderPage.click('[data-tt="messenger-invite-action"]');
       await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 10000 });
       await expectFullFieldSelection(holderPage, '[data-tt="messenger-invite-message-text"]');
       const messageValue = await holderPage.inputValue('[data-tt="messenger-invite-message-text"]');
       assert.match(messageValue, /Messenger holder UI box/);
       assert.match(messageValue, /Посмотреть передачу:/);
+      const urlMatches = messageValue.match(/https?:\/\/[^\s]+/g) || [];
+      assert.equal(urlMatches.length, 1);
+      assert.equal(new URL(urlMatches[0]!).searchParams.get("mst"), inviteBody.startToken);
 
-      await holderPage.evaluate(`Object.defineProperty(navigator, "clipboard", {
-        configurable: true, value: undefined
-      })`);
-      await holderPage.click('[data-tt="messenger-invite-copy-message"]');
-      await expectFullFieldSelection(holderPage, '[data-tt="messenger-invite-message-text"]');
-      await holderPage.click('[data-tt="messenger-invite-copy"]');
-      await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 10000 });
-      await expectFullFieldSelection(holderPage, '[data-tt="messenger-invite-url"]');
-      const urlAfter = await holderPage.inputValue('[data-tt="messenger-invite-url"]');
-      assert.equal(urlAfter, urlBefore);
-      assert.equal(new URL(urlAfter).searchParams.get("mst"), inviteBody.startToken);
       await holderPage.evaluate(`Object.defineProperty(navigator, "clipboard", {
         configurable: true, value: { writeText: (text) => {
           window.__ttInvitationCopied = text; return Promise.resolve();
         } }
       })`);
-      await holderPage.click('[data-tt="messenger-invite-copy-message"]');
+      await holderPage.click('[data-tt="messenger-invite-action"]');
       const copiedMessage = await holderPage.evaluate("window.__ttInvitationCopied");
       assert.equal(copiedMessage, messageValue);
-      assert.ok(copiedMessage.endsWith(urlBefore));
       assert.equal(invitePostCount, 0);
+      assert.equal(await holderPage.locator('[data-tt="messenger-invite-message-text"].tt-invite-message-fallback--visible').count(), 0);
     } finally {
       await holderContext.close();
     }

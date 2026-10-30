@@ -171,9 +171,23 @@
 
   function canDeleteTrack(o) {
     if (cleanupPreviewReadOnly() || !o || !deps.orderVisible(o)) return false;
-    if (usesServerDeleteEligibility()) return o.canDeleteBeforeReceipt === true;
-    if (typeof o.canDeleteBeforeReceipt === "boolean") return o.canDeleteBeforeReceipt;
+    if (usesServerDeleteEligibility()) {
+      return o.canDeleteBeforeReceipt === true || o.canAdminDeleteTransfer === true;
+    }
+    if (typeof o.canDeleteBeforeReceipt === "boolean" && o.canDeleteBeforeReceipt) return true;
+    if (typeof o.canAdminDeleteTransfer === "boolean" && o.canAdminDeleteTransfer) return true;
     return false;
+  }
+
+  function deleteCleanupDescription() {
+    if (canManageRegistry()) {
+      return "Безвозвратное удаление: трек, история, файлы и ссылки доступа (код, QR, приглашения) будут уничтожены. Восстановить нельзя.";
+    }
+    return "Только до первого подтверждённого получения кем-либо, включая промежуточного получателя. Трек и его файлы не попадут в архив; ссылка, код и QR перестанут действовать. Восстановить удалённое нельзя.";
+  }
+
+  function deleteCleanupTitle() {
+    return canManageRegistry() ? "Удалить треки" : "Удалить до первого получения";
   }
 
   function cleanupEligible(o, mode) {
@@ -210,7 +224,7 @@
         restore: "Вернуть из общего архива",
         personal: "В мой архив",
         "personal-restore": "Вернуть из моего архива",
-        delete: "Удалить до первого получения",
+        delete: deleteCleanupTitle(),
       }[mode] || ""
     );
   }
@@ -390,7 +404,11 @@
       : "") +
       "</div>" +
       (n ?
-        "<p>Цифра на кнопке — сколько выбранных треков доступно для действия. Удалить можно только до первого получения.</p>"
+        "<p>Цифра на кнопке — сколько выбранных треков доступно для действия. " +
+          (canManageRegistry() ?
+            "Удаление необратимо и затронет историю, файлы и ссылки доступа."
+          : "Удалить можно только до первого получения.") +
+          "</p>"
       : "") +
       "</div>"
     );
@@ -569,7 +587,11 @@
 
   function skipReason(o, mode, allowed) {
     if (allowed) {
-      if (mode === "delete") return "Получение ещё не подтверждалось";
+      if (mode === "delete") {
+        return canManageRegistry() ?
+          "Будет удалён без возможности восстановления"
+        : "Получение ещё не подтверждалось";
+      }
       if (mode === "restore" || mode === "personal-restore") return "Можно восстановить";
       return "Выполнено, без ожидаемой передачи";
     }
@@ -598,7 +620,7 @@
     var disabled =
       !eligible.length || (all && !state().archiveAllAck) || (deleting && state().archiveTypedAck !== "УДАЛИТЬ");
     var description = deleting ?
-      "Только до первого подтверждённого получения кем-либо, включая промежуточного получателя. Трек и его файлы не попадут в архив; ссылка, код и QR перестанут действовать. Восстановить удалённое нельзя."
+      deleteCleanupDescription()
     : restoring ?
       personal ?
         "Треки вернутся в ваш основной список. Реестры других участников не изменятся."

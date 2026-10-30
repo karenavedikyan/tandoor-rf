@@ -93,6 +93,8 @@ export type TanTrackerOrderDto = {
   generalArchived?: boolean;
   /** Server hint for registry delete before first confirmed receipt (authoritative for UI). */
   canDeleteBeforeReceipt?: boolean;
+  /** Technical admin may delete any visible track regardless of custody (authoritative for UI). */
+  canAdminDeleteTransfer?: boolean;
   /** Signed public-holder capability scoped to this order (external person bootstrap only). */
   holderAccessToken?: string | null;
 };

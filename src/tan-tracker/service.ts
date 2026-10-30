@@ -14,7 +14,10 @@ import {
 } from "./repository";
 import { canViewOrder, tanTrackerNavAllowed } from "./scope";
 import { isBeforeFirstConfirmedCustody, transferIdsWithConfirmedFirstCustodyAudit } from "./custody-state";
-import { computeCanDeleteBeforeReceiptDto } from "./registry-cleanup/eligibility";
+import {
+  computeCanAdminDeleteTransferDto,
+  computeCanDeleteBeforeReceiptDto,
+} from "./registry-cleanup/eligibility";
 import type { RegistryCleanupActor } from "./registry-cleanup/context";
 import { loadTanTrackerTeamEmployeeGuids } from "./team-scope";
 import type { TanTrackerContactDto, TanTrackerOrderDto, TanTrackerScopeContext } from "./types";
@@ -182,6 +185,7 @@ export async function buildTanTrackerBootstrap(
         deleteActor,
         auditConfirmedIds,
       );
+      dto.canAdminDeleteTransfer = computeCanAdminDeleteTransferDto(deleteActor);
       orders.push(dto);
     }
   }

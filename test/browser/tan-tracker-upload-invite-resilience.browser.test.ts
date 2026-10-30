@@ -162,7 +162,7 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
           (req) => req.method() === "POST" && req.url().includes("/messenger-invite"),
           { timeout: 15000 },
         );
-        await page.click('[data-tt="messenger-invite-create"]');
+        await page.click('[data-tt="messenger-invite-action"]');
         await inviteReq;
         await page.clock.runFor(10001);
         assert.equal(await page.locator('[data-tt="messenger-invite-error"]').count(), 0);
@@ -185,7 +185,7 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
           (req) => req.method() === "POST" && req.url().includes("/messenger-invite"),
           { timeout: 15000 },
         );
-        await page.click('[data-tt="messenger-invite-create"]');
+        await page.click('[data-tt="messenger-invite-action"]');
         await inviteReq;
         await page.clock.runFor(45001);
         const errLoc = page.locator('[data-tt="messenger-invite-error"]');
