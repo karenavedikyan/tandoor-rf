@@ -12,7 +12,12 @@ import {
 } from "./repository";
 import { getAppOrigin } from "../config";
 import { tanTrackerUserTestBannerForApi } from "../shared/tan-tracker-user-test-env";
-import { contentDispositionFilename, listAttachmentsForTransfers, readAttachmentBytes } from "./attachments";
+import {
+  contentDispositionFilename,
+  listAttachmentsForTransfers,
+  readAttachmentBytes,
+  resolveAttachmentContentDisposition,
+} from "./attachments";
 
 function maskPhone(phone: string | null): string {
   if (!phone || phone.length < 6) return "—";
@@ -210,10 +215,13 @@ export async function publicRecipientAttachmentHandler(req: Request, res: Respon
   try {
     const data = await readAttachmentBytes(fileRow.storage_key, pool);
     res.setHeader("Content-Type", fileRow.mime_type);
-    res.setHeader(
-      "Content-Disposition",
-      contentDispositionFilename(fileRow.original_name, "attachment"),
+    const disposition = resolveAttachmentContentDisposition(
+      fileRow.mime_type,
+      req.query as Record<string, unknown>,
     );
+    setNoStore(res);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Disposition", contentDispositionFilename(fileRow.original_name, disposition));
     res.status(200).send(data);
   } catch {
     setNoStore(res);

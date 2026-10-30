@@ -49,6 +49,30 @@ export function decodeUploadFilename(rawHeader: string): string {
   return decoded || "file";
 }
 
+export function isSafeInlinePreviewMime(mime: string): boolean {
+  const m = String(mime ?? "").toLowerCase();
+  return m === "image/jpeg" || m === "image/png" || m === "image/webp";
+}
+
+function queryFlag(value: unknown): boolean {
+  const raw = String(value ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/** Preview (`preview=1`) may inline safe raster; download (`download=1`) is always attachment. */
+export function resolveAttachmentContentDisposition(
+  mime: string,
+  query: Record<string, unknown> = {},
+): "inline" | "attachment" {
+  if (queryFlag(query.download)) {
+    return "attachment";
+  }
+  if (queryFlag(query.preview)) {
+    return isSafeInlinePreviewMime(mime) ? "inline" : "attachment";
+  }
+  return isSafeInlinePreviewMime(mime) ? "inline" : "attachment";
+}
+
 export function contentDispositionFilename(
   name: string,
   disposition: "inline" | "attachment" = "inline",
@@ -254,8 +278,11 @@ export async function downloadAttachmentHandler(req: AccessRequest, res: Respons
   }
   try {
     const data = await readAttachmentBytes(row.storage_key, pool);
+    const disposition = resolveAttachmentContentDisposition(row.mime_type, req.query as Record<string, unknown>);
+    setNoStore(res);
     res.setHeader("Content-Type", row.mime_type);
-    res.setHeader("Content-Disposition", contentDispositionFilename(row.original_name));
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Disposition", contentDispositionFilename(row.original_name, disposition));
     res.status(200).send(data);
   } catch {
     setNoStore(res);

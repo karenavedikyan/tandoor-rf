@@ -148,7 +148,11 @@ body.tt-recipient-shell .main { align-self:start; margin-top:0; margin-bottom:au
 .tt-att-thumb:focus-visible { outline:3px solid var(--green,#507f22); outline-offset:2px; border-radius:8px; }
 .tt-att-lightbox { position:fixed; inset:0; z-index:200; background:#000c; display:grid; place-items:center; padding:16px; }
 .tt-att-lightbox[hidden] { display:none !important; }
-.tt-att-lightbox img { max-width:min(100%,720px); max-height:80vh; object-fit:contain; background:#fff; border-radius:8px; }
+.tt-att-lightbox-stage { display:grid; place-items:center; width:min(100%,720px); max-height:min(80dvh,80vh); }
+.tt-att-lightbox img { display:block; max-width:100%; max-height:min(80dvh,80vh); width:auto; height:auto; object-fit:contain; background:#fff; border-radius:8px; -webkit-user-select:none; user-select:none; }
+.tt-att-lightbox img[hidden] { display:none !important; }
+.tt-att-lightbox-fallback { color:#fff; text-align:center; padding:16px; max-width:min(100%,420px); }
+.tt-att-lightbox-fallback-actions { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:12px; }
 .tt-att-lightbox-close { position:absolute; top:16px; right:16px; z-index:1; }
 .tt-att-lightbox-cap { color:#fff; text-align:center; margin-top:10px; font-size:13px; max-width:720px; }
 @media (max-width:767px){

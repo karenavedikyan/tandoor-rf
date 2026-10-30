@@ -1948,6 +1948,21 @@
       } catch (_) {}
     }
     state.lightboxReturn = null;
+    state.lightboxAtt = null;
+  }
+
+  function setLightboxPreviewState(lb, mode, message) {
+    const img = lb.querySelector('[data-tt="attach-lightbox-img"]');
+    const fallback = lb.querySelector('[data-tt="attach-lightbox-fallback"]');
+    const err = lb.querySelector('[data-tt="attach-lightbox-err"]');
+    if (mode === "loading" || mode === "ok") {
+      if (fallback) fallback.hidden = true;
+      if (img) img.hidden = false;
+      return;
+    }
+    if (img) img.hidden = true;
+    if (fallback) fallback.hidden = false;
+    if (err && message) err.textContent = message;
   }
 
   function openAttachLightbox(a, trigger) {
@@ -1959,11 +1974,28 @@
     }
     if (!lb) return;
     state.lightboxReturn = trigger || document.activeElement;
+    state.lightboxAtt = a;
     const img = lb.querySelector('[data-tt="attach-lightbox-img"]');
     const cap = lb.querySelector('[data-tt="attach-lightbox-cap"]');
+    const dl = lb.querySelector('[data-tt="attach-lightbox-download"]');
+    const previewUrl = Att().attachmentPreviewUrl(a.url);
+    const downloadUrl = a.downloadUrl || Att().attachmentDownloadUrl(a.url);
+    if (dl) {
+      dl.href = downloadUrl;
+      dl.setAttribute("download", a.name || "file");
+    }
     if (img) {
-      img.src = a.url;
+      img.onload = () => setLightboxPreviewState(lb, "ok");
+      img.onerror = () =>
+        setLightboxPreviewState(
+          lb,
+          "error",
+          "Не удалось показать изображение. Попробуйте повторить или скачайте файл.",
+        );
+      setLightboxPreviewState(lb, "loading");
       img.alt = a.name;
+      img.removeAttribute("src");
+      img.src = previewUrl;
     }
     if (cap) cap.textContent = `${a.name} · ${Att().fmtBytes(a.size)}`;
     lb.hidden = false;
@@ -5109,6 +5141,13 @@
       closeAttachLightbox();
       return;
     }
+    if (action === "attach-lightbox-retry") {
+      const a = state.lightboxAtt;
+      if (a && Att()?.canPreview(a.mime)) {
+        openAttachLightbox(a, b);
+      }
+      return;
+    }
     if (action === "demo-verify-phone") {
       if (TT_LK) return;
       const order = o || orders.find((x) => x.id === state.orderId);
@@ -5292,15 +5331,24 @@
       if (!data.lkMode && Sc()?.migrateOrderFields) Sc().migrateOrderFields(copy);
       if (!copy.activeInvitation && copy.pendingId) syncInvitation(copy);
       if (copy.attachments && copy.attachments.length) {
-        copy.attachments = copy.attachments.map((a) => ({
-          id: a.id,
-          name: a.name,
-          mime: a.mimeType || a.mime,
-          size: a.byteSize || a.size,
-          addedAt: a.addedAt,
-          addedBy: a.addedBy,
-          url: `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}`,
-        }));
+        copy.attachments = copy.attachments.map((a) => {
+          const previewUrl = Att()?.lkAttachmentPreviewUrl
+            ? Att().lkAttachmentPreviewUrl(copy.id, a.id)
+            : `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}?preview=1`;
+          const downloadUrl = Att()?.lkAttachmentDownloadUrl
+            ? Att().lkAttachmentDownloadUrl(copy.id, a.id)
+            : `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}?download=1`;
+          return {
+            id: a.id,
+            name: a.name,
+            mime: a.mimeType || a.mime,
+            size: a.byteSize || a.size,
+            addedAt: a.addedAt,
+            addedBy: a.addedBy,
+            url: previewUrl,
+            downloadUrl,
+          };
+        });
       } else {
         copy.attachments = copy.attachments || [];
       }

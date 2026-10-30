@@ -12,6 +12,7 @@ import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS } from "./otp-config";
 import { hashOtp } from "./phone-verification";
 import {
   contentDispositionFilename,
+  resolveAttachmentContentDisposition,
   decodeUploadFilename,
   deleteAttachmentBytes,
   linkStagedAttachmentsToTransfer,
@@ -389,10 +390,12 @@ export async function publicHolderAttachmentHandler(req: Request, res: Response)
   }
   setNoStore(res);
   res.setHeader("Content-Type", fileRow.mime_type || "application/octet-stream");
-  res.setHeader(
-    "Content-Disposition",
-    contentDispositionFilename(fileRow.original_name, "attachment"),
+  const disposition = resolveAttachmentContentDisposition(
+    fileRow.mime_type || "application/octet-stream",
+    req.query as Record<string, unknown>,
   );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Disposition", contentDispositionFilename(fileRow.original_name, disposition));
   res.status(200).send(buf);
 }
 

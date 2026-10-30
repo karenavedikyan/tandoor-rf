@@ -276,6 +276,38 @@
     return m.includes("heic") || m.includes("heif") || /\.heic$/i.test(name) || /\.heif$/i.test(name);
   }
 
+  function lkTransferAttachmentBaseUrl(transferId, attId) {
+    return (
+      "/api/tan-tracker/transfers/" +
+      encodeURIComponent(transferId) +
+      "/attachments/" +
+      encodeURIComponent(attId)
+    );
+  }
+
+  function withAttachmentQuery(baseUrl, key) {
+    const sep = String(baseUrl).includes("?") ? "&" : "?";
+    return `${baseUrl}${sep}${key}=1`;
+  }
+
+  function lkAttachmentPreviewUrl(transferId, attId) {
+    return withAttachmentQuery(lkTransferAttachmentBaseUrl(transferId, attId), "preview");
+  }
+
+  function lkAttachmentDownloadUrl(transferId, attId) {
+    return withAttachmentQuery(lkTransferAttachmentBaseUrl(transferId, attId), "download");
+  }
+
+  function attachmentPreviewUrl(url) {
+    if (!url || String(url).includes("preview=1")) return url;
+    return withAttachmentQuery(url, "preview");
+  }
+
+  function attachmentDownloadUrl(url) {
+    if (!url || String(url).includes("download=1")) return url;
+    return withAttachmentQuery(url, "download");
+  }
+
   function onThumbError(img) {
     const thumb = img && img.closest ? img.closest(".tt-att-thumb") : null;
     if (!thumb) return;
@@ -326,7 +358,7 @@
     const dl = attActionChip(
       "Скачать",
       "download",
-      `data-tt="attach-download" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}" href="${E(a.url)}" download="${E(a.name)}"`,
+      `data-tt="attach-download" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}" href="${E(a.downloadUrl || attachmentDownloadUrl(a.url))}" download="${E(a.name)}"`,
       "tt-att-action--download"
     );
     const openBtn = prev
@@ -415,7 +447,7 @@
   }
 
   function lightboxHtml() {
-    return `<div class="tt-att-lightbox" data-tt="attach-lightbox" hidden role="dialog" aria-modal="true" aria-label="Просмотр вложения"><button type="button" class="tt-att-lightbox-close" data-tt="attach-lightbox-close">Закрыть</button><img data-tt="attach-lightbox-img" alt=""><p class="tt-att-lightbox-cap" data-tt="attach-lightbox-cap"></p></div>`;
+    return `<div class="tt-att-lightbox" data-tt="attach-lightbox" hidden role="dialog" aria-modal="true" aria-label="Просмотр вложения"><button type="button" class="tt-att-lightbox-close" data-tt="attach-lightbox-close">Закрыть</button><div class="tt-att-lightbox-stage" data-tt="attach-lightbox-stage"><img data-tt="attach-lightbox-img" alt="" decoding="async"><div class="tt-att-lightbox-fallback" data-tt="attach-lightbox-fallback" hidden><p class="tt-att-lightbox-err" data-tt="attach-lightbox-err">Не удалось показать изображение.</p><div class="tt-att-lightbox-fallback-actions"><button type="button" class="tt-wizard-btn" data-tt="attach-lightbox-retry">Повторить</button><a class="tt-wizard-btn tt-wizard-btn-secondary" data-tt="attach-lightbox-download" href="" download="">Скачать файл</a></div></div></div><p class="tt-att-lightbox-cap" data-tt="attach-lightbox-cap"></p></div>`;
   }
 
   window.TanTrackerAttachments = {
@@ -436,6 +468,10 @@
     untrackUrl,
     canPreview,
     onThumbError,
+    lkAttachmentPreviewUrl,
+    lkAttachmentDownloadUrl,
+    attachmentPreviewUrl,
+    attachmentDownloadUrl,
     totalBytes,
     mergeToOrder(order, stagingItems, addedBy) {
       if (!order.attachments) order.attachments = [];
