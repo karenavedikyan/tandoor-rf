@@ -167,10 +167,200 @@
         title: item.title,
         text: item.text,
         orderId: item.orderId,
+        at: item.at,
+        messengerText: item.messengerText || null,
         read: old?.read && old.orderId === item.orderId ? old.read : false,
       });
     });
     inboxByEmployee[employeeId] = next;
+  }
+
+  function contactName(contacts, id) {
+    return contacts.find((c) => c.id === id)?.name || "—";
+  }
+
+  function pendingIsExternalOrder(o, contacts) {
+    if (!o?.pendingId) return false;
+    return contacts.find((c) => c.id === o.pendingId)?.kind === "external";
+  }
+
+  function isConfirmedHandoffNote(note) {
+    return /Подтверждено (одноразовым кодом|по QR)/.test(note || "");
+  }
+
+  function isAssignPendingNote(note) {
+    return note === "Назначен следующий получатель" || /^Изменён получатель/.test(note || "");
+  }
+
+  function isCancelPendingNote(note) {
+    return note === "Ожидание передачи отменено";
+  }
+
+  function dueTail(o, fmtDue) {
+    const due = o.dueAt ? fmtDue(o.dueAt) : null;
+    return due ? ` до ${due}` : "";
+  }
+
+  function eventItem(o, key, title, text, at) {
+    return {
+      key,
+      title,
+      text,
+      orderId: o.id,
+      at,
+      messengerText: `Тан-трекер · ${o.id}\n${text}`,
+    };
+  }
+
+  function pushStaffEvent(byUser, employeeId, item, seen) {
+    if (!employeeId) return;
+    const dedupe = `${employeeId}:${item.key}`;
+    if (seen.has(dedupe)) return;
+    seen.add(dedupe);
+    (byUser[employeeId] ||= []).push(item);
+  }
+
+  function syncHandoffEvents(orders, contacts, fmtDue) {
+    const byUser = {};
+    const seen = new Set();
+
+    (orders || []).forEach((o) => {
+      const timeline = o.timeline || [];
+      timeline.forEach((t, ti) => {
+        const at = t.at;
+        const fromName = contactName(contacts, t.from);
+        const toName = contactName(contacts, t.to);
+
+        if (isAssignPendingNote(t.note)) {
+          const prevAssign = timeline
+            .slice(0, ti)
+            .reverse()
+            .find((x) => isAssignPendingNote(x.note));
+          if (prevAssign && prevAssign.to !== t.to) {
+            const prevEmp = contactEmployeeId(prevAssign.to, contacts);
+            const cancelText = `«${o.item}» вам отменена: ${fromName} выбрал другого получателя. Код и QR недействительны.`;
+            pushStaffEvent(
+              byUser,
+              prevEmp,
+              eventItem(o, `tt-ev:${o.id}:${ti}:cancel:recipient`, "Передача отменена", cancelText, at),
+              seen
+            );
+          }
+          const duePhrase = dueTail(o, fmtDue);
+          const recvText = `«${o.item}». ${fromName} передаст вам предмет${duePhrase}. При встрече подтвердите получение: назовите код из SMS или покажите QR.`;
+          const sendText = `«${o.item}» направлена ${toName}. Вы остаётесь ответственным, пока получатель не подтвердит получение кодом или QR.`;
+          pushStaffEvent(
+            byUser,
+            contactEmployeeId(t.to, contacts),
+            eventItem(o, `tt-ev:${o.id}:${ti}:assign:recipient`, "Вам передают", recvText, at),
+            seen
+          );
+          pushStaffEvent(
+            byUser,
+            contactEmployeeId(t.from, contacts),
+            eventItem(o, `tt-ev:${o.id}:${ti}:assign:sender`, "Передача направлена", sendText, at),
+            seen
+          );
+        }
+
+        if (isCancelPendingNote(t.note)) {
+          const cancelText = `«${o.item}» вам отменена: ${fromName} выбрал другого получателя. Код и QR недействительны.`;
+          pushStaffEvent(
+            byUser,
+            contactEmployeeId(t.to, contacts),
+            eventItem(o, `tt-ev:${o.id}:${ti}:cancel:recipient`, "Передача отменена", cancelText, at),
+            seen
+          );
+        }
+
+        if (isConfirmedHandoffNote(t.note)) {
+          const finName = contactName(contacts, o.finalRecipientId);
+          const due = o.dueAt ? fmtDue(o.dueAt) : null;
+          const intermediate = !!(o.finalRecipientId && t.to !== o.finalRecipientId);
+          const holderText = intermediate
+            ? `«${o.item}» у вас. Передайте дальше: ${finName}, срок до ${due || "срок не указан"}.`
+            : `«${o.item}» у вас. Передача ${o.id} завершена, делать ничего не нужно.`;
+          pushStaffEvent(
+            byUser,
+            contactEmployeeId(t.to, contacts),
+            eventItem(o, `tt-ev:${o.id}:${ti}:confirm:recipient`, "Предмет у вас", holderText, at),
+            seen
+          );
+          const formerText = `${toName} подтвердил получение «${o.item}». Вы больше не ответственны за предмет.`;
+          pushStaffEvent(
+            byUser,
+            contactEmployeeId(t.from, contacts),
+            eventItem(o, `tt-ev:${o.id}:${ti}:confirm:sender`, "Получение подтверждено", formerText, at),
+            seen
+          );
+          const creatorId = o.createdById;
+          if (intermediate && creatorId && creatorId !== t.from && creatorId !== t.to) {
+            const creatorEmp = contactEmployeeId(creatorId, contacts);
+            const creatorText = `«${o.item}» теперь у ${toName}. Следующий: ${finName}.`;
+            pushStaffEvent(
+              byUser,
+              creatorEmp,
+              eventItem(o, `tt-ev:${o.id}:${ti}:confirm:creator`, "Предмет передан дальше", creatorText, at),
+              seen
+            );
+          }
+        }
+      });
+
+      if (o.status === "completed") {
+        const finHolder = o.holderId;
+        const finName = contactName(contacts, finHolder);
+        const completeAt =
+          timeline
+            .slice()
+            .reverse()
+            .find((t) => t.note === "Передача явно завершена" || isConfirmedHandoffNote(t.note))?.at ||
+          o.holderSince ||
+          Date.now();
+        const completeText = `Передача ${o.id} завершена: «${o.item}» у ${finName}.`;
+        const lastConfirm = timeline.filter((t) => isConfirmedHandoffNote(t.note)).pop();
+        const formerId = lastConfirm?.from;
+        const completeRoles = new Map();
+        const creatorEmp = contactEmployeeId(o.createdById, contacts);
+        if (creatorEmp && o.createdById !== finHolder) completeRoles.set(creatorEmp, "creator");
+        const formerEmp = contactEmployeeId(formerId, contacts);
+        if (formerEmp && formerId !== finHolder && !completeRoles.has(formerEmp)) {
+          completeRoles.set(formerEmp, "former");
+        }
+        completeRoles.forEach((role, emp) => {
+          pushStaffEvent(
+            byUser,
+            emp,
+            eventItem(o, `tt-ev:${o.id}:complete:${role}`, "Передача завершена", completeText, completeAt),
+            seen
+          );
+        });
+      }
+
+      const code = o.code;
+      const handoffVer = o.handoffVer ?? 0;
+      if (
+        code &&
+        !code.used &&
+        code.expiresAt > Date.now() &&
+        code.attempts < 5 &&
+        pendingIsExternalOrder(o, contacts) &&
+        o.status !== "completed"
+      ) {
+        const pendingName = contactName(contacts, o.pendingId);
+        const channel = code.channel === "max" ? "MAX" : "Telegram";
+        const holderEmp = contactEmployeeId(o.holderId, contacts);
+        const codeText = `${pendingName} подтвердил номер в ${channel} и получил код для «${o.item}». Введите код в Тан-трекере, чтобы завершить передачу.`;
+        pushStaffEvent(
+          byUser,
+          holderEmp,
+          eventItem(o, `tt-ev:${o.id}:code:${handoffVer}`, "Получатель получил код", codeText, code.issuedAt || Date.now()),
+          seen
+        );
+      }
+    });
+
+    return byUser;
   }
 
   function syncReminders(orders, contacts, fmtDue) {
@@ -199,6 +389,7 @@
           text: `Передайте «${o.item}» ${fin?.name || "конечному получателю"}${duePhrase}.${wait}`,
           orderId: o.id,
           at: Date.now(),
+          messengerText: null,
         });
       }
 
@@ -209,6 +400,7 @@
           text: `Подтвердите получение «${o.item}»${duePhrase}.`,
           orderId: o.id,
           at: Date.now(),
+          messengerText: null,
         });
       }
 
@@ -221,6 +413,7 @@
             text: `«${o.item}» · ${fin?.name || "получатель"}${due ? " · " + due : ""}.`,
             orderId: o.id,
             at: Date.now(),
+            messengerText: null,
           });
         } else {
           const urgency = dueUrgencyLabel(o.dueAt, now);
@@ -231,10 +424,18 @@
               text: `«${o.item}» · ${fin?.name || "получатель"}${due ? " · " + due : ""}.`,
               orderId: o.id,
               at: Date.now(),
+              messengerText: null,
             });
           }
         }
       }
+    });
+
+    const eventsByUser = syncHandoffEvents(orders, contacts, fmtDue);
+    Object.keys(eventsByUser).forEach((employeeId) => {
+      eventsByUser[employeeId].forEach((item) => {
+        (byUser[employeeId] ||= []).push(item);
+      });
     });
 
     const touched = new Set(Object.keys(byUser));

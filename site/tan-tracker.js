@@ -1896,6 +1896,7 @@
     o.code = {
       code,
       expiresAt: now() + CODE_TTL_MS,
+      issuedAt: now(),
       attempts: 0,
       used: false,
       forContact: o.pendingId,
@@ -3078,6 +3079,13 @@
 
     if (o.status === "completed") return completedTaskCard(o, actor);
     if (!isHolder) {
+      if (o.pendingId && actor === o.pendingId && contactById(actor)?.kind === "employee") {
+        const duePhrase = o.dueAt ? ` до ${dt(o.dueAt)}` : "";
+        return `<section class="tt-detail-task-card tt-detail-task-card--info" data-tt="detail-task-awaiting">
+        <h3 class="tt-detail-task-heading">Вам передают</h3>
+        <p class="tt-detail-task-instructions">${E(h?.name || "—")} передаст вам «${E(o.item)}»${E(duePhrase)}. При встрече подтвердите получение: назовите код из SMS или покажите QR.</p>
+      </section>`;
+      }
       if (isFormerHolderAfterHandoff(o, actor)) return formerHolderTaskCard(o);
       const wait = p
         ? `Ожидается подтверждение от ${p.name}.`
@@ -3438,6 +3446,28 @@
     </div>`;
   }
 
+  function recipientProgressBlock(o, ctx) {
+    const { verified, stale, tokenBad, qrMode, codePath, c } = ctx;
+    if (stale || tokenBad) return "";
+    if (qrMode) {
+      return `<p class="tt-muted tt-recipient-progress" data-tt="recipient-progress">Шаг 3 из 3 · примите предмет</p>`;
+    }
+    if (!verified) {
+      if (!state.recipientChannel) {
+        return `<p class="tt-muted tt-recipient-progress" data-tt="recipient-progress">Шаг 1 из 3 · мессенджер</p>`;
+      }
+      return `<p class="tt-muted tt-recipient-progress" data-tt="recipient-progress">Шаг 2 из 3 · подтвердите номер</p>`;
+    }
+    if (codePath) {
+      const whatsNext =
+        c && codeValid(o)
+          ? `<p class="tt-muted" data-tt="recipient-whats-next">Что дальше: передающий вводит код — после этого здесь появится «Предмет у вас».</p>`
+          : "";
+      return `<p class="tt-muted tt-recipient-progress" data-tt="recipient-progress">Шаг 3 из 3 · назовите код</p>${whatsNext}`;
+    }
+    return "";
+  }
+
   function messengerVerifyBlock(o, stale) {
     if (stale || !state.recipientChannel) return "";
     const ch = state.recipientChannel;
@@ -3493,7 +3523,11 @@
           ? `<div class="tt-holder-demo-code" data-tt="holder-shown-code"><span class="tt-code tt-code-inline">${E(o.code.code)}</span></div>`
           : ""
       }
-      <p id="tt-code-demo-help" class="tt-muted tt-code-help">Демо без СМС: нажмите «Получить демо-код», затем введите цифры и «Подтвердить».</p>
+      <p id="tt-code-demo-help" class="tt-muted tt-code-help">${
+        pendingIsExternal(o)
+          ? "Код назовёт получатель — он получил его в Telegram или MAX. В демо код показан на экране получателя («⋯ → Открыть экран получателя (демо)»)."
+          : "Демо без СМС: нажмите «Получить демо-код», затем введите цифры и «Подтвердить»."
+      }</p>
       ${state.error ? `<p class="tt-error" data-tt="code-error">${E(state.error)}</p>` : ""}
       <div class="tt-code-dock">${btn("Подтвердить", 'data-tt="confirm-code"', "tt-primary tt-btn-block")}${btn("Назад", 'data-tt="detail"', "tt-btn-ghost tt-btn-block")}</div>
     </div>`;
@@ -3571,6 +3605,7 @@
       ${fin && intermediate ? `<p class="tt-recipient-fin">Конечный получатель: <strong>${E(fin.name)}</strong></p>` : ""}
       ${intermediate ? `<div class="tt-reminder tt-recipient-relay" data-tt="recipient-relay-reminder"><strong>После получения передайте дальше</strong><p>Доставить до ${o.dueAt ? dt(o.dueAt) : "срока не указан"}.</p></div>` : ""}
       ${tokenBad ? `<p class="tt-error" data-tt="invite-token-error">Ссылка приглашения недействительна, истекла или уже заменена новой версией.</p>` : ""}
+      ${recipientProgressBlock(o, { verified, stale, tokenBad, qrMode, codePath, c })}
       ${channelStep}
       ${verifyStep}
       ${receiveStep}

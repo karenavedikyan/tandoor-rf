@@ -17,6 +17,8 @@ When the holder confirms the one-time code, custody moves to the external recipi
 - **Intermediate relay** (`finalRecipientId` is someone else): next-step block names the final recipient and due date; **«Открыть мою страницу передачи»** switches to the external holder shell (`tt_act`) with `holder-status-card` and **«Передать дальше»** (same transfer handler as the main app).
 - **Final recipient** (or completed track): success copy only; no holder-page button.
 - Collapsed **«Сообщение в Telegram|MAX (демо)»** (`data-tt="bot-message-preview"`) shows the plain-text bot message for the code step and for received (final vs relay). Nothing is sent.
+- **Progress:** `data-tt="recipient-progress"` («Шаг N из 3 · …») above steps; on the code step `data-tt="recipient-whats-next"` explains the «Предмет у вас» screen after the holder confirms.
+- **Holder code entry:** for external pending, `#tt-code-demo-help` points to the recipient demo screen, not «Получить демо-код».
 - After confirm, the internal holder’s detail view may show **«Что увидит получатель (демо)»** (`data-tt="preview-recipient-received"`) to open the received screen for QA.
 
 ## Invalidation
@@ -30,6 +32,7 @@ When the holder confirms the one-time code, custody moves to the external recipi
 node run-browser-qa.mjs tan-tracker-external-messenger-qa.js
 node run-browser-qa.mjs tan-tracker-handoff-identity-qa.js
 node run-browser-qa.mjs tan-tracker-external-after-code-qa.js
+node run-browser-qa.mjs tan-tracker-step-notifications-qa.js
 node run-browser-qa.mjs notification-center-qa.js
 node run-browser-qa.mjs tan-tracker-pre-handoff-edit-qa.js
 ```

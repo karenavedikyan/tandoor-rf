@@ -46,6 +46,23 @@
 - Без реальных ботов, SMS, учётных записей и production API.
 - Сброс демо в «Назначениях» → `DELETE` состояния посетителя на preview-backend.
 
+## Step notifications (staff)
+
+Помимо state-напоминаний (`tt-hold`, `tt-pending`, `tt-due`), `syncHandoffEvents` в `site/tan-tracker-scope.js` строит **события по timeline** передачи. Получают только **сотрудники** (`contactEmployeeId`); внешние контакты — в экране получателя и bot preview, не в колокольчике.
+
+| Событие | Получатель (роль) | Заголовок |
+|--------|-------------------|-----------|
+| Назначен / изменён pending | `to` | Вам передают |
+| То же | `from` | Передача направлена |
+| Отмена / смена получателя | прежний pending | Передача отменена |
+| Код у внешнего (активный `o.code`) | держатель | Получатель получил код |
+| Подтверждение handoff | новый держатель (staff) | Предмет у вас |
+| Подтверждение | бывший держатель | Получение подтверждено |
+| Подтверждение (relay) | создатель ≠ from/to | Предмет передан дальше |
+| `status: completed` | создатель, бывший держатель ≠ final | Передача завершена |
+
+Ключи: `tt-ev:<orderId>:<timelineIndex>:<type>:<role>` (код: `tt-ev:<orderId>:code:<handoffVer>`). У каждого item есть `messengerText` (`Тан-трекер · <id>` + тот же текст); в центре — `<details data-af="messenger-preview">`.
+
 ## Точки входа
 
 - UI: `site/assistant-feedback.js`, `site/assistant-feedback.css`

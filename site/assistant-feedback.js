@@ -75,12 +75,16 @@
     notes.push({key:uid,user,title,text,id,kind,at,read,seq:++seq,deliveryFailSeed:!!extra.deliveryFailSeed});
     if(read)persistReadFlag(user,uid,true);
   }
-  function upsert(user,key,title,text,id,kind,at){
+  function upsert(user,key,title,text,id,kind,at,extra={}){
     const uid=user+":"+key;seen.add(uid);
     const n=notes.find(x=>x.key===uid);
-    if(n){n.title=title;n.text=text;n.id=id;n.kind=kind;n.at=at;if(storedRead(user,uid))n.read=true;return n;}
+    if(n){
+      n.title=title;n.text=text;n.id=id;n.kind=kind;n.at=at;
+      n.messengerText=extra.messengerText??n.messengerText??null;
+      if(storedRead(user,uid))n.read=true;return n;
+    }
     const read=storedRead(user,uid);
-    const row={key:uid,user,title,text,id,kind,at,read,seq:++seq};notes.push(row);return row;
+    const row={key:uid,user,title,text,id,kind,at,read,seq:++seq,messengerText:extra.messengerText||null};notes.push(row);return row;
   }
   function markReadNote(n,read=true){n.read=read;persistReadFlag(n.user,n.key,read);}
   function inboxUserId(){return noticeUserId();}
@@ -100,7 +104,7 @@
       items.forEach(i=>{
         const existing=notes.find(n=>n.key===user+":tt:"+i.key);
         const at=Number.isFinite(i.at)?i.at:Date.now();
-        upsert(user,"tt:"+i.key,i.title,i.text,i.orderId,"tt-track",at);
+        upsert(user,"tt:"+i.key,i.title,i.text,i.orderId,"tt-track",at,{messengerText:i.messengerText||null});
         if(existing?.read||i.read){
           const n=notes.find(x=>x.key===user+":tt:"+i.key);if(n)n.read=true;
         }
@@ -288,7 +292,7 @@
     el.innerHTML=`<div class="af-inbox-head"><div><h2>Центр уведомлений</h2><p class="af-muted">${E(P.person(c.id)==="Не выбран"?"Сотрудник в демо":P.person(c.id))} · ${E(c.label||names[c.role]||c.role)}</p><p class="af-muted af-inbox-lead">История событий ЛК сохраняется здесь. Telegram и MAX — дополнительные каналы доставки (демо).</p></div>${action("close-inbox","Закрыть")}</div>
       <div class="af-inbox-tools">${action("all","Все","",!unreadOnly?"af-selected":"")}${action("unread","Непрочитанные","",unreadOnly?"af-selected":"")}${action("read-all","Прочитать все")}${action("delivery-settings","Настройки доставки")}</div>
       <div class="af-inbox-cats" role="group" aria-label="Категории">${catTools}</div>
-      <div class="af-inbox-list">${rows.map(n=>`<article class="af-note ${n.read?"":"af-unread"}"><div class="af-line"><strong>${E(n.title)}</strong><span class="af-cat">${E(categoryLabels[noteCategory(n)])}</span><small>${n.read?"Прочитано":"Новое"}</small></div><p>${E(n.text)}</p><p class="af-muted">${fmt(n.at)} МСК · ${E(deliveryStatusLine(n,user))}</p><div class="af-actions">${n.kind!=="info"?action("open-note",n.kind==="rate"?"Оценить":n.kind==="rating"?"Посмотреть оценку":n.kind==="clients"?"Открыть клиентов":n.kind==="tt-track"?"Открыть трек":"Открыть назначение",n.key):""}${!n.read?action("read","Прочитано",n.key):""}</div></article>`).join("")||`<div class="af-empty"><h3>${unreadOnly?"Непрочитанных нет":"По этому фильтру пусто"}</h3><p>Смените категорию или откройте «Все». События Tan-трекера, назначений и системные уведомления используют один центр.</p></div>`}</div>
+      <div class="af-inbox-list">${rows.map(n=>{const messenger=n.messengerText?`<details class="tt-disclosure af-note-messenger" data-af="messenger-preview"><summary>Текст в Telegram/MAX (демо)</summary><div class="tt-disclosure-body"><pre class="tt-bot-preview">${E(n.messengerText)}</pre></div></details>`:"";return `<article class="af-note ${n.read?"":"af-unread"}"><div class="af-line"><strong>${E(n.title)}</strong><span class="af-cat">${E(categoryLabels[noteCategory(n)])}</span><small>${n.read?"Прочитано":"Новое"}</small></div><p>${E(n.text)}</p>${messenger}<p class="af-muted">${fmt(n.at)} МСК · ${E(deliveryStatusLine(n,user))}</p><div class="af-actions">${n.kind!=="info"?action("open-note",n.kind==="rate"?"Оценить":n.kind==="rating"?"Посмотреть оценку":n.kind==="clients"?"Открыть клиентов":n.kind==="tt-track"?"Открыть трек":"Открыть назначение",n.key):""}${!n.read?action("read","Прочитано",n.key):""}</div></article>`;}).join("")||`<div class="af-empty"><h3>${unreadOnly?"Непрочитанных нет":"По этому фильтру пусто"}</h3><p>Смените категорию или откройте «Все». События Tan-трекера, назначений и системные уведомления используют один центр.</p></div>`}</div>
       <p class="af-inbox-foot">Демо прототипа: без реальных ботов, SMS и учётных записей. Статус доставки не удаляет событие из ЛК.</p>
       ${saveStatusFullMessage()?`<p id="af-inbox-store-status" class="af-inbox-store-status" role="status">${E(saveStatusFullMessage())}</p>`:""}`;
     document.body.append(el);

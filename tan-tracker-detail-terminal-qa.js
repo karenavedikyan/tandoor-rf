@@ -8,9 +8,14 @@ var TT_DETAIL_TERMINAL_QA = await (async () => {
 
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-001`);
   await page.reload();
+  await ttOpenDetailDemo();
+  await page.locator('[data-tt="open-recipient"]').click();
+  await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
+  await page.getByRole("button", { name: /Поделиться контактом/ }).click();
+  await page.getByRole("button", { name: "Получить код", exact: true }).click();
+  const code = (await page.locator('[data-tt="shown-code"]').textContent()).trim();
+  await page.locator('[data-tt="exit-recipient"]').click();
   await page.locator('[data-tt="enter-code"]').click();
-  await page.getByRole("button", { name: "Получить демо-код", exact: true }).click();
-  const code = (await page.locator('[data-tt="holder-shown-code"] .tt-code-inline').textContent()).trim();
   await page.locator('[data-tt="code-input"]').fill(code);
   await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
   await page.locator('[data-tt="detail-task-card"]').waitFor({ state: "visible" });
