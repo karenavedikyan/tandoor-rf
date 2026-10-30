@@ -211,8 +211,8 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
       });
       (window as unknown as { __TT_TEST_staging: typeof state & { releaseFirst: () => void; releaseSecond: () => void } }).__TT_TEST_staging =
         Object.assign(state, {
-          releaseFirst: () => resolveFirst(),
-          releaseSecond: () => resolveSecond(),
+          releaseFirst: resolveFirst,
+          releaseSecond: resolveSecond,
         });
 
       const origFetch = window.fetch.bind(window);
