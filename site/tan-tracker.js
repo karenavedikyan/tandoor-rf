@@ -486,6 +486,7 @@
     ttRoleUnsupported: false,
     ttRequestedRole: "",
     handoffReceipt: null,
+    recipientReceivedPreview: null,
     codeDemoRevealed: false,
     detailAttDisclosureOpen: null,
     registryFilterSheet: false,
@@ -684,13 +685,60 @@
     return qr.createSvgTag({ cellSize: cell, margin, scalable: true });
   }
 
-  function resolveInvitation(o, urlHv) {
+  function invitationForTicket(o, urlHv) {
     const hv = Number(urlHv);
+    if (o.activeInvitation && o.activeInvitation.hv === hv) return o.activeInvitation;
+    return (o.pastInvitations || []).find((x) => x.hv === hv) || null;
+  }
+
+  function invitationTicketReceiver(inv) {
+    return inv?.pendingId ?? inv?.rcv ?? null;
+  }
+
+  function recipientHandoffReceived(o, ticketRcv, urlHv) {
+    if (!o || !ticketRcv || urlHv == null || urlHv === "") return null;
+    if (o.holderId !== ticketRcv) return null;
+    const inv = invitationForTicket(o, urlHv);
+    if (!inv) return null;
+    if (invitationTicketReceiver(inv) !== ticketRcv) return null;
+    if (o.activeInvitation?.hv === Number(urlHv) && o.pendingId === ticketRcv) return null;
+    const entry =
+      o.timeline
+        .filter((t) => t.to === ticketRcv && isConfirmedHandoffTimelineNote(t.note))
+        .sort((a, b) => a.at - b.at)
+        .pop() || null;
+    if (!entry && o.status !== "completed") return null;
+    if (!entry && o.status === "completed" && o.finalRecipientId === ticketRcv) {
+      return {
+        inv,
+        receivedAt: o.holderSince,
+        fromId: o.timeline.filter((t) => t.to === ticketRcv).sort((a, b) => a.at - b.at).pop()?.from,
+      };
+    }
+    if (!entry) return null;
+    return { inv, receivedAt: entry.at, fromId: entry.from };
+  }
+
+  function resolveInvitation(o, urlHv, ticketRcv) {
+    const hv = Number(urlHv);
+    const rcv = ticketRcv || null;
     if (o.activeInvitation && o.activeInvitation.hv === hv) return { inv: o.activeInvitation, stale: false };
     const past = (o.pastInvitations || []).find((x) => x.hv === hv);
-    if (past) return { inv: past, stale: true };
+    if (past) {
+      if (rcv && recipientHandoffReceived(o, rcv, urlHv)) return { inv: past, stale: false, consumed: true };
+      return { inv: past, stale: true };
+    }
     if (o.activeInvitation) return { inv: o.activeInvitation, stale: o.activeInvitation.hv !== hv };
     return { inv: null, stale: true };
+  }
+
+  function externalHolderPageDemoUrl(o, contactId) {
+    const p = new URLSearchParams({
+      role: state.ttPrototypeRole || "manager",
+      tt_act: contactId,
+      tt_id: o.id,
+    });
+    return `${location.origin}${location.pathname}#tan-tracker?${p}`;
   }
 
   function leaveRouteCleanup() {
@@ -3148,6 +3196,9 @@
     const metaBlock = desktopDetail
       ? ""
       : `<div class="tt-detail-meta">${statusBadge(o, actor)}<span class="${dueCls}">${E(dueLabel)}</span></div>`;
+    const extShellHolder = isExternalShell() && isHolder && !o.pendingId;
+    const taskBlock = extShellHolder ? externalHolderShellBlocks(o) : detailTaskSection(o);
+    const previewRecipientBtn = recipientPreviewDemoBtn(o);
     return `<div class="tt-panel tt-detail-panel tt-view-enter${mobileDock ? " tt-detail-panel--has-dock" : ""}" data-tt="detail">
       <header class="tt-detail-head tt-detail-head-v2">
         ${
@@ -3162,7 +3213,7 @@
       <div class="tt-detail-main">
       <h2 class="tt-detail-title">${E(o.item)}</h2>
       ${metaBlock}
-      ${detailTaskSection(o)}
+      ${taskBlock}
       ${detailRouteDisclosure(o)}
       ${!desktopDetail ? detailNotesDisclosure(o) : ""}
       <details class="tt-disclosure tt-detail-att-wrap" data-tt="detail-attachments-disclosure"${isDetailAttDisclosureOpen(o) ? " open" : ""}>
@@ -3197,6 +3248,7 @@
           : ""
       }
       ${state.toast ? `<p class="tt-success" data-tt="toast">${E(state.toast)}</p>` : ""}
+      ${previewRecipientBtn ? `<p class="tt-detail-preview-recipient">${previewRecipientBtn}</p>` : ""}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
       </aside>
       </div>
@@ -3248,6 +3300,118 @@
       max: { available: false, label: "MAX", reason: "MAX недоступен." },
     };
     return ch;
+  }
+
+  function recipientMessengerLabel(o) {
+    const ch = state.recipientChannel || o.code?.channel;
+    return messengerChannelsUi()[ch]?.label || (ch === "max" ? "MAX" : "Telegram");
+  }
+
+  function botMessagePreviewText(o, mode, ctx) {
+    const item = ctx.item || o.item;
+    const id = o.id;
+    if (mode === "code") {
+      const holderName = ctx.holderName || "—";
+      const code = ctx.code || "------";
+      return `Код получения: ${code}\nНазовите его ${holderName} — он введёт код в Тан-трекере.\nПосле этого предмет «${item}» будет числиться у вас, и мы пришлём сюда подтверждение.\nЭто не код входа и не SMS.`;
+    }
+    const senderName = ctx.senderName || "—";
+    if (ctx.intermediate) {
+      const finName = ctx.finalName || "—";
+      const due = ctx.dueText || "срок не указан";
+      const url = ctx.holderPageUrl || "";
+      return `✅ Предмет «${item}» у вас (передача ${id}).\nПередайте дальше: ${finName}, срок до ${due}.\nВаша страница передачи: ${url} (действует 7 дней).`;
+    }
+    return `✅ Предмет «${item}» у вас.\nПередача ${id} завершена, от ${senderName}. Больше ничего делать не нужно.`;
+  }
+
+  function botMessagePreviewBlock(o, mode, ctx) {
+    const label = recipientMessengerLabel(o);
+    const text = botMessagePreviewText(o, mode, ctx);
+    return `<details class="tt-disclosure" data-tt="bot-message-preview">
+      ${disclosureSummary(`Сообщение в ${label} (демо)`, { icon: "message-square" })}
+      <div class="tt-disclosure-body"><pre class="tt-bot-preview">${E(text)}</pre><p class="tt-muted">Демо-текст. Сообщение не отправляется.</p></div>
+    </details>`;
+  }
+
+  function externalHolderShellBlocks(o) {
+    const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
+    const mustRelay = o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
+    const prevEntry =
+      o.timeline
+        .filter((t) => t.to === o.holderId && isConfirmedHandoffTimelineNote(t.note))
+        .sort((a, b) => a.at - b.at)
+        .pop() || null;
+    const prevHolder = contactById(prevEntry?.from);
+    const statusCard = `<article class="tt-panel tt-recipient-card" data-tt="holder-status-card">
+      <p class="tt-muted">Предмет у вас с ${E(dt(o.holderSince))} МСК</p>
+      <h2 class="tt-recipient-title">${E(o.item)}</h2>
+      <p class="tt-recipient-kicker">${E(o.id)}</p>
+      <p class="tt-recipient-from">Получено от <strong>${E(prevHolder?.name || "—")}</strong></p>
+    </article>`;
+    let nextStep;
+    if (mustRelay) {
+      nextStep = `<div class="tt-reminder" data-tt="holder-next-step">
+        <p><strong>Передайте дальше:</strong> ${E(fin?.name || "—")}</p>
+        <p class="tt-muted">Срок: ${o.dueAt ? `до ${E(dt(o.dueAt))}` : "срок не указан"}</p>
+        ${btn("Передать дальше", 'data-tt="transfer"', "tt-primary tt-btn-block")}
+      </div>`;
+    } else {
+      nextStep = `<div class="tt-success tt-panel" data-tt="holder-next-step"><p>Передача завершена</p><p class="tt-muted">Больше ничего делать не нужно.</p></div>`;
+    }
+    return `${statusCard}${nextStep}`;
+  }
+
+  function recipientPreviewDemoBtn(o) {
+    const p = state.recipientReceivedPreview;
+    if (!p || p.orderId !== o.id) return "";
+    if (contactById(p.rcv)?.kind !== "external") return "";
+    return btn("Что увидит получатель (демо)", 'data-tt="preview-recipient-received"', "tt-btn-ghost");
+  }
+
+  function recipientReceivedScreen(o, received) {
+    const ticketRcv = state.recipientTicket?.rcv;
+    const inv = received.inv;
+    const item = inv?.item || o.item;
+    const prevHolder = contactById(received.fromId);
+    const self = contactById(ticketRcv);
+    const fin = contactById(o.finalRecipientId);
+    const intermediate =
+      fin && o.finalRecipientId && ticketRcv && o.finalRecipientId !== ticketRcv && o.status !== "completed";
+    const attItems = Att() ? Att().listForOrder(o) : [];
+    const attCount = attItems.length;
+    const attDisclosure = attCount
+      ? `<details class="tt-disclosure tt-recipient-att" data-tt="recipient-attachments-disclosure">
+        ${disclosureSummary("Фото и файлы", { icon: "paperclip", count: attCount })}
+        <div class="tt-disclosure-body">${attachmentsSection(o, { readonly: true, items: attItems, compact: true, omitTitle: true })}</div>
+      </details>`
+      : "";
+    const nextStep = intermediate
+      ? `<div class="tt-reminder" data-tt="recipient-next-step">
+        <p><strong>Передайте дальше:</strong> ${E(fin?.name || "—")}</p>
+        <p class="tt-muted">Срок: ${o.dueAt ? `до ${E(dt(o.dueAt))}` : "срок не указан"}</p>
+        ${btn("Открыть мою страницу передачи", 'data-tt="open-holder-page"', "tt-primary tt-btn-block")}
+      </div>`
+      : `<div class="tt-success" data-tt="recipient-next-step"><p>Передача завершена. Больше ничего делать не нужно.</p></div>`;
+    const botCtx = {
+      item,
+      senderName: prevHolder?.name || "—",
+      intermediate,
+      finalName: fin?.name,
+      dueText: o.dueAt ? dt(o.dueAt) : "срок не указан",
+      holderPageUrl: ticketRcv ? externalHolderPageDemoUrl(o, ticketRcv) : "",
+    };
+    return `<div class="tt-recipient-wrap"><article class="tt-recipient-card" data-tt="recipient-received">
+      <p class="tt-recipient-kicker">${E(o.id)}</p>
+      <h1 class="tt-recipient-hero">Предмет у вас</h1>
+      <h2 class="tt-recipient-title">${E(item)}</h2>
+      <p class="tt-recipient-from">От кого: <strong>${E(prevHolder?.name || "—")}</strong></p>
+      <p class="tt-muted">Получено ${E(dt(received.receivedAt))} МСК · ${E(maskPhone(self?.phone || ""))}</p>
+      ${nextStep}
+      ${botMessagePreviewBlock(o, "received", botCtx)}
+      ${attDisclosure}
+      <div class="tt-recipient-foot">${btn("Вернуться к передаче", 'data-tt="exit-recipient"', "tt-btn-ghost tt-recipient-foot-quiet")}</div>
+    </article></div>`;
   }
 
   function messengerChannelPickBlock(o, stale) {
@@ -3338,7 +3502,11 @@
 
   function recipientScreen(o) {
     const ticketHv = state.recipientTicket?.hv;
-    const resolved = ticketHv != null ? resolveInvitation(o, ticketHv) : { inv: o.activeInvitation, stale: false };
+    const ticketRcv = state.recipientTicket?.rcv;
+    const received = recipientHandoffReceived(o, ticketRcv, ticketHv);
+    if (received) return recipientReceivedScreen(o, received);
+    const resolved =
+      ticketHv != null ? resolveInvitation(o, ticketHv, ticketRcv) : { inv: o.activeInvitation, stale: false };
     const inv = resolved.inv || o.activeInvitation;
     const from = contactById(inv?.holderId || o.holderId);
     const to = contactById(inv?.pendingId || o.pendingId);
@@ -3408,6 +3576,15 @@
       ${verifyStep}
       ${receiveStep}
       ${codeBlock}
+      ${
+        !stale && codePath && c && codeValid(o)
+          ? botMessagePreviewBlock(o, "code", {
+              item: inv?.item || o.item,
+              holderName: from?.name || "—",
+              code: c.code,
+            })
+          : ""
+      }
       ${attDisclosure}
       ${stale && qrMode ? `<p class="tt-error">Подтверждение по этому QR недоступно.</p>` : ""}
       <div class="tt-recipient-foot">${!qrMode && verified ? btn("Истечь срок кода (демо)", 'data-tt="demo-expire"', "tt-btn-ghost tt-recipient-foot-quiet") : ""}${btn("Вернуться к передаче", 'data-tt="exit-recipient"', "tt-btn-ghost tt-recipient-foot-quiet")}</div>
@@ -3449,13 +3626,21 @@
       ttShellMounted = false;
       const o = orders.find((x) => x.id === state.orderId);
       const rcv = state.recipientTicket?.rcv;
+      const receivedHandoff =
+        o && rcv && state.recipientTicket?.hv != null
+          ? recipientHandoffReceived(o, rcv, state.recipientTicket.hv)
+          : null;
       const resolvedInv =
         o && state.recipientTicket?.hv != null
-          ? resolveInvitation(o, state.recipientTicket.hv)
+          ? resolveInvitation(o, state.recipientTicket.hv, rcv)
           : { inv: o?.activeInvitation, stale: false };
-      const staleInvite = !!(resolvedInv?.stale && resolvedInv?.inv);
+      const staleInvite = !!(resolvedInv?.stale && resolvedInv?.inv && !receivedHandoff);
       const rcvOk =
-        staleInvite || !rcv || o.pendingId === rcv || o.activeInvitation?.pendingId === rcv;
+        receivedHandoff ||
+        staleInvite ||
+        !rcv ||
+        o.pendingId === rcv ||
+        o.activeInvitation?.pendingId === rcv;
       const scopeOk =
         staleInvite ||
         !Sc() ||
@@ -4087,7 +4272,20 @@
     }
     if (action === "confirm-code" && o) {
       const senderBefore = state.actingContactId || employeeContact(state.employeeId)?.id;
-      if (tryConfirmCode(o, state.codeInput)) afterCodeSend(o, senderBefore);
+      const previewTicket = o.activeInvitation
+        ? {
+            orderId: o.id,
+            hv: String(o.activeInvitation.hv),
+            rcv: o.pendingId,
+            st: o.activeInvitation.startTokenPlain || "",
+          }
+        : null;
+      if (tryConfirmCode(o, state.codeInput)) {
+        if (previewTicket && contactById(o.holderId)?.kind === "external") {
+          state.recipientReceivedPreview = previewTicket;
+        }
+        afterCodeSend(o, senderBefore);
+      }
       writeUrl();
       renderTracker();
       return;
@@ -4205,6 +4403,30 @@
       state.recipientMode = false;
       state.view = "detail";
       ttShellMounted = false;
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "open-holder-page" && o) {
+      const rcv = state.recipientTicket?.rcv || o.holderId;
+      state.recipientMode = false;
+      state.recipientTicket = null;
+      state.actingContactId = rcv;
+      state.view = "detail";
+      state.orderId = o.id;
+      ttShellMounted = false;
+      lastViewKey = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "preview-recipient-received" && o) {
+      const p = state.recipientReceivedPreview;
+      if (!p || p.orderId !== o.id) return;
+      state.recipientMode = true;
+      state.recipientVia = "code";
+      state.recipientTicket = { hv: p.hv, rcv: p.rcv, order: o.id, st: p.st || "" };
+      resetRecipientIdentity();
       writeUrl();
       renderTracker();
       return;

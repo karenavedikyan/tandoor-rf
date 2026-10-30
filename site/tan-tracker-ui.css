@@ -420,6 +420,9 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 .tt-recipient-att { margin-top:12px; }
 .tt-recipient-code-display { font-size:36px; font-weight:800; letter-spacing:.12em; font-variant-numeric:tabular-nums; }
 .tt-recipient-code-block { text-align:center; margin:16px 0; }
+.tt-bot-preview { white-space:pre-wrap; word-break:break-word; font-family:inherit; font-size:13px; line-height:1.45; margin:8px 0 0; padding:10px 12px; background:var(--surface-2,#f4f4f2); border-radius:8px; border:1px solid var(--border,#e2e2de); }
+[data-theme=dark] .tt-bot-preview { background:var(--surface-2,#2a2a28); border-color:var(--border,#3a3a38); }
+.tt-detail-preview-recipient { margin:8px 0 0; }
 .tt-messenger-grid { display:grid; grid-template-columns:1fr; gap:10px; margin:10px 0; }
 @media (min-width:480px) { .tt-messenger-grid { grid-template-columns:1fr 1fr; } }
 .tt-messenger-card {
