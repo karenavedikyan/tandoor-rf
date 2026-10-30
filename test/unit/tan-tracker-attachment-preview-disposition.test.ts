@@ -5,14 +5,13 @@ import {
   resolveAttachmentContentDisposition,
 } from "../../src/tan-tracker/attachments";
 
-describe("tan-tracker attachment preview disposition", () => {
+describe("tan-tracker attachment preview disposition (regression hardening)", () => {
   it("allows inline only for safe raster preview query", () => {
     assert.equal(isSafeInlinePreviewMime("image/jpeg"), true);
     assert.equal(isSafeInlinePreviewMime("application/pdf"), false);
-    assert.equal(
-      resolveAttachmentContentDisposition("image/jpeg", { preview: "1" }),
-      "inline",
-    );
+    assert.equal(resolveAttachmentContentDisposition("image/jpeg", { preview: "1" }), "inline");
+    assert.equal(resolveAttachmentContentDisposition("image/jpeg", { preview: "thumb" }), "inline");
+    assert.equal(resolveAttachmentContentDisposition("image/jpeg", { preview: "lightbox" }), "inline");
     assert.equal(
       resolveAttachmentContentDisposition("application/pdf", { preview: "1" }),
       "attachment",

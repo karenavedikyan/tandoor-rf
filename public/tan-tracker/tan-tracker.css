@@ -124,6 +124,9 @@ body.tt-recipient-shell .main { align-self:start; margin-top:0; margin-bottom:au
 .tt-att-block--cards .tt-att-item { box-shadow:0 1px 0 rgba(0,0,0,.04); }
 .tt-att-thumb { padding:0; border:0; background:transparent; cursor:pointer; border-radius:8px; flex:0 0 auto; position:relative; line-height:0; }
 .tt-att-thumb img { display:block; width:72px; height:54px; object-fit:cover; border-radius:8px; border:1px solid var(--line); background:var(--bg); }
+.tt-att-thumb--loading img { opacity:0.35; }
+.tt-att-thumb--loading::after { content:""; position:absolute; inset:0; border-radius:8px; border:2px solid var(--line); border-top-color:var(--green,#507f22); animation:tt-att-spin .8s linear infinite; width:72px; height:54px; box-sizing:border-box; pointer-events:none; }
+@keyframes tt-att-spin { to { transform:rotate(360deg); } }
 .tt-att-thumb .tt-att-fallback { display:none; width:72px; height:54px; place-items:center; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; background:var(--bg); border:1px solid var(--line); border-radius:8px; color:var(--tt-muted); }
 .tt-att-thumb--fallback img,.tt-att-thumb--fallback .tt-att-img-broken { display:none !important; }
 .tt-att-thumb--fallback .tt-att-fallback { display:grid !important; }
@@ -151,6 +154,8 @@ body.tt-recipient-shell .main { align-self:start; margin-top:0; margin-bottom:au
 .tt-att-lightbox-stage { display:grid; place-items:center; width:min(100%,720px); max-height:min(80dvh,80vh); }
 .tt-att-lightbox img { display:block; max-width:100%; max-height:min(80dvh,80vh); width:auto; height:auto; object-fit:contain; background:#fff; border-radius:8px; -webkit-user-select:none; user-select:none; }
 .tt-att-lightbox img[hidden] { display:none !important; }
+.tt-att-lightbox-loading { color:#fff; font-size:14px; margin:0; padding:12px; }
+.tt-att-lightbox-loading[hidden] { display:none !important; }
 .tt-att-lightbox-fallback { color:#fff; text-align:center; padding:16px; max-width:min(100%,420px); }
 .tt-att-lightbox-fallback-actions { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:12px; }
 .tt-att-lightbox-close { position:absolute; top:16px; right:16px; z-index:1; }

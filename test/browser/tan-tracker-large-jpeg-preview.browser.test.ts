@@ -25,9 +25,10 @@ async function launchRequired(engine: BrowserType, t: { skip: (message?: string)
   }
 }
 
-describe("tan-tracker large JPEG preview after reload (browser + PG)", { concurrency: false }, () => {
+describe("tan-tracker large JPEG bounded preview after reload (browser + PG)", { concurrency: false }, () => {
   let fixture: BrowserHttpFixture;
   let largeJpegPath = "";
+  let originalByteSize = 0;
 
   before(async () => {
     fixture = await startBrowserHttpFixture({ attachmentsDir: "var/tt-large-jpeg-preview-browser" });
@@ -39,7 +40,8 @@ describe("tan-tracker large JPEG preview after reload (browser + PG)", { concurr
       .jpeg({ quality: 78, mozjpeg: true })
       .toFile(largeJpegPath);
     const stat = await fs.stat(largeJpegPath);
-    assert.ok(stat.size > 1_000_000, "generated JPEG should be large enough for preview stress");
+    originalByteSize = stat.size;
+    assert.ok(originalByteSize > 1_000_000, "generated JPEG should be large enough for preview stress");
   });
 
   after(async () => {
@@ -81,7 +83,7 @@ describe("tan-tracker large JPEG preview after reload (browser + PG)", { concurr
   }
 
   for (const engine of [chromium, webkit] as const) {
-    it(`thumbnail and lightbox decode persisted JPEG after reload (${engine.name()})`, async (t) => {
+    it(`thumbnail and lightbox use bounded server previews after reload (${engine.name()})`, async (t) => {
       const browser = await launchRequired(engine, t);
       const context = await browser!.newContext(
         engine === webkit ? { ...IPHONE_13, baseURL: fixture.baseUrl } : { baseURL: fixture.baseUrl },
@@ -91,28 +93,52 @@ describe("tan-tracker large JPEG preview after reload (browser + PG)", { concurr
         await login(page);
         await uploadLargeJpegOnDetail(page);
 
-        const inlinePreview = page.waitForResponse(
+        const thumbPreview = page.waitForResponse(
           (r) =>
             r.request().method() === "GET" &&
             r.url().includes("/attachments/") &&
-            r.url().includes("preview=1") &&
+            r.url().includes("preview=thumb") &&
             r.status() === 200,
           { timeout: 120000 },
         );
         await page.reload({ waitUntil: "networkidle" });
-        const previewResponse = await inlinePreview;
-        assert.match(String(previewResponse.headers()["content-disposition"] || ""), /^inline;/i);
+        const thumbResponse = await thumbPreview;
+        const thumbBytes = (await thumbResponse.body()).length;
+        assert.ok(thumbBytes < originalByteSize / 5, "thumb response must be much smaller than original file");
+        assert.equal(thumbResponse.headers()["content-type"], "image/jpeg");
 
         const thumb = page.locator(".tt-att-thumb img").first();
         await thumb.waitFor({ state: "visible", timeout: 60000 });
+        await page.waitForFunction(
+          () => !document.querySelector(".tt-att-thumb--loading"),
+          undefined,
+          { timeout: 60000 },
+        );
         const thumbNatural = await thumb.evaluate((img: HTMLImageElement) => ({
           w: img.naturalWidth,
           h: img.naturalHeight,
         }));
         assert.ok(thumbNatural.w > 0 && thumbNatural.h > 0, "thumbnail must decode after reload");
+        assert.ok(
+          Math.max(thumbNatural.w, thumbNatural.h) <= 320,
+          "thumbnail natural size must match bounded server preview",
+        );
 
+        const lightboxPreview = page.waitForResponse(
+          (r) =>
+            r.request().method() === "GET" &&
+            r.url().includes("/attachments/") &&
+            r.url().includes("preview=lightbox") &&
+            r.status() === 200,
+          { timeout: 120000 },
+        );
         await page.locator('[data-tt="attach-preview"]').first().click();
         await page.waitForSelector('[data-tt="attach-lightbox"]:not([hidden])', { timeout: 15000 });
+        const lightboxResponse = await lightboxPreview;
+        const lbBytes = (await lightboxResponse.body()).length;
+        assert.ok(lbBytes < originalByteSize, "lightbox response must be smaller than original file");
+        assert.ok(lbBytes > thumbBytes, "lightbox payload should exceed thumb preview");
+
         const lbImg = page.locator('[data-tt="attach-lightbox-img"]');
         await lbImg.waitFor({ state: "visible", timeout: 60000 });
         const lbNatural = await lbImg.evaluate((img: HTMLImageElement) => ({
@@ -122,7 +148,17 @@ describe("tan-tracker large JPEG preview after reload (browser + PG)", { concurr
         }));
         assert.equal(lbNatural.hidden, false);
         assert.ok(lbNatural.w > 0 && lbNatural.h > 0, "lightbox image must decode on mobile WebKit");
+        assert.ok(
+          Math.max(lbNatural.w, lbNatural.h) <= 1600,
+          "lightbox natural size must match bounded server preview",
+        );
         assert.equal(await page.locator('[data-tt="attach-lightbox-fallback"]:not([hidden])').count(), 0);
+
+        const downloadHref = await page.locator('[data-tt="attach-download"]').first().getAttribute("href");
+        assert.ok(downloadHref && downloadHref.includes("download=1"));
+        const downloadResponse = await page.request.get(`${fixture.baseUrl}${downloadHref}`);
+        assert.equal(downloadResponse.status(), 200);
+        assert.equal(Buffer.from(await downloadResponse.body()).length, originalByteSize);
       } finally {
         await context.close();
         await browser!.close();

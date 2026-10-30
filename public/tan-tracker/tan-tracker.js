@@ -957,7 +957,9 @@
     if (!window.__TT_PUBLIC_RECIPIENT__ || !o?.attachments?.length) return;
     const verified = isPublicHolderSession() || identityVerified(o);
     for (const a of o.attachments) {
-      a.url = verified ? buildPublicAttachmentDownloadUrl(a.id, o) : "";
+      const base = verified ? buildPublicAttachmentDownloadUrl(a.id, o) : "";
+      a.url = base && Att()?.attachmentThumbUrl ? Att().attachmentThumbUrl(base) : base;
+      a.downloadUrl = base && Att()?.attachmentDownloadUrl ? Att().attachmentDownloadUrl(base) : base;
     }
   }
 
@@ -1955,11 +1957,20 @@
     const img = lb.querySelector('[data-tt="attach-lightbox-img"]');
     const fallback = lb.querySelector('[data-tt="attach-lightbox-fallback"]');
     const err = lb.querySelector('[data-tt="attach-lightbox-err"]');
-    if (mode === "loading" || mode === "ok") {
+    const loading = lb.querySelector('[data-tt="attach-lightbox-loading"]');
+    if (mode === "loading") {
       if (fallback) fallback.hidden = true;
+      if (loading) loading.hidden = false;
+      if (img) img.hidden = true;
+      return;
+    }
+    if (mode === "ok") {
+      if (fallback) fallback.hidden = true;
+      if (loading) loading.hidden = true;
       if (img) img.hidden = false;
       return;
     }
+    if (loading) loading.hidden = true;
     if (img) img.hidden = true;
     if (fallback) fallback.hidden = false;
     if (err && message) err.textContent = message;
@@ -1978,7 +1989,7 @@
     const img = lb.querySelector('[data-tt="attach-lightbox-img"]');
     const cap = lb.querySelector('[data-tt="attach-lightbox-cap"]');
     const dl = lb.querySelector('[data-tt="attach-lightbox-download"]');
-    const previewUrl = Att().attachmentPreviewUrl(a.url);
+    const previewUrl = Att().attachmentLightboxUrl(a.url);
     const downloadUrl = a.downloadUrl || Att().attachmentDownloadUrl(a.url);
     if (dl) {
       dl.href = downloadUrl;
@@ -5332,9 +5343,9 @@
       if (!copy.activeInvitation && copy.pendingId) syncInvitation(copy);
       if (copy.attachments && copy.attachments.length) {
         copy.attachments = copy.attachments.map((a) => {
-          const previewUrl = Att()?.lkAttachmentPreviewUrl
-            ? Att().lkAttachmentPreviewUrl(copy.id, a.id)
-            : `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}?preview=1`;
+          const previewUrl = Att()?.lkAttachmentThumbUrl
+            ? Att().lkAttachmentThumbUrl(copy.id, a.id)
+            : `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}?preview=thumb`;
           const downloadUrl = Att()?.lkAttachmentDownloadUrl
             ? Att().lkAttachmentDownloadUrl(copy.id, a.id)
             : `/api/tan-tracker/transfers/${encodeURIComponent(copy.id)}/attachments/${encodeURIComponent(a.id)}?download=1`;

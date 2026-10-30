@@ -13,12 +13,13 @@ import {
   prepareDatabase,
   setIntegrationEnv,
 } from "../helpers/test-db";
+import sharp from "sharp";
 import { linkStagedAttachmentsToTransfer, stageAttachmentBuffer } from "../../src/tan-tracker/attachments";
 import { withTransaction } from "../../src/access/db";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
 
-describe("tan-tracker attachment preview vs download disposition (PG)", { concurrency: false }, () => {
+describe("tan-tracker attachment preview vs download disposition hardening (PG)", { concurrency: false }, () => {
   let pool: Pool;
   let app: ReturnType<typeof createApp>;
   let cookie = "";
@@ -82,7 +83,12 @@ describe("tan-tracker attachment preview vs download disposition (PG)", { concur
       .send({ email: "tt-att-preview-other@test.local", password: "AttPreview!2026" });
     otherCookie = loginOther.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
 
-    const staged = await stageAttachmentBuffer(user.id, "preview.jpg", "image/jpeg", Buffer.from("jpeg-preview-bytes"));
+    const jpegBytes = await sharp({
+      create: { width: 64, height: 48, channels: 3, background: "#336699" },
+    })
+      .jpeg()
+      .toBuffer();
+    const staged = await stageAttachmentBuffer(user.id, "preview.jpg", "image/jpeg", jpegBytes);
     transferId = `TT-PREV-${randomUUID().slice(0, 8)}`;
     await withTransaction(async (client) => {
       await client.query(

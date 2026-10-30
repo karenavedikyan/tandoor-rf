@@ -15,7 +15,6 @@ import { tanTrackerUserTestBannerForApi } from "../shared/tan-tracker-user-test-
 import {
   contentDispositionFilename,
   listAttachmentsForTransfers,
-  readAttachmentBytes,
   resolveAttachmentContentDisposition,
 } from "./attachments";
 
@@ -212,19 +211,35 @@ export async function publicRecipientAttachmentHandler(req: Request, res: Respon
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Вложение не найдено."));
     return;
   }
+  const query = req.query as Record<string, unknown>;
   try {
-    const data = await readAttachmentBytes(fileRow.storage_key, pool);
-    res.setHeader("Content-Type", fileRow.mime_type);
-    const disposition = resolveAttachmentContentDisposition(
+    const { loadAttachmentServePayload } = await import("./attachment-preview");
+    const { buffer, contentType } = await loadAttachmentServePayload(
+      fileRow.storage_key,
       fileRow.mime_type,
-      req.query as Record<string, unknown>,
+      query,
+      pool,
     );
+    const disposition = resolveAttachmentContentDisposition(fileRow.mime_type, query);
     setNoStore(res);
+    res.setHeader("Content-Type", contentType);
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Disposition", contentDispositionFilename(fileRow.original_name, disposition));
-    res.status(200).send(data);
-  } catch {
+    res.status(200).send(buffer);
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http;
     setNoStore(res);
+    if (http === 400 || http === 422) {
+      res
+        .status(http)
+        .json(
+          apiError(
+            ERROR_CODES.VALIDATION_ERROR,
+            err instanceof Error ? err.message : "Предпросмотр недоступен.",
+          ),
+        );
+      return;
+    }
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Файл не найден."));
   }
 }

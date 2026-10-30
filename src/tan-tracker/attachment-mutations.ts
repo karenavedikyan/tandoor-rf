@@ -100,6 +100,8 @@ export async function deleteTransferAttachmentInTransaction(
   if (!deleted) {
     throw Object.assign(new Error("Вложение не найдено."), { http: 404 });
   }
+  const { deleteAttachmentPreviewDerivatives } = await import("./attachment-preview");
+  await deleteAttachmentPreviewDerivatives(deleted.storage_key, client);
   await deleteAttachmentBytes(deleted.storage_key, client);
 }
 

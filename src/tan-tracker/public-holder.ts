@@ -17,7 +17,6 @@ import {
   deleteAttachmentBytes,
   linkStagedAttachmentsToTransfer,
   listAttachmentsForTransfers,
-  readAttachmentBytes,
   stageAttachmentBuffer,
 } from "./attachments";
 import {
@@ -380,23 +379,38 @@ export async function publicHolderAttachmentHandler(req: Request, res: Response)
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Файл не найден."));
     return;
   }
-  let buf: Buffer;
+  const mime = fileRow.mime_type || "application/octet-stream";
+  const query = req.query as Record<string, unknown>;
   try {
-    buf = await readAttachmentBytes(fileRow.storage_key, pool);
-  } catch {
+    const { loadAttachmentServePayload } = await import("./attachment-preview");
+    const { buffer, contentType } = await loadAttachmentServePayload(
+      fileRow.storage_key,
+      mime,
+      query,
+      pool,
+    );
+    const disposition = resolveAttachmentContentDisposition(mime, query);
     setNoStore(res);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Disposition", contentDispositionFilename(fileRow.original_name, disposition));
+    res.status(200).send(buffer);
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http;
+    setNoStore(res);
+    if (http === 400 || http === 422) {
+      res
+        .status(http)
+        .json(
+          apiError(
+            ERROR_CODES.VALIDATION_ERROR,
+            err instanceof Error ? err.message : "Предпросмотр недоступен.",
+          ),
+        );
+      return;
+    }
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Файл недоступен."));
-    return;
   }
-  setNoStore(res);
-  res.setHeader("Content-Type", fileRow.mime_type || "application/octet-stream");
-  const disposition = resolveAttachmentContentDisposition(
-    fileRow.mime_type || "application/octet-stream",
-    req.query as Record<string, unknown>,
-  );
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Content-Disposition", contentDispositionFilename(fileRow.original_name, disposition));
-  res.status(200).send(buf);
 }
 
 export async function publicHolderChangePendingHandler(req: Request, res: Response): Promise<void> {
@@ -607,6 +621,8 @@ export async function publicHolderDeleteAttachmentHandler(req: Request, res: Res
       if (!deleted) {
         throw Object.assign(new Error("Вложение не найдено."), { http: 404 });
       }
+      const { deleteAttachmentPreviewDerivatives } = await import("./attachment-preview");
+      await deleteAttachmentPreviewDerivatives(deleted.storage_key, client);
       await deleteAttachmentBytes(deleted.storage_key, client);
       await client.query(
         `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)

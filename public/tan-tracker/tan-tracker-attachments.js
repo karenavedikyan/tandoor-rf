@@ -285,22 +285,50 @@
     );
   }
 
-  function withAttachmentQuery(baseUrl, key) {
+  function withAttachmentQuery(baseUrl, key, value) {
     const sep = String(baseUrl).includes("?") ? "&" : "?";
-    return `${baseUrl}${sep}${key}=1`;
+    const v = value === undefined || value === null || value === "" ? "1" : String(value);
+    return `${baseUrl}${sep}${encodeURIComponent(key)}=${encodeURIComponent(v)}`;
   }
 
-  function lkAttachmentPreviewUrl(transferId, attId) {
-    return withAttachmentQuery(lkTransferAttachmentBaseUrl(transferId, attId), "preview");
+  function lkAttachmentThumbUrl(transferId, attId) {
+    return withAttachmentQuery(lkTransferAttachmentBaseUrl(transferId, attId), "preview", "thumb");
+  }
+
+  function lkAttachmentLightboxUrl(transferId, attId) {
+    return withAttachmentQuery(lkTransferAttachmentBaseUrl(transferId, attId), "preview", "lightbox");
   }
 
   function lkAttachmentDownloadUrl(transferId, attId) {
     return withAttachmentQuery(lkTransferAttachmentBaseUrl(transferId, attId), "download");
   }
 
+  /** @deprecated use lkAttachmentThumbUrl */
+  function lkAttachmentPreviewUrl(transferId, attId) {
+    return lkAttachmentThumbUrl(transferId, attId);
+  }
+
+  function attachmentThumbUrl(url) {
+    if (!url) return url;
+    const s = String(url);
+    if (/[?&]preview=(thumb|lightbox|1)(&|$)/i.test(s)) {
+      return s.replace(/([?&])preview=(?:lightbox|1|true)(?=&|$)/i, "$1preview=thumb");
+    }
+    return withAttachmentQuery(url, "preview", "thumb");
+  }
+
+  function attachmentLightboxUrl(url) {
+    if (!url) return url;
+    const s = String(url);
+    if (/[?&]preview=lightbox(?=&|$)/i.test(s)) return s;
+    if (/[?&]preview=thumb(?=&|$)/i.test(s)) {
+      return s.replace(/([?&])preview=thumb(?=&|$)/i, "$1preview=lightbox");
+    }
+    return withAttachmentQuery(url, "preview", "lightbox");
+  }
+
   function attachmentPreviewUrl(url) {
-    if (!url || String(url).includes("preview=1")) return url;
-    return withAttachmentQuery(url, "preview");
+    return attachmentLightboxUrl(url);
   }
 
   function attachmentDownloadUrl(url) {
@@ -308,9 +336,16 @@
     return withAttachmentQuery(url, "download");
   }
 
+  function onThumbLoad(img) {
+    const thumb = img && img.closest ? img.closest(".tt-att-thumb") : null;
+    if (!thumb) return;
+    thumb.classList.remove("tt-att-thumb--loading");
+  }
+
   function onThumbError(img) {
     const thumb = img && img.closest ? img.closest(".tt-att-thumb") : null;
     if (!thumb) return;
+    thumb.classList.remove("tt-att-thumb--loading");
     img.classList.add("tt-att-img-broken");
     thumb.classList.add("tt-att-thumb--fallback");
   }
@@ -352,7 +387,7 @@
     const ext = extOf(a.name);
     const baseName = ext ? a.name.slice(0, -ext.length) : a.name;
     const thumb = prev
-      ? `<button type="button" class="tt-att-thumb" data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}" aria-label="Открыть ${E(a.name)}"><img src="${E(a.url)}" alt="" loading="lazy" decoding="async" onerror="TanTrackerAttachments.onThumbError(this)"><span class="tt-att-fallback" aria-hidden="true">${E(docLabel)}</span></button>`
+      ? `<button type="button" class="tt-att-thumb tt-att-thumb--loading" data-tt="attach-preview" data-att-id="${E(a.id)}" data-order="${E(orderId || "")}" aria-label="Открыть ${E(a.name)}"><img src="${E(a.url)}" alt="" loading="lazy" decoding="async" onload="TanTrackerAttachments.onThumbLoad(this)" onerror="TanTrackerAttachments.onThumbError(this)"><span class="tt-att-fallback" aria-hidden="true">${E(docLabel)}</span></button>`
       : `<div class="tt-att-doc" aria-hidden="true">${E(docLabel)}</div>`;
     const meta = `<div class="tt-att-name-row"><span class="tt-att-name">${E(baseName)}</span>${ext ? `<span class="tt-att-ext">${E(ext)}</span>` : ""}</div><span class="tt-att-meta">${E(fmtBytes(a.size))}${a.demo ? " · демо" : ""}${a.addedLabel ? ` · ${E(a.addedLabel)}` : ""}</span>`;
     const dl = attActionChip(
@@ -447,7 +482,7 @@
   }
 
   function lightboxHtml() {
-    return `<div class="tt-att-lightbox" data-tt="attach-lightbox" hidden role="dialog" aria-modal="true" aria-label="Просмотр вложения"><button type="button" class="tt-att-lightbox-close" data-tt="attach-lightbox-close">Закрыть</button><div class="tt-att-lightbox-stage" data-tt="attach-lightbox-stage"><img data-tt="attach-lightbox-img" alt="" decoding="async"><div class="tt-att-lightbox-fallback" data-tt="attach-lightbox-fallback" hidden><p class="tt-att-lightbox-err" data-tt="attach-lightbox-err">Не удалось показать изображение.</p><div class="tt-att-lightbox-fallback-actions"><button type="button" class="tt-wizard-btn" data-tt="attach-lightbox-retry">Повторить</button><a class="tt-wizard-btn tt-wizard-btn-secondary" data-tt="attach-lightbox-download" href="" download="">Скачать файл</a></div></div></div><p class="tt-att-lightbox-cap" data-tt="attach-lightbox-cap"></p></div>`;
+    return `<div class="tt-att-lightbox" data-tt="attach-lightbox" hidden role="dialog" aria-modal="true" aria-label="Просмотр вложения"><button type="button" class="tt-att-lightbox-close" data-tt="attach-lightbox-close">Закрыть</button><div class="tt-att-lightbox-stage" data-tt="attach-lightbox-stage"><p class="tt-att-lightbox-loading" data-tt="attach-lightbox-loading" hidden>Загрузка…</p><img data-tt="attach-lightbox-img" alt="" decoding="async"><div class="tt-att-lightbox-fallback" data-tt="attach-lightbox-fallback" hidden><p class="tt-att-lightbox-err" data-tt="attach-lightbox-err">Не удалось показать изображение.</p><div class="tt-att-lightbox-fallback-actions"><button type="button" class="tt-wizard-btn" data-tt="attach-lightbox-retry">Повторить</button><a class="tt-wizard-btn tt-wizard-btn-secondary" data-tt="attach-lightbox-download" href="" download="">Скачать файл</a></div></div></div><p class="tt-att-lightbox-cap" data-tt="attach-lightbox-cap"></p></div>`;
   }
 
   window.TanTrackerAttachments = {
@@ -467,9 +502,14 @@
     trackUrl,
     untrackUrl,
     canPreview,
+    onThumbLoad,
     onThumbError,
+    lkAttachmentThumbUrl,
+    lkAttachmentLightboxUrl,
     lkAttachmentPreviewUrl,
     lkAttachmentDownloadUrl,
+    attachmentThumbUrl,
+    attachmentLightboxUrl,
     attachmentPreviewUrl,
     attachmentDownloadUrl,
     totalBytes,

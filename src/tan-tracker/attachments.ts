@@ -49,17 +49,27 @@ export function decodeUploadFilename(rawHeader: string): string {
   return decoded || "file";
 }
 
-export function isSafeInlinePreviewMime(mime: string): boolean {
-  const m = String(mime ?? "").toLowerCase();
-  return m === "image/jpeg" || m === "image/png" || m === "image/webp";
-}
+export { isSafeInlinePreviewMime } from "./attachment-preview";
+import { isSafeInlinePreviewMime } from "./attachment-preview";
 
 function queryFlag(value: unknown): boolean {
   const raw = String(value ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
-/** Preview (`preview=1`) may inline safe raster; download (`download=1`) is always attachment. */
+function isRasterPreviewQuery(query: Record<string, unknown>): boolean {
+  if (queryFlag(query.download)) return false;
+  const preview = String(query.preview ?? "").trim().toLowerCase();
+  return (
+    preview === "thumb" ||
+    preview === "lightbox" ||
+    preview === "1" ||
+    preview === "true" ||
+    queryFlag(query.preview)
+  );
+}
+
+/** Disposition hardening for preview/download queries; not a proven Safari blank-image fix. */
 export function resolveAttachmentContentDisposition(
   mime: string,
   query: Record<string, unknown> = {},
@@ -67,7 +77,7 @@ export function resolveAttachmentContentDisposition(
   if (queryFlag(query.download)) {
     return "attachment";
   }
-  if (queryFlag(query.preview)) {
+  if (isRasterPreviewQuery(query)) {
     return isSafeInlinePreviewMime(mime) ? "inline" : "attachment";
   }
   return isSafeInlinePreviewMime(mime) ? "inline" : "attachment";
@@ -277,15 +287,34 @@ export async function downloadAttachmentHandler(req: AccessRequest, res: Respons
     return;
   }
   try {
-    const data = await readAttachmentBytes(row.storage_key, pool);
-    const disposition = resolveAttachmentContentDisposition(row.mime_type, req.query as Record<string, unknown>);
+    const { loadAttachmentServePayload } = await import("./attachment-preview");
+    const query = req.query as Record<string, unknown>;
+    const { buffer, contentType } = await loadAttachmentServePayload(
+      row.storage_key,
+      row.mime_type,
+      query,
+      pool,
+    );
+    const disposition = resolveAttachmentContentDisposition(row.mime_type, query);
     setNoStore(res);
-    res.setHeader("Content-Type", row.mime_type);
+    res.setHeader("Content-Type", contentType);
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Disposition", contentDispositionFilename(row.original_name, disposition));
-    res.status(200).send(data);
-  } catch {
+    res.status(200).send(buffer);
+  } catch (err: unknown) {
+    const http = (err as { http?: number }).http;
     setNoStore(res);
+    if (http === 400 || http === 422) {
+      res
+        .status(http)
+        .json(
+          apiError(
+            ERROR_CODES.VALIDATION_ERROR,
+            err instanceof Error ? err.message : "Предпросмотр недоступен.",
+          ),
+        );
+      return;
+    }
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Файл не найден."));
   }
 }
