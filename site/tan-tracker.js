@@ -2151,14 +2151,14 @@
   }
 
   function contactAddedByLabel(c) {
-    if (!c) return "справочник";
-    if (c.kind === "employee") return "справочник";
-    return contactById(c.addedBy)?.name || "справочник";
+    if (!c || c.kind === "employee") return "справочник компании";
+    const by = contactById(c.addedBy)?.name;
+    return by ? `добавил ${by}` : "контакт компании";
   }
 
   function contactExistsBlock(c) {
     return `<div class="tt-reminder" data-tt="contact-exists">
-      <p>Этот номер уже записан: <strong>${E(c.name)}</strong> · ${E(contactKindLabel(c))} · добавил ${E(contactAddedByLabel(c))}</p>
+      <p>Этот номер уже записан: <strong>${E(c.name)}</strong> · ${E(contactKindLabel(c))} · ${E(contactAddedByLabel(c))}</p>
       ${btn("Выбрать", 'data-tt="pick-existing"', "tt-primary")}
     </div>`;
   }
@@ -2886,8 +2886,12 @@
     if (o.pendingId) {
       return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Ввести код", `data-tt="enter-code-dock" ${heroAttr}`, "tt-primary")}</div>`;
     }
-    const canComplete =
-      !o.pendingId && (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
+    if (orderIsDelivered(o)) {
+      // Доставка — веха: держатель может передать дальше; закрыть трек из дока внешний держатель не может.
+      if (isExternalShell()) return "";
+      return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Передать дальше", `data-tt="transfer" ${heroAttr}`, "tt-primary")}</div>`;
+    }
+    const canComplete = canExplicitComplete(o, actor);
     const mustRelay = o.finalRecipientId && o.holderId !== o.finalRecipientId;
     if (mustRelay && !o.pendingId) {
       return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Передать конечному получателю", `data-tt="transfer-final" ${heroAttr}`, "tt-primary")}</div>`;
@@ -3527,10 +3531,13 @@
     }
     if (phase === "done") {
       const staff = contactById(f.recipientId);
-      const dueText = f.duePreset === "tomorrow" ? "завтра" : "сегодня";
+      const createdOrder = orders.find((x) => x.id === f.createdId);
+      const dueText = createdOrder?.dueAt
+        ? `${f.duePreset === "tomorrow" ? "завтра" : "сегодня"} до ${dt(createdOrder.dueAt).split(", ").pop()}`
+        : f.duePreset === "tomorrow" ? "завтра" : "сегодня";
       return `<div class="tt-panel tt-ext-request" data-tt="ext-request">
         ${extRequestBotBubble(
-          `Заявка ${f.createdId} создана. Передайте «${f.item}» ${staff?.name || "—"} до ${dueText}. При встрече он назовёт код из SMS или покажет QR — введите код на вашей странице.`
+          `Заявка ${f.createdId} создана. Передайте «${f.item}» ${staff?.name || "—"} ${dueText}. При встрече он назовёт код из SMS или покажет QR — введите код на вашей странице.`
         )}
         <div class="tt-actions">${btn("Открыть мою передачу", 'data-tt="ext-request-open-order"', "tt-primary")}${btn("Закрыть", 'data-tt="ext-request-close"')}</div>
       </div>`;
@@ -5313,6 +5320,16 @@
       if (!state.form) state.form = {};
       state.form[e.target.getAttribute("data-tt-field")] = e.target.value;
       if (e.target.getAttribute("data-tt-field") === "pickQ") renderTracker({ soft: true });
+      if (
+        e.target.getAttribute("data-tt-field") === "newPhone" &&
+        (state.form.existingMatchId || state.form.newPhoneStep === "name")
+      ) {
+        // Номер изменился после проверки — сбрасываем результат поиска, чтобы «Далее» проверил его заново.
+        state.form.existingMatchId = "";
+        state.form.newPhoneStep = "phone";
+        state.error = "";
+        renderTracker({ soft: true });
+      }
     }
     if (e.target.matches('[data-tt="search"]')) {
       state.query = e.target.value;
