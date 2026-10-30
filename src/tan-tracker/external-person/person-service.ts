@@ -3,6 +3,7 @@ import { normalizeRuPhoneE164 } from "../phone-normalize";
 import { mintExternalPersonSessionToken } from "./session-token";
 import { requireHandoffOtpPepper } from "../otp-config";
 import { resolveKnownExternalPartyByPhone } from "./known-party";
+import { assertPersonHasVerificationChannel, type ExternalMessengerChannel } from "./messenger-provenance";
 
 export type ExternalPersonRow = {
   id: string;
@@ -88,8 +89,9 @@ export async function upsertVerifiedPerson(
 export async function createPersonBrowserSession(
   client: PoolClient,
   personId: string,
-  channel: "telegram" | "max",
+  channel: ExternalMessengerChannel,
 ): Promise<string> {
+  await assertPersonHasVerificationChannel(client, personId, channel);
   const pepper = requireHandoffOtpPepper();
   const { raw, hash, exp } = mintExternalPersonSessionToken(personId, 30 * 60_000);
   await client.query(

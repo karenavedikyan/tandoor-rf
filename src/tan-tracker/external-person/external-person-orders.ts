@@ -92,7 +92,7 @@ export async function loadExternalHistoricalSummaries(
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     out.push({
-      id: row.id,
+      id: row.public_code,
       publicCode: row.public_code,
       itemTitle: row.item_title,
       lastAt: row.occurred_at.getTime(),

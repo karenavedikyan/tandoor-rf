@@ -5,6 +5,7 @@ import { getPool } from "../../db/pool";
 import { setNoStore } from "../../http/no-store";
 import { apiError, ERROR_CODES } from "../../shared/errors";
 import { resolveExternalPersonAuth } from "./resolve-auth";
+import { requirePersonMessengerProvenance } from "./messenger-provenance";
 import { confirmExternalRequestDraft } from "../external-request/confirm";
 import { buildExternalPersonBootstrapPayload } from "./bootstrap-build";
 import { writeAttachmentBytes } from "../attachments";
@@ -28,11 +29,12 @@ export async function getExternalWebDraftHandler(req: Request, res: Response): P
     return;
   }
   const pool = getPool()!;
+  const provenance = await requirePersonMessengerProvenance(pool, person.personId);
   const draft = await pool.query<{ id: string; step: string; payload: Record<string, unknown> }>(
     `SELECT id::text, step, payload FROM tt_external_request_drafts
-     WHERE channel = 'web' AND person_id = $1::uuid
+     WHERE channel = $1 AND messenger_chat_id = $2 AND person_id = $3::uuid
      ORDER BY updated_at DESC LIMIT 1`,
-    [person.personId],
+    [provenance.channel, provenance.messengerChatId, person.personId],
   );
   setNoStore(res);
   res.status(200).json({ draft: draft.rows[0] ?? null });
@@ -48,12 +50,17 @@ export async function upsertExternalWebDraftHandler(req: Request, res: Response)
   const step = String((req.body as { step?: string })?.step ?? "item").slice(0, 32);
   const payload = (req.body as { payload?: Record<string, unknown> })?.payload ?? {};
   const pool = getPool()!;
+  const provenance = await requirePersonMessengerProvenance(pool, person.personId);
   const row = await pool.query<{ id: string }>(
     `INSERT INTO tt_external_request_drafts (channel, messenger_chat_id, person_id, step, payload)
-     VALUES ('web', $1, $2::uuid, $3, $4::jsonb)
-     ON CONFLICT (channel, messenger_chat_id) DO UPDATE SET step = EXCLUDED.step, payload = EXCLUDED.payload, updated_at = NOW()
+     VALUES ($1, $2, $3::uuid, $4, $5::jsonb)
+     ON CONFLICT (channel, messenger_chat_id) DO UPDATE SET
+       person_id = EXCLUDED.person_id,
+       step = EXCLUDED.step,
+       payload = EXCLUDED.payload,
+       updated_at = NOW()
      RETURNING id::text`,
-    [person.personId, person.personId, step, JSON.stringify(payload)],
+    [provenance.channel, provenance.messengerChatId, person.personId, step, JSON.stringify(payload)],
   );
   setNoStore(res);
   res.status(200).json({ draftId: row.rows[0]!.id, step });
