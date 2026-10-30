@@ -1,4 +1,4 @@
-export type TanTrackerTransferStatus = "active" | "waiting" | "completed";
+export type TanTrackerTransferStatus = "active" | "waiting" | "delivered" | "completed";
 
 export type TanTrackerPartyKind = "user" | "external";
 

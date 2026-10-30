@@ -45,6 +45,9 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
       if (row.status === "completed") {
         return { ok: false, http: 409, message: "Передача уже завершена." };
       }
+      if (row.status !== "active" && row.status !== "waiting" && row.status !== "delivered") {
+        return { ok: false, http: 409, message: "Передача недоступна для завершения." };
+      }
       if (row.pending_party_id) {
         return {
           ok: false,

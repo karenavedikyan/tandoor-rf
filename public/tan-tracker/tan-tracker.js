@@ -748,6 +748,7 @@
       if (inv?.invitationToken) state.publicInvitationToken = inv.invitationToken;
     }
     const completed = data.orders?.[0]?.status === "completed";
+    const delivered = data.orders?.[0]?.status === "delivered";
     const nextView = completed ? "public-receipt" : "detail";
     if (window.TanTrackerPrototype?.hydrateFromServer) {
       window.TanTrackerPrototype.hydrateFromServer(data, { skipUrlRead: true, skipRender: true });
@@ -760,6 +761,8 @@
         transferStatus: "completed",
         completedAt: Date.now(),
       };
+    } else if (delivered) {
+      state.publicReceipt = null;
     }
     state.recipientMode = false;
     state.view = nextView;
@@ -1204,13 +1207,15 @@
 
   function registryActorContext(o, actor) {
     if (o.status === "completed") return { key: "done", label: "Завершена", icon: "check-circle" };
+    if (o.status === "delivered" && o.holderId === actor && !o.pendingId)
+      return { key: "delivered", label: "Доставлено", icon: "package-check" };
     if (!actor) return { key: "route", label: "В пути", icon: "route" };
     if (o.pendingId === actor) return { key: "inbox", label: "Жду получения", icon: "download" };
     if (o.holderId === actor && o.pendingId) {
       const p = contactById(o.pendingId);
       return { key: "wait", label: "Ожидает код", icon: "key-round", hint: p?.name };
     }
-    if (o.holderId === actor && !o.pendingId && o.status !== "completed")
+    if (o.holderId === actor && !o.pendingId && o.status !== "completed" && o.status !== "delivered")
       return { key: "send", label: "Нужно передать", icon: "send" };
     return { key: "route", label: "В пути", icon: "route" };
   }
@@ -2200,11 +2205,12 @@
 
   function orderStatus(o) {
     if (o.status === "completed") return "completed";
+    if (o.status === "delivered") return "delivered";
     if (o.pendingId) return "waiting";
     return "active";
   }
   function isOverdue(o) {
-    return o.status !== "completed" && o.dueAt && o.dueAt < now();
+    return o.status !== "completed" && o.status !== "delivered" && o.dueAt && o.dueAt < now();
   }
   function dueCell(o) {
     if (!o.dueAt) return "—";
@@ -2251,14 +2257,14 @@
       note: via === "qr" ? "Подтверждено по QR" : "Подтверждено одноразовым кодом",
     });
     if (o.holderId === o.finalRecipientId) {
-      o.status = "completed";
+      o.status = "delivered";
       o.timeline.push({
         at: now(),
         from: o.holderId,
         to: o.finalRecipientId,
         note: "Доставлено конечному получателю",
       });
-      state.toast = "Передача завершена — конечный получатель подтвердил.";
+      state.toast = "Доставлено конечному получателю.";
     } else state.toast = "Держатель обновлён.";
     return true;
   }
@@ -2359,9 +2365,11 @@
     const r = state.publicReceipt;
     if (!r) return deniedView();
     const title =
-      r.routeComplete || r.transferStatus === "completed" || r.status === "completed"
+      r.transferStatus === "completed" || r.status === "completed"
         ? "Передача завершена"
-        : "Получение подтверждено";
+        : r.transferStatus === "delivered" || r.deliveredAt
+          ? "Доставлено"
+          : "Получение подтверждено";
     return `${userTestBannerBlock()}<div class="tt-panel tt-handoff-receipt" data-tt="public-receipt">
       <h2>${E(title)}</h2>
       <p class="tt-success">${E(r.item || "Передача")}</p>

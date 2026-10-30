@@ -193,15 +193,17 @@ describe("tan-tracker P1 regression", { concurrency: false }, () => {
       .send({ invitationToken: finalToken, phoneSessionToken: finalPhone });
     assert.equal(finalConfirm.status, 200, finalConfirm.text);
     assert.equal(finalConfirm.body.receipt.routeComplete, true);
-    assert.equal(finalConfirm.body.receipt.transferStatus, "completed");
+    assert.equal(finalConfirm.body.receipt.transferStatus, "delivered");
 
     const done = await db.query(
-      `SELECT status, holder_party_id::text, completed_at IS NOT NULL AS done FROM tt_transfers WHERE public_code = $1`,
+      `SELECT status, holder_party_id::text, delivered_at IS NOT NULL AS delivered, completed_at IS NOT NULL AS closed
+       FROM tt_transfers WHERE public_code = $1`,
       [publicCode],
     );
-    assert.equal(done.rows[0].status, "completed");
+    assert.equal(done.rows[0].status, "delivered");
     assert.equal(done.rows[0].holder_party_id, finalPartyId);
-    assert.equal(done.rows[0].done, true);
+    assert.equal(done.rows[0].delivered, true);
+    assert.equal(done.rows[0].closed, false);
   });
 
   it("CODE-01: public recipient code generate works without auth cookie after SMS", async () => {

@@ -291,6 +291,7 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
     transferStatus: string;
     routeComplete: boolean;
     completedAt: number | null;
+    deliveredAt?: number | null;
     holderAccessToken: string | null;
   } | null = null;
   try {
@@ -331,16 +332,16 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
         item: itemRow?.item_title ?? "",
         transferStatus: outcome.transferStatus,
         routeComplete: outcome.routeComplete,
-        completedAt: outcome.routeComplete ? Date.now() : null,
-        holderAccessToken:
-          outcome.routeComplete || !after
-            ? null
-            : signHolderAccess({
-                transferId: row.id,
-                partyId: after.holder_party_id,
-                hv: after.handoff_version,
-                exp: Date.now() + holderAccessTtlMs(),
-              }),
+        completedAt: outcome.transferStatus === "completed" ? Date.now() : null,
+        deliveredAt: outcome.transferStatus === "delivered" ? Date.now() : null,
+        holderAccessToken: after
+          ? signHolderAccess({
+              transferId: row.id,
+              partyId: after.holder_party_id,
+              hv: after.handoff_version,
+              exp: Date.now() + holderAccessTtlMs(),
+            })
+          : null,
       };
     });
   } catch (err: unknown) {

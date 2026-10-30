@@ -58,7 +58,7 @@ export async function generateHandoffCodeForPendingParty(
   if (row.pending_party_id !== input.pendingPartyId) {
     return { ok: false, http: 403, message: "Только ожидающий получатель может выпустить код." };
   }
-  if (row.status !== "waiting" && row.status !== "active") {
+  if (row.status !== "waiting" && row.status !== "active" && row.status !== "delivered") {
     return { ok: false, http: 409, message: "Передача недоступна для получения кода." };
   }
 

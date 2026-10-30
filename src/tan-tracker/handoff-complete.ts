@@ -29,12 +29,12 @@ export async function applyPendingReceiptHandoff(
   const from = row.holder_party_id;
   const to = row.pending_party_id;
   let newStatus = "active";
-  const completed = to === row.final_recipient_party_id;
-  if (completed) newStatus = "completed";
+  const routeComplete = to === row.final_recipient_party_id;
+  if (routeComplete) newStatus = "delivered";
   await client.query(
     `UPDATE tt_transfers SET holder_party_id = $2, pending_party_id = NULL, status = $3,
             holder_since = NOW(), handoff_version = handoff_version + 1, row_version = row_version + 1,
-            completed_at = CASE WHEN $3 = 'completed' THEN NOW() ELSE completed_at END
+            delivered_at = CASE WHEN $3 = 'delivered' THEN NOW() ELSE delivered_at END
      WHERE id = $1 AND row_version = $4`,
     [row.id, to, newStatus, row.row_version],
   );
@@ -43,7 +43,7 @@ export async function applyPendingReceiptHandoff(
      VALUES ($1,$2,$3,$4,$5::uuid)`,
     [row.id, from, to, timelineNote, auditUserId],
   );
-  if (completed) {
+  if (routeComplete) {
     await client.query(
       `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
        VALUES ($1,$2,$3,$4,$5::uuid)`,
@@ -85,5 +85,5 @@ export async function applyPendingReceiptHandoff(
     }
   }
 
-  return { transferStatus: newStatus, routeComplete: completed };
+  return { transferStatus: newStatus, routeComplete };
 }

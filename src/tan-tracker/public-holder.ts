@@ -5,7 +5,12 @@ import { setNoStore } from "../http/no-store";
 import { apiError, ERROR_CODES } from "../shared/errors";
 import { getAppOrigin } from "../config";
 import { tanTrackerUserTestBannerForApi } from "../shared/tan-tracker-user-test-env";
-import { holderAccessTtlMs, signHolderAccess, verifyHolderAccess } from "./holder-access";
+import {
+  holderAccessTtlMs,
+  signHolderAccess,
+  verifyHolderAccess,
+  verifyHolderAccessAllowExpired,
+} from "./holder-access";
 import { applyPendingReceiptHandoff } from "./handoff-complete";
 import { requireHandoffOtpPepper } from "./otp-config";
 import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS } from "./otp-config";
@@ -42,7 +47,8 @@ async function loadHolderTransfer(
               creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
               due_at, holder_since, handoff_version, allow_legacy_complete, completed_at, row_version
        FROM tt_transfers
-       WHERE id = $1 AND holder_party_id = $2::uuid AND handoff_version = $3 AND status <> 'completed'
+       WHERE id = $1 AND holder_party_id = $2::uuid AND handoff_version = $3
+         AND status IN ('active', 'waiting', 'delivered')
        LIMIT 1 FOR UPDATE`,
       [transferId, partyId, hv],
     )
@@ -127,7 +133,10 @@ async function buildPublicHolderJson(pool: NonNullable<ReturnType<typeof getPool
 
 export async function publicHolderContextHandler(req: Request, res: Response): Promise<void> {
   const holderAccessToken = String(req.query.holderAccessToken ?? "").trim();
-  const access = holderAccessToken ? verifyHolderAccess(holderAccessToken) : null;
+  let access = holderAccessToken ? verifyHolderAccess(holderAccessToken) : null;
+  if (!access && holderAccessToken) {
+    access = verifyHolderAccessAllowExpired(holderAccessToken);
+  }
   if (!access) {
     setNoStore(res);
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Доступ недоступен или устарел."));

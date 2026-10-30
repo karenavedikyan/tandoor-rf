@@ -15,7 +15,7 @@ export function signHolderAccess(payload: HolderAccessPayload): string {
   return `${body}.${sig}`;
 }
 
-export function verifyHolderAccess(token: string): HolderAccessPayload | null {
+function parseHolderAccessToken(token: string, options: { allowExpired?: boolean } = {}): HolderAccessPayload | null {
   const parts = token.split(".");
   if (parts.length !== 2) return null;
   const [body, sig] = parts;
@@ -33,11 +33,20 @@ export function verifyHolderAccess(token: string): HolderAccessPayload | null {
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as HolderAccessPayload;
     if (!payload.transferId || !payload.partyId || !payload.hv || !payload.exp) return null;
-    if (payload.exp < Date.now()) return null;
+    if (!options.allowExpired && payload.exp < Date.now()) return null;
     return payload;
   } catch {
     return null;
   }
+}
+
+export function verifyHolderAccess(token: string): HolderAccessPayload | null {
+  return parseHolderAccessToken(token);
+}
+
+/** Valid signature but expired — used only to renew while still current holder. */
+export function verifyHolderAccessAllowExpired(token: string): HolderAccessPayload | null {
+  return parseHolderAccessToken(token, { allowExpired: true });
 }
 
 export function holderAccessTtlMs(): number {

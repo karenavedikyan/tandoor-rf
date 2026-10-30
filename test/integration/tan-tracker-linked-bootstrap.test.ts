@@ -305,7 +305,7 @@ describe("tan-tracker linked employee bootstrap", { concurrency: false }, () => 
       `SELECT status, holder_party_id::text FROM tt_transfers WHERE public_code = $1`,
       [publicCode],
     );
-    assert.equal(after.rows[0].status, "completed");
+    assert.equal(after.rows[0].status, "delivered");
     assert.equal(after.rows[0].holder_party_id, pendingPartyId);
   });
 
