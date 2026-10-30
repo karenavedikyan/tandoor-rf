@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
-import { chromium, webkit, type Browser, type BrowserType, type Page } from "playwright";
+import { chromium, devices, webkit, type Browser, type BrowserType, type Page } from "playwright";
 import {
   seedTanTrackerBrowserUsers,
   startBrowserHttpFixture,
@@ -11,6 +11,25 @@ import {
 } from "./helpers/http-integration-browser";
 
 const FIXTURE_PNG = path.join(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/tan-tracker-admin-wizard.png");
+const IPHONE_13 = devices["iPhone 13"];
+
+async function launchRequired(engine: BrowserType<Browser>, t: { skip: (message?: string) => void }) {
+  try {
+    if (engine === chromium) {
+      return await chromium.launch({ headless: true, channel: "chromium" });
+    }
+    return await webkit.launch({ headless: true });
+  } catch (err) {
+    t.skip(`${engine.name()} required for acceptance: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function newContextOptions(engine: BrowserType<Browser>, baseURL: string) {
+  if (engine === webkit) {
+    return { ...IPHONE_13, baseURL };
+  }
+  return { baseURL };
+}
 
 describe("tan-tracker upload + invite regression (browser + PG)", { concurrency: false }, () => {
   let fixture: BrowserHttpFixture;
@@ -74,126 +93,170 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
     await page.waitForSelector('[data-tt="detail"]', { timeout: 30000 });
   }
 
-  async function runWithEngine(engine: BrowserType<Browser>, title: string, fn: (page: Page) => Promise<void>) {
-    const browser = await (
-      engine === chromium
-        ? engine.launch({ headless: true, channel: "chromium" })
-        : engine.launch({ headless: true })
-    ).catch(() => null);
-    if (!browser) {
-      console.log(`skip ${title}: ${engine.name()} not installed`);
-      return;
-    }
-    const context = await browser.newContext({ baseURL: fixture.baseUrl });
+  async function waitForStagingUploadRequest(page: Page) {
+    await page.waitForRequest(
+      (req) => req.method() === "POST" && req.url().includes("/api/tan-tracker/staging-attachments"),
+      { timeout: 15000 },
+    );
+  }
+
+  it("baseline PNG upload succeeds (Chromium)", async (t) => {
+    const browser = await launchRequired(chromium, t);
+    const context = await browser!.newContext({ baseURL: fixture.baseUrl });
     try {
       const page = await context.newPage();
       await login(page, "tt-browser-admin@test.local");
-      await fn(page);
-    } finally {
-      await context.close();
-      await browser.close();
-    }
-  }
-
-  it("baseline PNG upload succeeds (Chromium)", async () => {
-    await runWithEngine(chromium, "baseline chromium", async (page) => {
       await openCreateFilesStep(page);
       await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
       await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 20000 });
       assert.equal(await page.locator(".tt-att-block .tt-error").count(), 0);
-    });
+    } finally {
+      await context.close();
+      await browser!.close();
+    }
   });
 
   for (const engine of [chromium, webkit] as const) {
-    it(`stalled upload clears attach-busy with Russian timeout after 120s clock (${engine.name()})`, async () => {
-      const browser = await (
-      engine === chromium
-        ? engine.launch({ headless: true, channel: "chromium" })
-        : engine.launch({ headless: true })
-    ).catch(() => null);
-      if (!browser) {
-        console.log(`skip stalled upload: ${engine.name()} not installed`);
-        return;
-      }
-      const context = await browser.newContext({ baseURL: fixture.baseUrl });
+    it(`stalled upload clears attach-busy with Russian timeout after 120s clock (${engine.name()})`, async (t) => {
+      const browser = await launchRequired(engine, t);
+      const context = await browser!.newContext(newContextOptions(engine, fixture.baseUrl));
       await context.clock.install({ time: Date.now() });
       try {
         const page = await context.newPage();
         await login(page, "tt-browser-admin@test.local");
         await openCreateFilesStep(page);
         await page.route("**/api/tan-tracker/staging-attachments", () => {});
+        const uploadReq = waitForStagingUploadRequest(page);
         await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
-        await page.waitForSelector('[data-tt="attach-busy"]', { timeout: 5000 });
+        await uploadReq;
         await page.clock.runFor(120001);
-        await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 5000 });
+        await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 10000 });
         const errText = await page.locator(".tt-att-block .tt-error").textContent();
         assert.match(errText || "", /Превышено время ожидания загрузки файла/i);
         assert.doesNotMatch(errText || "", /Load failed/i);
       } finally {
         await context.close();
-        await browser.close();
+        await browser!.close();
       }
     });
 
-    it(`invite still pending at 10001ms clock, not Fetch is aborted (${engine.name()})`, async () => {
-      const browser = await (
-      engine === chromium
-        ? engine.launch({ headless: true, channel: "chromium" })
-        : engine.launch({ headless: true })
-    ).catch(() => null);
-      if (!browser) {
-        console.log(`skip invite 10001: ${engine.name()} not installed`);
-        return;
-      }
-      const context = await browser.newContext({ baseURL: fixture.baseUrl });
+    it(`invite still pending at 10001ms clock, not Fetch is aborted (${engine.name()})`, async (t) => {
+      const browser = await launchRequired(engine, t);
+      const context = await browser!.newContext(newContextOptions(engine, fixture.baseUrl));
       await context.clock.install({ time: Date.now() });
       try {
         const page = await context.newPage();
         await login(page, "tt-browser-admin@test.local");
         await createExternalTransfer(page);
         await page.route("**/messenger-invite", () => {});
+        const inviteReq = page.waitForRequest(
+          (req) => req.method() === "POST" && req.url().includes("/messenger-invite"),
+          { timeout: 15000 },
+        );
         await page.click('[data-tt="messenger-invite-create"]');
-        await page.waitForSelector('[data-tt="messenger-invite-create"][disabled]', { timeout: 5000 });
+        await inviteReq;
         await page.clock.runFor(10001);
         const errText = (await page.locator('[data-tt="messenger-invite-error"]').textContent()) || "";
         assert.doesNotMatch(errText, /Fetch is aborted/i);
         assert.equal(errText.trim(), "");
       } finally {
         await context.close();
-        await browser.close();
+        await browser!.close();
       }
     });
 
-    it(`stalled invite maps to Russian timeout at 45s clock (${engine.name()})`, async () => {
-      const browser = await (
-      engine === chromium
-        ? engine.launch({ headless: true, channel: "chromium" })
-        : engine.launch({ headless: true })
-    ).catch(() => null);
-      if (!browser) {
-        console.log(`skip invite 45s: ${engine.name()} not installed`);
-        return;
-      }
-      const context = await browser.newContext({ baseURL: fixture.baseUrl });
+    it(`stalled invite maps to Russian timeout at 45s clock (${engine.name()})`, async (t) => {
+      const browser = await launchRequired(engine, t);
+      const context = await browser!.newContext(newContextOptions(engine, fixture.baseUrl));
       await context.clock.install({ time: Date.now() });
       try {
         const page = await context.newPage();
         await login(page, "tt-browser-admin@test.local");
         await createExternalTransfer(page);
         await page.route("**/messenger-invite", () => {});
+        const inviteReq = page.waitForRequest(
+          (req) => req.method() === "POST" && req.url().includes("/messenger-invite"),
+          { timeout: 15000 },
+        );
         await page.click('[data-tt="messenger-invite-create"]');
+        await inviteReq;
         await page.clock.runFor(45001);
-        const errText = (await page.locator('[data-tt="messenger-invite-error"]').textContent({ timeout: 5000 })) || "";
+        const errText =
+          (await page.locator('[data-tt="messenger-invite-error"]').textContent({ timeout: 10000 })) || "";
         assert.match(errText, /Превышено время ожидания ответа/i);
         assert.doesNotMatch(errText, /Fetch is aborted/i);
       } finally {
         await context.close();
-        await browser.close();
+        await browser!.close();
       }
     });
   }
 
-  it("retry works after upload timeout (Chromium + clock)", async () => {
+  it("late ingest A must not clear busy/abort for ingest B (Chromium)", async (t) => {
+    const browser = await launchRequired(chromium, t);
+    const context = await browser!.newContext({ baseURL: fixture.baseUrl });
+    try {
+      const page = await context.newPage();
+      await login(page, "tt-browser-admin@test.local");
+      await openCreateFilesStep(page);
+
+      let releaseFirstUpload: (() => void) | undefined;
+      const firstUploadGate = new Promise<void>((resolve) => {
+        releaseFirstUpload = resolve;
+      });
+      let uploadPostCount = 0;
+      await page.route("**/api/tan-tracker/staging-attachments", async (route) => {
+        uploadPostCount += 1;
+        if (uploadPostCount === 1) {
+          await firstUploadGate;
+        }
+        await route.continue();
+      });
+
+      const firstUploadReq = waitForStagingUploadRequest(page);
+      await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
+      await firstUploadReq;
+      assert.equal(await page.locator('[data-tt="attach-busy"]').count(), 1);
+
+      await page.click('[data-tt="create-wizard-back"]');
+      await page.waitForSelector('[data-create-phase="item"]', { timeout: 10000 });
+
+      await page.click('[data-tt="create-wizard-next"]');
+      await page.waitForSelector('[data-create-phase="files"]', { timeout: 10000 });
+
+      let releaseSecondUpload: (() => void) | undefined;
+      const secondUploadGate = new Promise<void>((resolve) => {
+        releaseSecondUpload = resolve;
+      });
+      await page.unroute("**/api/tan-tracker/staging-attachments");
+      uploadPostCount = 0;
+      await page.route("**/api/tan-tracker/staging-attachments", async (route) => {
+        uploadPostCount += 1;
+        if (uploadPostCount === 1) {
+          await secondUploadGate;
+        }
+        await route.continue();
+      });
+
+      const secondUploadReq = waitForStagingUploadRequest(page);
+      await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
+      await secondUploadReq;
+      assert.equal(await page.locator('[data-tt="attach-busy"]').count(), 1);
+
+      releaseFirstUpload?.();
+      await page.waitForFunction(() => document.querySelector('[data-tt="attach-busy"]'), { timeout: 5000 });
+      assert.equal(await page.locator('[data-tt="attach-busy"]').count(), 1, "stale ingest A must not clear B busy");
+
+      await page.click('[data-tt="create-wizard-back"]');
+      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 10000 });
+      releaseSecondUpload?.();
+    } finally {
+      await context.close();
+      await browser!.close();
+    }
+  });
+
+  it("retry works after upload timeout (Chromium + clock)", async (t) => {
     const context = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
     await context.clock.install({ time: Date.now() });
     try {
@@ -201,9 +264,11 @@ describe("tan-tracker upload + invite regression (browser + PG)", { concurrency:
       await login(page, "tt-browser-admin@test.local");
       await openCreateFilesStep(page);
       await page.route("**/api/tan-tracker/staging-attachments", () => {});
+      const uploadReq = waitForStagingUploadRequest(page);
       await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
+      await uploadReq;
       await page.clock.runFor(120001);
-      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 5000 });
+      await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 10000 });
       await page.unroute("**/api/tan-tracker/staging-attachments");
       await page.locator('[data-tt="attach-input"]').first().setInputFiles(FIXTURE_PNG);
       await page.waitForFunction(() => !document.querySelector('[data-tt="attach-busy"]'), { timeout: 20000 });

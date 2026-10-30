@@ -838,11 +838,6 @@
     if (state.attachBusyGen === opGen) {
       state.attachBusy = false;
       state.attachBusyGen = null;
-      return;
-    }
-    if (state.attachBusy && state.attachOpGen > opGen) {
-      state.attachBusy = false;
-      state.attachBusyGen = null;
     }
   }
 

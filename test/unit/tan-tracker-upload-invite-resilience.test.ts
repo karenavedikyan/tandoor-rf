@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-describe("tan-tracker upload + messenger invite resilience wiring", () => {
+describe("tan-tracker upload + messenger invite resilience (static source wiring only)", () => {
   const lkApi = fs.readFileSync(path.join(process.cwd(), "public/tan-tracker-lk-api.js"), "utf8");
   const attJs = fs.readFileSync(path.join(process.cwd(), "public/tan-tracker/tan-tracker-attachments.js"), "utf8");
   const trackerJs = fs.readFileSync(path.join(process.cwd(), "public/tan-tracker/tan-tracker.js"), "utf8");
@@ -34,6 +34,7 @@ describe("tan-tracker upload + messenger invite resilience wiring", () => {
     assert.match(trackerJs, /uploadStagingFile\(file, \{ signal: uploadSignal \}\)/);
     assert.match(trackerJs, /if \(state\.attachBusy\) abortAttachInFlight\(\)/);
     assert.match(trackerJs, /releaseAttachInFlightAbort\(opGen, opAbortController\)/);
+    assert.doesNotMatch(trackerJs, /state\.attachOpGen > opGen/);
     assert.match(trackerJs, /if \(!attachSnapValid\(snap\)\) \{\s*Att\(\)\.revokeStagingItem\(r\.item\);\s*break;/);
   });
 });
