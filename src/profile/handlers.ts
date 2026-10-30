@@ -14,7 +14,16 @@ export async function getSelfProfileHandler(
   req: AuthenticatedRequest,
   res: Response,
 ): Promise<void> {
-  sendUser(res, req.authUser!);
+  const intake = await query<{ accepts_external_tt_intake: boolean }>(
+    `SELECT accepts_external_tt_intake FROM users WHERE id = $1::uuid LIMIT 1`,
+    [req.authUser!.id],
+  );
+  const user = {
+    ...req.authUser!,
+    acceptsExternalTtIntake: intake.rows[0]?.accepts_external_tt_intake === true,
+  };
+  setNoStore(res);
+  res.status(200).json({ user });
 }
 
 function sendUser(res: Response, user: ReturnType<typeof toUserDto>): void {

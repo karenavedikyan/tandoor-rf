@@ -525,6 +525,10 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
   background:color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter:blur(10px); border-top:1px solid var(--line);
   display:flex; flex-direction:column; gap:8px; max-width:640px; margin:0 auto;
 }
+.tt-code-dock.tt-code-dock--inline {
+  position:static; margin:16px 0 0; padding:0; background:transparent; border:0; backdrop-filter:none; max-width:none;
+}
+body.tt-external-shell.tt-code-view .tt-code-screen { padding-bottom:24px; }
 @media (min-width:768px) {
   .tt-code-dock { position:sticky; margin-top:20px; border-radius:var(--tt-radius-md); border:1px solid var(--line); background:var(--bg); }
   .tt-code-screen { padding-bottom:24px; }

@@ -32,6 +32,18 @@
   var maxLinkFallback = document.getElementById("tanbot-max-link-fallback");
   var maxLinkUrlInput = document.getElementById("tanbot-max-link-url");
   var maxLinkCopyBtn = document.getElementById("tanbot-max-link-copy");
+  var ttIntakeSection = document.getElementById("tt-external-intake-section");
+  var ttIntakeToggle = document.getElementById("tt-external-intake-toggle");
+  var ttIntakeStatus = document.getElementById("tt-external-intake-status");
+  var ttDedupeSection = document.getElementById("tt-admin-phone-dedupe-section");
+  var ttDedupeRefresh = document.getElementById("tt-phone-dedupe-refresh");
+  var ttDedupeList = document.getElementById("tt-phone-dedupe-list");
+  var ttAdminIntakeSection = document.getElementById("tt-admin-intake-users-section");
+  var ttAdminIntakeUserId = document.getElementById("tt-admin-intake-user-id");
+  var ttAdminIntakeToggle = document.getElementById("tt-admin-intake-toggle");
+  var ttAdminIntakeSave = document.getElementById("tt-admin-intake-save");
+  var ttAdminIntakeStatus = document.getElementById("tt-admin-intake-status");
+  var profileUser = null;
 
   var ROLE_LABELS = {
     admin: "Администратор",
@@ -61,12 +73,170 @@
   }
 
   function fillForm(user) {
+    profileUser = user;
     fullNameInput.value = user.fullName || "";
     emailInput.value = user.email || "";
     phoneInput.value = user.phone || "";
     roleInput.value = ROLE_LABELS[user.role] || user.role || "";
     statusInput.value = STATUS_LABELS[user.status] || user.status || "";
     form.hidden = false;
+    setupTanTrackerProfileSections(user);
+  }
+
+  function setupTanTrackerProfileSections(user) {
+    if (ttIntakeSection) {
+      ttIntakeSection.hidden = user.status !== "active";
+      if (ttIntakeToggle) {
+        ttIntakeToggle.checked = user.acceptsExternalTtIntake === true;
+        ttIntakeToggle.disabled = user.role !== "admin";
+      }
+      if (ttIntakeStatus) {
+        ttIntakeStatus.textContent =
+          user.role === "admin"
+            ? "Администратор может менять флаг здесь или в блоке ниже для других сотрудников."
+            : "Изменить может администратор в карточке сотрудника.";
+      }
+    }
+    if (ttAdminIntakeSection) {
+      ttAdminIntakeSection.hidden = user.role !== "admin";
+      if (ttAdminIntakeUserId && !ttAdminIntakeUserId.value) {
+        ttAdminIntakeUserId.value = user.id || "";
+      }
+    }
+    if (ttDedupeSection) {
+      ttDedupeSection.hidden = user.role !== "admin";
+    }
+  }
+
+  function renderPhoneDedupeConflicts(conflicts) {
+    if (!ttDedupeList) return;
+    if (!conflicts || !conflicts.length) {
+      ttDedupeList.innerHTML = '<p class="profile-muted">Конфликтов не найдены.</p>';
+      return;
+    }
+    ttDedupeList.innerHTML = conflicts
+      .map(function (row) {
+        var phone = row.phone_e164 || row.phoneE164 || "";
+        var parties = row.party_ids || row.partyIds || [];
+        var kinds = row.kinds || [];
+        var options = parties
+          .map(function (pid, idx) {
+            var kind = kinds[idx] || "—";
+            return (
+              '<label><input type="radio" name="canonical-' +
+              phone.replace(/[^a-zA-Z0-9]/g, "") +
+              '" value="' +
+              pid +
+              '"> <span>' +
+              pid +
+              " · " +
+              kind +
+              "</span></label>"
+            );
+          })
+          .join("");
+        return (
+          '<article class="tt-phone-dedupe-row" data-phone="' +
+          phone +
+          '"><strong>' +
+          phone +
+          '</strong><div class="tt-phone-dedupe-parties">' +
+          options +
+          '</div><div class="tt-phone-dedupe-actions"><button type="button" class="secondary-button" data-tt-set-canonical="' +
+          phone +
+          '">Сохранить выбор</button></div></article>'
+        );
+      })
+      .join("");
+    ttDedupeList.querySelectorAll("[data-tt-set-canonical]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var phone = btn.getAttribute("data-tt-set-canonical");
+        var row = btn.closest(".tt-phone-dedupe-row");
+        var picked = row && row.querySelector('input[type="radio"]:checked');
+        if (!picked) {
+          api.setStatus(statusEl, "Выберите контакт для номера " + phone + ".", "error");
+          return;
+        }
+        api
+          .apiRequest("/api/tan-tracker/admin/phone-dedupe/canonical", {
+            method: "POST",
+            body: { phoneE164: phone, partyId: picked.value },
+          })
+          .then(function (result) {
+            if (result.response.status !== 200) {
+              api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось сохранить."), "error");
+              return;
+            }
+            api.setStatus(statusEl, "Канонический контакт для " + phone + " сохранён.", "success");
+            refreshPhoneDedupe();
+          });
+      });
+    });
+  }
+
+  function refreshPhoneDedupe() {
+    if (!ttDedupeList) return;
+    ttDedupeList.innerHTML = '<p class="profile-muted">Загрузка…</p>';
+    return api
+      .apiRequest("/api/tan-tracker/admin/phone-dedupe/refresh", { method: "POST", body: {} })
+      .then(function (result) {
+        if (result.response.status !== 200) {
+          ttDedupeList.innerHTML = "";
+          api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось обновить список."), "error");
+          return;
+        }
+        renderPhoneDedupeConflicts(result.data.conflicts || []);
+      });
+  }
+
+  function patchExternalIntake(userId, accepts) {
+    return api.apiRequest("/api/tan-tracker/admin/users/" + encodeURIComponent(userId) + "/external-intake", {
+      method: "PATCH",
+      body: { acceptsExternalIntake: accepts },
+    });
+  }
+
+  if (ttIntakeToggle) {
+    ttIntakeToggle.addEventListener("change", function () {
+      if (!profileUser || profileUser.role !== "admin") return;
+      patchExternalIntake(profileUser.id, ttIntakeToggle.checked).then(function (result) {
+        if (result.response.status !== 200) {
+          ttIntakeToggle.checked = !ttIntakeToggle.checked;
+          api.setStatus(statusEl, api.extractErrorMessage(result.data, "Не удалось сохранить."), "error");
+          return;
+        }
+        profileUser.acceptsExternalTtIntake = ttIntakeToggle.checked;
+        api.setStatus(statusEl, "Настройка приёма заявок сохранена.", "success");
+      });
+    });
+  }
+
+  if (ttDedupeRefresh) {
+    ttDedupeRefresh.addEventListener("click", function () {
+      refreshPhoneDedupe();
+    });
+  }
+
+  if (ttAdminIntakeSave) {
+    ttAdminIntakeSave.addEventListener("click", function () {
+      var uid = (ttAdminIntakeUserId && ttAdminIntakeUserId.value.trim()) || "";
+      if (!uid) {
+        if (ttAdminIntakeStatus) ttAdminIntakeStatus.textContent = "Укажите ID пользователя.";
+        return;
+      }
+      patchExternalIntake(uid, !!(ttAdminIntakeToggle && ttAdminIntakeToggle.checked)).then(function (result) {
+        if (result.response.status !== 200) {
+          if (ttAdminIntakeStatus) {
+            ttAdminIntakeStatus.textContent = api.extractErrorMessage(result.data, "Ошибка сохранения.");
+          }
+          return;
+        }
+        if (ttAdminIntakeStatus) ttAdminIntakeStatus.textContent = "Сохранено для пользователя " + uid + ".";
+        if (profileUser && profileUser.id === uid && ttIntakeToggle) {
+          ttIntakeToggle.checked = !!(ttAdminIntakeToggle && ttAdminIntakeToggle.checked);
+        }
+      });
+    });
   }
 
   function loadProfile() {

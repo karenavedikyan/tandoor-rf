@@ -40,6 +40,28 @@
     });
   }
 
+  function fmtPhone(phone) {
+    if (!phone) return "";
+    var digits = String(phone).replace(/\D/g, "");
+    if (digits.length === 11 && digits[0] === "7") digits = digits.slice(1);
+    if (digits.length !== 10) return String(phone);
+    return "+7 " + digits.slice(0, 3) + " " + digits.slice(3, 6) + " " + digits.slice(6, 8) + " " + digits.slice(8);
+  }
+
+  function fmtDt(ts) {
+    if (!ts) return "—";
+    try {
+      return new Date(ts).toLocaleString("ru-RU", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch (_e) {
+      return "—";
+    }
+  }
+
   function staffOptions(extId) {
     var fromContacts = contacts().filter(function (c) {
       return c.kind === "user" && c.id !== extId;
@@ -54,6 +76,7 @@
           name: r.fullName,
           kind: "user",
           userId: r.userId,
+          phone: (c && c.phone) || "",
         };
       });
     }
@@ -95,12 +118,48 @@
       E(name) +
       "</h1>" +
       '<p class="tt-ext-sub">' +
-      (phone ? E(phone) + " · " : "") +
+      (phone ? E(fmtPhone(phone)) + " · " : "") +
       "вход через Telegram или MAX</p></div>" +
       btn("Выйти", "ext-logout-all", "tt-ext-bar-exit") +
       "</div>" +
       btn("Отправить предмет", "ext-request-open", "tt-primary tt-btn-block tt-ext-cta") +
-      '<p class="tt-ext-cta-hint">Что передаёте → фото → кому → срок. Сотрудник получит уведомление.</p></header>'
+      '<p class="tt-ext-cta-hint">Как в боте: что передаёте → фото → кому → срок. Сотрудник получит уведомление.</p></header>'
+    );
+  }
+
+  function externalGroupOrders(rows, actor) {
+    var action = [];
+    var progress = [];
+    var done = [];
+    rows.forEach(function (o) {
+      if (o.status === "completed") done.push(o);
+      else if (o.pendingId === actor || (o.holderId === actor && o.pendingId)) action.push(o);
+      else progress.push(o);
+    });
+    return [
+      { id: "action", title: "Требуют вашего действия", items: action },
+      { id: "progress", title: "В пути", items: progress },
+      { id: "done", title: "Недавно завершённые", items: done },
+    ].filter(function (g) {
+      return g.items.length;
+    });
+  }
+
+  function registryCard(o) {
+    var st = state();
+    if (proto && proto.registryCardHtml && st) {
+      return proto.registryCardHtml(o, st.actingContactId);
+    }
+    return (
+      '<article class="tt-card" data-tt="open-order" data-order-id="' +
+      E(o.id) +
+      '"><h3>' +
+      E(o.item) +
+      '</h3><p class="tt-muted">' +
+      E(o.id) +
+      " · " +
+      E(o.status) +
+      "</p></article>"
     );
   }
 
@@ -110,114 +169,288 @@
     var rows = orders().filter(function (o) {
       return proto && proto.canViewOrder(o.id);
     });
+    var cutoff = Date.now() - 30 * 86400000;
+    var groups = externalGroupOrders(rows, actor).map(function (g) {
+      if (g.id === "done") {
+        return {
+          id: g.id,
+          title: g.title,
+          items: g.items.filter(function (o) {
+            var tl = o.timeline || [];
+            var last = tl.length ? tl[tl.length - 1].at : 0;
+            return last >= cutoff;
+          }),
+        };
+      }
+      return g;
+    }).filter(function (g) {
+      return g.items.length;
+    });
     var hist = (st && st.historicalSummaries) || [];
-    var cards =
-      rows.length || hist.length
-        ? (rows.length
-            ? '<div class="tt-ext-groups"><section class="tt-ext-group"><h2 class="tt-ext-group-title">Мои передачи</h2><div class="tt-cards">' +
-              rows
-                .map(function (o) {
-                  return (
-                    '<article class="tt-card" data-tt="open-order" data-order-id="' +
-                    E(o.id) +
-                    '"><h3>' +
-                    E(o.item) +
-                    "</h3><p class=\"tt-muted\">" +
-                    E(o.id) +
-                    " · " +
-                    E(o.status) +
-                    "</p></article>"
-                  );
-                })
-                .join("") +
-              "</div></section></div>"
-            : "") +
-          (hist.length
-            ? '<div class="tt-ext-groups"><section class="tt-ext-group"><h2 class="tt-ext-group-title">Упоминания в истории</h2><ul class="tt-ext-history">' +
-              hist
-                .map(function (h) {
-                  return "<li><strong>" + E(h.itemTitle) + "</strong> · " + E(h.note) + "</li>";
-                })
-                .join("") +
-              "</ul></section></div>"
-            : "")
-        : '<div class="tt-empty tt-ext-empty"><p>Пока нет передач.</p><p class="tt-muted">Отправьте предмет кнопкой выше или дождитесь назначения от сотрудника.</p></div>';
+    var cards = groups.length
+      ? '<div class="tt-ext-groups" data-tt="external-order-list">' +
+        groups
+          .map(function (g) {
+            return (
+              '<section class="tt-ext-group" data-tt-ext-group="' +
+              E(g.id) +
+              '"><h2 class="tt-ext-group-title">' +
+              E(g.title) +
+              ' <span class="tt-ext-group-count">' +
+              g.items.length +
+              '</span></h2><div class="tt-cards">' +
+              g.items.map(registryCard).join("") +
+              "</div></section>"
+            );
+          })
+          .join("") +
+        "</div>"
+      : '<div class="tt-empty tt-ext-empty" data-tt="external-empty"><i data-lucide="package-open"></i><p>Пока нет передач.</p><p class="tt-muted">Когда сотрудник Тандор назначит вам передачу или вы отправите предмет, она появится здесь.</p></div>';
+    if (hist.length) {
+      cards +=
+        '<div class="tt-ext-groups"><section class="tt-ext-group"><h2 class="tt-ext-group-title">Упоминания в истории</h2><ul class="tt-ext-history">' +
+        hist
+          .map(function (h) {
+            return "<li><strong>" + E(h.itemTitle) + "</strong> · " + E(h.note) + "</li>";
+          })
+          .join("") +
+        "</ul></section></div>";
+    }
     return '<div class="tt-external-home" data-tt="external-home">' + cards + "</div>";
+  }
+
+  function extRequestBotBubble(text) {
+    return '<div class="tt-bot-preview tt-bot-preview--bubble" data-tt="ext-request-bot"><p>' + E(text) + "</p></div>";
+  }
+
+  function extRequestChatRow(label, value) {
+    return (
+      '<div class="tt-ext-chat-answer"><span class="tt-ext-chat-answer-label">' +
+      E(label) +
+      "</span><strong>" +
+      E(value) +
+      "</strong></div>"
+    );
+  }
+
+  function extRequestAnswersHtml(f, phase) {
+    var idx = PHASES.indexOf(phase);
+    var rows = [];
+    if (idx > 0 && f.item) rows.push(extRequestChatRow("Предмет", f.item));
+    if (idx > 1) rows.push(extRequestChatRow("Фото", f.photoCount ? f.photoCount + " шт." : "без фото"));
+    if (idx > 2) rows.push(extRequestChatRow("Комментарий", (f.comment && f.comment.trim()) || "—"));
+    if (idx > 3 && f.recipientId) {
+      rows.push(extRequestChatRow("Кому", contactById(f.recipientId)?.name || "—"));
+    }
+    if (idx > 4) rows.push(extRequestChatRow("Срок", f.duePreset === "tomorrow" ? "Завтра" : "Сегодня"));
+    return rows.length ? '<div class="tt-ext-chat-answers">' + rows.join("") + "</div>" : "";
+  }
+
+  function extRequestFrame(inner, meta) {
+    meta = meta || {};
+    var step = meta.step;
+    var total = meta.total || PHASES.length;
+    var progress =
+      step && step > 0
+        ? '<div class="tt-ext-chat-progress" aria-hidden="true"><span style="width:' +
+          Math.round((step / total) * 100) +
+          '%"></span></div>'
+        : "";
+    var stepLabel =
+      step && step > 0 ? '<span class="tt-ext-chat-step">Шаг ' + step + " из " + total + "</span>" : "";
+    return (
+      '<div class="tt-panel tt-ext-request" data-tt="ext-request">' +
+      '<div class="tt-ext-chat-head">' +
+      '<span class="tt-ext-chat-avatar" aria-hidden="true"><i data-lucide="bot"></i></span>' +
+      "<div><h2>Отправить предмет</h2><p class=\"tt-ext-chat-sub\">Бот Тан-трекера</p></div>" +
+      stepLabel +
+      "</div>" +
+      progress +
+      inner +
+      "</div>"
+    );
   }
 
   function extRequestView() {
     var st = state();
     if (!st) return "";
     var phase = st.extRequestPhase || "item";
-    var f = st.extRequestForm || { item: "", comment: "", recipientId: "", duePreset: "today", draftId: "" };
+    var f = st.extRequestForm || {
+      item: "",
+      comment: "",
+      recipientId: "",
+      duePreset: "today",
+      draftId: "",
+      photoCount: 0,
+    };
     st.extRequestForm = f;
+
+    if (phase === "blocked") {
+      return extRequestFrame(
+        extRequestBotBubble("Открытых заявок уже 5 — дождитесь завершения хотя бы одной, затем попробуйте снова.") +
+          '<div class="tt-ext-chat-actions">' +
+          btn("Закрыть", "ext-request-close", "tt-primary tt-btn-block") +
+          "</div>",
+      );
+    }
+
+    if (phase === "done") {
+      var staff = contactById(f.recipientId);
+      var photos = f.photoCount || 0;
+      return extRequestFrame(
+        extRequestBotBubble(
+          "Заявка " +
+            (f.createdId || "") +
+            " создана" +
+            (photos ? ", фото приложено (" + photos + ")" : "") +
+            ". Передайте «" +
+            (f.item || "") +
+            "» — " +
+            (staff?.name || "—") +
+            ". При встрече введите код на странице передачи.",
+        ) +
+          '<div class="tt-ext-chat-actions">' +
+          btn("Открыть мою передачу", "ext-request-open-order", "tt-primary tt-btn-block") +
+          btn("К списку", "ext-request-close", "tt-btn-ghost tt-btn-block") +
+          "</div>",
+      );
+    }
+
     var step = PHASES.indexOf(phase) + 1;
     var body = "";
+    var nextLabel = "Далее";
     if (phase === "item") {
       body =
-        '<p class="tt-muted">Что передаёте?</p><label class="tt-wizard-field"><input data-tt-field="extItem" value="' +
+        extRequestBotBubble("Что передаёте?") +
+        '<label class="tt-wizard-field tt-ext-chat-field"><span class="tt-visually-hidden">Предмет</span><input data-tt-field="extItem" value="' +
         E(f.item) +
-        '" placeholder="Например: ключи, договор"></label>';
+        '" autocomplete="off" placeholder="Например: ключи, договор, образцы"></label>';
     } else if (phase === "photo") {
       body =
-        '<p class="tt-muted">Фото предмета (до 5). Можно пропустить.</p><input type="file" accept="image/*" data-tt="ext-photo-input" />';
+        extRequestBotBubble("Пришлите фото предмета — так сотруднику проще его узнать. Можно пропустить.") +
+        '<div class="tt-ext-chat-attach"><p class="tt-muted tt-att-hint">Фото попадёт в карточку передачи.</p><input type="file" accept="image/*" data-tt="ext-photo-input" /></div>';
+      if (!f.photoCount) nextLabel = "Пропустить";
     } else if (phase === "comment") {
       body =
-        '<label class="tt-wizard-field"><input data-tt-field="extComment" value="' +
+        extRequestBotBubble("Добавите комментарий? Можно пропустить.") +
+        '<label class="tt-wizard-field tt-ext-chat-field"><span class="tt-visually-hidden">Комментарий</span><input data-tt-field="extComment" value="' +
         E(f.comment) +
         '" placeholder="Комментарий (необязательно)"></label>';
+      if (!(f.comment && f.comment.trim())) nextLabel = "Пропустить";
     } else if (phase === "recipient") {
       body =
-        '<div class="tt-contact-pick">' +
+        extRequestBotBubble("Кому передать?") +
+        '<div class="tt-contact-pick tt-ext-chat-pick" data-tt="ext-request-recipients">' +
         staffOptions(st.actingContactId)
           .map(function (c) {
             return (
-              '<button type="button" class="tt-pick-row" data-tt="ext-pick-recipient" data-id="' +
+              '<button type="button" data-tt="ext-pick-recipient" data-id="' +
               E(c.id) +
-              '">' +
+              '" aria-pressed="' +
+              (f.recipientId === c.id) +
+              '"><span class="tt-ext-pick-name">' +
               E(c.name) +
-              "</button>"
+              "</span><small>" +
+              E(c.phone ? fmtPhone(c.phone) : "сотрудник") +
+              "</small></button>"
             );
           })
           .join("") +
         "</div>";
     } else if (phase === "due") {
       body =
+        extRequestBotBubble("До какого срока нужно передать?") +
+        '<div class="tt-ext-chat-chips">' +
         btn("Сегодня", "ext-due-today", f.duePreset === "today" ? "tt-primary" : "") +
-        " " +
-        btn("Завтра", "ext-due-tomorrow", f.duePreset === "tomorrow" ? "tt-primary" : "");
+        btn("Завтра", "ext-due-tomorrow", f.duePreset === "tomorrow" ? "tt-primary" : "") +
+        "</div>";
     } else if (phase === "summary") {
+      var staffSum = contactById(f.recipientId);
       body =
-        "<ul><li>" +
+        extRequestBotBubble("Проверьте заявку. Если всё верно — создаю передачу и сообщаю сотруднику.") +
+        '<dl class="tt-ext-chat-summary">' +
+        "<div><dt>Предмет</dt><dd>" +
         E(f.item) +
-        "</li><li>" +
-        E(contactById(f.recipientId)?.name || "—") +
-        "</li><li>" +
+        "</dd></div>" +
+        "<div><dt>Фото</dt><dd>" +
+        (f.photoCount ? f.photoCount + " шт." : "без фото") +
+        "</dd></div>" +
+        "<div><dt>Комментарий</dt><dd>" +
+        E((f.comment && f.comment.trim()) || "—") +
+        "</dd></div>" +
+        "<div><dt>Кому</dt><dd>" +
+        E(staffSum?.name || "—") +
+        (staffSum?.phone ? "<small>" + E(fmtPhone(staffSum.phone)) + "</small>" : "") +
+        "</dd></div>" +
+        "<div><dt>Срок</dt><dd>" +
         (f.duePreset === "tomorrow" ? "Завтра" : "Сегодня") +
-        "</li></ul>";
-    } else     if (phase === "blocked") {
-      return (
-        '<div class="tt-panel tt-ext-request" data-tt="ext-request"><p>Открытых заявок уже 5. Дождитесь завершения хотя бы одной.</p>' +
-        btn("Закрыть", "ext-request-close", "tt-primary tt-btn-block") +
-        "</div>"
-      );
+        "</dd></div></dl>";
+      nextLabel = "Создать заявку";
     }
-    if (phase === "done") {
-      body =
-        "<p>Заявка " +
-        E(f.createdId || "") +
-        " отправлена. Сотрудник получит уведомление; при встрече подтвердите передачу на этой странице.</p>" +
-        btn("Открыть передачу", "ext-request-open-order", "tt-primary");
-    }
-    return (
-      '<div class="tt-panel tt-ext-request" data-tt="ext-request"><h2>Отправить предмет</h2>' +
-      (step > 0 ? '<p class="tt-ext-chat-step">Шаг ' + step + " из " + PHASES.length + "</p>" : "") +
-      body +
-      '<div class="tt-ext-chat-actions">' +
-      (phase !== "done" ? btn(phase === "summary" ? "Отправить" : "Далее", "ext-request-next", "tt-primary") : "") +
-      btn("Отмена", "ext-request-close", "tt-link") +
-      "</div></div>"
+
+    return extRequestFrame(
+      extRequestAnswersHtml(f, phase) +
+        body +
+        (st.error ? '<p class="tt-error">' + E(st.error) + "</p>" : "") +
+        '<div class="tt-ext-chat-actions">' +
+        btn(nextLabel, "ext-request-next", "tt-primary tt-btn-block") +
+        '<div class="tt-ext-chat-secondary">' +
+        btn(step > 1 ? "Назад" : "К списку", "ext-request-back", "tt-link") +
+        btn("Отмена", "ext-request-close", "tt-link") +
+        "</div></div>",
+      { step: step, total: PHASES.length },
     );
+  }
+
+  function isConfirmedHandoffNote(note) {
+    return /подтвержден/i.test(String(note || "")) || /код/i.test(String(note || ""));
+  }
+
+  function externalHolderDetailBlocks(o, actor) {
+    if (!o || o.holderId !== actor) return "";
+    var fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
+    var mustRelay =
+      o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed" && o.status !== "delivered";
+    var deliveredFinal = o.status === "delivered" && o.holderId === o.finalRecipientId && !o.pendingId;
+    var prevEntry =
+      (o.timeline || [])
+        .filter(function (t) {
+          return t.to === o.holderId && isConfirmedHandoffNote(t.note);
+        })
+        .sort(function (a, b) {
+          return a.at - b.at;
+        })
+        .pop() || null;
+    var prevHolder = contactById(prevEntry?.from);
+    var statusCard =
+      '<article class="tt-panel tt-recipient-card" data-tt="holder-status-card">' +
+      '<h2 class="tt-recipient-hero">Предмет у вас</h2>' +
+      '<p class="tt-recipient-from">С ' +
+      E(fmtDt(o.holderSince)) +
+      " · получено от <strong>" +
+      E(prevHolder?.name || "—") +
+      "</strong></p></article>";
+    var nextStep;
+    if (mustRelay) {
+      nextStep =
+        '<div class="tt-reminder" data-tt="holder-next-step"><p><strong>Передайте дальше:</strong> ' +
+        E(fin?.name || "—") +
+        "</p>" +
+        (o.dueAt ? '<p class="tt-muted">Срок: до ' + E(fmtDt(o.dueAt)) + "</p>" : "") +
+        btn("Передать дальше", "transfer", "tt-primary tt-btn-block") +
+        "</div>";
+    } else if (deliveredFinal) {
+      nextStep =
+        '<div class="tt-panel" data-tt="holder-delivered"><p class="tt-success">Передача дошла до вас. Делать ничего не нужно.</p>' +
+        btn("Передать дальше или вернуть", "transfer", "tt-btn-ghost tt-btn-block") +
+        "</div>";
+    } else if (o.status === "completed") {
+      nextStep =
+        '<div class="tt-success tt-panel" data-tt="holder-next-step"><p>Передача завершена</p><p class="tt-muted">Больше ничего делать не нужно.</p></div>';
+    } else {
+      return "";
+    }
+    return statusCard + nextStep;
   }
 
   function ensureDraft(f) {
@@ -232,10 +465,25 @@
   function advancePhase() {
     var st = state();
     if (!st) return;
-    var f = st.extRequestForm;
     var idx = PHASES.indexOf(st.extRequestPhase || "item");
     if (idx < PHASES.length - 1) st.extRequestPhase = PHASES[idx + 1];
     else st.extRequestPhase = "summary";
+    st.error = "";
+    if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+  }
+
+  function retreatPhase() {
+    var st = state();
+    if (!st) return;
+    var idx = PHASES.indexOf(st.extRequestPhase || "item");
+    if (idx <= 0) {
+      st.view = "list";
+      st.extRequestPhase = null;
+      st.error = "";
+    } else {
+      st.extRequestPhase = PHASES[idx - 1];
+      st.error = "";
+    }
     if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
   }
 
@@ -248,9 +496,11 @@
       var action = t.getAttribute("data-tt");
       var st = state();
       if (!st) return;
+      var f = st.extRequestForm;
       if (action === "ext-request-open") {
         st.view = "list";
-        st.extRequestForm = { item: "", comment: "", recipientId: "", duePreset: "today", draftId: "" };
+        st.extRequestForm = { item: "", comment: "", recipientId: "", duePreset: "today", draftId: "", photoCount: 0 };
+        st.error = "";
         if (externalOpenRequestCount(st.actingContactId) >= 5) {
           st.extRequestPhase = "blocked";
           st.view = "ext-request";
@@ -272,7 +522,12 @@
       if (action === "ext-request-close") {
         st.view = "list";
         st.extRequestPhase = null;
+        st.error = "";
         if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+        return;
+      }
+      if (action === "ext-request-back") {
+        retreatPhase();
         return;
       }
       if (action === "ext-logout-all") {
@@ -307,18 +562,20 @@
         return;
       }
       if (action === "ext-request-next") {
-        var f = st.extRequestForm;
+        f = st.extRequestForm;
         var phase = st.extRequestPhase || "item";
         if (phase === "item") {
           var input = document.querySelector('[data-tt-field="extItem"]');
           f.item = (input && input.value) || "";
           if (!f.item.trim()) return;
-          void ensureDraft(f).then(function () {
-            return window.TanTrackerExternal.saveDraft("photo", {
-              item: f.item,
-              dueMode: f.duePreset === "tomorrow" ? "tomorrow" : "today",
-            });
-          }).then(advancePhase);
+          void ensureDraft(f)
+            .then(function () {
+              return window.TanTrackerExternal.saveDraft("photo", {
+                item: f.item,
+                dueMode: f.duePreset === "tomorrow" ? "tomorrow" : "today",
+              });
+            })
+            .then(advancePhase);
           return;
         }
         if (phase === "photo") {
@@ -361,6 +618,7 @@
             }
             f.createdId = res.data && res.data.publicCode;
             st.extRequestPhase = "done";
+            st.error = "";
             if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
           });
         }
@@ -383,7 +641,10 @@
       var file = e.target.files && e.target.files[0];
       if (!file) return;
       void ensureDraft(st.extRequestForm).then(function (draftId) {
-        return window.TanTrackerExternal.uploadPhoto(draftId, file);
+        return window.TanTrackerExternal.uploadPhoto(draftId, file).then(function () {
+          st.extRequestForm.photoCount = (st.extRequestForm.photoCount || 0) + 1;
+          if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+        });
       });
     }
   });
@@ -392,5 +653,6 @@
     externalActionBarHtml: externalActionBarHtml,
     externalShellHomeHtml: externalShellHomeHtml,
     extRequestView: extRequestView,
+    externalHolderDetailBlocks: externalHolderDetailBlocks,
   };
 })();

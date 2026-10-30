@@ -82,6 +82,44 @@
               </label>
             </section>
 
+            <section id="tt-external-intake-section" class="profile-card profile-card--nested" hidden data-testid="tt-external-intake-section">
+              <h2 class="profile-section-title">Заявки от внешних клиентов</h2>
+              <p class="profile-muted">Если включено, клиенты из Telegram или MAX смогут выбрать вас при отправке предмета через Тан-трекер.</p>
+              <label class="field profile-toggle-row">
+                <span class="field__label">Принимаю заявки от внешних</span>
+                <input id="tt-external-intake-toggle" type="checkbox" data-testid="tt-external-intake-toggle" />
+              </label>
+              <p id="tt-external-intake-status" class="profile-muted" role="status"></p>
+            </section>
+
+            <section id="tt-admin-phone-dedupe-section" class="profile-card profile-card--nested" hidden data-testid="tt-admin-phone-dedupe-section">
+              <h2 class="profile-section-title">Телефоны · канонический контакт</h2>
+              <p class="profile-muted">При дубликатах номера у разных участников выберите, какой контакт считать основным для внешних привязок.</p>
+              <div class="button-row">
+                <button type="button" id="tt-phone-dedupe-refresh" class="secondary-button" data-testid="tt-phone-dedupe-refresh">
+                  Обновить список конфликтов
+                </button>
+              </div>
+              <div id="tt-phone-dedupe-list" class="tt-phone-dedupe-list" data-testid="tt-phone-dedupe-list"></div>
+            </section>
+
+            <section id="tt-admin-intake-users-section" class="profile-card profile-card--nested" hidden data-testid="tt-admin-intake-users-section">
+              <h2 class="profile-section-title">Админ · приём заявок сотрудниками</h2>
+              <p class="profile-muted">Включите приём внешних заявок для выбранного сотрудника (по UUID из карточки пользователя).</p>
+              <label class="field">
+                <span class="field__label">ID пользователя</span>
+                <input id="tt-admin-intake-user-id" type="text" class="field__input" placeholder="uuid сотрудника" data-testid="tt-admin-intake-user-id" />
+              </label>
+              <label class="field profile-toggle-row">
+                <span class="field__label">Принимает заявки</span>
+                <input id="tt-admin-intake-toggle" type="checkbox" data-testid="tt-admin-intake-toggle" />
+              </label>
+              <div class="button-row">
+                <button type="button" id="tt-admin-intake-save" class="secondary-button" data-testid="tt-admin-intake-save">Сохранить</button>
+              </div>
+              <p id="tt-admin-intake-status" class="profile-muted" role="status"></p>
+            </section>
+
             <section id="tanbot-telegram-section" class="profile-card profile-card--nested" hidden>
               <h2 class="profile-section-title">Telegram-уведомления</h2>
               <p class="profile-muted tanbot-consent-hint">

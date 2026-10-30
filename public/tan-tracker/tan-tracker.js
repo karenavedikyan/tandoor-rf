@@ -1054,7 +1054,10 @@
       "tt-registry-list",
       !state.recipientMode && !ext && state.view === "list"
     );
-    document.body.classList.toggle("tt-code-view", !state.recipientMode && !ext && state.view === "code");
+    document.body.classList.toggle(
+      "tt-code-view",
+      !state.recipientMode && state.view === "code" && (!ext || !!state.orderId),
+    );
   }
 
   let detailOverflowListenersBound = false;
@@ -1628,6 +1631,8 @@
       pickQ: "",
       newName: "",
       newPhone: "",
+      existingMatchId: "",
+      newPhoneStep: "phone",
       mode: "list",
       pickTarget: "final",
       recipientStep: "choose",
@@ -1879,8 +1884,7 @@
       state.createPhase = "review";
       state.createReturnPhase = null;
     }
-    else if (p === "recipient-new-name") state.createPhase = "recipient-new-phone";
-    else if (p === "recipient-new-phone") {
+    else if (p === "recipient-new-name") {
       const r = addExternalContact(state.form.newName, state.form.newPhone);
       if (r.error) {
         state.error = r.error;
@@ -1903,6 +1907,16 @@
         state.createPhase = state.form.pickTarget === "final" ? "review" : "recipient";
         if (state.createPhase === "review") state.createReturnPhase = null;
       }
+    } else if (p === "recipient-new-phone") {
+      const existing = contactByPhone(state.form.newPhone);
+      if (existing) {
+        state.form.existingMatchId = existing.id;
+        state.error = "";
+        return false;
+      }
+      state.form.existingMatchId = "";
+      state.form.newPhoneStep = "name";
+      state.createPhase = "recipient-new-name";
     } else if (p === "edit-comment" || p === "edit-due" || p === "edit-relay") {
       state.createPhase = "review";
       state.createReturnPhase = null;
@@ -1932,10 +1946,16 @@
       if (f.recipientStep === "pick-list") f.recipientStep = "choose";
       else state.createPhase = "files";
     } else if (p === "recipient-new-name") {
+      state.createPhase = "recipient-new-phone";
+      if (state.form) state.form.newPhoneStep = "phone";
+    } else if (p === "recipient-new-phone") {
       state.createPhase = "recipient";
-      if (state.form) state.form.recipientStep = "choose";
+      if (state.form) {
+        state.form.recipientStep = "choose";
+        state.form.existingMatchId = "";
+        state.form.newPhoneStep = "phone";
+      }
     }
-    else if (p === "recipient-new-phone") state.createPhase = "recipient-new-name";
     else if (p === "review") {
       state.createPhase = "recipient";
       ensureRecipientStep(state.form || defaultCreateForm());
@@ -2792,6 +2812,46 @@
     state.toast = "Получатель выбран. Прежний код и QR аннулированы.";
   }
 
+  function contactByPhone(phoneRaw) {
+    const phone = normPhone(phoneRaw);
+    if (!phone) return null;
+    return (
+      contacts.find((c) => {
+        const p = normPhone(c.phone || "");
+        return p && p === phone;
+      }) || null
+    );
+  }
+
+  function contactKindLabel(c) {
+    if (!c) return "контакт";
+    if (c.kind === "user" || c.kind === "employee") return "сотрудник";
+    return "внешний";
+  }
+
+  function contactAddedByLabel(c) {
+    if (!c || c.kind === "user" || c.kind === "employee") return "справочник компании";
+    const by = contactById(c.addedBy)?.name;
+    return by ? `добавил ${by}` : "контакт компании";
+  }
+
+  function contactExistsBlock(c) {
+    return `<div class="tt-reminder" data-tt="contact-exists">
+      <p>Этот номер уже записан: <strong>${E(c.name)}</strong> · ${E(contactKindLabel(c))} · ${E(contactAddedByLabel(c))}</p>
+      ${btn("Выбрать", 'data-tt="pick-existing"', "tt-primary")}
+    </div>`;
+  }
+
+  function renderContactPickGrouped(list, selectedId) {
+    const emps = list.filter((c) => c.kind === "user" || c.kind === "employee");
+    const ext = list.filter((c) => c.kind === "external");
+    const btnHtml = (c) =>
+      `<button type="button" data-tt-pick="${E(c.id)}" aria-pressed="${selectedId === c.id}">${E(c.name)}<br><small>${E(fmtPhone(c.phone))}</small></button>`;
+    return `${emps.length ? `<p class="tt-muted">Сотрудники · справочник компании</p><div class="tt-contact-pick">${emps.map(btnHtml).join("")}</div>` : ""}${
+      ext.length ? `<p class="tt-muted">Внешние контакты</p><div class="tt-contact-pick">${ext.map(btnHtml).join("")}</div>` : ""
+    }`;
+  }
+
   function addExternalContact(name, phoneRaw) {
     const phone = normPhone(phoneRaw);
     if (!phone) {
@@ -2799,7 +2859,7 @@
         error: TT_LK ? "Введите телефон: 10 цифр после +7." : "Укажите демонстрационный телефон: 10 цифр после +7.",
       };
     }
-    const dup = contacts.find((c) => c.phone === phone || c.phone === `+7${phone}`);
+    const dup = contactByPhone(phoneRaw);
     if (dup) return { error: `Контакт с этим номером уже есть: ${dup.name}.`, existing: dup };
     const id = TT_LK ? `draft-${phone}` : "ext_" + String(contacts.length + 1).padStart(2, "0");
     const c = {
@@ -3336,19 +3396,18 @@
         phase,
         "Имя нового получателя",
         "Шаг 3 из 4 · как зовут человека, которому передаёте.",
-        `<label class="tt-wizard-field">Имя и фамилия<input data-tt-field="newName" value="${E(f.newName)}" placeholder="Например: Сергей Приёмка"></label>`,
+        `<span class="tt-badge" data-tt="contact-new">Новый контакт</span><label class="tt-wizard-field">Имя и фамилия<input data-tt-field="newName" value="${E(f.newName)}" placeholder="Например: Сергей Приёмка"></label>`,
         `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
       );
     }
     if (phase === "recipient-new-phone") {
+      const existing = f.existingMatchId ? contactById(f.existingMatchId) : null;
       return wizardShell(
         phase,
-        "Телефон нового получателя",
-        TT_LK
-          ? "Шаг 3 из 4 · номер для SMS-подтверждения получателем."
-          : "Шаг 3 из 4 · демо-номер для связи в прототипе (без реальной СМС).",
-        `<label class="tt-wizard-field">Телефон<input inputmode="tel" data-tt-field="newPhone" value="${E(f.newPhone)}" placeholder="+7 900 000 00 00"></label>`,
-        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+        "Телефон получателя",
+        "Шаг 3 из 4 · сначала номер — мы проверим, есть ли контакт.",
+        `<label class="tt-wizard-field">Телефон<input inputmode="tel" data-tt-field="newPhone" value="${E(f.newPhone)}" placeholder="+7 900 000 00 00"></label>${existing ? contactExistsBlock(existing) : ""}`,
+        `${existing ? wizardBtn("Выбрать", "pick-existing-wizard", true) : wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
       );
     }
     if (phase === "edit-comment") {
@@ -3821,6 +3880,11 @@
     const canContinueDelivered =
       isHolder && o.status === "delivered" && !o.pendingId && mustRelay === false && o.holderId === o.finalRecipientId;
 
+    if (isExternalShell() && isHolder && window.TtExternalUi?.externalHolderDetailBlocks) {
+      const extBlocks = window.TtExternalUi.externalHolderDetailBlocks(o, actor);
+      if (extBlocks) return extBlocks;
+    }
+
     if (o.status === "completed") return completedTaskCard(o, actor);
     if (o.pendingId === actor && o.status !== "completed") return pendingRecipientDetailCard(o, h);
     if (!isHolder && canActorCloseDeliveredTransfer(o, actor)) {
@@ -3986,22 +4050,38 @@
   }
 
   function transferView(o) {
-    const f = state.form || { pickQ: "", recipientId: "", mode: "list", newName: "", newPhone: "" };
+    const f = state.form || {
+      pickQ: "",
+      recipientId: "",
+      mode: "list",
+      newName: "",
+      newPhone: "",
+      existingMatchId: "",
+      newPhoneStep: "phone",
+    };
     state.form = f;
     const allowed = transferPickAllowed(o, f);
     const pick = allowed.filter((c) => !f.pickQ || (c.name + c.phone).toLowerCase().includes(f.pickQ.toLowerCase()));
+    const pickHtml = f.mode === "list" ? renderContactPickGrouped(pick, f.recipientId) : "";
+    const existing = f.existingMatchId ? contactById(f.existingMatchId) : null;
+    const newBlock =
+      f.mode === "new"
+        ? `<label class="tt-wizard-field">Телефон<input inputmode="tel" data-tt-field="newPhone" value="${E(f.newPhone)}"></label>
+        ${existing ? contactExistsBlock(existing) : f.newPhoneStep === "name" ? `<span class="tt-badge" data-tt="contact-new">Новый контакт</span><label>Имя<input data-tt-field="newName" value="${E(f.newName)}"></label>` : ""}`
+        : "";
+    const newActions =
+      f.mode === "new" && !existing && f.newPhoneStep !== "name"
+        ? btn("Далее", 'data-tt="transfer-phone-next"', "tt-primary")
+        : f.mode === "new" && f.newPhoneStep === "name"
+          ? btn("Сохранить и выбрать", 'data-tt="confirm-transfer"', "tt-primary")
+          : "";
     return `<div class="tt-panel"><h2>Передать «${E(o.item)}»</h2>
       <label>Поиск<input data-tt-field="pickQ" value="${E(f.pickQ)}"></label>
-      <div class="tt-contact-pick" data-tt="contact-pick">${pick
-        .map(
-          (c) =>
-            `<button type="button" data-tt-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}">${E(c.name)}<br><small>${E(fmtPhone(c.phone))}</small></button>`
-        )
-        .join("")}</div>
+      <div data-tt="contact-pick">${pickHtml}</div>
       ${btn("Новый получатель", 'data-tt="toggle-new"')}
-      ${f.mode === "new" ? `<label>Имя<input data-tt-field="newName" value="${E(f.newName)}"><label>Телефон<input data-tt-field="newPhone" value="${E(f.newPhone)}"></label>` : ""}
+      ${newBlock}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
-      <div class="tt-actions">${btn("Назначить получателя", 'data-tt="confirm-transfer"', "tt-primary")}${btn("Назад", 'data-tt="detail"')}</div></div>`;
+      <div class="tt-actions">${newActions || btn("Назначить получателя", 'data-tt="confirm-transfer"', "tt-primary")}${btn("Назад", 'data-tt="detail"')}</div></div>`;
   }
 
   function paintCodeCells() {
@@ -4046,7 +4126,7 @@
       }
       <p id="tt-code-demo-help" class="tt-muted tt-code-help">Демо без СМС: нажмите «Получить демо-код», затем введите цифры и «Подтвердить».</p>
       ${state.error ? `<p class="tt-error" data-tt="code-error">${E(state.error)}</p>` : ""}
-      <div class="tt-code-dock">${btn("Подтвердить", 'data-tt="confirm-code"', "tt-primary tt-btn-block")}${btn("Назад", 'data-tt="detail"', "tt-btn-ghost tt-btn-block")}</div>
+      <div class="tt-code-dock${isExternalShell() ? " tt-code-dock--inline" : ""}">${btn("Подтвердить", 'data-tt="confirm-code"', "tt-primary tt-btn-block")}${btn("Назад", 'data-tt="detail"', "tt-btn-ghost tt-btn-block")}</div>
     </div>`;
   }
 
@@ -4621,7 +4701,9 @@
       state.form.mode = "new";
       state.form.pickTarget = state.createPhase === "relay-pick" ? "relay" : "final";
       state.error = "";
-      state.createPhase = "recipient-new-name";
+      state.createPhase = "recipient-new-phone";
+      state.form.newPhoneStep = "phone";
+      state.form.existingMatchId = "";
       state.form.recipientStep = "choose";
       writeUrl();
       renderTracker();
@@ -4920,8 +5002,60 @@
       return;
     }
     if (action === "toggle-new") {
-      if (!state.form) state.form = {};
-      state.form.mode = state.form.mode === "new" ? "list" : "new";
+      if (!state.form) state.form = defaultCreateForm();
+      if (state.form.mode === "new") {
+        state.form.mode = "list";
+        state.form.existingMatchId = "";
+        state.form.newPhoneStep = "phone";
+      } else {
+        state.form.mode = "new";
+        state.form.newPhoneStep = "phone";
+        state.form.existingMatchId = "";
+      }
+      state.error = "";
+      renderTracker();
+      return;
+    }
+    if (action === "transfer-phone-next") {
+      if (!state.form) state.form = defaultCreateForm();
+      document.querySelectorAll('[data-tt-field="newPhone"]').forEach((el) => {
+        state.form.newPhone = el.value;
+      });
+      const existing = contactByPhone(state.form.newPhone);
+      if (existing) {
+        state.form.existingMatchId = existing.id;
+        state.error = "";
+      } else if (!normPhone(state.form.newPhone)) {
+        state.error = TT_LK
+          ? "Введите телефон: 10 цифр после +7."
+          : "Введите телефон: 10 цифр после +7 (демо).";
+      } else {
+        state.form.existingMatchId = "";
+        state.form.newPhoneStep = "name";
+        state.error = "";
+      }
+      renderTracker();
+      return;
+    }
+    if (action === "pick-existing" || action === "pick-existing-wizard") {
+      if (!state.form) state.form = defaultCreateForm();
+      document.querySelectorAll('[data-tt-field="newPhone"]').forEach((el) => {
+        state.form.newPhone = el.value;
+      });
+      const cid = state.form.existingMatchId || contactByPhone(state.form.newPhone)?.id;
+      if (!cid) return;
+      if (state.view === "transfer") {
+        state.form.recipientId = cid;
+        state.form.mode = "list";
+        state.form.existingMatchId = "";
+      } else {
+        state.form.finalRecipientId = cid;
+        state.form.recipientId = cid;
+        state.form.recipientStep = "confirmed";
+        state.createPhase = state.form.pickTarget === "relay" ? "review" : "recipient";
+      }
+      state.error = "";
+      writeUrl();
       renderTracker();
       return;
     }
@@ -5583,6 +5717,8 @@
       const o = orders.find((x) => x.id === orderId);
       return o && orderVisible(o);
     },
+    registryCardHtml: (o, actor) => registryCardHtml(o, actor),
+    registryGroupOrders: (rows, actor) => registryGroupOrders(rows, actor),
     seed: () => {
       seedContacts();
       seedOrders();
