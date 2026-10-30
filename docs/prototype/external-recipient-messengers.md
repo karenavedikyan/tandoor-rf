@@ -15,7 +15,7 @@ Prototype-only flow in `site/tan-tracker.js` + `site/tan-tracker-messenger-demo.
 When the holder confirms the one-time code, custody moves to the external recipient. The **same personal invitation URL** (`tt_view=recipient`, matching `tt_hv` / `tt_rcv` / `tt_st`) then opens the **«Предмет у вас»** screen (`data-tt="recipient-received"`) instead of a stale-invite error — only if another person or a newer invitation invalidated that ticket.
 
 - **Intermediate relay** (`finalRecipientId` is someone else): next-step block names the final recipient and due date; **«Открыть мою страницу передачи»** switches to the external holder shell (`tt_act`) with `holder-status-card` and **«Передать дальше»** (same transfer handler as the main app).
-- **Final recipient** (or completed track): success copy only; no holder-page button.
+- **Final recipient** (`status: delivered` or explicit `completed`): copy «Передача дошла до вас — делать ничего не нужно…»; optional holder page for further transfer. Explicit **«Завершить передачу»** closes the track (`completed`) while the item stays with the holder.
 - Collapsed **«Сообщение в Telegram|MAX (демо)»** (`data-tt="bot-message-preview"`) shows the plain-text bot message for the code step and for received (final vs relay). Nothing is sent.
 - **Progress:** `data-tt="recipient-progress"` («Шаг N из 3 · …») above steps; on the code step `data-tt="recipient-whats-next"` explains the «Предмет у вас» screen after the holder confirms.
 - **Holder code entry:** for external pending, `#tt-code-demo-help` points to the recipient demo screen, not «Получить демо-код».
@@ -35,6 +35,13 @@ node run-browser-qa.mjs tan-tracker-external-after-code-qa.js
 node run-browser-qa.mjs tan-tracker-step-notifications-qa.js
 node run-browser-qa.mjs notification-center-qa.js
 node run-browser-qa.mjs tan-tracker-pre-handoff-edit-qa.js
+node run-browser-qa.mjs tan-tracker-delivery-continue-qa.js
+node run-browser-qa.mjs tan-tracker-contacts-dedupe-qa.js
+node run-browser-qa.mjs tan-tracker-ext-request-qa.js
 ```
+
+## External shell: bot request (demo)
+
+With `tt_act=<external contact>`, the bar **«Отправить предмет (бот, демо)»** opens `data-tt="ext-request"` (phone-first staff list from past orders + `acceptsExternalRequests` employees). Creates in-memory orders with `fromExternal: true`; staff see **«От внешнего»** and **«Вам передают от клиента»**. Limit: 5 open (not completed/delivered) requests per external creator. Unknown externals without `tt_act` are out of scope for this demo.
 
 Production implementation is tracked separately on branch `cursor/external-recipient-messengers-20261029` from published backend baseline — not this prototype site tree.

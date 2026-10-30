@@ -18,9 +18,15 @@ var TT_DETAIL_TERMINAL_QA = await (async () => {
   await page.locator('[data-tt="enter-code"]').click();
   await page.locator('[data-tt="code-input"]').fill(code);
   await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
+  await page.locator('[data-tt="detail-task-delivered-close"]').waitFor({ state: "visible" });
+
+  ok((await page.locator('[data-tt="detail-task-delivered-close"]').textContent()).includes("Доставлено"), "initiator sees delivered milestone before explicit close");
+  ok((await page.locator('[data-tt="detail-completed"]').count()) === 0, "not terminal completed until explicit close");
+  await page.getByRole("button", { name: "Завершить передачу", exact: true }).click();
+  await page.getByRole("button", { name: "Подтвердить завершение", exact: true }).click();
   await page.locator('[data-tt="detail-task-card"]').waitFor({ state: "visible" });
 
-  ok((await page.locator('[data-tt-terminal-audience="contributor"]').count()) === 1, "initiator sees contributor terminal after code delivery");
+  ok((await page.locator('[data-tt-terminal-audience="contributor"]').count()) === 1, "initiator sees contributor terminal after explicit close");
   ok((await page.locator('[data-tt="detail-completed"]').textContent()).includes("Вы свою часть выполнили"), "personal success copy");
   ok((await page.locator('[data-tt="detail-terminal-monitor"]').textContent()).includes("Подтверждение получения"), "verified delivery shows confirmation time");
   ok((await page.locator('[data-tt="enter-code"]').count()) === 0, "terminal has no handoff mutation");

@@ -69,7 +69,12 @@ var TT_RELAY_QA = await (async () => {
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
-  await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  if (await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').count()) {
+    await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
+    await page.getByRole("button", { name: /Поделиться контактом/ }).click();
+  } else {
+    await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  }
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
   const code1 = (await page.locator('[data-tt="shown-code"]').textContent()).trim();
   await page.locator('[data-tt="exit-recipient"]').click();
@@ -111,11 +116,31 @@ var TT_RELAY_QA = await (async () => {
   await page.locator("#af-bell").click();
   await page.locator("#af-inbox").getByRole("button", { name: "Закрыть", exact: true }).click();
 
-  if ((await page.locator('[data-tt="qr-host"]').count()) === 0) await page.locator('[data-tt="tab-qr"]').click();
-  await page.locator('[data-tt="scan-qr-demo"]').click();
-  await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
-  await page.getByRole("button", { name: "Подтвердить получение", exact: true }).click();
-  ok((await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "final QR receipt completes track");
+  await page.evaluate((id) => {
+    location.hash = `#tan-tracker?role=coordinator&tt_emp=c1&tt_id=${id}`;
+  }, orderId);
+  await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
+  await ttOpenDetailDemo();
+  await page.locator('[data-tt="open-recipient"]').click();
+  await page.locator('[data-tt="recipient-screen"], [data-tt="pick-channel"]').first().waitFor({ state: "visible" });
+  if (await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').count()) {
+    await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
+    await page.getByRole("button", { name: /Поделиться контактом/ }).click();
+  } else {
+    await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "Получить код", exact: true }).click();
+  const codeFin = (await page.locator('[data-tt="shown-code"]').textContent()).trim();
+  await page.locator('[data-tt="exit-recipient"]').click();
+  await page.locator('[data-tt="enter-code"]').click();
+  await page.locator('[data-tt="code-input"]').fill(codeFin);
+  await page.getByRole("button", { name: "Подтвердить", exact: true }).click();
+  ok((await page.locator('[data-tt="detail"]').textContent()).includes("Доставлено"), "final code receipt marks delivered milestone");
+  await page.evaluate((id) => {
+    const o = window.TanTrackerPrototype.orders().find((x) => x.id === id);
+    location.hash = `#tan-tracker?role=manager&tt_act=${o.holderId}&tt_id=${id}`;
+  }, orderId);
+  await page.locator("#tt-root").waitFor({ state: "visible" });
   ok(await page.locator('[data-tt="relay-reminder"]').count() === 0, "relay reminder cleared after delivery");
   ok(await page.evaluate(() => document.body.classList.contains("tt-external-shell")), "final external recipient stays external shell");
   ok(await page.locator(".sidebar").isHidden(), "final external recipient hides sidebar");
@@ -148,7 +173,7 @@ var TT_RELAY_QA = await (async () => {
     location.hash = `#tan-tracker?role=manager&tt_emp=m1&tt_id=${id}`;
   }, orderId);
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
-  ok((await page.locator('[data-tt="detail"]').textContent()).includes("Завершена"), "historical participant reads completed order without reload");
+  ok((await page.locator('[data-tt="detail"]').textContent()).includes("Доставлено"), "historical participant reads delivered order without reload");
   ok((await page.getByRole("button", { name: "Передать другому человеку", exact: true }).count()) === 0, "historical view not editable after complete");
 
   await ttOpenDemoSettings();

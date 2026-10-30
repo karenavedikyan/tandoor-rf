@@ -39,7 +39,7 @@ var TT_EXTERNAL_AFTER_CODE_QA = await (async () => {
   ok((await page.locator('[data-tt="recipient-received"] h1').textContent()).includes("Предмет у вас"), "final: preview opens received state");
   ok((await page.locator('[data-tt="recipient-received"] [data-tt="open-holder-page"]').count()) === 0, "final: no holder page button");
   const finalBot = await page.locator('[data-tt="bot-message-preview"] pre').textContent();
-  ok(finalBot.includes("завершена") && finalBot.includes("Больше ничего"), "final: bot received text");
+  ok(finalBot.includes("Передача дошла до вас") && finalBot.includes("делать ничего не нужно"), "final: bot received text");
   await page.locator('[data-tt="exit-recipient"]').click();
   await page.evaluate((h) => {
     location.hash = h.startsWith("#") ? h : "#" + h;

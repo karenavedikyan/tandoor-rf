@@ -184,12 +184,21 @@
     return contacts.find((c) => c.id === o.pendingId)?.kind === "external";
   }
 
+  function orderIsCompleted(o) {
+    return o?.status === "completed";
+  }
+
   function isConfirmedHandoffNote(note) {
     return /Подтверждено (одноразовым кодом|по QR)/.test(note || "");
   }
 
   function isAssignPendingNote(note) {
-    return note === "Назначен следующий получатель" || /^Изменён получатель/.test(note || "");
+    return (
+      note === "Назначен следующий получатель" ||
+      note === "Возврат" ||
+      note === "Продолжение после доставки" ||
+      /^Изменён получатель/.test(note || "")
+    );
   }
 
   function isCancelPendingNote(note) {
@@ -247,12 +256,14 @@
             );
           }
           const duePhrase = dueTail(o, fmtDue);
+          const fromExt = o.fromExternal && contacts.find((c) => c.id === t.from)?.kind === "external";
+          const recvTitle = fromExt ? "Вам передают от клиента" : "Вам передают";
           const recvText = `«${o.item}». ${fromName} передаст вам предмет${duePhrase}. При встрече подтвердите получение: назовите код из SMS или покажите QR.`;
           const sendText = `«${o.item}» направлена ${toName}. Вы остаётесь ответственным, пока получатель не подтвердит получение кодом или QR.`;
           pushStaffEvent(
             byUser,
             contactEmployeeId(t.to, contacts),
-            eventItem(o, `tt-ev:${o.id}:${ti}:assign:recipient`, "Вам передают", recvText, at),
+            eventItem(o, `tt-ev:${o.id}:${ti}:assign:recipient`, recvTitle, recvText, at),
             seen
           );
           pushStaffEvent(
@@ -277,15 +288,34 @@
           const finName = contactName(contacts, o.finalRecipientId);
           const due = o.dueAt ? fmtDue(o.dueAt) : null;
           const intermediate = !!(o.finalRecipientId && t.to !== o.finalRecipientId);
+          const toFinal = !!(o.finalRecipientId && t.to === o.finalRecipientId);
           const holderText = intermediate
             ? `«${o.item}» у вас. Передайте дальше: ${finName}, срок до ${due || "срок не указан"}.`
-            : `«${o.item}» у вас. Передача ${o.id} завершена, делать ничего не нужно.`;
+            : toFinal
+              ? `«${o.item}» у вас. Передача дошла до вас. Если предмет нужно передать дальше или вернуть — нажмите «Передать дальше».`
+              : `«${o.item}» у вас. Передача ${o.id} завершена, делать ничего не нужно.`;
           pushStaffEvent(
             byUser,
             contactEmployeeId(t.to, contacts),
             eventItem(o, `tt-ev:${o.id}:${ti}:confirm:recipient`, "Предмет у вас", holderText, at),
             seen
           );
+          if (toFinal && o.createdById && o.createdById !== t.from && o.createdById !== t.to) {
+            const creatorEmp = contactEmployeeId(o.createdById, contacts);
+            const holderName = contactName(contacts, t.to);
+            pushStaffEvent(
+              byUser,
+              creatorEmp,
+              eventItem(
+                o,
+                `tt-ev:${o.id}:${ti}:confirm:creator-delivered`,
+                "Доставлено",
+                `Доставлено: «${o.item}» у ${holderName}.`,
+                at
+              ),
+              seen
+            );
+          }
           const formerText = `${toName} подтвердил получение «${o.item}». Вы больше не ответственны за предмет.`;
           pushStaffEvent(
             byUser,
@@ -307,17 +337,17 @@
         }
       });
 
-      if (o.status === "completed") {
+      if (orderIsCompleted(o)) {
         const finHolder = o.holderId;
         const finName = contactName(contacts, finHolder);
         const completeAt =
           timeline
             .slice()
             .reverse()
-            .find((t) => t.note === "Передача явно завершена" || isConfirmedHandoffNote(t.note))?.at ||
+            .find((t) => t.note === "Передача завершена" || t.note === "Передача явно завершена")?.at ||
           o.holderSince ||
           Date.now();
-        const completeText = `Передача ${o.id} завершена: «${o.item}» у ${finName}.`;
+        const completeText = `Передача ${o.id} завершена: «${o.item}» остаётся у ${finName}.`;
         const lastConfirm = timeline.filter((t) => isConfirmedHandoffNote(t.note)).pop();
         const formerId = lastConfirm?.from;
         const completeRoles = new Map();
@@ -371,7 +401,7 @@
     };
 
     (orders || []).forEach((o) => {
-      if (o.status === "completed") return;
+      if (o.status === "completed" || o.status === "delivered") return;
       const fin = contacts.find((c) => c.id === o.finalRecipientId);
       const due = o.dueAt ? fmtDue(o.dueAt) : null;
       const duePhrase = due ? ` до ${due}` : "";

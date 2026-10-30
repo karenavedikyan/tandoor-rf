@@ -16,6 +16,8 @@
     m3: { id: "m3", name: "Иван Орлов", phone: "79001234003", team: "orlov" },
     a1: { id: "a1", name: "Анна Белова", phone: "79001234011", team: "volkova" },
     c1: { id: "c1", name: "Наталья Савельева", phone: "79001234021", team: "volkova" },
+    cr1: { id: "cr1", name: "Курьер «Быстрый»", phone: "79001234055", team: "volkova", acceptsExternalRequests: true },
+    rcv1: { id: "rcv1", name: "Офис Тандор · приёмка", phone: "79001234056", team: "volkova", acceptsExternalRequests: true },
   };
   const Sc = () => window.TanTrackerScope;
   const fmtPhone = (digits) => {
@@ -39,6 +41,15 @@
     if (d.startsWith("8") && d.length === 11) d = "7" + d.slice(1);
     return d.length === 11 && d.startsWith("7") ? d : "";
   };
+  function orderIsCompleted(o) {
+    return o?.status === "completed";
+  }
+  function orderIsDelivered(o) {
+    return o?.status === "delivered";
+  }
+  function orderTrackOpen(o) {
+    return o?.status !== "completed";
+  }
   const dt = (ts) =>
     new Intl.DateTimeFormat("ru-RU", {
       timeZone: "Europe/Moscow",
@@ -104,7 +115,8 @@
     }
     if (lastPrototypeRoleSynced !== role) {
       state.employeeId = next;
-      state.actingContactId = null;
+      const extAct = state.actingContactId && contactById(state.actingContactId)?.kind === "external";
+      if (!extAct) state.actingContactId = null;
       bumpAttachOpGen();
       lastPrototypeRoleSynced = role;
     }
@@ -425,7 +437,16 @@
       },
     ];
     nextTrack = 22;
-    orders.forEach((o) => Sc()?.migrateOrderFields(o));
+    orders.forEach((o) => {
+      Sc()?.migrateOrderFields(o);
+      if (
+        o.status === "completed" &&
+        (o.timeline || []).some((t) => t.note === "Доставлено конечному получателю") &&
+        !(o.timeline || []).some((t) => t.note === "Передача завершена" || t.note === "Передача явно завершена")
+      ) {
+        o.status = "delivered";
+      }
+    });
   }
 
   seedContacts();
@@ -493,6 +514,9 @@
     registryPersonalView: "main",
     registryConfirmRemoveOrderId: null,
     editOrderId: null,
+    extRequestPhase: null,
+    extRequestForm: null,
+    extDeclineConfirmOrderId: null,
   };
 
   const Att = () => window.TanTrackerAttachments;
@@ -655,6 +679,11 @@
     if (state.recipientMode) return false;
     const c = state.actingContactId && contactById(state.actingContactId);
     return !!(c && c.kind === "external");
+  }
+
+  function externalActionBarHtml() {
+    if (!isExternalShell()) return "";
+    return `<div class="tt-external-bar tt-external-bar--page"><strong>${E(contactById(state.actingContactId)?.name || "Внешний участник")}</strong>${btn("Отправить предмет (бот, демо)", 'data-tt="ext-request-open"', "tt-btn-ghost")}${btn("Выйти из демо-профиля", 'data-tt="clear-act"')}</div>`;
   }
 
   function handoffUrl(o, inv) {
@@ -938,13 +967,14 @@
 
   function registryActorContext(o, actor) {
     if (!actor) return { key: "route", label: "В пути", icon: "route" };
-    if (o.status === "completed") return { key: "done", label: "Завершена", icon: "check-circle" };
+    if (orderIsCompleted(o)) return { key: "done", label: "Завершена", icon: "check-circle" };
+    if (orderIsDelivered(o)) return { key: "delivered", label: "Доставлено", icon: "package-check" };
     if (o.pendingId === actor) return { key: "inbox", label: "Жду получения", icon: "download" };
     if (o.holderId === actor && o.pendingId) {
       const p = contactById(o.pendingId);
       return { key: "wait", label: "Ожидает код", icon: "key-round", hint: p?.name };
     }
-    if (o.holderId === actor && !o.pendingId && o.status !== "completed")
+    if (o.holderId === actor && !o.pendingId && orderTrackOpen(o) && !orderIsDelivered(o))
       return { key: "send", label: "Нужно передать", icon: "send" };
     return { key: "route", label: "В пути", icon: "route" };
   }
@@ -1014,7 +1044,7 @@
   function registryCardHtml(o, actor) {
     const ctx = registryActorContext(o, actor);
     const overdue = isOverdue(o);
-    const done = o.status === "completed";
+    const done = orderIsCompleted(o) || orderIsDelivered(o);
     const due = humanDueLabel(o);
     const accent =
       ctx.key === "send"
@@ -1026,9 +1056,13 @@
             : overdue
               ? "var(--bad,#ac4343)"
               : "var(--line)";
+    const extBadge =
+      o.fromExternal && !isExternalShell()
+        ? ` <span class="tt-badge" data-tt="from-external">От внешнего</span>`
+        : "";
     return `<button type="button" class="tt-card-v2${overdue ? " tt-card-v2--overdue" : ""}${done ? " tt-card-v2--completed" : ""}" data-tt-open="${E(o.id)}" style="--tt-card-accent:${accent}">
       <span class="tt-card-v2-accent" aria-hidden="true"></span>
-      <div class="tt-card-v2-top"><h3 class="tt-card-v2-title">${E(o.item)}</h3><i data-lucide="chevron-right"></i></div>
+      <div class="tt-card-v2-top"><h3 class="tt-card-v2-title">${E(o.item)}${extBadge}</h3><i data-lucide="chevron-right"></i></div>
       ${registryRouteLine(o)}
       <div class="tt-card-v2-foot">${statusBadge(o, actor, { compact: true })}<span class="tt-card-v2-due-inline ${due.overdue ? "tt-due-human--over" : ""}">${E(registryCardDuePrimary(o))}</span></div>
       <p class="tt-card-v2-meta">${registryCardMeta(o)}</p>
@@ -1043,11 +1077,16 @@
       base = base.filter((o) => !registryPersonallyHidden(o, actor));
     }
     const handoff = scopeVisible.filter(
-      (o) => o.holderId === actor && o.status !== "completed" && o.finalRecipientId && o.holderId !== o.finalRecipientId
+      (o) =>
+        o.holderId === actor &&
+        orderTrackOpen(o) &&
+        !orderIsDelivered(o) &&
+        o.finalRecipientId &&
+        o.holderId !== o.finalRecipientId
     ).length;
     const receive = scopeVisible.filter((o) => o.pendingId === actor).length;
     const overdue = base.filter((o) => isOverdue(o)).length;
-    const active = base.filter((o) => o.status !== "completed").length;
+    const active = base.filter((o) => orderTrackOpen(o) && !orderIsDelivered(o)).length;
     return { handoff, receive, overdue, active, total: base.length };
   }
 
@@ -1057,7 +1096,7 @@
     const done = [];
     rows.forEach((o) => {
       const ctx = registryActorContext(o, actor);
-      if (o.status === "completed") done.push(o);
+      if (orderIsCompleted(o) || orderIsDelivered(o)) done.push(o);
       else if (ctx.key === "send" || ctx.key === "wait" || ctx.key === "inbox") action.push(o);
       else progress.push(o);
     });
@@ -1091,8 +1130,12 @@
     return rows
       .map((o) => {
         const overdue = isOverdue(o);
+        const extBadge =
+          o.fromExternal && !isExternalShell()
+            ? ` <span class="tt-badge" data-tt="from-external">От внешнего</span>`
+            : "";
         return `<tr data-tt-open="${E(o.id)}" class="${overdue ? "tt-row--overdue" : ""}">
-          <td><strong>${E(o.item)}</strong><small>${E(o.id)}${o.qty ? ` · ${E(o.qty)}` : ""}</small></td>
+          <td><strong>${E(o.item)}</strong>${extBadge}<small>${E(o.id)}${o.qty ? ` · ${E(o.qty)}` : ""}</small></td>
           <td>${registryRouteLine(o)}</td>
           <td>${statusBadge(o, actor)}</td>
           <td class="tt-table-due">${humanDueTableCell(o)}</td>
@@ -1180,14 +1223,13 @@
       return (c.name + c.phone + fmtPhone(c.phone)).toLowerCase().includes(q);
     });
     const sel = relay ? f.relayId : f.finalRecipientId || f.recipientId;
+    const emps = pick.filter((c) => c.kind === "employee").slice(0, 40);
+    const ext = pick.filter((c) => c.kind === "external").slice(0, 40);
+    const btn = (c) => wizardContactButton(c, sel === c.id);
     host.innerHTML = pick.length
-      ? pick
-          .slice(0, 40)
-          .map(
-            (c) =>
-              wizardContactButton(c, sel === c.id)
-          )
-          .join("")
+      ? `${emps.length ? `<p class="tt-muted">Сотрудники · справочник компании</p><div class="tt-wizard-contact-list tt-wizard-contact-list--group">${emps.map(btn).join("")}</div>` : ""}${
+          ext.length ? `<p class="tt-muted">Внешние контакты</p><div class="tt-wizard-contact-list tt-wizard-contact-list--group">${ext.map(btn).join("")}</div>` : ""
+        }`
       : `<p class="tt-wizard-contact-empty" data-tt="contact-pick-empty">Никого не найдено. Измените запрос или добавьте нового получателя.</p>`;
     return true;
   }
@@ -1309,14 +1351,13 @@
       return (c.name + c.phone + fmtPhone(c.phone)).toLowerCase().includes(q);
     });
     const sel = selectedId || (relay ? f.relayId : f.finalRecipientId || f.recipientId);
+    const emps = pick.filter((c) => c.kind === "employee").slice(0, 40);
+    const ext = pick.filter((c) => c.kind === "external").slice(0, 40);
+    const btn = (c) => wizardContactButton(c, sel === c.id);
     const listInner = pick.length
-      ? pick
-          .slice(0, 40)
-          .map(
-            (c) =>
-              wizardContactButton(c, sel === c.id)
-          )
-          .join("")
+      ? `${emps.length ? `<p class="tt-muted">Сотрудники · справочник компании</p><div class="tt-wizard-contact-list tt-wizard-contact-list--group">${emps.map(btn).join("")}</div>` : ""}${
+          ext.length ? `<p class="tt-muted">Внешние контакты</p><div class="tt-wizard-contact-list tt-wizard-contact-list--group">${ext.map(btn).join("")}</div>` : ""
+        }`
       : `<p class="tt-wizard-contact-empty" data-tt="contact-pick-empty">Никого не найдено. Измените запрос или добавьте нового получателя.</p>`;
     return `<label class="tt-wizard-field">Поиск по имени или телефону<input data-tt-field="pickQ" value="${E(f.pickQ || "")}" placeholder="Начните вводить имя или цифры телефона" autocomplete="off"></label>
         <div class="tt-wizard-contact-list" data-tt="contact-pick">${listInner}</div>
@@ -1533,8 +1574,7 @@
       state.createPhase = "review";
       state.createReturnPhase = null;
     }
-    else if (p === "recipient-new-name") state.createPhase = "recipient-new-phone";
-    else if (p === "recipient-new-phone") {
+    else if (p === "recipient-new-name") {
       const r = addExternalContact(state.form.newName, state.form.newPhone);
       if (r.error) {
         state.error = r.error;
@@ -1557,6 +1597,16 @@
         state.createPhase = state.form.pickTarget === "final" ? "review" : "recipient";
         if (state.createPhase === "review") state.createReturnPhase = null;
       }
+    } else if (p === "recipient-new-phone") {
+      const existing = contactByPhone(state.form.newPhone);
+      if (existing) {
+        state.form.existingMatchId = existing.id;
+        state.error = "";
+        return false;
+      }
+      state.form.existingMatchId = "";
+      state.form.newPhoneStep = "name";
+      state.createPhase = "recipient-new-name";
     } else if (p === "edit-comment" || p === "edit-due" || p === "edit-relay") {
       state.createPhase = "review";
       state.createReturnPhase = null;
@@ -1589,7 +1639,14 @@
       state.createPhase = "recipient";
       if (state.form) state.form.recipientStep = "choose";
     }
-    else if (p === "recipient-new-phone") state.createPhase = "recipient-new-name";
+    else if (p === "recipient-new-phone") {
+      state.createPhase = "recipient";
+      if (state.form) {
+        state.form.recipientStep = "choose";
+        state.form.existingMatchId = "";
+        state.form.newPhoneStep = "phone";
+      }
+    }
     else if (p === "review") {
       state.createPhase = "recipient";
       ensureRecipientStep(state.form || defaultCreateForm());
@@ -1699,11 +1756,12 @@
 
   function orderStatus(o) {
     if (o.status === "completed") return "completed";
+    if (o.status === "delivered") return "delivered";
     if (o.pendingId) return "waiting";
     return "active";
   }
   function isOverdue(o) {
-    return o.status !== "completed" && o.dueAt && o.dueAt < now();
+    return orderTrackOpen(o) && !orderIsDelivered(o) && o.dueAt && o.dueAt < now();
   }
   function dueCell(o) {
     if (!o.dueAt) return "—";
@@ -1721,8 +1779,12 @@
       state.error = "Ожидание уже подтверждено или отменено.";
       return false;
     }
-    if (o.status === "completed") {
+    if (orderIsCompleted(o)) {
       state.error = "Передача завершена.";
+      return false;
+    }
+    if (orderIsDelivered(o) && !o.pendingId) {
+      state.error = "Сначала назначьте следующего получателя или завершите передачу.";
       return false;
     }
     if (ticket) {
@@ -1750,14 +1812,14 @@
       note: via === "qr" ? "Подтверждено по QR" : "Подтверждено одноразовым кодом",
     });
     if (o.holderId === o.finalRecipientId) {
-      o.status = "completed";
+      o.status = "delivered";
       o.timeline.push({
         at: now(),
         from: o.holderId,
         to: o.finalRecipientId,
         note: "Доставлено конечному получателю",
       });
-      state.toast = "Передача завершена — конечный получатель подтвердил.";
+      state.toast = "Доставлено — предмет у конечного получателя.";
     } else state.toast = "Держатель обновлён.";
     return true;
   }
@@ -1994,31 +2056,37 @@
     o.activeInvitation = null;
     o.code = null;
     resetRecipientIdentity();
-    o.status = "active";
+    o.status =
+      o.holderId === o.finalRecipientId && !orderIsCompleted(o) ? "delivered" : "active";
     state.toast = "Ожидание отменено.";
   }
 
+  function canExplicitComplete(o, actor) {
+    if (!o || !actor || o.pendingId || orderIsCompleted(o)) return false;
+    if (orderIsDelivered(o)) {
+      if (isExternalShell() && o.holderId === actor) return false;
+      if (o.holderId === actor && !isExternalShell()) return true;
+      if (o.createdById === actor) return true;
+      return false;
+    }
+    if (o.holderId !== actor || isExternalShell()) return false;
+    if (o.finalRecipientId && o.holderId !== o.finalRecipientId && !o.allowLegacyComplete) return false;
+    return true;
+  }
+
   function completeOrder(o) {
-    if (o.status === "completed") return;
-    if (o.pendingId) {
-      state.error = "Сначала отмените ожидание или подтвердите передачу.";
-      return;
-    }
+    if (orderIsCompleted(o)) return;
     const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
-    if (!actor || o.holderId !== actor) {
-      state.error = "Завершить может только текущий держатель.";
-      return;
-    }
-    if (o.finalRecipientId && o.holderId !== o.finalRecipientId && !o.allowLegacyComplete) {
-      state.error = "Промежуточный держатель не может завершить передачу — передайте конечному получателю.";
+    if (!canExplicitComplete(o, actor)) {
+      state.error = "Завершить передачу сейчас нельзя.";
       return;
     }
     o.status = "completed";
     o.timeline.push({
       at: now(),
-      from: o.holderId,
+      from: actor,
       to: o.holderId,
-      note: "Передача явно завершена",
+      note: "Передача завершена",
     });
     invalidateCode(o);
     state.toast = "Передача завершена.";
@@ -2036,10 +2104,11 @@
       state.error = "Нельзя передать самому себе.";
       return;
     }
-    if (o.status === "completed") {
+    if (orderIsCompleted(o)) {
       state.error = "Завершённую передачу нельзя продолжить.";
       return;
     }
+    const fromDelivered = orderIsDelivered(o);
     const prevPending = o.pendingId;
     archiveInvitation(o);
     if (prevPending && prevPending !== recipientId) {
@@ -2048,19 +2117,60 @@
     }
     o.revokedParticipants = (o.revokedParticipants || []).filter((id) => id !== recipientId);
     o.pendingId = recipientId;
+    if (fromDelivered) o.finalRecipientId = recipientId;
     o.status = "waiting";
     o.handoffVer = (o.handoffVer ?? 0) + 1;
     o.code = null;
     resetRecipientIdentity();
     syncInvitation(o);
     state.handoffTab = "code";
+    let note = "Назначен следующий получатель";
+    if (fromDelivered) {
+      o.status = "active";
+      const creator = o.createdById || orderCreatorId(o);
+      const seenBefore = o.timeline.some((t) => t.from === recipientId || t.to === recipientId);
+      note = recipientId === creator || seenBefore ? "Возврат" : "Продолжение после доставки";
+    }
     o.timeline.push({
       at: now(),
       from: o.holderId,
       to: recipientId,
-      note: "Назначен следующий получатель",
+      note,
     });
-    state.toast = "Получатель выбран. Прежний код и QR аннулированы.";
+    state.toast = fromDelivered ? "Получатель выбран — передача продолжается." : "Получатель выбран. Прежний код и QR аннулированы.";
+  }
+
+  function contactByPhone(phoneRaw) {
+    const phone = normPhone(phoneRaw);
+    if (!phone) return null;
+    return contacts.find((c) => c.phone === phone) || null;
+  }
+
+  function contactKindLabel(c) {
+    return c?.kind === "employee" ? "сотрудник" : "внешний";
+  }
+
+  function contactAddedByLabel(c) {
+    if (!c) return "справочник";
+    if (c.kind === "employee") return "справочник";
+    return contactById(c.addedBy)?.name || "справочник";
+  }
+
+  function contactExistsBlock(c) {
+    return `<div class="tt-reminder" data-tt="contact-exists">
+      <p>Этот номер уже записан: <strong>${E(c.name)}</strong> · ${E(contactKindLabel(c))} · добавил ${E(contactAddedByLabel(c))}</p>
+      ${btn("Выбрать", 'data-tt="pick-existing"', "tt-primary")}
+    </div>`;
+  }
+
+  function renderContactPickGrouped(list, selectedId) {
+    const emps = list.filter((c) => c.kind === "employee");
+    const ext = list.filter((c) => c.kind === "external");
+    const btnHtml = (c) =>
+      `<button type="button" data-tt-pick="${E(c.id)}" aria-pressed="${selectedId === c.id}">${E(c.name)}<br><small>${E(fmtPhone(c.phone))}</small></button>`;
+    return `${emps.length ? `<p class="tt-muted">Сотрудники · справочник компании</p><div class="tt-contact-pick">${emps.map(btnHtml).join("")}</div>` : ""}${
+      ext.length ? `<p class="tt-muted">Внешние контакты</p><div class="tt-contact-pick">${ext.map(btnHtml).join("")}</div>` : ""
+    }`;
   }
 
   function addExternalContact(name, phoneRaw) {
@@ -2079,7 +2189,7 @@
   }
 
   function actorHasRegistryObligation(o, actor) {
-    if (!o || !actor || o.status === "completed") return false;
+    if (!o || !actor || orderIsCompleted(o) || orderIsDelivered(o)) return false;
     if (o.holderId === actor && o.pendingId) return true;
     if (o.pendingId === actor) return true;
     return false;
@@ -2158,7 +2268,14 @@
       });
     }
     if (state.mineFilter === "handoff") {
-      list = list.filter((o) => o.holderId === actor && o.status !== "completed" && o.finalRecipientId && o.holderId !== o.finalRecipientId);
+      list = list.filter(
+        (o) =>
+          o.holderId === actor &&
+          !orderIsCompleted(o) &&
+          !orderIsDelivered(o) &&
+          o.finalRecipientId &&
+          o.holderId !== o.finalRecipientId
+      );
     }
     if (state.mineFilter === "receive") {
       list = list.filter((o) => o.pendingId === actor);
@@ -2172,11 +2289,11 @@
       const st = orderStatus(o);
       if (state.statusFilter === "waiting" && st !== "waiting") return false;
       if (state.statusFilter === "active" && st !== "active") return false;
-      if (state.statusFilter === "completed" && st !== "completed") return false;
+      if (state.statusFilter === "completed" && st !== "completed" && st !== "delivered") return false;
       if (state.statusFilter === "overdue" && !isOverdue(o)) return false;
       if (state.statusFilter === "route") {
         const ctx = registryActorContext(o, actor);
-        if (ctx.key !== "route" || o.status === "completed") return false;
+        if (ctx.key !== "route" || orderIsCompleted(o) || orderIsDelivered(o)) return false;
       }
       return true;
     });
@@ -2281,6 +2398,7 @@
     else p.delete("tt_emp");
     if (state.view !== "list") p.set("tt_screen", state.view);
     else p.delete("tt_screen");
+    if (state.view === "ext-request") p.set("tt_screen", "ext-request");
     if (state.orderId && !state.recipientMode) p.set("tt_id", state.orderId);
     else if (!state.recipientMode) p.delete("tt_id");
     if (state.view === "create" && state.createPhase) p.set("tt_cphase", state.createPhase);
@@ -2560,15 +2678,7 @@
         phase,
         "Кому отдадите для дальнейшей передачи",
         relayHint,
-        `<label class="tt-wizard-field">Поиск<input data-tt-field="pickQ" value="${E(f.pickQ || "")}" placeholder="Имя или телефон"></label>
-        <div class="tt-wizard-contact-list" data-tt="contact-pick">${pick
-          .slice(0, 20)
-          .map(
-            (c) =>
-              wizardContactButton(c, f.relayId === c.id)
-          )
-          .join("")}</div>
-        ${wizardBtn("Добавить нового получателя", "create-new-recipient")}`,
+        `${wizardContactPickList(f, { relay: true, selectedId: f.relayId })}`,
         `${wizardBtn("Готово", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
       );
     }
@@ -2577,17 +2687,18 @@
         phase,
         "Имя нового получателя",
         "Шаг 3 из 4 · как зовут человека, которому передаёте.",
-        `<label class="tt-wizard-field">Имя и фамилия<input data-tt-field="newName" value="${E(f.newName)}" placeholder="Например: Сергей Приёмка"></label>`,
+        `<span class="tt-badge" data-tt="contact-new">Новый контакт</span><label class="tt-wizard-field">Имя и фамилия<input data-tt-field="newName" value="${E(f.newName)}" placeholder="Например: Сергей Приёмка"></label>`,
         `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
       );
     }
     if (phase === "recipient-new-phone") {
+      const existing = f.existingMatchId ? contactById(f.existingMatchId) : null;
       return wizardShell(
         phase,
-        "Телефон нового получателя",
-        "Шаг 3 из 4 · демо-номер для связи в прототипе (без реальной СМС).",
-        `<label class="tt-wizard-field">Телефон<input inputmode="tel" data-tt-field="newPhone" value="${E(f.newPhone)}" placeholder="+7 900 000 00 00"></label>`,
-        `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
+        "Телефон получателя",
+        "Шаг 3 из 4 · сначала номер — мы проверим, есть ли контакт.",
+        `<label class="tt-wizard-field">Телефон<input inputmode="tel" data-tt-field="newPhone" value="${E(f.newPhone)}" placeholder="+7 900 000 00 00"></label>${existing ? contactExistsBlock(existing) : ""}`,
+        `${existing ? wizardBtn("Выбрать", "pick-existing-wizard", true) : wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`
       );
     }
     if (phase === "edit-comment") {
@@ -2698,7 +2809,7 @@
     const nodes = [];
     let nodeCount = 0;
 
-    if (o.status === "completed") {
+    if (o.status === "completed" || o.status === "delivered") {
       const delivered = contactById(o.holderId);
       nodeCount = 1;
       nodes.push(routeStepperNode(delivered, "Доставлено · конечный получатель", "delivered", false, false));
@@ -2792,8 +2903,10 @@
     const duePhrase = detailDuePhrase(o);
     const dueHuman = humanDueLabel(o);
     const dueCls = dueHuman.overdue ? "tt-due-overdue" : "tt-due-line";
+    const extBadge =
+      o.fromExternal && !isExternalShell() ? `<span class="tt-badge" data-tt="from-external">От внешнего</span> ` : "";
     const rows = [
-      `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Статус</span><span class="tt-detail-fact-value">${statusBadge(o, actor)}</span></div>`,
+      `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Статус</span><span class="tt-detail-fact-value">${extBadge}${statusBadge(o, actor)}</span></div>`,
       `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Срок</span><span class="tt-detail-fact-value ${dueCls}">${E(duePhrase)}</span></div>`,
     ];
     if (o.qty) rows.push(`<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Количество</span><span class="tt-detail-fact-value">${E(o.qty)}</span></div>`);
@@ -2830,7 +2943,7 @@
   }
 
   function shortRelayReminder(o, p, isHolder, mustRelay) {
-    if (!isHolder || !mustRelay || o.status === "completed") return "";
+    if (!isHolder || !mustRelay || orderIsCompleted(o) || orderIsDelivered(o)) return "";
     const text = o.pendingId
       ? `Ждём подтверждения от ${p?.name || "получателя"} — вы ответственны.`
       : `Передайте ${contactById(o.finalRecipientId)?.name || "конечному получателю"}.`;
@@ -3068,22 +3181,60 @@
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
     const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
     const isHolder = o.holderId === actor;
-    const canComplete =
-      isHolder &&
-      !o.pendingId &&
-      o.status !== "completed" &&
-      (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
+    const canComplete = canExplicitComplete(o, actor);
     const mustRelay =
-      isHolder && o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
+      isHolder &&
+      o.finalRecipientId &&
+      o.holderId !== o.finalRecipientId &&
+      orderTrackOpen(o) &&
+      !orderIsDelivered(o);
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
 
-    if (o.status === "completed") return completedTaskCard(o, actor);
+    if (orderIsCompleted(o)) return completedTaskCard(o, actor);
+    if (
+      !isHolder &&
+      orderIsDelivered(o) &&
+      !o.pendingId &&
+      canExplicitComplete(o, actor) &&
+      state.completeConfirmOrderId !== o.id
+    ) {
+      const heroAttr = 'data-tt-detail-hero-primary=""';
+      return `<section class="tt-detail-task-card" data-tt="detail-task-delivered-close">
+        <h3 class="tt-detail-task-heading">Доставлено конечному получателю</h3>
+        <p class="tt-detail-task-instructions">Предмет у ${E(h?.name || "—")}. Если движение по треку закончено — завершите передачу.</p>
+        <div class="tt-detail-primary">${btn("Завершить передачу", `data-tt="complete" ${heroAttr}`, "tt-primary tt-btn-block")}</div>
+      </section>`;
+    }
+    if (isHolder && orderIsDelivered(o) && !o.pendingId) {
+      const heroAttr = 'data-tt-detail-hero-primary=""';
+      return `<section class="tt-detail-task-card" data-tt="detail-task-delivered">
+        <h3 class="tt-detail-task-heading">Предмет у вас · передача дошла до вас</h3>
+        <p class="tt-detail-task-instructions">Если предмет нужно передать дальше или вернуть — «Передать дальше». Если движение закончено — «Завершить передачу».</p>
+        <div class="tt-detail-primary" data-tt="detail-primary-actions">
+          ${btn("Передать дальше", `data-tt="transfer" ${heroAttr}`, "tt-primary tt-btn-block")}
+          ${btn("Завершить передачу", 'data-tt="complete"', "tt-btn-ghost tt-btn-block")}
+        </div>
+      </section>`;
+    }
     if (!isHolder) {
       if (o.pendingId && actor === o.pendingId && contactById(actor)?.kind === "employee") {
         const duePhrase = o.dueAt ? ` до ${dt(o.dueAt)}` : "";
+        const fromClient = o.fromExternal;
+        const declineConfirm =
+          state.extDeclineConfirmOrderId === o.id
+            ? `<div class="tt-complete-confirm" data-tt="ext-decline-confirm">
+        <p class="tt-warning">Отклонить заявку «${E(o.item)}» (${E(o.id)})?</p>
+        <div class="tt-actions">${btn("Отклонить", 'data-tt="ext-decline-confirm"', "tt-primary")}${btn("Отмена", 'data-tt="ext-decline-cancel"')}</div>
+      </div>`
+            : "";
+        const decline =
+          fromClient && state.extDeclineConfirmOrderId !== o.id
+            ? `<div class="tt-detail-primary">${btn("Отклонить заявку", 'data-tt="ext-request-decline"', "tt-btn-ghost")}</div>`
+            : "";
         return `<section class="tt-detail-task-card tt-detail-task-card--info" data-tt="detail-task-awaiting">
-        <h3 class="tt-detail-task-heading">Вам передают</h3>
+        <h3 class="tt-detail-task-heading">${fromClient ? "Вам передают от клиента" : "Вам передают"}</h3>
         <p class="tt-detail-task-instructions">${E(h?.name || "—")} передаст вам «${E(o.item)}»${E(duePhrase)}. При встрече подтвердите получение: назовите код из SMS или покажите QR.</p>
+        ${decline}${declineConfirm}
       </section>`;
       }
       if (isFormerHolderAfterHandoff(o, actor)) return formerHolderTaskCard(o);
@@ -3130,11 +3281,7 @@
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
     const isHolder = o.holderId === actor;
-    const canComplete =
-      isHolder &&
-      !o.pendingId &&
-      o.status !== "completed" &&
-      (o.allowLegacyComplete || o.holderId === o.finalRecipientId);
+    const canComplete = canExplicitComplete(o, actor);
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
     const dueHuman = humanDueLabel(o);
@@ -3242,7 +3389,7 @@
       ${
         confirmingComplete
           ? `<div class="tt-complete-confirm" data-tt="complete-confirm">
-        <p class="tt-warning">Завершить передачу «${E(o.item)}» (${E(o.id)})? Это необратимо: дальнейшие передачи по этому треку будут недоступны.</p>
+        <p class="tt-warning">Завершить передачу «${E(o.item)}» (${E(o.id)})? Предмет остаётся у ${E(contactById(o.holderId)?.name || "—")}, движение по треку закончено.</p>
         <div class="tt-actions">${btn("Подтвердить завершение", 'data-tt="confirm-complete"', "tt-primary")}${btn("Отмена", 'data-tt="cancel-complete"')}</div>
       </div>`
           : ""
@@ -3257,6 +3404,7 @@
       }
       ${state.toast ? `<p class="tt-success" data-tt="toast">${E(state.toast)}</p>` : ""}
       ${previewRecipientBtn ? `<p class="tt-detail-preview-recipient">${previewRecipientBtn}</p>` : ""}
+      ${externalDeclinedPreview(o)}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
       </aside>
       </div>
@@ -3265,7 +3413,7 @@
   }
 
   function transferView(o) {
-    const f = state.form || { pickQ: "", recipientId: "", mode: "list", newName: "", newPhone: "" };
+    const f = state.form || { pickQ: "", recipientId: "", mode: "list", newName: "", newPhone: "", existingMatchId: "" };
     state.form = f;
     const allowed = contacts.filter((c) => {
       if (c.id === o.holderId) return false;
@@ -3276,19 +3424,214 @@
       }
       return true;
     });
-    const pick = allowed.filter((c) => !f.pickQ || (c.name + c.phone).toLowerCase().includes(f.pickQ.toLowerCase()));
+    let pick = allowed.filter((c) => !f.pickQ || (c.name + c.phone).toLowerCase().includes(f.pickQ.toLowerCase()));
+    const creatorId = o.createdById || orderCreatorId(o);
+    const creator = creatorId ? contactById(creatorId) : null;
+    if (orderIsDelivered(o) && creator && creator.id !== o.holderId && !f.pickQ) {
+      pick = pick.filter((c) => c.id !== creator.id);
+      pick.unshift(creator);
+    }
+    const pickBtn = (c) => {
+      const isReturn = orderIsDelivered(o) && creator && c.id === creator.id && !f.pickQ;
+      const title = isReturn ? `Вернуть · ${c.name}` : c.name;
+      return `<button type="button" data-tt-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}">${E(title)}<br><small>${E(fmtPhone(c.phone))}</small></button>`;
+    };
+    const emps = pick.filter((c) => c.kind === "employee");
+    const ext = pick.filter((c) => c.kind === "external");
+    const pickHtml =
+      f.mode === "list"
+        ? `${emps.length ? `<p class="tt-muted">Сотрудники · справочник компании</p><div class="tt-contact-pick">${emps.map(pickBtn).join("")}</div>` : ""}${
+            ext.length ? `<p class="tt-muted">Внешние контакты</p><div class="tt-contact-pick">${ext.map(pickBtn).join("")}</div>` : ""
+          }`
+        : "";
+    const existing = f.existingMatchId ? contactById(f.existingMatchId) : null;
+    const newBlock =
+      f.mode === "new"
+        ? `<label class="tt-wizard-field">Телефон<input inputmode="tel" data-tt-field="newPhone" value="${E(f.newPhone)}"></label>
+        ${existing ? contactExistsBlock(existing) : f.newPhoneStep === "name" ? `<span class="tt-badge" data-tt="contact-new">Новый контакт</span><label>Имя<input data-tt-field="newName" value="${E(f.newName)}"></label>` : ""}`
+        : "";
+    const newActions =
+      f.mode === "new" && !existing && f.newPhoneStep !== "name"
+        ? btn("Далее", 'data-tt="transfer-phone-next"', "tt-primary")
+        : f.mode === "new" && f.newPhoneStep === "name"
+          ? btn("Сохранить и выбрать", 'data-tt="confirm-transfer"', "tt-primary")
+          : "";
     return `<div class="tt-panel"><h2>Передать «${E(o.item)}»</h2>
       <label>Поиск<input data-tt-field="pickQ" value="${E(f.pickQ)}"></label>
-      <div class="tt-contact-pick" data-tt="contact-pick">${pick
+      <div data-tt="contact-pick">${pickHtml}</div>
+      ${btn("Новый получатель", 'data-tt="toggle-new"')}
+      ${newBlock}
+      ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
+      <div class="tt-actions">${newActions || btn("Назначить получателя", 'data-tt="confirm-transfer"', "tt-primary")}${btn("Назад", 'data-tt="detail"')}</div></div>`;
+  }
+
+  function externalOrdersForActor(contactId) {
+    return orders.filter((o) => {
+      const parts = [o.holderId, o.pendingId, o.createdById, ...o.timeline.flatMap((t) => [t.from, t.to])];
+      return parts.includes(contactId);
+    });
+  }
+
+  function externalOpenRequestCount(externalId) {
+    return orders.filter(
+      (o) =>
+        o.fromExternal &&
+        o.createdById === externalId &&
+        o.status !== "completed" &&
+        o.status !== "delivered"
+    ).length;
+  }
+
+  function extRequestStaffOptions(externalId) {
+    const seen = new Set();
+    const out = [];
+    const add = (c) => {
+      if (!c || c.kind !== "employee" || seen.has(c.id)) return;
+      seen.add(c.id);
+      out.push(c);
+    };
+    orders.forEach((o) => {
+      const touch = [o.holderId, o.pendingId, o.createdById, ...o.timeline.flatMap((t) => [t.from, t.to])];
+      if (!touch.includes(externalId)) return;
+      touch.forEach((id) => add(contactById(id)));
+    });
+    Object.values(employees).forEach((e) => {
+      if (e.acceptsExternalRequests) add(employeeContact(e.id));
+    });
+    return out;
+  }
+
+  function extRequestBotBubble(text) {
+    return `<div class="tt-bot-preview tt-bot-preview--bubble" data-tt="ext-request-bot"><p>${E(text)}</p></div>`;
+  }
+
+  function externalShellHomeHtml() {
+    const actor = state.actingContactId;
+    const rows = externalOrdersForActor(actor).filter((o) => orderVisible(o));
+    const cards = rows.length
+      ? `<div class="tt-cards" data-tt="external-order-list">${rows.map((o) => registryCardHtml(o, actor)).join("")}</div>`
+      : `<div class="tt-empty" data-tt="external-empty"><p>Нет активных передач для этого участника.</p></div>`;
+    return `<div class="tt-external-home" data-tt="external-home">${cards}</div>`;
+  }
+
+  function extRequestView() {
+    const extId = state.actingContactId;
+    const phase = state.extRequestPhase || "item";
+    const f = state.extRequestForm || { item: "", comment: "", recipientId: "", duePreset: "today" };
+    state.extRequestForm = f;
+    if (phase === "blocked") {
+      return `<div class="tt-panel tt-ext-request" data-tt="ext-request">
+        ${extRequestBotBubble("Открытых заявок уже 5 — дождитесь завершения.")}
+        <div class="tt-actions">${btn("Закрыть", 'data-tt="ext-request-close"')}</div>
+      </div>`;
+    }
+    if (phase === "done") {
+      const staff = contactById(f.recipientId);
+      const dueText = f.duePreset === "tomorrow" ? "завтра" : "сегодня";
+      return `<div class="tt-panel tt-ext-request" data-tt="ext-request">
+        ${extRequestBotBubble(
+          `Заявка ${f.createdId} создана. Передайте «${f.item}» ${staff?.name || "—"} до ${dueText}. При встрече он назовёт код из SMS или покажет QR — введите код на вашей странице.`
+        )}
+        <div class="tt-actions">${btn("Открыть мою передачу", 'data-tt="ext-request-open-order"', "tt-primary")}${btn("Закрыть", 'data-tt="ext-request-close"')}</div>
+      </div>`;
+    }
+    let body = "";
+    if (phase === "item") {
+      body = `${extRequestBotBubble("Что передаёте?")}<label class="tt-wizard-field">Предмет<input data-tt-field="extItem" value="${E(f.item)}" autocomplete="off"></label>`;
+    } else if (phase === "comment") {
+      body = `${extRequestBotBubble("Комментарий (необязательно)")}<label class="tt-wizard-field">Комментарий<input data-tt-field="extComment" value="${E(f.comment)}"></label>`;
+    } else if (phase === "recipient") {
+      const opts = extRequestStaffOptions(extId);
+      body = `${extRequestBotBubble("Кому передать?")}<div class="tt-contact-pick" data-tt="ext-request-recipients">${opts
         .map(
           (c) =>
-            `<button type="button" data-tt-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}">${E(c.name)}<br><small>${E(fmtPhone(c.phone))}</small></button>`
+            `<button type="button" data-tt-ext-pick="${E(c.id)}" aria-pressed="${f.recipientId === c.id}">${E(c.name)}<br><small>${E(
+              fmtPhone(c.phone)
+            )}</small></button>`
         )
-        .join("")}</div>
-      ${btn("Новый получатель", 'data-tt="toggle-new"')}
-      ${f.mode === "new" ? `<label>Имя<input data-tt-field="newName" value="${E(f.newName)}"><label>Телефон<input data-tt-field="newPhone" value="${E(f.newPhone)}"></label>` : ""}
+        .join("")}</div>`;
+    } else if (phase === "due") {
+      body = `${extRequestBotBubble("До какого срока?")}<div class="tt-actions">${btn("Сегодня", 'data-tt="ext-due-today"', f.duePreset === "today" ? "tt-primary" : "")}${btn(
+        "Завтра",
+        'data-tt="ext-due-tomorrow"',
+        f.duePreset === "tomorrow" ? "tt-primary" : ""
+      )}</div>`;
+    } else if (phase === "summary") {
+      const staff = contactById(f.recipientId);
+      body = `${extRequestBotBubble("Проверьте заявку")}
+        <ul class="tt-muted"><li>${E(f.item)}</li><li>${E(f.comment || "—")}</li><li>${E(staff?.name || "—")}</li><li>${f.duePreset === "tomorrow" ? "Завтра" : "Сегодня"}</li></ul>`;
+    }
+    const nextLabel = phase === "summary" ? "Создать заявку" : "Далее";
+    const nextAction = phase === "summary" ? "ext-request-create" : "ext-request-next";
+    return `<div class="tt-panel tt-ext-request" data-tt="ext-request">
+      <h2>Отправить предмет (бот, демо)</h2>
+      ${body}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
-      <div class="tt-actions">${btn("Назначить получателя", 'data-tt="confirm-transfer"', "tt-primary")}${btn("Назад", 'data-tt="detail"')}</div></div>`;
+      <div class="tt-actions">${btn(nextLabel, `data-tt="${nextAction}"`, "tt-primary")}${btn("Назад", 'data-tt="ext-request-back"')}${btn("Отмена", 'data-tt="ext-request-close"')}</div>
+    </div>`;
+  }
+
+  function syncExtRequestFieldsFromDom() {
+    if (!state.extRequestForm) return;
+    document.querySelectorAll('[data-tt="ext-request"] [data-tt-field]').forEach((el) => {
+      const key = el.getAttribute("data-tt-field");
+      if (key === "extItem") state.extRequestForm.item = el.value;
+      if (key === "extComment") state.extRequestForm.comment = el.value;
+    });
+  }
+
+  function submitExternalRequest() {
+    const extId = state.actingContactId;
+    if (!extId || !isExternalShell()) return;
+    syncExtRequestFieldsFromDom();
+    const f = state.extRequestForm;
+    if (!f.item?.trim()) {
+      state.error = "Укажите, что передаёте.";
+      state.extRequestPhase = "item";
+      return;
+    }
+    if (!f.recipientId) {
+      state.error = "Выберите получателя.";
+      state.extRequestPhase = "recipient";
+      return;
+    }
+    const id = `TT-2026-${String(nextTrack++).padStart(3, "0")}`;
+    const dueAt =
+      f.duePreset === "tomorrow"
+        ? Date.now() + 86400000
+        : Date.now() + 6 * 3600000;
+    const order = {
+      id,
+      item: f.item.trim(),
+      qty: "",
+      holderId: extId,
+      pendingId: f.recipientId,
+      finalRecipientId: f.recipientId,
+      createdById: extId,
+      status: "active",
+      dueAt,
+      comment: (f.comment || "").trim(),
+      holderSince: now(),
+      fromExternal: true,
+      timeline: [{ at: now(), from: extId, to: f.recipientId, note: "Назначен следующий получатель" }],
+      code: null,
+      handoffVer: 1,
+      pastInvitations: [],
+      attachments: [],
+    };
+    syncInvitation(order);
+    orders.unshift(order);
+    f.createdId = id;
+    state.extRequestPhase = "done";
+    state.error = "";
+    state.toast = "";
+  }
+
+  function externalDeclinedPreview(o) {
+    if (!o.fromExternal || !isExternalShell()) return "";
+    const entry = (o.timeline || []).slice().reverse().find((t) => t.note === "Заявка отклонена");
+    if (!entry || o.status !== "completed") return "";
+    return botMessagePreviewBlock(o, "declined", { reason: "без причины" });
   }
 
   function paintCodeCells() {
@@ -3318,6 +3661,10 @@
   function botMessagePreviewText(o, mode, ctx) {
     const item = ctx.item || o.item;
     const id = o.id;
+    if (mode === "declined") {
+      const reason = ctx.reason || "без причины";
+      return `Заявка ${id} отклонена: ${reason}.`;
+    }
     if (mode === "code") {
       const holderName = ctx.holderName || "—";
       const code = ctx.code || "------";
@@ -3330,7 +3677,8 @@
       const url = ctx.holderPageUrl || "";
       return `✅ Предмет «${item}» у вас (передача ${id}).\nПередайте дальше: ${finName}, срок до ${due}.\nВаша страница передачи: ${url} (действует 7 дней).`;
     }
-    return `✅ Предмет «${item}» у вас.\nПередача ${id} завершена, от ${senderName}. Больше ничего делать не нужно.`;
+    const url = ctx.holderPageUrl || "";
+    return `✅ Предмет «${item}» у вас (передача ${id}).\nПередача дошла до вас — делать ничего не нужно. Если предмет нужно передать дальше или вернуть — ваша страница передачи: ${url} (действует, пока предмет у вас).`;
   }
 
   function botMessagePreviewBlock(o, mode, ctx) {
@@ -3344,7 +3692,10 @@
 
   function externalHolderShellBlocks(o) {
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
-    const mustRelay = o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed";
+    const mustRelay =
+      o.finalRecipientId && o.holderId !== o.finalRecipientId && orderTrackOpen(o) && !orderIsDelivered(o);
+    const deliveredFinal =
+      orderIsDelivered(o) && o.holderId === o.finalRecipientId && !o.pendingId;
     const prevEntry =
       o.timeline
         .filter((t) => t.to === o.holderId && isConfirmedHandoffTimelineNote(t.note))
@@ -3361,6 +3712,11 @@
         <p><strong>Передайте дальше:</strong> ${E(fin?.name || "—")}</p>
         <p class="tt-muted">Срок: ${o.dueAt ? `до ${E(dt(o.dueAt))}` : "срок не указан"}</p>
         ${btn("Передать дальше", 'data-tt="transfer"', "tt-primary tt-btn-block")}
+      </div>`;
+    } else if (deliveredFinal) {
+      nextStep = `<div class="tt-panel" data-tt="holder-delivered">
+        <p class="tt-success">Передача дошла до вас. Делать ничего не нужно.</p>
+        ${btn("Передать дальше или вернуть", 'data-tt="transfer"', "tt-btn-ghost tt-btn-block")}
       </div>`;
     } else {
       nextStep = `<div class="tt-success tt-panel" data-tt="holder-next-step"><p>Передача завершена</p><p class="tt-muted">Больше ничего делать не нужно.</p></div>`;
@@ -3383,8 +3739,7 @@
     const prevHolder = contactById(received.fromId);
     const self = contactById(ticketRcv);
     const fin = contactById(o.finalRecipientId);
-    const intermediate =
-      fin && o.finalRecipientId && ticketRcv && o.finalRecipientId !== ticketRcv && o.status !== "completed";
+    const intermediate = !!(fin && o.finalRecipientId && ticketRcv && o.finalRecipientId !== ticketRcv && !orderIsCompleted(o));
     const attItems = Att() ? Att().listForOrder(o) : [];
     const attCount = attItems.length;
     const attDisclosure = attCount
@@ -3399,7 +3754,7 @@
         <p class="tt-muted">Срок: ${o.dueAt ? `до ${E(dt(o.dueAt))}` : "срок не указан"}</p>
         ${btn("Открыть мою страницу передачи", 'data-tt="open-holder-page"', "tt-primary tt-btn-block")}
       </div>`
-      : `<div class="tt-success" data-tt="recipient-next-step"><p>Передача завершена. Больше ничего делать не нужно.</p></div>`;
+      : `<div class="tt-success" data-tt="recipient-next-step"><p>Передача дошла до вас — делать ничего не нужно. Если предмет нужно передать дальше или вернуть, откройте свою страницу передачи.</p></div>`;
     const botCtx = {
       item,
       senderName: prevHolder?.name || "—",
@@ -3632,13 +3987,14 @@
       if (!o || !handoffReceiptValid(o)) return deniedView();
       return handoffReceiptView(o);
     }
+    if (isExternalShell() && state.view === "ext-request") return extRequestView();
     if (state.view === "detail" && o && !orderVisible(o)) return deniedView();
     if (state.view === "create") return createView();
     if (state.view === "transfer" && o) return transferView(o);
     if (state.view === "code" && o) return codeView(o);
     if (state.view === "detail" && o) return detailView(o);
     if (isExternalShell() && o) return detailView(o);
-    if (isExternalShell()) return `<div class="tt-empty"><p>Нет доступных передач для этого участника.</p></div>`;
+    if (isExternalShell()) return externalShellHomeHtml();
     if (state.view === "list" && !registryPersonalFlagsReady()) return registryPersonalLoadingView();
     return registryView();
   }
@@ -3714,7 +4070,7 @@
     const chrome = inCreateWizard
       ? ""
       : ext
-        ? `<div class="tt-external-bar"><strong>${E(contactById(state.actingContactId)?.name || "Внешний участник")}</strong>${btn("Выйти из демо-профиля", 'data-tt="clear-act"')}</div>`
+        ? `<p class="tt-muted">Внешний профиль: ${E(contactById(state.actingContactId)?.name || "—")}</p>`
         : `<label>Текущий сотрудник (демо)<select data-tt="employee">${Object.keys(employees)
             .map((id) => {
               const label = Sc()?.employeeDemoOptionLabel?.(id, employees) || employees[id].name;
@@ -3774,7 +4130,7 @@
     }
 
     const content = document.getElementById("tt-content");
-    if (content) content.innerHTML = bodyHtml();
+    if (content) content.innerHTML = `${externalActionBarHtml()}${bodyHtml()}`;
     paintQrHosts();
     paintCodeCells();
     document.title = "Tandoor RF · Тан-трекер";
@@ -3920,8 +4276,17 @@
   }
 
   document.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-tt], [data-tt-open], [data-tt-pick]");
+    const b = e.target.closest("[data-tt], [data-tt-open], [data-tt-pick], [data-tt-ext-pick]");
     if (!b || current !== ROUTE) return;
+
+    const extPick = b.getAttribute("data-tt-ext-pick");
+    if (extPick) {
+      if (!state.extRequestForm) state.extRequestForm = {};
+      state.extRequestForm.recipientId = extPick;
+      state.error = "";
+      renderTracker();
+      return;
+    }
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
 
     if (b.hasAttribute("data-tt-open")) {
@@ -3944,6 +4309,11 @@
     if (b.hasAttribute("data-tt-pick")) {
       if (!state.form) state.form = {};
       const pid = b.getAttribute("data-tt-pick");
+      if (state.view === "transfer") {
+        state.form.recipientId = pid;
+        renderTracker();
+        return;
+      }
       if (state.createPhase === "relay-pick") state.form.relayId = pid;
       else {
         state.form.finalRecipientId = pid;
@@ -4067,7 +4437,9 @@
       state.form.mode = "new";
       state.form.pickTarget = state.createPhase === "relay-pick" ? "relay" : "final";
       state.error = "";
-      state.createPhase = "recipient-new-name";
+      state.createPhase = "recipient-new-phone";
+      state.form.newPhoneStep = "phone";
+      state.form.existingMatchId = "";
       state.form.recipientStep = "choose";
       writeUrl();
       renderTracker();
@@ -4278,12 +4650,81 @@
     if (action === "toggle-new") {
       if (!state.form) state.form = {};
       state.form.mode = state.form.mode === "new" ? "list" : "new";
+      if (state.form.mode === "new") {
+        state.form.newPhoneStep = "phone";
+        state.form.existingMatchId = "";
+        state.form.newName = "";
+        state.form.newPhone = "";
+      }
+      renderTracker();
+      return;
+    }
+    if (action === "transfer-phone-next" && o && state.form?.mode === "new") {
+      document.querySelectorAll('[data-tt-field="newPhone"], [data-tt-field="newName"]').forEach((el) => {
+        state.form[el.getAttribute("data-tt-field")] = el.value;
+      });
+      const existing = contactByPhone(state.form.newPhone);
+      if (existing) {
+        state.form.existingMatchId = existing.id;
+        state.error = "";
+      } else if (!normPhone(state.form.newPhone)) {
+        state.error = "Введите телефон: 10 цифр после +7 (демо).";
+      } else {
+        state.form.existingMatchId = "";
+        state.form.newPhoneStep = "name";
+        state.error = "";
+      }
+      renderTracker();
+      return;
+    }
+    if (action === "pick-existing" || action === "pick-existing-wizard") {
+      const cid = state.form?.existingMatchId || contactByPhone(state.form?.newPhone)?.id;
+      if (!cid) return;
+      if (state.view === "transfer") {
+        state.form.recipientId = cid;
+        state.form.mode = "list";
+        state.form.existingMatchId = "";
+      } else {
+        state.form.finalRecipientId = cid;
+        state.form.recipientId = cid;
+        state.form.recipientStep = "confirmed";
+        state.createPhase = state.form.pickTarget === "relay" ? "review" : "recipient";
+      }
+      state.error = "";
       renderTracker();
       return;
     }
     if (action === "confirm-transfer" && o && state.form) {
       let rid = state.form.recipientId;
       if (state.form.mode === "new") {
+        document.querySelectorAll('[data-tt-field="newPhone"], [data-tt-field="newName"]').forEach((el) => {
+          state.form[el.getAttribute("data-tt-field")] = el.value;
+        });
+        if (state.form.existingMatchId) {
+          rid = state.form.existingMatchId;
+        } else if (state.form.newPhoneStep !== "name") {
+          const existing = contactByPhone(state.form.newPhone);
+          if (existing) {
+            state.form.existingMatchId = existing.id;
+            state.error = "";
+            renderTracker();
+            return;
+          }
+          if (!normPhone(state.form.newPhone)) {
+            state.error = "Введите телефон: 10 цифр после +7 (демо).";
+            renderTracker();
+            return;
+          }
+          state.form.newPhoneStep = "name";
+          state.error = "";
+          renderTracker();
+          return;
+        }
+        if (!state.form.newName?.trim() && !state.form.existingMatchId) {
+          state.error = "Введите имя нового контакта.";
+          renderTracker();
+          return;
+        }
         const r = addExternalContact(state.form.newName, state.form.newPhone);
         if (r.error) {
           state.error = r.error;
@@ -4327,9 +4768,9 @@
     if (action === "complete" && o) {
       state.error = "";
       const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
-      if (o.status === "completed") state.error = "Передача уже завершена.";
+      if (orderIsCompleted(o)) state.error = "Передача уже завершена.";
       else if (o.pendingId) state.error = "Сначала отмените ожидание или подтвердите передачу.";
-      else if (!actor || o.holderId !== actor) state.error = "Завершить может только текущий держатель.";
+      else if (!canExplicitComplete(o, actor)) state.error = "Завершить передачу сейчас нельзя.";
       else state.completeConfirmOrderId = o.id;
       writeUrl();
       renderTracker();
@@ -4490,11 +4931,133 @@
       renderTracker();
       return;
     }
+    if (action === "ext-request-open") {
+      const extId = state.actingContactId;
+      if (!extId || !isExternalShell()) return;
+      if (externalOpenRequestCount(extId) >= 5) {
+        state.extRequestPhase = "blocked";
+        state.extRequestForm = {};
+        state.view = "ext-request";
+        state.error = "";
+      } else {
+        state.extRequestPhase = "item";
+        state.extRequestForm = { item: "", comment: "", recipientId: "", duePreset: "today" };
+        state.view = "ext-request";
+        state.error = "";
+      }
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "ext-request-close") {
+      state.extRequestPhase = null;
+      state.extRequestForm = null;
+      state.view = "list";
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "ext-request-back") {
+      const order = ["item", "comment", "recipient", "due", "summary"];
+      const idx = order.indexOf(state.extRequestPhase || "item");
+      if (idx <= 0) {
+        state.view = "list";
+        state.extRequestPhase = null;
+      } else state.extRequestPhase = order[idx - 1];
+      state.error = "";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "ext-request-next") {
+      syncExtRequestFieldsFromDom();
+      const f = state.extRequestForm || {};
+      const phase = state.extRequestPhase || "item";
+      state.error = "";
+      if (phase === "item" && !f.item?.trim()) {
+        state.error = "Укажите, что передаёте.";
+        renderTracker();
+        return;
+      }
+      if (phase === "recipient" && !f.recipientId) {
+        state.error = "Выберите получателя.";
+        renderTracker();
+        return;
+      }
+      const next = { item: "comment", comment: "recipient", recipient: "due", due: "summary" };
+      state.extRequestPhase = next[phase] || "summary";
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "ext-due-today") {
+      if (!state.extRequestForm) state.extRequestForm = {};
+      state.extRequestForm.duePreset = "today";
+      renderTracker();
+      return;
+    }
+    if (action === "ext-due-tomorrow") {
+      if (!state.extRequestForm) state.extRequestForm = {};
+      state.extRequestForm.duePreset = "tomorrow";
+      renderTracker();
+      return;
+    }
+    if (action === "ext-request-create") {
+      submitExternalRequest();
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "ext-request-open-order") {
+      const id = state.extRequestForm?.createdId;
+      if (!id) return;
+      state.orderId = id;
+      state.view = "detail";
+      state.extRequestPhase = null;
+      state.extRequestForm = null;
+      writeUrl();
+      renderTracker();
+      return;
+    }
+    if (action === "ext-request-decline" && o) {
+      const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+      if (o.pendingId !== actor || !o.fromExternal) {
+        state.error = "Отклонить может только назначенный сотрудник.";
+        renderTracker();
+        return;
+      }
+      state.extDeclineConfirmOrderId = o.id;
+      renderTracker();
+      return;
+    }
+    if (action === "ext-decline-cancel") {
+      state.extDeclineConfirmOrderId = null;
+      renderTracker();
+      return;
+    }
+    if (action === "ext-decline-confirm" && o) {
+      if (state.extDeclineConfirmOrderId !== o.id) return;
+      const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+      const extId = o.createdById;
+      o.timeline.push({ at: now(), from: actor, to: extId, note: "Заявка отклонена" });
+      o.pendingId = null;
+      o.status = "completed";
+      archiveInvitation(o);
+      o.activeInvitation = null;
+      state.extDeclineConfirmOrderId = null;
+      state.toast = "Заявка отклонена.";
+      writeUrl();
+      renderTracker();
+      return;
+    }
     if (action === "clear-act") {
       bumpAttachOpGen();
       state.attachBusy = false;
       state.attachBusyGen = null;
       state.actingContactId = null;
+      state.extRequestPhase = null;
+      state.extRequestForm = null;
       clearCompleteConfirm();
       ttShellMounted = false;
       lastViewKey = "";

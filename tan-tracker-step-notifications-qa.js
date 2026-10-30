@@ -104,7 +104,8 @@ var TT_STEP_NOTIFICATIONS_QA = await (async () => {
   await page.locator('[data-tt="detail"]').waitFor({ state: "visible" });
   await page.evaluate(() => document.dispatchEvent(new Event("assistant:paint")));
   await openInboxTt();
-  ok(await inboxHasTitle("Передача завершена"), "completed event (e)");
+  ok(!(await inboxHasTitle("Передача завершена")), "no completed inbox event until explicit close");
+  ok(await inboxHasTitle("Получение подтверждено"), "former holder event after final delivery");
   await page.locator('#af-inbox [data-af="close-inbox"]').click();
 
   await page.goto(`${base}/#tan-tracker?role=manager&tt_emp=m1&tt_id=TT-2026-004`);
