@@ -19,6 +19,14 @@ const IPHONE_13 = devices["iPhone 13"];
 const STAFF_EMAIL = "ext-shell-staff@test.local";
 const DIAG_DIR = path.join(process.cwd(), "var/browser-diagnostics");
 
+const VISUAL_VIEWPORTS = [
+  { label: "w320", width: 320, height: 800 },
+  { label: "w390", width: 390, height: 844 },
+  { label: "desktop", width: 1280, height: 900 },
+] as const;
+
+const VISUAL_THEMES = ["light", "dark"] as const;
+
 type ExtFixture = BrowserHttpFixture & { estToken?: string };
 
 async function saveBrowserDiagnostic(page: Page, label: string): Promise<string> {
@@ -30,40 +38,51 @@ async function saveBrowserDiagnostic(page: Page, label: string): Promise<string>
   return file;
 }
 
-async function launchRequired(engine: BrowserType<Browser>, t: { skip: (message?: string) => void }) {
-  try {
-    if (engine === chromium) {
-      return await chromium.launch({ headless: true, channel: "chromium" });
+async function applyPageTheme(page: Page, theme: (typeof VISUAL_THEMES)[number]): Promise<void> {
+  await page.evaluate((t) => {
+    document.documentElement.setAttribute("data-theme", t);
+    document.documentElement.style.colorScheme = t;
+  }, theme);
+}
+
+async function assertNoHorizontalOverflow(page: Page, context: string): Promise<void> {
+  const ok = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2);
+  assert.ok(ok, `${context}: document must not horizontal overflow`);
+}
+
+async function saveVisualAcceptanceShot(page: Page, scene: string, viewport: string, theme: string): Promise<string> {
+  await mkdir(DIAG_DIR, { recursive: true });
+  const file = path.join(DIAG_DIR, `ext-shell-visual-${scene}-${viewport}-${theme}.png`);
+  await page.screenshot({ path: file, fullPage: true });
+  return file;
+}
+
+async function captureVisualMatrix(
+  page: Page,
+  scene: "registry" | "summary" | "pending-detail",
+  assertReady: () => Promise<void>,
+): Promise<void> {
+  for (const vp of VISUAL_VIEWPORTS) {
+    for (const theme of VISUAL_THEMES) {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await applyPageTheme(page, theme);
+      await assertReady();
+      await assertNoHorizontalOverflow(page, `${scene} ${vp.label} ${theme}`);
+      await saveVisualAcceptanceShot(page, scene, vp.label, theme);
     }
-    return await webkit.launch({ headless: true });
-  } catch (err) {
-    t.skip(`${engine.name()} required for acceptance: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-async function loginStaff(page: Page, fixture: BrowserHttpFixture) {
-  await page.goto(`${fixture.baseUrl}/login`);
-  await page.fill("#email", STAFF_EMAIL);
-  await page.fill("#password", fixture.password);
-  await page.click("#login-button");
-  await page.waitForURL(/\/(clients|profile|work|access|admin|tan-tracker)(\/|\?|$)/, { timeout: 25000 });
-}
-
-async function runExternalRequestWizard(page: Page, baseUrl: string, est: string): Promise<string> {
+async function openExternalHome(page: Page, baseUrl: string, est: string): Promise<void> {
   await page.goto(`${baseUrl}/tan-tracker?est=${encodeURIComponent(est)}`);
   await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 30000 });
-  try {
-    await page.waitForSelector('[data-tt="external-bar"]', { timeout: 15000 });
-    await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 15000 });
-  } catch (err) {
-    const shot = await saveBrowserDiagnostic(page, "missing-ext-request-open");
-    throw new Error(
-      `${err instanceof Error ? err.message : String(err)} (diagnostic screenshot: ${shot})`,
-    );
-  }
+  await page.waitForSelector('[data-tt="external-bar"]', { timeout: 15000 });
+  await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 15000 });
+}
+
+async function advanceExternalWizardToSummary(page: Page): Promise<void> {
   await page.click('[data-tt="ext-request-open"]');
   await page.waitForSelector('[data-tt-field="extItem"]', { timeout: 10000 });
-
   await page.fill('[data-tt-field="extItem"]', "Browser E2E parcel");
   const draftItem = page.waitForResponse(
     (r) => r.url().includes("/api/tan-tracker/public/external/request/draft") && r.request().method() === "POST",
@@ -107,6 +126,38 @@ async function runExternalRequestWizard(page: Page, baseUrl: string, est: string
   );
   await page.click('[data-tt="ext-request-next"]');
   assert.equal((await draftDue).status(), 200);
+  await page.waitForSelector(".tt-ext-chat-summary", { timeout: 15000 });
+}
+
+async function launchRequired(engine: BrowserType<Browser>, t: { skip: (message?: string) => void }) {
+  try {
+    if (engine === chromium) {
+      return await chromium.launch({ headless: true, channel: "chromium" });
+    }
+    return await webkit.launch({ headless: true });
+  } catch (err) {
+    t.skip(`${engine.name()} required for acceptance: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function loginStaff(page: Page, fixture: BrowserHttpFixture) {
+  await page.goto(`${fixture.baseUrl}/login`);
+  await page.fill("#email", STAFF_EMAIL);
+  await page.fill("#password", fixture.password);
+  await page.click("#login-button");
+  await page.waitForURL(/\/(clients|profile|work|access|admin|tan-tracker)(\/|\?|$)/, { timeout: 25000 });
+}
+
+async function runExternalRequestWizard(page: Page, baseUrl: string, est: string): Promise<string> {
+  try {
+    await openExternalHome(page, baseUrl, est);
+  } catch (err) {
+    const shot = await saveBrowserDiagnostic(page, "missing-ext-request-open");
+    throw new Error(
+      `${err instanceof Error ? err.message : String(err)} (diagnostic screenshot: ${shot})`,
+    );
+  }
+  await advanceExternalWizardToSummary(page);
 
   const confirmReq = page.waitForResponse(
     (r) => r.url().includes("/api/tan-tracker/public/external/request/confirm") && r.request().method() === "POST",
@@ -198,13 +249,53 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
         { timeout: 10000 },
       );
 
+      await page.waitForSelector('[data-tt="enter-code"]', { timeout: 15000 });
+
       const staffPage = await fixture.browser.newPage();
       try {
         await loginStaff(staffPage, fixture);
         await staffPage.goto(`${fixture.baseUrl}/tan-tracker`);
         await staffPage.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
-        await staffPage.locator(`[data-tt="open-order"][data-order-id="${publicCode}"]`).first().click();
-        await staffPage.waitForSelector('[data-testid="tan-tracker"]', { timeout: 15000 });
+        const orderCard = staffPage.locator(`[data-tt-open="${publicCode}"]`).first();
+        try {
+          await orderCard.waitFor({ timeout: 15000 });
+          await orderCard.click();
+        } catch (staffListErr) {
+          const staffShot = await saveBrowserDiagnostic(staffPage, "staff-registry-missing-order");
+          throw new Error(
+            `${staffListErr instanceof Error ? staffListErr.message : String(staffListErr)} (staff screenshot: ${staffShot})`,
+          );
+        }
+        await staffPage.waitForSelector('[data-tt="gen-code"]', { timeout: 15000 });
+        const codeResp = staffPage.waitForResponse(
+          (r) => r.url().includes("/code/generate") && r.request().method() === "POST",
+          { timeout: 30000 },
+        );
+        await staffPage.click('[data-tt="gen-code"]');
+        assert.equal((await codeResp).status(), 200);
+        await staffPage.waitForSelector('[data-tt="shown-code"]', { timeout: 15000 });
+        const handoffCode = (await staffPage.locator('[data-tt="shown-code"]').textContent())?.trim() ?? "";
+        assert.match(handoffCode, /^\d{6}$/);
+
+        await page.click('[data-tt="enter-code"]');
+        await page.waitForSelector('[data-tt="code-input"]', { timeout: 10000 });
+        const verifyResp = page.waitForResponse(
+          (r) => r.url().includes("/code/verify") && r.request().method() === "POST",
+          { timeout: 30000 },
+        );
+        await page.fill('[data-tt="code-input"]', handoffCode);
+        await page.click('[data-tt="confirm-code"]');
+        assert.equal((await verifyResp).status(), 200);
+        await page.waitForFunction(
+          (code) => {
+            const proto = (window as unknown as { TanTrackerPrototype?: { orders?: () => Array<{ id: string; status: string; holderId?: string }> } }).TanTrackerPrototype;
+            const o = proto?.orders?.().find((x) => x.id === code);
+            return o && o.status === "active";
+          },
+          publicCode,
+          { timeout: 20000 },
+        );
+
         const attachments = staffPage.locator("details").filter({ has: staffPage.locator('[data-tt="attach-download"]') });
         if ((await attachments.getAttribute("open")) === null) {
           await attachments.locator("summary").first().click();
@@ -219,6 +310,49 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
       }
     } catch (err) {
       const shot = await saveBrowserDiagnostic(page, "chromium-wizard-failure");
+      throw new Error(
+        `${err instanceof Error ? err.message : String(err)} (diagnostic screenshot: ${shot})`,
+      );
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("visual acceptance: registry, summary, pending detail matrix (Chromium)", async () => {
+    const est = fixture.estToken;
+    assert.ok(est);
+    const page = await fixture.browser.newPage();
+    try {
+      await openExternalHome(page, fixture.baseUrl, est);
+      await captureVisualMatrix(page, "registry", async () => {
+        await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 5000 });
+        assert.ok(await page.locator('[data-tt="ext-request-open"]').isVisible());
+      });
+
+      await advanceExternalWizardToSummary(page);
+      await captureVisualMatrix(page, "summary", async () => {
+        await page.waitForSelector(".tt-ext-chat-summary", { timeout: 5000 });
+        assert.ok(await page.locator('[data-tt="ext-request-next"]').isVisible());
+      });
+
+      const confirmReq = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/confirm") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-request-next"]');
+      const confirmResp = await confirmReq;
+      assert.equal(confirmResp.status(), 200);
+      const confirmJson = (await confirmResp.json()) as { publicCode?: string };
+      assert.ok(confirmJson.publicCode);
+      await page.click('[data-tt="ext-request-open-order"]');
+      await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 15000 });
+
+      await captureVisualMatrix(page, "pending-detail", async () => {
+        await page.waitForSelector('[data-tt="enter-code"]', { timeout: 10000 });
+        assert.ok(await page.locator('[data-tt="enter-code"]').isVisible());
+      });
+    } catch (err) {
+      const shot = await saveBrowserDiagnostic(page, "visual-acceptance-failure");
       throw new Error(
         `${err instanceof Error ? err.message : String(err)} (diagnostic screenshot: ${shot})`,
       );

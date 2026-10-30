@@ -46,11 +46,11 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-skip-files"]');
     await page.click('[data-tt="create-new-recipient"]');
-    await page.waitForSelector('[data-create-phase="recipient-new-name"]', { timeout: 15000 });
-    await page.fill('[data-tt-field="newName"]', "Ext Browser Recipient");
-    await page.click('[data-tt="create-wizard-next"]');
     await page.waitForSelector('[data-create-phase="recipient-new-phone"]', { timeout: 15000 });
     await page.fill('[data-tt-field="newPhone"]', "+79992223344");
+    await page.click('[data-tt="create-wizard-next"]');
+    await page.waitForSelector('[data-create-phase="recipient-new-name"]', { timeout: 15000 });
+    await page.fill('[data-tt-field="newName"]', "Ext Browser Recipient");
     await page.click('[data-tt="create-wizard-next"]');
     const createResp = page.waitForResponse(
       (r) => r.request().method() === "POST" && r.url().includes("/api/tan-tracker/transfers") && r.status() === 201,

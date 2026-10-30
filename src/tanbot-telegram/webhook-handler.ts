@@ -169,13 +169,14 @@ async function processParsedUpdate(
 
   try {
     if (command === "/stop") {
-      const account = await findAccountByTelegramUserId(client, update.telegramUserId);
-      if (account) {
-        await disconnectTelegramAccountOnClient(client, account.user_id);
-      }
+      const { handleStaffOrExternalMessengerStop } = await import("../tanbot/messenger-stop-handler");
+      const stopText = await handleStaffOrExternalMessengerStop(client, {
+        channel: "telegram",
+        messengerUserId: update.telegramUserId,
+      });
       reply = {
         chatId: update.chatId,
-        text: "Уведомления Telegram отключены. Включить снова можно в личном кабинете.",
+        text: stopText,
       };
     } else if (command === "/status") {
       const account = await findAccountByTelegramUserId(client, update.telegramUserId);

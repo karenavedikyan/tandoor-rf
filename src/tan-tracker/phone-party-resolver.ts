@@ -19,7 +19,7 @@ export class PhonePartyConflictError extends Error {
 export class EmployeePhoneCollisionError extends Error {
   readonly http = 403;
   constructor() {
-    super("Этот номер принадleжит сотруднику. Используйте личный кабинет.");
+    super("Этот номер принадлежит сотруднику. Используйте личный кабинет.")
     this.name = "EmployeePhoneCollisionError";
   }
 }

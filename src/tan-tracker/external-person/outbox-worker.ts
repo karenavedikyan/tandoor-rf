@@ -46,7 +46,9 @@ async function verificationStillValid(
 ): Promise<boolean> {
   const row = await client.query(
     `SELECT 1 FROM tt_external_person_verifications
-     WHERE person_id = $1::uuid AND channel = $2 AND messenger_chat_id = $3 LIMIT 1`,
+     WHERE person_id = $1::uuid AND channel = $2 AND messenger_chat_id = $3
+       AND notifications_enabled = TRUE AND opted_out_at IS NULL
+     LIMIT 1`,
     [personId, channel, chatId],
   );
   return (row.rowCount ?? 0) > 0;

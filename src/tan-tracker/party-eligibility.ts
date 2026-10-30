@@ -1,7 +1,11 @@
 import type { Pool, PoolClient } from "pg";
 import type { AccessContext } from "../access/types";
 import { normalizeRuPhoneE164, isUuid } from "./phone-normalize";
-import { createExternalParty, findExternalPartyByPhone } from "./repository";
+import {
+  EmployeePhoneCollisionError,
+  PhonePartyConflictError,
+  resolveOrCreateGlobalExternalPartyByPhone,
+} from "./phone-party-resolver";
 import { loadTanTrackerTeamEmployeeGuids } from "./team-scope";
 import { query } from "../db/pool";
 import {
@@ -49,7 +53,7 @@ export async function assertPartyEligibleAsRecipient(
       SELECT TRUE AS ok FROM tt_parties p
       WHERE p.id = $1::uuid
         AND (
-          (p.kind = 'external' AND p.created_by_user_id = $2::uuid)
+          p.kind = 'external'
           OR (
             p.kind = 'user'
             AND p.user_id IS NOT NULL
@@ -99,9 +103,18 @@ export async function resolveExternalRecipientPartyId(
   if (!phoneE164) {
     throw Object.assign(new Error("Введите телефон: 10 цифр после +7."), { http: 400 });
   }
-  const existing = await findExternalPartyByPhone(client, phoneE164, userId);
-  if (existing) return existing.id;
-  return createExternalParty(client, name, phoneE164, userId);
+  try {
+    return await resolveOrCreateGlobalExternalPartyByPhone(client, {
+      phoneE164,
+      displayName: name,
+      createdByUserId: userId,
+    });
+  } catch (err) {
+    if (err instanceof PhonePartyConflictError || err instanceof EmployeePhoneCollisionError) {
+      throw Object.assign(err, { http: err.http });
+    }
+    throw err;
+  }
 }
 
 export async function resolveRecipientPartyId(

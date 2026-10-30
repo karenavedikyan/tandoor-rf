@@ -40,7 +40,8 @@ export async function enqueueExternalPersonMessengerNotice(
   }
 
   const channels = await client.query<{ channel: string; messenger_chat_id: string }>(
-    `SELECT channel, messenger_chat_id FROM tt_external_person_verifications WHERE person_id = $1::uuid`,
+    `SELECT channel, messenger_chat_id FROM tt_external_person_verifications
+     WHERE person_id = $1::uuid AND notifications_enabled = TRUE AND opted_out_at IS NULL`,
     [personId],
   );
   for (const ch of channels.rows) {

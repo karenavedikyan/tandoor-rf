@@ -118,14 +118,15 @@ async function processUpdateInTransaction(
           }
         : { userId: update.maxUserId, chatId: update.chatId, text: "Контакт не принят." };
     } else if (update.updateType === "bot_stopped" || commandText?.split(/\s+/)[0]?.toLowerCase() === "/stop") {
-      const account = await findAccountByMaxUserId(client, update.maxUserId);
-      if (account) {
-        await disconnectMaxAccountOnClient(client, account.user_id);
-      }
+      const { handleStaffOrExternalMessengerStop } = await import("../tanbot/messenger-stop-handler");
+      const stopText = await handleStaffOrExternalMessengerStop(client, {
+        channel: "max",
+        messengerUserId: update.maxUserId,
+      });
       reply = {
         userId: update.maxUserId,
         chatId: update.chatId,
-        text: "Уведомления MAX отключены. Включить снова можно в личном кабинете.",
+        text: stopText,
       };
     } else if (commandText?.split(/\s+/)[0]?.toLowerCase() === "/status") {
       const account = await findAccountByMaxUserId(client, update.maxUserId);

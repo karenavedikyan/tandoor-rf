@@ -74,12 +74,14 @@ export async function upsertVerifiedPerson(
     throw Object.assign(new Error("Конфликт данных контакта. Обратитесь к сотруднику Тандор."), { http: 409 });
   }
   await client.query(
-    `INSERT INTO tt_external_person_verifications (person_id, channel, messenger_user_id, messenger_chat_id)
-     VALUES ($1::uuid, $2, $3, $4)
+    `INSERT INTO tt_external_person_verifications (person_id, channel, messenger_user_id, messenger_chat_id, notifications_enabled, opted_out_at)
+     VALUES ($1::uuid, $2, $3, $4, TRUE, NULL)
      ON CONFLICT (channel, messenger_user_id) DO UPDATE SET
        person_id = EXCLUDED.person_id,
        messenger_chat_id = EXCLUDED.messenger_chat_id,
-       verified_at = NOW()`,
+       verified_at = NOW(),
+       notifications_enabled = TRUE,
+       opted_out_at = NULL`,
     [person.id, input.channel, input.messengerUserId.toString(), input.messengerChatId.toString()],
   );
   return person;

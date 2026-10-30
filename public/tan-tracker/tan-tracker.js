@@ -1048,7 +1048,7 @@
     );
     document.body.classList.toggle(
       "tt-detail-focus",
-      !state.recipientMode && !ext && state.view === "detail" && !!state.orderId
+      !state.recipientMode && state.view === "detail" && !!state.orderId
     );
     document.body.classList.toggle(
       "tt-registry-list",
@@ -3817,8 +3817,9 @@
         ${btn(openRecipientLabel, 'data-tt="scan-qr-demo"', "tt-detail-alt-action")} ${btn("Скрыть QR", 'data-tt="tab-code"', "tt-detail-alt-action")}
       </div>`
         : "";
+    const handoffHeading = o.fromExternal ? "Передайте предмет" : "Подтвердите передачу";
     return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-card">
-      <h3 class="tt-detail-task-heading">Подтвердите передачу</h3>
+      <h3 class="tt-detail-task-heading">${E(handoffHeading)}</h3>
       <p class="tt-detail-task-receiver">Получатель: <strong>${E(p?.name || "—")}</strong></p>
       <p class="tt-detail-task-instructions">Попросите получателя открыть передачу и получить код. Введите его здесь, затем отдайте предмет.</p>
       <div class="tt-handoff" data-tt="handoff-panel">
@@ -3893,7 +3894,7 @@
     const canContinueDelivered =
       isHolder && o.status === "delivered" && !o.pendingId && mustRelay === false && o.holderId === o.finalRecipientId;
 
-    if (isExternalShell() && isHolder && window.TtExternalUi?.externalHolderDetailBlocks) {
+    if (isExternalShell() && isHolder && !o.pendingId && window.TtExternalUi?.externalHolderDetailBlocks) {
       const extBlocks = window.TtExternalUi.externalHolderDetailBlocks(o, actor);
       if (extBlocks) return extBlocks;
     }
@@ -4326,7 +4327,7 @@
     const onListRegistry = !state.recipientMode && !ext && state.view === "list";
     const inCreateWizard = state.view === "create" && !ext;
     const inCreateReview = inCreateWizard && state.createPhase === "review";
-    const inDetailFocus = !state.recipientMode && !ext && state.view === "detail" && !!state.orderId;
+    const inDetailFocus = !state.recipientMode && state.view === "detail" && !!state.orderId;
     const inCompactHead =
       inDetailFocus || inCreateWizard || state.view === "code" || state.view === "transfer" || isExternalShell();
     const chrome = inCreateWizard
@@ -5740,6 +5741,7 @@
     },
     registryCardHtml: (o, actor) => registryCardHtml(o, actor),
     registryGroupOrders: (rows, actor) => registryGroupOrders(rows, actor),
+    writeUrl,
     seed: () => {
       seedContacts();
       seedOrders();

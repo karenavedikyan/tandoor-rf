@@ -287,25 +287,46 @@ describe("tan-tracker staff notify fanout (PostgreSQL)", { concurrency: false },
       client.release();
     }
 
+    const tgOut = await pool.query<{ id: string }>(
+      `SELECT id::text FROM tanbot_notification_outbox
+       WHERE user_id = $1::uuid AND channel = 'telegram' AND payload->>'transferId' = $2`,
+      [user.id, transferId],
+    );
+    assert.equal(tgOut.rowCount, 1);
+
     const tgLoaded = loadTanbotTelegramStage2Config();
     assert.equal(tgLoaded.ok, true);
     if (!tgLoaded.ok) return;
     const sink = { calls: [] as unknown[] };
     const transport = createRecordingTelegramDeliveryTransport(sink as never);
-    const result = await processTanbotNotificationOutbox(pool, tgLoaded.config, transport, {
+    await processTanbotNotificationOutbox(pool, tgLoaded.config, transport, {
       deliveryEnabled: true,
     });
-    assert.equal(result.cancelled, 1);
-    assert.equal(result.sent, 0);
+    const tgAfter = await pool.query<{ status: string }>(
+      `SELECT status FROM tanbot_notification_outbox WHERE id = $1::uuid`,
+      [tgOut.rows[0]!.id],
+    );
+    assert.equal(tgAfter.rows[0]!.status, "cancelled");
+    assert.equal(sink.calls.length, 0);
+
+    const maxOut = await pool.query<{ id: string }>(
+      `SELECT id::text FROM tanbot_notification_outbox
+       WHERE user_id = $1::uuid AND channel = 'max' AND payload->>'transferId' = $2`,
+      [user.id, transferId],
+    );
+    assert.equal(maxOut.rowCount, 1);
 
     const maxLoaded = loadTanbotMaxStage2Config();
     assert.equal(maxLoaded.ok, true);
     if (!maxLoaded.ok) return;
-    const maxSink = { calls: [] as unknown[] };
     const maxTransport = async () => ({ ok: true as const, result: {} });
-    const maxResult = await processTanbotMaxNotificationOutbox(pool, maxLoaded.config, maxTransport, {
+    await processTanbotMaxNotificationOutbox(pool, maxLoaded.config, maxTransport, {
       deliveryEnabled: true,
     });
-    assert.equal(maxResult.processed, 1);
+    const maxAfter = await pool.query<{ status: string }>(
+      `SELECT status FROM tanbot_notification_outbox WHERE id = $1::uuid`,
+      [maxOut.rows[0]!.id],
+    );
+    assert.equal(maxAfter.rows[0]!.status, "cancelled");
   });
 });

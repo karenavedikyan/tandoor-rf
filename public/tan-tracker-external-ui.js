@@ -99,10 +99,10 @@
     var c = st && contactById(st.actingContactId);
     var name = (c && c.name) || "Мои передачи";
     var phone = (c && c.phone) || "";
-    if (st && st.view === "ext-request") {
+    if (st && (st.view === "ext-request" || ((st.view === "detail" || st.view === "code") && st.orderId))) {
       return (
         '<div class="tt-ext-bar tt-ext-bar--compact" data-tt="external-bar">' +
-        btn("← Мои передачи", "ext-request-close", "tt-ext-bar-back") +
+        btn("← Мои передачи", "back-list", "tt-ext-bar-back") +
         '<span class="tt-ext-bar-name">' +
         E(name) +
         "</span>" +
@@ -410,7 +410,11 @@
     if (!o || o.holderId !== actor) return "";
     var fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
     var mustRelay =
-      o.finalRecipientId && o.holderId !== o.finalRecipientId && o.status !== "completed" && o.status !== "delivered";
+      !o.pendingId &&
+      o.finalRecipientId &&
+      o.holderId !== o.finalRecipientId &&
+      o.status !== "completed" &&
+      o.status !== "delivered";
     var deliveredFinal = o.status === "delivered" && o.holderId === o.finalRecipientId && !o.pendingId;
     var prevEntry =
       (o.timeline || [])
@@ -539,6 +543,7 @@
       if (action === "open-order") {
         st.orderId = t.getAttribute("data-order-id");
         st.view = "detail";
+        if (window.TanTrackerPrototype && window.TanTrackerPrototype.writeUrl) window.TanTrackerPrototype.writeUrl();
         if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
         return;
       }
@@ -627,6 +632,7 @@
         st.orderId = f.createdId;
         st.view = "detail";
         st.extRequestPhase = null;
+        if (window.TanTrackerPrototype && window.TanTrackerPrototype.writeUrl) window.TanTrackerPrototype.writeUrl();
         if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
       }
     },

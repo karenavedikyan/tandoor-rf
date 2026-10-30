@@ -67,7 +67,6 @@ export async function buildExternalPersonBootstrapPayload(
     (o) =>
       o.holderId === resolved.partyId &&
       o.status !== "completed" &&
-      !o.pendingId &&
       (o.status === "active" || o.status === "waiting" || o.status === "delivered"),
   );
   if (holderRow) {

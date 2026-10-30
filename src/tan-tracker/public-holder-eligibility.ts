@@ -67,10 +67,8 @@ export async function assertPublicHolderPendingEligible(
   }
   const ext = (
     await client.query<{ id: string }>(
-      `SELECT id::text FROM tt_parties
-       WHERE id = $1::uuid AND kind = 'external' AND created_by_user_id = $2::uuid
-       LIMIT 1`,
-      [pendingPartyId, creatorUserId],
+      `SELECT id::text FROM tt_parties WHERE id = $1::uuid AND kind = 'external' LIMIT 1`,
+      [pendingPartyId],
     )
   ).rows[0];
   if (ext) return;
