@@ -508,6 +508,7 @@
     ttRequestedRole: "",
     handoffReceipt: null,
     recipientReceivedPreview: null,
+    recipientWelcomeAck: false,
     codeDemoRevealed: false,
     detailAttDisclosureOpen: null,
     registryFilterSheet: false,
@@ -648,6 +649,92 @@
   function resetRecipientIdentity() {
     resetPhoneIdentity();
     resetMessengerSession();
+  }
+
+  function resetRecipientWelcome() {
+    state.recipientWelcomeAck = false;
+  }
+
+  function recipientLogoSrc() {
+    return document.documentElement.dataset.theme === "dark" ? "./assets/logo-light.png" : "./assets/logo.png";
+  }
+
+  function recipientBrandHeader() {
+    return `<header class="tt-recipient-brand" data-tt="recipient-brand">
+      <img class="tt-recipient-logo" src="${E(recipientLogoSrc())}" alt="" width="36" height="36" decoding="async">
+      <span class="tt-recipient-brand-name">Тандор</span>
+    </header>`;
+  }
+
+  function invitationMessagePlain(o, inv, url) {
+    const from = contactById(inv?.holderId || o.holderId);
+    const item = inv?.item || o.item;
+    const abs = url ? new URL(url, location.href).href : "";
+    return [
+      "Вам передают предмет",
+      "",
+      `Отправитель: ${from?.name || "—"}`,
+      `Предмет: ${item || "—"}`,
+      "",
+      "Здесь можно посмотреть детали и подтвердить получение. Регистрация не нужна.",
+      "",
+      `Посмотреть передачу: ${abs}`,
+    ].join("\n");
+  }
+
+  function recipientWelcomeAboutDisclosure() {
+    return `<details class="tt-disclosure tt-recipient-welcome-about" data-tt="recipient-welcome-about">
+      ${disclosureSummary("Что это за ссылка?", { icon: "help-circle" })}
+      <div class="tt-disclosure-body tt-recipient-welcome-about-body">
+        <p>Тандор помогает отследить передачу документа или предмета между людьми. Личный кабинет получателю не нужен.</p>
+        <p>Ссылка персональная — рассчитана на того, кому передают. Контакт в боте используется только для этой передачи.</p>
+        <p>Код получения сообщайте отправителю только после того, как предмет реально у вас.</p>
+      </div>
+    </details>`;
+  }
+
+  function recipientInvitationBlocked(o, resolved) {
+    const inv = resolved?.inv;
+    const token = state.recipientTicket?.st || "";
+    if (resolved?.stale) return { blocked: true, kind: "stale" };
+    if (!inv) return { blocked: true, kind: "missing" };
+    if (inv.startTokenPlain) {
+      if (!token || !Ms()?.tokenMatches?.(inv, token)) return { blocked: true, kind: "token" };
+      if (!invitationTokenValid(o, inv, token)) return { blocked: true, kind: "expired" };
+    }
+    return { blocked: false, kind: "" };
+  }
+
+  function recipientWelcomeScreen(o, ctx) {
+    const { inv, from, item, blocked } = ctx;
+    const kicker = o?.id ? `<p class="tt-recipient-kicker">${E(o.id)}</p>` : "";
+    if (blocked.blocked) {
+      const copy =
+        blocked.kind === "stale"
+          ? "Это приглашение устарело — отправитель мог изменить получателя или параметры передачи. Попросите прислать новую ссылку."
+          : blocked.kind === "expired"
+            ? "Срок действия ссылки истёк. Попросите отправителя прислать новое приглашение."
+            : "Ссылка приглашения недействительна. Попросите отправителя прислать новую ссылку.";
+      return `<div class="tt-recipient-wrap"><article class="tt-recipient-card tt-recipient-card--welcome" data-tt="recipient-welcome-invalid">
+        ${recipientBrandHeader()}
+        ${kicker}
+        <h1 class="tt-recipient-welcome-heading">Приглашение недоступно</h1>
+        <p class="tt-recipient-welcome-lead">${E(copy)}</p>
+        ${recipientWelcomeAboutDisclosure()}
+      </article></div>`;
+    }
+    return `<div class="tt-recipient-wrap"><article class="tt-recipient-card tt-recipient-card--welcome" data-tt="recipient-welcome">
+      ${recipientBrandHeader()}
+      ${kicker}
+      <h1 class="tt-recipient-welcome-heading">Вам передают предмет</h1>
+      <dl class="tt-recipient-welcome-facts">
+        <div><dt>Отправитель</dt><dd>${E(from?.name || "—")}</dd></div>
+        <div><dt>Предмет</dt><dd>${E(item || "—")}</dd></div>
+      </dl>
+      <p class="tt-recipient-welcome-lead">Здесь можно посмотреть детали и подтвердить получение. Регистрация не нужна.</p>
+      ${btn("Посмотреть передачу", 'data-tt="recipient-welcome-continue"', "tt-primary tt-btn-block tt-recipient-welcome-cta")}
+      ${recipientWelcomeAboutDisclosure()}
+    </article></div>`;
   }
 
   function identityVerified(o) {
@@ -796,6 +883,7 @@
     state.recipientMode = false;
     state.recipientVia = "code";
     state.recipientTicket = null;
+    resetRecipientWelcome();
     state.actingContactId = null;
     state.orderId = null;
     state.view = "list";
@@ -2474,6 +2562,7 @@
         st: p.get("tt_st") || "",
       };
       resetRecipientIdentity();
+      resetRecipientWelcome();
     } else state.recipientTicket = null;
     const scr = p.get("tt_screen");
     if (scr) state.view = scr;
@@ -3906,6 +3995,12 @@
     </article></div>`;
   }
 
+  function recipientMessengerPreamble(o) {
+    if (state.recipientVia === "qr" && !pendingIsExternal(o)) return "";
+    if (identityVerified(o)) return "";
+    return `<p class="tt-recipient-messenger-preamble" data-tt="recipient-messenger-preamble" tabindex="-1">Бот Тандор попросит подтвердить ваш номер, чтобы выдать код получения. Сообщите код отправителю только после того, как получите предмет.</p>`;
+  }
+
   function messengerChannelPickBlock(o, stale) {
     if (stale) return "";
     const ch = messengerChannelsUi();
@@ -3973,10 +4068,27 @@
     const inv = o.activeInvitation;
     if (!inv?.startTokenPlain) return "";
     const url = handoffUrl(o, inv);
-    return `<div class="tt-handoff-invite-link">
+    const abs = new URL(url, location.href).href;
+    const plain = invitationMessagePlain(o, inv, url);
+    const from = contactById(inv?.holderId || o.holderId);
+    const item = inv?.item || o.item;
+    return `<div class="tt-handoff-invite-link" data-tt="invitation-link-block">
       <p class="tt-muted">Персональная ссылка для получателя (выбор Telegram/MAX на экране):</p>
       <code class="tt-invite-url" data-tt="invite-url">${E(url)}</code>
-      ${btn("Скопировать ссылку", 'data-tt="copy-invite-link"', "tt-btn-ghost")}
+      <div class="tt-invite-actions">${btn("Скопировать ссылку", 'data-tt="copy-invite-link"', "tt-btn-ghost")}${btn("Скопировать приглашение", 'data-tt="copy-invite-message"', "tt-btn-ghost")}</div>
+      <section class="tt-invite-message-demo" aria-labelledby="tt-invite-preview-heading">
+        <h4 class="tt-invite-preview-heading" id="tt-invite-preview-heading">Демо-превью сообщения для получателя</h4>
+        <p class="tt-muted tt-invite-preview-note">В мессенджере вид может отличаться; rich-превью MAX/Telegram в прототипе не обещаем.</p>
+        <div class="tt-invite-message-card" data-tt="invite-message-preview">
+          <p class="tt-invite-message-card-title">Вам передают предмет</p>
+          <p class="tt-invite-message-card-line">Отправитель: <strong>${E(from?.name || "—")}</strong></p>
+          <p class="tt-invite-message-card-line">Предмет: <strong>${E(item || "—")}</strong></p>
+          <p class="tt-invite-message-card-body">Здесь можно посмотреть детали и подтвердить получение. Регистрация не нужна.</p>
+          <p class="tt-invite-message-card-action">Посмотреть передачу →</p>
+          <p class="tt-invite-message-card-url tt-muted">${E(abs)}</p>
+        </div>
+        <pre class="tt-invite-message-fallback" data-tt="invite-message-text">${E(plain)}</pre>
+      </section>
     </div>`;
   }
 
@@ -4027,6 +4139,11 @@
       ticketHv != null ? resolveInvitation(o, ticketHv, ticketRcv) : { inv: o.activeInvitation, stale: false };
     const inv = resolved.inv || o.activeInvitation;
     const from = contactById(inv?.holderId || o.holderId);
+    const item = inv?.item || o.item;
+    const blocked = recipientInvitationBlocked(o, resolved);
+    if (!state.recipientWelcomeAck || blocked.blocked) {
+      return recipientWelcomeScreen(o, { inv, from, item, blocked });
+    }
     const to = contactById(inv?.pendingId || o.pendingId);
     const fin = contactById(o.finalRecipientId);
     const intermediate =
@@ -4052,6 +4169,8 @@
       inv &&
       !invitationTokenValid(o, inv, token) &&
       !(resolved.stale && Ms()?.tokenMatches?.(inv, token));
+    const messengerPreamble =
+      !stale && !tokenBad && !verified ? recipientMessengerPreamble(o) : "";
     const channelStep = !verified && !tokenBad ? messengerChannelPickBlock(o, stale) : "";
     const verifyStep = !verified && !tokenBad ? messengerVerifyBlock(o, stale) : verified ? messengerVerifyBlock(o, stale) : "";
     const qrAllowed = verified && !stale && qrMode && !pendingIsExternal(o);
@@ -4091,6 +4210,7 @@
       ${intermediate ? `<div class="tt-reminder tt-recipient-relay" data-tt="recipient-relay-reminder"><strong>После получения передайте дальше</strong><p>Доставить до ${o.dueAt ? dt(o.dueAt) : "срока не указан"}.</p></div>` : ""}
       ${tokenBad ? `<p class="tt-error" data-tt="invite-token-error">Ссылка приглашения недействительна, истекла или уже заменена новой версией.</p>` : ""}
       ${recipientProgressBlock(o, { verified, stale, tokenBad, qrMode, codePath, c })}
+      ${messengerPreamble}
       ${channelStep}
       ${verifyStep}
       ${receiveStep}
@@ -4136,7 +4256,7 @@
     if (!main) return;
     syncTrackerShellMountFlag(main);
 
-    const viewKey = `${state.view}|${state.orderId}|${state.recipientMode}|${state.handoffTab}|${state.createPhase}`;
+    const viewKey = `${state.view}|${state.orderId}|${state.recipientMode}|${state.recipientWelcomeAck}|${state.handoffTab}|${state.createPhase}`;
     if (viewKey !== lastViewKey && !opts.soft) {
       window.scrollTo(0, 0);
       lastViewKey = viewKey;
@@ -4173,9 +4293,46 @@
         o && allowed
           ? `<div class="tt-work tt-work-recipient"><div class="tt-head tt-head-compact tt-head-compact-demo"><span class="tt-head-compact-label">Тан-трекер</span>${recipDemo}</div>${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
           : `<div class="tt-work tt-recipient"><p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
-      document.title = "Tandoor RF · Тан-трекер · получатель";
+      document.title = "Tandoor RF · Приглашение к передаче";
+      let metaDesc = document.querySelector('meta[name="description"]');
+      if (!metaDesc) {
+        metaDesc = document.createElement("meta");
+        metaDesc.setAttribute("name", "description");
+        document.head.appendChild(metaDesc);
+      }
+      metaDesc.setAttribute(
+        "content",
+        "Тандор · демо-приглашение к передаче документа или предмета. Персональные данные в превью ссылки не публикуются."
+      );
+      let ogTitle = document.querySelector('meta[property="og:title"]');
+      if (!ogTitle) {
+        ogTitle = document.createElement("meta");
+        ogTitle.setAttribute("property", "og:title");
+        document.head.appendChild(ogTitle);
+      }
+      ogTitle.setAttribute("content", "Tandoor RF · Передача предмета");
+      let ogDesc = document.querySelector('meta[property="og:description"]');
+      if (!ogDesc) {
+        ogDesc = document.createElement("meta");
+        ogDesc.setAttribute("property", "og:description");
+        document.head.appendChild(ogDesc);
+      }
+      ogDesc.setAttribute("content", "Демо-приглашение Тандор: посмотреть передачу и подтвердить получение.");
       lucide.createIcons();
       setupDetailOverflowMenu();
+      if (opts.recipientFocus) {
+        const selectors = String(opts.recipientFocus).split(",").map((s) => s.trim());
+        requestAnimationFrame(() => {
+          for (const sel of selectors) {
+            const el = main.querySelector(sel);
+            if (el) {
+              if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
+              el.focus({ preventScroll: false });
+              break;
+            }
+          }
+        });
+      }
       return;
     }
 
@@ -4965,10 +5122,25 @@
       if (window.innerWidth < 768) scrollQrIntoView();
       return;
     }
+    if (action === "recipient-welcome-continue" && o) {
+      const ticketHv = state.recipientTicket?.hv;
+      const ticketRcv = state.recipientTicket?.rcv;
+      const resolved =
+        ticketHv != null ? resolveInvitation(o, ticketHv, ticketRcv) : { inv: o.activeInvitation, stale: false };
+      if (recipientInvitationBlocked(o, resolved).blocked) {
+        resetRecipientWelcome();
+        renderTracker();
+        return;
+      }
+      state.recipientWelcomeAck = true;
+      renderTracker({ recipientFocus: '[data-tt="recipient-messenger-preamble"], [data-tt="recipient-step-channel"], [data-tt="recipient-screen"] h2' });
+      return;
+    }
     if (action === "scan-qr-demo" && o) {
       state.recipientMode = true;
       state.recipientVia = "qr";
       resetRecipientIdentity();
+      resetRecipientWelcome();
       if (o.activeInvitation) {
         state.recipientTicket = {
           hv: String(o.activeInvitation.hv),
@@ -4985,6 +5157,7 @@
       state.recipientMode = true;
       state.recipientVia = state.handoffTab === "qr" ? "qr" : "code";
       resetRecipientIdentity();
+      resetRecipientWelcome();
       if (o.activeInvitation) {
         state.recipientTicket = {
           hv: String(o.activeInvitation.hv),
@@ -5032,6 +5205,7 @@
       state.recipientVia = "code";
       state.recipientTicket = { hv: p.hv, rcv: p.rcv, order: o.id, st: p.st || "" };
       resetRecipientIdentity();
+      resetRecipientWelcome();
       writeUrl();
       renderTracker();
       return;
@@ -5390,6 +5564,18 @@
       if (url && navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(new URL(url, location.href).href).then(() => {
           state.toast = "Ссылка скопирована";
+          renderTracker();
+        });
+      }
+      return;
+    }
+    if (action === "copy-invite-message" && o) {
+      const inv = o.activeInvitation;
+      const url = inv ? handoffUrl(o, inv) : "";
+      const text = inv ? invitationMessagePlain(o, inv, url) : "";
+      if (text && navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          state.toast = "Текст приглашения скопирован";
           renderTracker();
         });
       }

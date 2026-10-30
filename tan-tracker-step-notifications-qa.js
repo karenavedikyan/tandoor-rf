@@ -55,6 +55,7 @@ var TT_STEP_NOTIFICATIONS_QA = await (async () => {
   await page.reload();
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   ok((await page.locator('[data-tt="recipient-progress"]').textContent()).includes("Шаг 1 из 3"), "progress step 1");
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   ok((await page.locator('[data-tt="recipient-progress"]').textContent()).includes("Шаг 2 из 3"), "progress step 2");
@@ -93,6 +94,7 @@ var TT_STEP_NOTIFICATIONS_QA = await (async () => {
   await page.reload();
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
   await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   await page.getByRole("button", { name: "Получить код", exact: true }).click();
@@ -155,6 +157,7 @@ var TT_STEP_NOTIFICATIONS_QA = await (async () => {
   await page.reload();
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
+  await ttAckRecipientWelcome();
   const recipOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1
   );

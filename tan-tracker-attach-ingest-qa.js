@@ -90,7 +90,9 @@ var TT_INGEST_QA = await (async () => {
 
   await ttOpenDetailDemo();
   await page.locator('[data-tt="open-recipient"]').click();
-  await page.getByRole("button", { name: "Подтвердить номер (демо)", exact: true }).click();
+  await ttAckRecipientWelcome();
+  await page.locator('[data-tt="pick-channel"][data-channel="telegram"]').click();
+  await page.getByRole("button", { name: /Поделиться контактом/ }).click();
   const nwR = await page.locator(".tt-att-thumb img").first().evaluate((img) => img.naturalWidth);
   ok(nwR > 0, "recipient still sees attachment image after handoff prep");
 
