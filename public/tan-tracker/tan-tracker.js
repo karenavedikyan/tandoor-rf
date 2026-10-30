@@ -791,6 +791,7 @@
   }
 
   let attachInFlightAbort = null;
+  let attachInFlightAbortGen = null;
 
   function abortAttachInFlight() {
     if (!attachInFlightAbort) return;
@@ -798,6 +799,14 @@
       attachInFlightAbort.abort();
     } catch (_) {}
     attachInFlightAbort = null;
+    attachInFlightAbortGen = null;
+  }
+
+  function releaseAttachInFlightAbort(opGen, controller) {
+    if (attachInFlightAbort === controller && attachInFlightAbortGen === opGen) {
+      attachInFlightAbort = null;
+      attachInFlightAbortGen = null;
+    }
   }
 
   function bumpAttachOpGen() {
@@ -1991,8 +2000,10 @@
     state.attachBusyGen = opGen;
     state.attachError = "";
     abortAttachInFlight();
-    attachInFlightAbort = new AbortController();
-    const uploadSignal = attachInFlightAbort.signal;
+    const opAbortController = new AbortController();
+    attachInFlightAbort = opAbortController;
+    attachInFlightAbortGen = opGen;
+    const uploadSignal = opAbortController.signal;
     renderTracker();
     const order = target === "create" ? null : orders.find((x) => x.id === state.orderId);
     const existing = target === "create" ? [] : Att().listForOrder(order);
@@ -2105,7 +2116,7 @@
         if (errors.length) state.attachError = errors.slice(0, 3).join(" ");
       } else Att().revokeStagingItems(accepted);
     } finally {
-      attachInFlightAbort = null;
+      releaseAttachInFlightAbort(opGen, opAbortController);
       finishAttachIngest(opGen);
       renderTracker();
     }

@@ -30,9 +30,10 @@ describe("tan-tracker upload + messenger invite resilience wiring", () => {
   });
 
   it("aborts in-flight upload on attach context bump and re-validates snap after await", () => {
-    assert.match(trackerJs, /attachInFlightAbort = new AbortController\(\)/);
+    assert.match(trackerJs, /const opAbortController = new AbortController\(\)/);
     assert.match(trackerJs, /uploadStagingFile\(file, \{ signal: uploadSignal \}\)/);
     assert.match(trackerJs, /if \(state\.attachBusy\) abortAttachInFlight\(\)/);
+    assert.match(trackerJs, /releaseAttachInFlightAbort\(opGen, opAbortController\)/);
     assert.match(trackerJs, /if \(!attachSnapValid\(snap\)\) \{\s*Att\(\)\.revokeStagingItem\(r\.item\);\s*break;/);
   });
 });
