@@ -645,12 +645,18 @@
   function focusSelectFallbackControl(selector) {
     const el = document.querySelector(selector);
     if (!el) return false;
+    const len =
+      "value" in el && el.value != null
+        ? String(el.value).length
+        : String(el.textContent || "").length;
+    if (!len) return false;
     el.focus();
-    if (typeof el.select === "function") {
+    if (typeof el.setSelectionRange === "function") {
+      el.setSelectionRange(0, len);
+    } else if (typeof el.select === "function") {
       el.select();
-      return el.selectionStart === 0 && el.selectionEnd > 0;
     }
-    return false;
+    return el.selectionStart === 0 && el.selectionEnd === len;
   }
 
   function queueClipboardFallbackSelect(selector) {
@@ -662,7 +668,9 @@
     if (!selector) return;
     pendingClipboardFallbackSelect = null;
     requestAnimationFrame(() => {
-      focusSelectFallbackControl(selector);
+      requestAnimationFrame(() => {
+        focusSelectFallbackControl(selector);
+      });
     });
   }
 
