@@ -6,10 +6,10 @@ Approved prototype: branch `cursor/prototype-registry-recovery-20261030`, commit
 
 | Block | Status in repo | Notes |
 |-------|----------------|-------|
-| Delivery vs explicit close | **Phase 1 in 064+** | `delivered` status; `completed` only via explicit close |
-| Holder URL renewal | **Phase 1** | Signature-valid expired token refresh while still holder |
-| External «Мои передачи» shell | **Not in this slice** | Prototype in `site/tan-tracker.js`; port to `public/tan-tracker/*` |
-| Bot 6-step external request + photos | **Not in this slice** | Needs drafts, media ingest, intake employees, limit 5 |
+| Delivery vs explicit close | **In progress** | `delivered`; creator may close after delivery while external holds; holder token bound to `handoff_version` + open status |
+| Holder URL renewal | **In progress** | Expired signature refresh only while still holder on open transfer; invalid after close or `hv` bump |
+| External «Мои передачи» shell | **Partial** | `/api/tan-tracker/public/external/bootstrap`; LK shell port pending |
+| Bot 6-step external request + photos | **Partial (Telegram)** | Drafts, durable photos, intake list, confirm/decline API; MAX mirror pending |
 | Global phone-first contacts dedupe | **Not in this slice** | Migration + admin UX + conflict report |
 | Step LK notifications + outbox matrix | **Not in this slice** | Extend `tanbot_notification_outbox` + bell center |
 | Admin «принимает заявки от внешних» | **Not in this slice** | Role guard on `users` / employee profile |
