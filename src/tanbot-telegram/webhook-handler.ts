@@ -135,7 +135,9 @@ async function processParsedUpdate(
       reply = account
         ? {
             chatId: update.chatId,
-            text: "Telegram подключён. Уведомления о передачах: включены в кабинете при активной подписке.",
+            text: account.notifications_enabled
+              ? "Telegram подключён. Уведомления о передачах Тан-трекера включены."
+              : "Telegram подключён. Уведомления о передачах выключены — включите в профиле или /stop не отключает привязку.",
           }
         : {
             chatId: update.chatId,
@@ -194,7 +196,8 @@ async function processParsedUpdate(
         } else {
           reply = {
             chatId: update.chatId,
-            text: `Почти готово. Вернитесь в личный кабинет и подтвердите привязку Telegram.\n${lkUrl}`,
+            text:
+              "Telegram подключён к личному кабинету. Коды и уведомления Тан-трекера доступны в этом чате. Отключить уведомления: /stop или профиль.",
           };
         }
       }

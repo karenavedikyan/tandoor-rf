@@ -53,6 +53,22 @@ export async function findLinkAttemptByTokenHash(
   return row.rows[0] ?? null;
 }
 
+export async function lockLinkAttemptByTokenHash(
+  client: PoolClient,
+  tokenHash: string,
+): Promise<LinkAttemptRow | null> {
+  const row = await client.query<LinkAttemptRow>(
+    `SELECT id::text, user_id::text, token_hash, expires_at, consumed_at, cancelled_at,
+            telegram_user_id::text, telegram_chat_id::text, telegram_username, telegram_first_name,
+            telegram_started_at, confirmed_at
+     FROM tanbot_telegram_link_attempts
+     WHERE token_hash = $1
+     FOR UPDATE`,
+    [tokenHash],
+  );
+  return row.rows[0] ?? null;
+}
+
 export async function findPendingLinkAttemptForUser(
   client: PoolClient,
   userId: string,
@@ -109,9 +125,9 @@ export async function attachTelegramToLinkAttempt(
 export async function findAccountByTelegramUserId(
   client: PoolClient,
   telegramUserId: bigint,
-): Promise<{ user_id: string } | null> {
-  const row = await client.query<{ user_id: string }>(
-    `SELECT user_id::text FROM tanbot_telegram_accounts
+): Promise<{ user_id: string; notifications_enabled: boolean } | null> {
+  const row = await client.query<{ user_id: string; notifications_enabled: boolean }>(
+    `SELECT user_id::text, notifications_enabled FROM tanbot_telegram_accounts
      WHERE telegram_user_id = $1 AND stopped_at IS NULL`,
     [telegramUserId.toString()],
   );

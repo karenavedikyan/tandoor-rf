@@ -59,7 +59,7 @@ describe("tanbot max stage2", { concurrency: false }, () => {
     await closePool();
   });
 
-  it("link flow: start → bot_started webhook → LK confirm → linked", async () => {
+  it("link flow: start → bot_started webhook → linked with notifications", async () => {
     await createTestUser({
       databaseUrl,
       email: "max-link@test.local",
@@ -94,25 +94,12 @@ describe("tanbot max stage2", { concurrency: false }, () => {
       .send(webhookUpdate);
     assert.equal(wh.status, 200, wh.text);
 
-    const statusBefore = await request(app)
-      .get("/api/profile/tanbot/max")
-      .set({ Origin: ORIGIN, Cookie: cookie });
-    assert.ok(statusBefore.body.pendingConfirmation);
-    assert.equal(statusBefore.body.linked, false);
-
-    const confirm = await request(app)
-      .post("/api/profile/tanbot/max/link/confirm")
-      .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
-      .send({
-        attemptId: statusBefore.body.pendingConfirmation.attemptId,
-        enableNotifications: true,
-      });
-    assert.equal(confirm.status, 200, confirm.text);
-
     const statusAfter = await request(app)
       .get("/api/profile/tanbot/max")
       .set({ Origin: ORIGIN, Cookie: cookie });
     assert.equal(statusAfter.body.linked, true);
+    assert.equal(statusAfter.body.notificationsEnabled, true);
+    assert.equal(statusAfter.body.pendingConfirmation, null);
   });
 
   it("rejects webhook without secret", async () => {

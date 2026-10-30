@@ -50,12 +50,12 @@ async function login(email: string, app: Awaited<ReturnType<typeof loadApp>>) {
   return res.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
 }
 
-async function startAndAttachTelegram(
+async function linkTelegramViaWebhook(
   app: Awaited<ReturnType<typeof loadApp>>,
   cookie: string,
   telegramUserId: number,
   updateId: number,
-): Promise<string> {
+): Promise<void> {
   const start = await request(app)
     .post("/api/profile/tanbot/telegram/link/start")
     .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
@@ -77,7 +77,7 @@ async function startAndAttachTelegram(
   const status = await request(app)
     .get("/api/profile/tanbot/telegram")
     .set({ Origin: ORIGIN, Cookie: cookie });
-  return status.body.pendingConfirmation.attemptId as string;
+  assert.equal(status.body.linked, true);
 }
 
 describe("tanbot telegram stage2 independent controls", { concurrency: false }, () => {
@@ -90,7 +90,7 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
     await closePool();
   });
 
-  it("concurrent confirm: only one LK user owns telegram account", async () => {
+  it("second LK user cannot take over an already linked telegram account", async () => {
     const userA = await createTestUser({
       databaseUrl,
       email: "race-a@test.local",
@@ -98,7 +98,7 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
       fullName: "Race A",
       role: "manager",
     });
-    const userB = await createTestUser({
+    await createTestUser({
       databaseUrl,
       email: "race-b@test.local",
       password: PASSWORD,
@@ -109,40 +109,31 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
     const cookieA = await login("race-a@test.local", app);
     const cookieB = await login("race-b@test.local", app);
     const tgId = 991001;
-    const attemptA = await startAndAttachTelegram(app, cookieA, tgId, 991001);
-    const attemptB = (
-      await request(app)
-        .post("/api/profile/tanbot/telegram/link/start")
-        .set({ Origin: ORIGIN, Cookie: cookieB, "Content-Type": "application/json" })
-        .send({})
-    ).body.attemptId as string;
-    const pool = getPool()!;
-    await pool.query(
-      `UPDATE tanbot_telegram_link_attempts
-       SET telegram_user_id = $1, telegram_chat_id = $1, telegram_username = 'race', telegram_started_at = NOW()
-       WHERE id = $2::uuid`,
-      [tgId, attemptB],
-    );
-
-    const confirmA = request(app)
-      .post("/api/profile/tanbot/telegram/link/confirm")
-      .set({ Origin: ORIGIN, Cookie: cookieA, "Content-Type": "application/json" })
-      .send({ attemptId: attemptA, enableNotifications: false });
-    const confirmB = request(app)
-      .post("/api/profile/tanbot/telegram/link/confirm")
+    await linkTelegramViaWebhook(app, cookieA, tgId, 991001);
+    const startB = await request(app)
+      .post("/api/profile/tanbot/telegram/link/start")
       .set({ Origin: ORIGIN, Cookie: cookieB, "Content-Type": "application/json" })
-      .send({ attemptId: attemptB, enableNotifications: false });
-    const [resA, resB] = await Promise.all([confirmA, confirmB]);
-    const ok = [resA.status, resB.status].filter((s) => s === 200).length;
-    const conflict = [resA.status, resB.status].filter((s) => s === 409).length;
-    assert.equal(ok, 1);
-    assert.equal(conflict, 1);
+      .send({});
+    const tokenB = new URL(startB.body.deepLink).searchParams.get("start")!;
+    await request(app)
+      .post("/api/tanbot-telegram/webhook")
+      .set("X-Telegram-Bot-Api-Secret-Token", WEBHOOK_SECRET)
+      .send({
+        update_id: 991002,
+        message: {
+          message_id: 1,
+          from: { id: tgId, is_bot: false, username: "race_user" },
+          chat: { id: tgId, type: "private" },
+          date: 1,
+          text: `/start ${tokenB}`,
+        },
+      });
+    const pool = getPool()!;
     const owners = await pool.query(`SELECT user_id::text FROM tanbot_telegram_accounts WHERE telegram_user_id = $1`, [
       tgId,
     ]);
     assert.equal(owners.rowCount, 1);
-    const winner = owners.rows[0]!.user_id;
-    assert.ok(winner === userA.id || winner === userB.id);
+    assert.equal(owners.rows[0]!.user_id, userA.id);
   });
 
   it("webhook update retries after business rollback", async () => {
@@ -199,14 +190,13 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
       .set("X-Telegram-Bot-Api-Secret-Token", WEBHOOK_SECRET)
       .send(update);
     assert.equal(second.status, 200);
-    const attempt = await pool.query(
-      `SELECT telegram_started_at FROM tanbot_telegram_link_attempts WHERE user_id = $1::uuid ORDER BY created_at DESC LIMIT 1`,
-      [user.id],
-    );
-    assert.ok(attempt.rows[0]?.telegram_started_at);
+    const status = await request(app)
+      .get("/api/profile/tanbot/telegram")
+      .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(status.body.linked, true);
   });
 
-  it("confirm blocked when master switch disabled", async () => {
+  it("link start blocked when master switch disabled", async () => {
     await createTestUser({
       databaseUrl,
       email: "master-off@test.local",
@@ -214,16 +204,14 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
       fullName: "Master Off",
       role: "manager",
     });
-    const app = await loadApp();
-    const cookie = await login("master-off@test.local", app);
-    const attemptId = await startAndAttachTelegram(app, cookie, 992003, 992003);
     process.env.TANBOT_TELEGRAM_ENABLED = "false";
     await resetPoolForTests();
-    const app2 = await loadApp();
-    const res = await request(app2)
-      .post("/api/profile/tanbot/telegram/link/confirm")
+    const app = await loadApp();
+    const cookie = await login("master-off@test.local", app);
+    const res = await request(app)
+      .post("/api/profile/tanbot/telegram/link/start")
       .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
-      .send({ attemptId, enableNotifications: false });
+      .send({});
     assert.equal(res.status, 503);
     process.env.TANBOT_TELEGRAM_ENABLED = "true";
   });

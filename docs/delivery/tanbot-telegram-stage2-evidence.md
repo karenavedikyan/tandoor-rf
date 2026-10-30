@@ -11,7 +11,7 @@
 | Dedup до commit / потеря update | inbox columns migration 056, business+dedup в одной транзакции, status failed→retry |
 | Потеря ответа webhook | reply persisted, `reply_delivered_at`, resend on duplicate update |
 | Delivery disabled user | `canDeliverAssignmentNotification` (status, holder, handoff version) |
-| Confirm при master off | 503 на `/link/confirm` |
+| Link start при master off | 503 на `/link/start` |
 | Возврат из Telegram без reload | `focus`/`visibilitychange` → refresh в `profile.js` |
 | Auto notifications on confirm | checkbox `#tanbot-confirm-notifications`, default off |
 | Unit probe public bundle | проверка секретов по паттернам, не по DOM id |

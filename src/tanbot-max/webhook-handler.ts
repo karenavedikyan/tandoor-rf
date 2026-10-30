@@ -100,7 +100,9 @@ async function processUpdateInTransaction(
         ? {
             userId: update.maxUserId,
             chatId: update.chatId,
-            text: "MAX подключён. Уведомления о передачах: включены в кабинете при активной подписке.",
+            text: account.notifications_enabled
+              ? "MAX подключён. Уведомления о передачах Тан-трекера включены."
+              : "MAX подключён. Уведомления о передачах выключены — включите в профиле.",
           }
         : {
             userId: update.maxUserId,
@@ -164,7 +166,8 @@ async function processUpdateInTransaction(
           reply = {
             userId: update.maxUserId,
             chatId: update.chatId,
-            text: `Почти готово. Вернитесь в личный кабинет и подтвердите привязку MAX.\n${lkUrl}`,
+            text:
+              "MAX подключён к личному кабинету. Коды и уведомления Тан-трекера доступны в этом чате. Отключить уведомления: /stop или профиль.",
           };
         }
       }

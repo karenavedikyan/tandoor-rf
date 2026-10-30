@@ -29,6 +29,14 @@
   var tanbotMaxNotifToggle = document.getElementById("tanbot-max-notifications-toggle");
   var tanbotMaxConfirmNotifWrap = document.getElementById("tanbot-max-confirm-notifications-wrap");
   var tanbotMaxConfirmNotifToggle = document.getElementById("tanbot-max-confirm-notifications");
+  var TG_LINK_STORAGE_KEY = "tanbot_telegram_deep_link";
+  var MAX_LINK_STORAGE_KEY = "tanbot_max_deep_link";
+  var tgLinkFallback = document.getElementById("tanbot-telegram-link-fallback");
+  var tgLinkUrlInput = document.getElementById("tanbot-telegram-link-url");
+  var tgLinkCopyBtn = document.getElementById("tanbot-telegram-link-copy");
+  var maxLinkFallback = document.getElementById("tanbot-max-link-fallback");
+  var maxLinkUrlInput = document.getElementById("tanbot-max-link-url");
+  var maxLinkCopyBtn = document.getElementById("tanbot-max-link-copy");
 
   var ROLE_LABELS = {
     admin: "Администратор",
@@ -93,6 +101,34 @@
     });
   }
 
+  function showStoredDeepLink(fallbackEl, inputEl, storageKey, linked) {
+    if (!fallbackEl || !inputEl) return;
+    var url = sessionStorage.getItem(storageKey) || "";
+    if (linked || !url) {
+      fallbackEl.hidden = true;
+      return;
+    }
+    inputEl.value = url;
+    fallbackEl.hidden = false;
+  }
+
+  function copyInputValue(inputEl, label) {
+    if (!inputEl || !inputEl.value) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(inputEl.value).then(function () {
+        api.setStatus(statusEl, label + " скопирована.", "success");
+      });
+      return;
+    }
+    inputEl.select();
+    try {
+      document.execCommand("copy");
+      api.setStatus(statusEl, label + " скопирована.", "success");
+    } catch (_) {
+      api.setStatus(statusEl, "Скопируйте ссылку вручную.", "error");
+    }
+  }
+
   function loadTanbotTelegram() {
     if (!tanbotSection || !api.apiRequest) return;
     return api.apiRequest("/api/profile/tanbot/telegram").then(function (result) {
@@ -107,6 +143,7 @@
       }
       tanbotSection.hidden = false;
       if (d.linked) {
+        sessionStorage.removeItem(TG_LINK_STORAGE_KEY);
         tanbotStatus.textContent =
           "Telegram подключён" + (d.telegramUsername ? " (@" + d.telegramUsername + ")" : "") + ".";
         tanbotNotifWrap.hidden = false;
@@ -115,18 +152,9 @@
         tanbotStatus.textContent = "Telegram не подключён.";
         tanbotNotifWrap.hidden = true;
       }
-      if (d.pendingConfirmation) {
-        tanbotPending.hidden = false;
-        if (tanbotConfirmNotifWrap) tanbotConfirmNotifWrap.hidden = false;
-        var p = d.pendingConfirmation;
-        tanbotPending.textContent =
-          "Подтвердите привязку Telegram" +
-          (p.telegramUsername ? " @" + p.telegramUsername : p.telegramFirstName ? " (" + p.telegramFirstName + ")" : "") +
-          ".";
-      } else {
-        tanbotPending.hidden = true;
-        if (tanbotConfirmNotifWrap) tanbotConfirmNotifWrap.hidden = true;
-      }
+      tanbotPending.hidden = true;
+      if (tanbotConfirmNotifWrap) tanbotConfirmNotifWrap.hidden = true;
+      showStoredDeepLink(tgLinkFallback, tgLinkUrlInput, TG_LINK_STORAGE_KEY, d.linked);
       tanbotActions.innerHTML = "";
       if (!d.linked) {
         var startBtn = document.createElement("button");
@@ -135,16 +163,6 @@
         startBtn.textContent = "Подключить Telegram";
         startBtn.addEventListener("click", startTanbotLink);
         tanbotActions.appendChild(startBtn);
-      }
-      if (d.pendingConfirmation) {
-        var confirmBtn = document.createElement("button");
-        confirmBtn.type = "button";
-        confirmBtn.className = "primary-button";
-        confirmBtn.textContent = "Подтвердить привязку";
-        confirmBtn.addEventListener("click", function () {
-          confirmTanbotLink(d.pendingConfirmation.attemptId);
-        });
-        tanbotActions.appendChild(confirmBtn);
       }
       if (d.linked) {
         var discBtn = document.createElement("button");
@@ -162,8 +180,13 @@
       .apiRequest("/api/profile/tanbot/telegram/link/start", { method: "POST", body: {} })
       .then(function (result) {
         if (result.response.status === 200 && result.data && result.data.deepLink) {
+          sessionStorage.setItem(TG_LINK_STORAGE_KEY, result.data.deepLink);
           window.open(result.data.deepLink, "_blank", "noopener,noreferrer");
-          api.setStatus(statusEl, "Откройте Telegram и вернитесь — страница обновит статус автоматически.", "success");
+          api.setStatus(
+            statusEl,
+            "Откройте Telegram и нажмите Start — привязка завершится в боте. Статус обновится на этой странице.",
+            "success",
+          );
           loadTanbotTelegram();
           scheduleTanbotRefresh();
         } else {
@@ -186,6 +209,7 @@
       }
       tanbotMaxSection.hidden = false;
       if (d.linked) {
+        sessionStorage.removeItem(MAX_LINK_STORAGE_KEY);
         tanbotMaxStatus.textContent =
           "MAX подключён" + (d.maxUsername ? " (@" + d.maxUsername + ")" : "") + ".";
         tanbotMaxNotifWrap.hidden = false;
@@ -194,18 +218,9 @@
         tanbotMaxStatus.textContent = "MAX не подключён.";
         tanbotMaxNotifWrap.hidden = true;
       }
-      if (d.pendingConfirmation) {
-        tanbotMaxPending.hidden = false;
-        if (tanbotMaxConfirmNotifWrap) tanbotMaxConfirmNotifWrap.hidden = false;
-        var p = d.pendingConfirmation;
-        tanbotMaxPending.textContent =
-          "Подтвердите привязку MAX" +
-          (p.maxUsername ? " @" + p.maxUsername : p.maxFirstName ? " (" + p.maxFirstName + ")" : "") +
-          ".";
-      } else {
-        tanbotMaxPending.hidden = true;
-        if (tanbotMaxConfirmNotifWrap) tanbotMaxConfirmNotifWrap.hidden = true;
-      }
+      tanbotMaxPending.hidden = true;
+      if (tanbotMaxConfirmNotifWrap) tanbotMaxConfirmNotifWrap.hidden = true;
+      showStoredDeepLink(maxLinkFallback, maxLinkUrlInput, MAX_LINK_STORAGE_KEY, d.linked);
       tanbotMaxActions.innerHTML = "";
       if (!d.linked) {
         var startBtn = document.createElement("button");
@@ -214,16 +229,6 @@
         startBtn.textContent = "Подключить MAX";
         startBtn.addEventListener("click", startTanbotMaxLink);
         tanbotMaxActions.appendChild(startBtn);
-      }
-      if (d.pendingConfirmation) {
-        var confirmBtn = document.createElement("button");
-        confirmBtn.type = "button";
-        confirmBtn.className = "primary-button";
-        confirmBtn.textContent = "Подтвердить привязку";
-        confirmBtn.addEventListener("click", function () {
-          confirmTanbotMaxLink(d.pendingConfirmation.attemptId);
-        });
-        tanbotMaxActions.appendChild(confirmBtn);
       }
       if (d.linked) {
         var discBtn = document.createElement("button");
@@ -241,8 +246,13 @@
       .apiRequest("/api/profile/tanbot/max/link/start", { method: "POST", body: {} })
       .then(function (result) {
         if (result.response.status === 200 && result.data && result.data.deepLink) {
+          sessionStorage.setItem(MAX_LINK_STORAGE_KEY, result.data.deepLink);
           window.open(result.data.deepLink, "_blank", "noopener,noreferrer");
-          api.setStatus(statusEl, "Откройте MAX и вернитесь — страница обновит статус автоматически.", "success");
+          api.setStatus(
+            statusEl,
+            "Откройте MAX и нажмите Start — привязка завершится в боте. Статус обновится на этой странице.",
+            "success",
+          );
           loadTanbotMax();
           scheduleTanbotRefresh();
         } else {
@@ -280,6 +290,7 @@
   function disconnectTanbotMax() {
     api.apiRequest("/api/profile/tanbot/max/disconnect", { method: "POST", body: {} }).then(function (result) {
       if (result.response.status === 200) {
+        sessionStorage.removeItem(MAX_LINK_STORAGE_KEY);
         api.setStatus(statusEl, "MAX отключён.", "success");
         loadTanbotMax();
       }
@@ -323,9 +334,21 @@
   function disconnectTanbot() {
     api.apiRequest("/api/profile/tanbot/telegram/disconnect", { method: "POST", body: {} }).then(function (result) {
       if (result.response.status === 200) {
+        sessionStorage.removeItem(TG_LINK_STORAGE_KEY);
         api.setStatus(statusEl, "Telegram отключён.", "success");
         loadTanbotTelegram();
       }
+    });
+  }
+
+  if (tgLinkCopyBtn && tgLinkUrlInput) {
+    tgLinkCopyBtn.addEventListener("click", function () {
+      copyInputValue(tgLinkUrlInput, "Ссылка для Telegram");
+    });
+  }
+  if (maxLinkCopyBtn && maxLinkUrlInput) {
+    maxLinkCopyBtn.addEventListener("click", function () {
+      copyInputValue(maxLinkUrlInput, "Ссылка для MAX");
     });
   }
 
@@ -400,6 +423,7 @@
   });
 
   window.addEventListener("focus", scheduleTanbotRefresh);
+  window.addEventListener("pageshow", scheduleTanbotRefresh);
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible") scheduleTanbotRefresh();
   });

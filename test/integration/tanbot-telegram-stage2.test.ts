@@ -59,7 +59,7 @@ describe("tanbot telegram stage2", { concurrency: false }, () => {
     await closePool();
   });
 
-  it("link flow: start → webhook /start → LK confirm → status linked", async () => {
+  it("link flow: start → webhook /start → status linked with notifications", async () => {
     const user = await createTestUser({
       databaseUrl,
       email: "tanbot-link@test.local",
@@ -99,26 +99,13 @@ describe("tanbot telegram stage2", { concurrency: false }, () => {
       .send(webhookUpdate);
     assert.equal(wh.status, 200, wh.text);
 
-    const statusBefore = await request(app)
-      .get("/api/profile/tanbot/telegram")
-      .set({ Origin: ORIGIN, Cookie: cookie });
-    assert.equal(statusBefore.status, 200);
-    assert.ok(statusBefore.body.pendingConfirmation);
-    assert.equal(statusBefore.body.linked, false);
-
-    const confirm = await request(app)
-      .post("/api/profile/tanbot/telegram/link/confirm")
-      .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
-      .send({
-        attemptId: statusBefore.body.pendingConfirmation.attemptId,
-        enableNotifications: true,
-      });
-    assert.equal(confirm.status, 200, confirm.text);
-
     const statusAfter = await request(app)
       .get("/api/profile/tanbot/telegram")
       .set({ Origin: ORIGIN, Cookie: cookie });
+    assert.equal(statusAfter.status, 200);
     assert.equal(statusAfter.body.linked, true);
+    assert.equal(statusAfter.body.notificationsEnabled, true);
+    assert.equal(statusAfter.body.pendingConfirmation, null);
 
     const dup = await request(app)
       .post("/api/tanbot-telegram/webhook")

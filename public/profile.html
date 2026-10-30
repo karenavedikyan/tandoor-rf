@@ -62,6 +62,9 @@
 
             <section id="tanbot-max-section" class="profile-card profile-card--nested" hidden>
               <h2 class="profile-section-title">MAX-уведомления</h2>
+              <p class="profile-muted tanbot-consent-hint">
+                Подключение включает коды и уведомления Тан-трекера в MAX. Отключить можно здесь позже.
+              </p>
               <p id="tanbot-max-status" class="profile-muted"></p>
               <p id="tanbot-max-pending" class="profile-muted" hidden></p>
               <label class="field" id="tanbot-max-confirm-notifications-wrap" hidden>
@@ -69,6 +72,13 @@
                 <input id="tanbot-max-confirm-notifications" type="checkbox" />
               </label>
               <div class="button-row" id="tanbot-max-actions"></div>
+              <div id="tanbot-max-link-fallback" class="profile-link-fallback" hidden>
+                <label class="field">
+                  <span class="field__label">Ссылка для MAX</span>
+                  <input id="tanbot-max-link-url" type="text" readonly class="field__input field__input--readonly" />
+                </label>
+                <button type="button" id="tanbot-max-link-copy" class="secondary-button">Скопировать ссылку</button>
+              </div>
               <label class="field" id="tanbot-max-notifications-toggle-wrap" hidden>
                 <span class="field__label">Уведомления о новых передачах в Тан-трекере</span>
                 <input id="tanbot-max-notifications-toggle" type="checkbox" />
@@ -77,6 +87,9 @@
 
             <section id="tanbot-telegram-section" class="profile-card profile-card--nested" hidden>
               <h2 class="profile-section-title">Telegram-уведомления</h2>
+              <p class="profile-muted tanbot-consent-hint">
+                Подключение включает коды и уведомления Тан-трекера в Telegram. Отключить можно здесь позже.
+              </p>
               <p id="tanbot-telegram-status" class="profile-muted"></p>
               <p id="tanbot-telegram-pending" class="profile-muted" hidden></p>
               <label class="field" id="tanbot-confirm-notifications-wrap" hidden>
@@ -84,6 +97,18 @@
                 <input id="tanbot-confirm-notifications" type="checkbox" />
               </label>
               <div class="button-row" id="tanbot-telegram-actions"></div>
+              <div id="tanbot-telegram-link-fallback" class="profile-link-fallback" hidden>
+                <label class="field">
+                  <span class="field__label">Ссылка для Telegram</span>
+                  <input
+                    id="tanbot-telegram-link-url"
+                    type="text"
+                    readonly
+                    class="field__input field__input--readonly"
+                  />
+                </label>
+                <button type="button" id="tanbot-telegram-link-copy" class="secondary-button">Скопировать ссылку</button>
+              </div>
               <label class="field" id="tanbot-notifications-toggle-wrap" hidden>
                 <span class="field__label">Уведомления о новых передачах в Тан-трекере</span>
                 <input id="tanbot-notifications-toggle" type="checkbox" />

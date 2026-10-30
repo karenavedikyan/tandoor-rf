@@ -6,10 +6,10 @@ import {
   cancelActiveLinkAttempts,
   findAccountByMaxUserId,
   findAccountByUserId,
-  findLinkAttemptByTokenHash,
   findPendingLinkAttemptForUser,
   insertLinkAttempt,
   insertLinkAudit,
+  lockLinkAttemptByTokenHash,
 } from "./link-repository";
 import { buildMaxDeepLink, generateLinkStartToken, hashLinkStartToken } from "./link-tokens";
 
@@ -90,6 +90,77 @@ export async function startTanbotMaxLink(
   };
 }
 
+async function finalizeMaxLinkAttemptOnClient(
+  client: PoolClient,
+  attemptId: string,
+  userId: string,
+  enableNotifications: boolean,
+): Promise<void> {
+  const attemptRow = await client.query(
+    `SELECT id::text, user_id::text, expires_at, consumed_at, cancelled_at,
+            max_user_id::text, max_chat_id::text, max_username
+     FROM tanbot_max_link_attempts
+     WHERE id = $1::uuid
+     FOR UPDATE`,
+    [attemptId],
+  );
+  const attempt = attemptRow.rows[0] as
+    | {
+        id: string;
+        user_id: string;
+        expires_at: Date;
+        consumed_at: Date | null;
+        cancelled_at: Date | null;
+        max_user_id: string | null;
+        max_chat_id: string | null;
+        max_username: string | null;
+      }
+    | undefined;
+  if (!attempt || attempt.user_id !== userId) {
+    throw Object.assign(new Error("Попытка привязки не найдена."), { http: 404 });
+  }
+  if (attempt.consumed_at || attempt.cancelled_at) {
+    throw Object.assign(new Error("Ссылка уже использована или отменена."), { http: 409 });
+  }
+  if (attempt.expires_at.getTime() <= Date.now()) {
+    throw Object.assign(new Error("Срок ссылки истёк. Запросите новую."), { http: 409 });
+  }
+  if (!attempt.max_user_id || !attempt.max_chat_id) {
+    throw Object.assign(new Error("Сначала откройте бота в MAX по ссылке."), { http: 409 });
+  }
+
+  const maxUserId = BigInt(attempt.max_user_id);
+  await client.query(`SELECT pg_advisory_xact_lock(845002, hashtext($1::text))`, [maxUserId.toString()]);
+
+  const other = await findAccountByMaxUserId(client, maxUserId);
+  if (other && other.user_id !== userId) {
+    throw Object.assign(new Error("Этот MAX уже привязан к другому сотруднику."), { http: 409 });
+  }
+
+  await client.query(`DELETE FROM tanbot_max_accounts WHERE user_id = $1::uuid`, [userId]);
+  const inserted = await client.query<{ user_id: string }>(
+    `INSERT INTO tanbot_max_accounts (user_id, max_user_id, max_chat_id, max_username, notifications_enabled, stopped_at)
+     VALUES ($1::uuid, $2, $3, $4, $5, NULL)
+     ON CONFLICT (max_user_id) DO UPDATE SET
+       max_chat_id = EXCLUDED.max_chat_id,
+       max_username = EXCLUDED.max_username,
+       notifications_enabled = EXCLUDED.notifications_enabled,
+       stopped_at = NULL,
+       linked_at = NOW()
+     WHERE tanbot_max_accounts.user_id = EXCLUDED.user_id
+     RETURNING user_id::text`,
+    [userId, attempt.max_user_id, attempt.max_chat_id, attempt.max_username, enableNotifications],
+  );
+  if (!inserted.rows[0] || inserted.rows[0].user_id !== userId) {
+    throw Object.assign(new Error("Этот MAX уже привязан к другому сотруднику."), { http: 409 });
+  }
+
+  await client.query(
+    `UPDATE tanbot_max_link_attempts SET consumed_at = NOW(), confirmed_at = NOW() WHERE id = $1::uuid`,
+    [attemptId],
+  );
+}
+
 export async function confirmTanbotMaxLink(
   pool: Pool,
   userId: string,
@@ -98,69 +169,7 @@ export async function confirmTanbotMaxLink(
 ): Promise<{ linked: true }> {
   const enableNotifications = options.enableNotifications === true;
   await withTransaction(async (client) => {
-    const attemptRow = await client.query(
-      `SELECT id::text, user_id::text, expires_at, consumed_at, cancelled_at,
-              max_user_id::text, max_chat_id::text, max_username
-       FROM tanbot_max_link_attempts
-       WHERE id = $1::uuid
-       FOR UPDATE`,
-      [attemptId],
-    );
-    const attempt = attemptRow.rows[0] as
-      | {
-          id: string;
-          user_id: string;
-          expires_at: Date;
-          consumed_at: Date | null;
-          cancelled_at: Date | null;
-          max_user_id: string | null;
-          max_chat_id: string | null;
-          max_username: string | null;
-        }
-      | undefined;
-    if (!attempt || attempt.user_id !== userId) {
-      throw Object.assign(new Error("Попытка привязки не найдена."), { http: 404 });
-    }
-    if (attempt.consumed_at || attempt.cancelled_at) {
-      throw Object.assign(new Error("Ссылка уже использована или отменена."), { http: 409 });
-    }
-    if (attempt.expires_at.getTime() <= Date.now()) {
-      throw Object.assign(new Error("Срок ссылки истёк. Запросите новую."), { http: 409 });
-    }
-    if (!attempt.max_user_id || !attempt.max_chat_id) {
-      throw Object.assign(new Error("Сначала откройте бота в MAX по ссылке."), { http: 409 });
-    }
-
-    const maxUserId = BigInt(attempt.max_user_id);
-    await client.query(`SELECT pg_advisory_xact_lock(845002, hashtext($1::text))`, [maxUserId.toString()]);
-
-    const other = await findAccountByMaxUserId(client, maxUserId);
-    if (other && other.user_id !== userId) {
-      throw Object.assign(new Error("Этот MAX уже привязан к другому сотруднику."), { http: 409 });
-    }
-
-    await client.query(`DELETE FROM tanbot_max_accounts WHERE user_id = $1::uuid`, [userId]);
-    const inserted = await client.query<{ user_id: string }>(
-      `INSERT INTO tanbot_max_accounts (user_id, max_user_id, max_chat_id, max_username, notifications_enabled, stopped_at)
-       VALUES ($1::uuid, $2, $3, $4, $5, NULL)
-       ON CONFLICT (max_user_id) DO UPDATE SET
-         max_chat_id = EXCLUDED.max_chat_id,
-         max_username = EXCLUDED.max_username,
-         notifications_enabled = EXCLUDED.notifications_enabled,
-         stopped_at = NULL,
-         linked_at = NOW()
-       WHERE tanbot_max_accounts.user_id = EXCLUDED.user_id
-       RETURNING user_id::text`,
-      [userId, attempt.max_user_id, attempt.max_chat_id, attempt.max_username, enableNotifications],
-    );
-    if (!inserted.rows[0] || inserted.rows[0].user_id !== userId) {
-      throw Object.assign(new Error("Этот MAX уже привязан к другому сотруднику."), { http: 409 });
-    }
-
-    await client.query(
-      `UPDATE tanbot_max_link_attempts SET consumed_at = NOW(), confirmed_at = NOW() WHERE id = $1::uuid`,
-      [attemptId],
-    );
+    await finalizeMaxLinkAttemptOnClient(client, attemptId, userId, enableNotifications);
     await insertLinkAudit(client, { userId, actorUserId: userId, action: "link_confirm", detail: { attemptId } });
   });
   return { linked: true };
@@ -195,6 +204,25 @@ export async function setTanbotMaxNotificationsEnabled(pool: Pool, userId: strin
   });
 }
 
+function idempotentMaxLinkedReplayForConsumedAttempt(
+  attempt: {
+    consumed_at: Date | null;
+    user_id: string;
+    max_user_id: string | null;
+  },
+  maxUserId: bigint,
+  account: { user_id: string } | null,
+): "linked" | "invalid" | null {
+  if (!attempt.consumed_at) return null;
+  if (!attempt.max_user_id || attempt.max_user_id !== maxUserId.toString()) {
+    return "invalid";
+  }
+  if (account && account.user_id === attempt.user_id) {
+    return "linked";
+  }
+  return "invalid";
+}
+
 export async function consumeStartTokenForMaxUser(
   pool: Pool,
   config: TanbotMaxStage2Config,
@@ -206,20 +234,25 @@ export async function consumeStartTokenForMaxUser(
     maxFirstName: string | null;
   },
   existingClient?: PoolClient,
-): Promise<"pending_lk_confirm" | "invalid" | "conflict"> {
+): Promise<"linked" | "invalid" | "conflict"> {
   const tokenHash = hashLinkStartToken(input.startToken, config.linkTokenPepper);
   const run = async (client: PoolClient) => {
-    const existingAccount = await findAccountByMaxUserId(client, input.maxUserId);
-    if (existingAccount) {
-      return "conflict";
+    const attempt = await lockLinkAttemptByTokenHash(client, tokenHash);
+    if (!attempt) {
+      return "invalid";
     }
 
-    const attempt = await findLinkAttemptByTokenHash(client, tokenHash);
-    if (!attempt || attempt.consumed_at || attempt.cancelled_at) {
+    const existingAccount = await findAccountByMaxUserId(client, input.maxUserId);
+    const replay = idempotentMaxLinkedReplayForConsumedAttempt(attempt, input.maxUserId, existingAccount);
+    if (replay) {
+      return replay;
+    }
+
+    if (attempt.consumed_at || attempt.cancelled_at || attempt.expires_at.getTime() <= Date.now()) {
       return "invalid";
     }
-    if (attempt.expires_at.getTime() <= Date.now()) {
-      return "invalid";
+    if (existingAccount && existingAccount.user_id !== attempt.user_id) {
+      return "conflict";
     }
 
     const ok = await attachMaxToLinkAttempt(client, {
@@ -238,7 +271,14 @@ export async function consumeStartTokenForMaxUser(
       action: "max_start",
       detail: { attemptId: attempt.id },
     });
-    return "pending_lk_confirm";
+    await finalizeMaxLinkAttemptOnClient(client, attempt.id, attempt.user_id, true);
+    await insertLinkAudit(client, {
+      userId: attempt.user_id,
+      actorUserId: null,
+      action: "link_confirm",
+      detail: { attemptId: attempt.id, via: "max_start" },
+    });
+    return "linked";
   };
   if (existingClient) {
     return run(existingClient);

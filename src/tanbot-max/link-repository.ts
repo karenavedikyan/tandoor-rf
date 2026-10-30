@@ -53,6 +53,22 @@ export async function findLinkAttemptByTokenHash(
   return row.rows[0] ?? null;
 }
 
+export async function lockLinkAttemptByTokenHash(
+  client: PoolClient,
+  tokenHash: string,
+): Promise<LinkAttemptRow | null> {
+  const row = await client.query<LinkAttemptRow>(
+    `SELECT id::text, user_id::text, token_hash, expires_at, consumed_at, cancelled_at,
+            max_user_id::text, max_chat_id::text, max_username, max_first_name,
+            max_started_at, confirmed_at
+     FROM tanbot_max_link_attempts
+     WHERE token_hash = $1
+     FOR UPDATE`,
+    [tokenHash],
+  );
+  return row.rows[0] ?? null;
+}
+
 export async function findPendingLinkAttemptForUser(
   client: PoolClient,
   userId: string,
@@ -109,9 +125,9 @@ export async function attachMaxToLinkAttempt(
 export async function findAccountByMaxUserId(
   client: PoolClient,
   maxUserId: bigint,
-): Promise<{ user_id: string } | null> {
-  const row = await client.query<{ user_id: string }>(
-    `SELECT user_id::text FROM tanbot_max_accounts
+): Promise<{ user_id: string; notifications_enabled: boolean } | null> {
+  const row = await client.query<{ user_id: string; notifications_enabled: boolean }>(
+    `SELECT user_id::text, notifications_enabled FROM tanbot_max_accounts
      WHERE max_user_id = $1 AND stopped_at IS NULL`,
     [maxUserId.toString()],
   );
