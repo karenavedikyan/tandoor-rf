@@ -285,6 +285,11 @@
     );
   }
 
+  function isPassthroughClientObjectUrl(url) {
+    const s = String(url ?? "").trim();
+    return s.startsWith("blob:") || s.startsWith("data:");
+  }
+
   function withAttachmentQuery(baseUrl, key, value) {
     const sep = String(baseUrl).includes("?") ? "&" : "?";
     const v = value === undefined || value === null || value === "" ? "1" : String(value);
@@ -309,7 +314,7 @@
   }
 
   function attachmentThumbUrl(url) {
-    if (!url) return url;
+    if (!url || isPassthroughClientObjectUrl(url)) return url;
     const s = String(url);
     if (/[?&]preview=(thumb|lightbox|1)(&|$)/i.test(s)) {
       return s.replace(/([?&])preview=(?:lightbox|1|true)(?=&|$)/i, "$1preview=thumb");
@@ -318,7 +323,7 @@
   }
 
   function attachmentLightboxUrl(url) {
-    if (!url) return url;
+    if (!url || isPassthroughClientObjectUrl(url)) return url;
     const s = String(url);
     if (/[?&]preview=lightbox(?=&|$)/i.test(s)) return s;
     if (/[?&]preview=thumb(?=&|$)/i.test(s)) {
@@ -332,7 +337,8 @@
   }
 
   function attachmentDownloadUrl(url) {
-    if (!url || String(url).includes("download=1")) return url;
+    if (!url || isPassthroughClientObjectUrl(url)) return url;
+    if (String(url).includes("download=1")) return url;
     return withAttachmentQuery(url, "download");
   }
 

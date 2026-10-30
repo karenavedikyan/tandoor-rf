@@ -489,6 +489,7 @@
     attachOpGen: 0,
     attachBusyGen: null,
     lightboxReturn: null,
+    lightboxLoadId: 0,
     ttPrototypeRole: "manager",
     ttRoleUnsupported: false,
     ttRequestedRole: "",
@@ -1939,6 +1940,7 @@
   }
 
   function closeAttachLightbox() {
+    state.lightboxLoadId += 1;
     const lb = document.querySelector('[data-tt="attach-lightbox"]');
     if (!lb) return;
     lb.hidden = true;
@@ -1996,17 +1998,49 @@
       dl.setAttribute("download", a.name || "file");
     }
     if (img) {
-      img.onload = () => setLightboxPreviewState(lb, "ok");
-      img.onerror = () =>
+      const loadId = ++state.lightboxLoadId;
+      const lightboxLoadTimeoutMs = 30000;
+      let loadTimer = setTimeout(() => {
+        if (state.lightboxLoadId !== loadId) return;
         setLightboxPreviewState(
           lb,
           "error",
-          "Не удалось показать изображение. Попробуйте повторить или скачайте файл.",
+          "Превышено время загрузки изображения. Попробуйте повторить или скачайте файл.",
         );
+      }, lightboxLoadTimeoutMs);
+      const finishLoad = (mode, message) => {
+        if (state.lightboxLoadId !== loadId) return;
+        clearTimeout(loadTimer);
+        setLightboxPreviewState(lb, mode, message);
+      };
+      const awaitPaintReady = () =>
+        new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       setLightboxPreviewState(lb, "loading");
       img.alt = a.name;
+      img.onload = null;
+      img.onerror = null;
       img.removeAttribute("src");
       img.src = previewUrl;
+      void (async () => {
+        try {
+          await Promise.race([
+            img.decode(),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("decode timeout")), lightboxLoadTimeoutMs),
+            ),
+          ]);
+          if (state.lightboxLoadId !== loadId) return;
+          await awaitPaintReady();
+          if (state.lightboxLoadId !== loadId) return;
+          finishLoad("ok");
+        } catch {
+          if (state.lightboxLoadId !== loadId) return;
+          finishLoad(
+            "error",
+            "Не удалось показать изображение. Попробуйте повторить или скачайте файл.",
+          );
+        }
+      })();
     }
     if (cap) cap.textContent = `${a.name} · ${Att().fmtBytes(a.size)}`;
     lb.hidden = false;

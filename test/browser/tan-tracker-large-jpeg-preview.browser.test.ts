@@ -11,8 +11,38 @@ import {
   stopBrowserHttpFixture,
   type BrowserHttpFixture,
 } from "./helpers/http-integration-browser";
+import { assertImageVisuallyPainted, sampleLocatorImagePaint } from "./helpers/image-painted";
 
 const IPHONE_13 = devices["iPhone 13"];
+
+/** 24MP high-entropy JPEG stress fixture (synthetic noise, not a production photo). */
+const STRESS_JPEG_WIDTH = 5712;
+const STRESS_JPEG_HEIGHT = 4284;
+const STRESS_JPEG_MIN_BYTES = 1_000_000;
+const STRESS_JPEG_MAX_BYTES = 10 * 1024 * 1024;
+
+function fillDeterministicNoiseRgb(buf: Buffer): void {
+  let seed = 0x29fec262;
+  for (let i = 0; i < buf.length; i += 1) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    buf[i] = seed & 0xff;
+  }
+}
+
+async function writeLargeStressJpeg(outPath: string): Promise<number> {
+  const pixels = STRESS_JPEG_WIDTH * STRESS_JPEG_HEIGHT * 3;
+  const raw = Buffer.allocUnsafe(pixels);
+  fillDeterministicNoiseRgb(raw);
+  await sharp(raw, { raw: { width: STRESS_JPEG_WIDTH, height: STRESS_JPEG_HEIGHT, channels: 3 } })
+    .jpeg({ quality: 68, mozjpeg: true })
+    .toFile(outPath);
+  const stat = await fs.stat(outPath);
+  assert.ok(
+    stat.size > STRESS_JPEG_MIN_BYTES && stat.size < STRESS_JPEG_MAX_BYTES,
+    `stress JPEG must be >1MB and <10MB (got ${stat.size} bytes)`,
+  );
+  return stat.size;
+}
 
 async function launchRequired(engine: BrowserType, t: { skip: (message?: string) => void }) {
   try {
@@ -34,14 +64,7 @@ describe("tan-tracker large JPEG bounded preview after reload (browser + PG)", {
     fixture = await startBrowserHttpFixture({ attachmentsDir: "var/tt-large-jpeg-preview-browser" });
     await seedTanTrackerBrowserUsers(fixture.databaseUrl, fixture.password);
     largeJpegPath = path.join(os.tmpdir(), `tt-large-preview-${process.pid}.jpg`);
-    await sharp({
-      create: { width: 5712, height: 4284, channels: 3, background: { r: 120, g: 90, b: 60 } },
-    })
-      .jpeg({ quality: 78, mozjpeg: true })
-      .toFile(largeJpegPath);
-    const stat = await fs.stat(largeJpegPath);
-    originalByteSize = stat.size;
-    assert.ok(originalByteSize > 1_000_000, "generated JPEG should be large enough for preview stress");
+    originalByteSize = await writeLargeStressJpeg(largeJpegPath);
   });
 
   after(async () => {
@@ -139,17 +162,20 @@ describe("tan-tracker large JPEG bounded preview after reload (browser + PG)", {
         assert.ok(lbBytes < originalByteSize, "lightbox response must be smaller than original file");
         assert.ok(lbBytes > thumbBytes, "lightbox payload should exceed thumb preview");
 
+        await page.waitForFunction(
+          () => {
+            const loading = document.querySelector('[data-tt="attach-lightbox-loading"]');
+            const img = document.querySelector('[data-tt="attach-lightbox-img"]') as HTMLImageElement | null;
+            return loading?.hasAttribute("hidden") && img && !img.hidden;
+          },
+          undefined,
+          { timeout: 60000 },
+        );
         const lbImg = page.locator('[data-tt="attach-lightbox-img"]');
-        await lbImg.waitFor({ state: "visible", timeout: 60000 });
-        const lbNatural = await lbImg.evaluate((img: HTMLImageElement) => ({
-          w: img.naturalWidth,
-          h: img.naturalHeight,
-          hidden: img.hidden,
-        }));
-        assert.equal(lbNatural.hidden, false);
-        assert.ok(lbNatural.w > 0 && lbNatural.h > 0, "lightbox image must decode on mobile WebKit");
+        const lbPaint = await sampleLocatorImagePaint(lbImg);
+        assertImageVisuallyPainted(lbPaint, engine.name());
         assert.ok(
-          Math.max(lbNatural.w, lbNatural.h) <= 1600,
+          Math.max(lbPaint.w, lbPaint.h) <= 1600,
           "lightbox natural size must match bounded server preview",
         );
         assert.equal(await page.locator('[data-tt="attach-lightbox-fallback"]:not([hidden])').count(), 0);

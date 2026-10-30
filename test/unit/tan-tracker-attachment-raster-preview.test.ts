@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import sharp from "sharp";
 import {
@@ -9,6 +11,12 @@ import {
 } from "../../src/tan-tracker/attachment-preview";
 
 describe("tan-tracker attachment raster preview", () => {
+  it("buildRasterPreviewBuffer configures sharp operation timeout", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src/tan-tracker/attachment-preview.ts"), "utf8");
+    assert.match(src, /\.timeout\(\{\s*seconds:\s*SHARP_OPERATION_TIMEOUT_SECONDS\s*\}\)/);
+    assert.match(src, /SHARP_OPERATION_TIMEOUT_SECONDS\s*=\s*30/);
+  });
+
   it("parseAttachmentServeMode maps query to download, thumb, or lightbox", () => {
     assert.equal(parseAttachmentServeMode({ download: "1" }, "image/jpeg"), "download");
     assert.equal(parseAttachmentServeMode({ preview: "thumb" }, "image/jpeg"), "thumb");

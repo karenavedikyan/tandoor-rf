@@ -22,6 +22,7 @@ const PREVIEW_VARIANTS: AttachmentPreviewVariant[] = ["thumb", "lightbox"];
 
 /** Cap decode work (~120 MP); fixed variants only — no arbitrary dimensions in URLs. */
 const SHARP_INPUT_PIXEL_LIMIT = 120_000_000;
+const SHARP_OPERATION_TIMEOUT_SECONDS = 30;
 
 function queryFlag(value: unknown): boolean {
   const raw = String(value ?? "").trim().toLowerCase();
@@ -84,6 +85,7 @@ export async function buildRasterPreviewBuffer(
       .rotate()
       .resize({ width: maxSide, height: maxSide, fit: "inside", withoutEnlargement: true })
       .jpeg({ quality: variant === "thumb" ? 78 : 85, mozjpeg: true })
+      .timeout({ seconds: SHARP_OPERATION_TIMEOUT_SECONDS })
       .toBuffer();
   } catch {
     throw Object.assign(new Error("Не удалось построить предпросмотр изображения."), { http: 422 });
