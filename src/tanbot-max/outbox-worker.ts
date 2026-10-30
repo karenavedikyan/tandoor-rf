@@ -3,6 +3,7 @@ import type { TanbotMaxStage2Config } from "./stage2-config";
 import type { MaxDeliveryTransport } from "./delivery-transport";
 import { findAccountByUserId } from "./link-repository";
 import { canDeliverTanTrackerOutboxNotification } from "../tanbot-telegram/tan-tracker-access";
+import { transferStillExists } from "../tan-tracker/registry-cleanup/cancel-transfer-notifications";
 import {
   buildTanTrackerStaffOutboxMessage,
   isTanTrackerStaffOutboxEvent,
@@ -72,8 +73,24 @@ export async function processTanbotMaxNotificationOutbox(
         continue;
       }
 
+      const live = await client.query<{ status: string }>(
+        `SELECT status FROM tanbot_notification_outbox WHERE id = $1::uuid`,
+        [row.id],
+      );
+      if (live.rows[0]?.status !== "processing") {
+        continue;
+      }
+
       if (isTanTrackerStaffOutboxEvent(row.event_type)) {
         const transferId = String(row.payload.transferId ?? "");
+        if (transferId && !(await transferStillExists(client, transferId))) {
+          await client.query(
+            `UPDATE tanbot_notification_outbox SET status = 'cancelled', last_error_code = 'TRANSFER_DELETED' WHERE id = $1::uuid`,
+            [row.id],
+          );
+          result.cancelled += 1;
+          continue;
+        }
         const hv = Number(row.payload.handoffVersion ?? 0);
         const allowed = await canDeliverTanTrackerOutboxNotification(
           client,

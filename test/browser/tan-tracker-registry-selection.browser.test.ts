@@ -30,7 +30,7 @@ describe("tan-tracker registry selection browser", { concurrency: false }, () =>
     await page.waitForURL(/\/(clients|profile|work|access|admin)(\/|\?|$)/, { timeout: 25000 });
   }
 
-  it("delete batch button stays disabled when bootstrap canDeleteBeforeReceipt is false", async () => {
+  it("technical admin can batch-delete legacy-audit track via canAdminDeleteTransfer", async () => {
     const pool = new Pool({ connectionString: fixture.databaseUrl, max: 1 });
     const adminId = (
       await pool.query<{ id: string }>(`SELECT id FROM users WHERE email = $1`, [
@@ -47,6 +47,11 @@ describe("tan-tracker registry selection browser", { concurrency: false }, () =>
          VALUES ('tt-br-leg-1', $1, 'Browser legacy audit', 'active', $2, $2, 1, 1, NOW())`,
         [code, party.id],
       );
+      await client.query(
+        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+         VALUES ('tt-br-leg-1', $1::uuid, $2, 'code_verify_ok', '{}'::jsonb)`,
+        [adminId, party.id],
+      );
     } finally {
       client.release();
       await pool.end();
@@ -54,6 +59,40 @@ describe("tan-tracker registry selection browser", { concurrency: false }, () =>
     const context = await fixture.browser.newContext({ viewport: { width: 1280, height: 800 }, baseURL: fixture.baseUrl });
     const page = await context.newPage();
     await login(page, "tt-browser-admin@test.local");
+    await page.goto("/tan-tracker");
+    await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 20000 });
+    await page.locator('[data-tt="registry-select-all"]').click({ force: true });
+    const deleteBtn = page.locator('[data-tt="registry-batch"][data-mode="delete"]');
+    await deleteBtn.waitFor({ state: "visible" });
+    assert.equal(await deleteBtn.isDisabled(), false);
+    assert.equal(await deleteBtn.locator(".tt-selbtn-count").textContent(), "1");
+    await context.close();
+  });
+
+  it("manager batch delete stays disabled after receipt without server DTO", async () => {
+    const pool = new Pool({ connectionString: fixture.databaseUrl, max: 1 });
+    const managerId = (
+      await pool.query<{ id: string }>(`SELECT id FROM users WHERE email = $1`, [
+        "tt-browser-fresh@test.local",
+      ])
+    ).rows[0]!.id;
+    const client = await pool.connect();
+    const code = "BRMGRRCV";
+    try {
+      const party = await ensurePartyForUserOnWrite(client, managerId!, "Browser Fresh", null);
+      await client.query(
+        `INSERT INTO tt_transfers (id, public_code, item_title, status, creator_party_id, holder_party_id,
+          handoff_version, row_version, first_custody_at)
+         VALUES ('tt-br-mgr-rcv', $1, 'Manager received', 'active', $2, $2, 1, 1, NOW())`,
+        [code, party.id],
+      );
+    } finally {
+      client.release();
+      await pool.end();
+    }
+    const context = await fixture.browser.newContext({ viewport: { width: 1280, height: 800 }, baseURL: fixture.baseUrl });
+    const page = await context.newPage();
+    await login(page, "tt-browser-fresh@test.local");
     await page.goto("/tan-tracker");
     await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 20000 });
     await page.locator('[data-tt="registry-select-all"]').click({ force: true });

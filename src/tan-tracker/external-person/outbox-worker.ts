@@ -1,4 +1,8 @@
 import type { Pool, PoolClient } from "pg";
+import {
+  transferInternalIdFromExternalPersonOutboxKey,
+  transferStillExists,
+} from "../registry-cleanup/cancel-transfer-notifications";
 
 const MAX_ATTEMPTS = 8;
 
@@ -27,8 +31,9 @@ async function loadPending(client: PoolClient, channel: "telegram" | "max", limi
     messenger_chat_id: string;
     body: string;
     attempt_count: number;
+    idempotency_key: string;
   }>(
-    `SELECT id::text, person_id::text, messenger_chat_id, body, attempt_count
+    `SELECT id::text, person_id::text, messenger_chat_id, body, attempt_count, idempotency_key
      FROM tt_external_person_message_outbox
      WHERE channel = $1 AND status = 'pending' AND next_attempt_at <= NOW()
      ORDER BY created_at
@@ -86,6 +91,25 @@ export async function processExternalPersonMessageOutbox(
            WHERE id = $1::uuid`,
           [row.id],
         );
+        continue;
+      }
+
+      const live = await client.query<{ status: string; idempotency_key: string }>(
+        `SELECT status, idempotency_key FROM tt_external_person_message_outbox WHERE id = $1::uuid`,
+        [row.id],
+      );
+      const liveRow = live.rows[0];
+      if (!liveRow || liveRow.status !== "processing") {
+        continue;
+      }
+
+      const linkedTransferId = transferInternalIdFromExternalPersonOutboxKey(liveRow.idempotency_key);
+      if (linkedTransferId && !(await transferStillExists(client, linkedTransferId))) {
+        await client.query(
+          `UPDATE tt_external_person_message_outbox SET status = 'cancelled', last_error_code = 'TRANSFER_DELETED' WHERE id = $1::uuid`,
+          [row.id],
+        );
+        result.cancelled += 1;
         continue;
       }
 

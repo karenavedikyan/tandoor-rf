@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { transferHasConfirmedFirstCustody, loadTransferForCustodyCheck } from "../custody-state";
+import { cancelQueuedNotificationsForTransferDelete } from "./cancel-transfer-notifications";
 import { clearPersonalFlagsForTransfer } from "./personal-flags";
 
 export async function deleteTransferBeforeFirstCustody(
@@ -31,6 +32,7 @@ export async function deleteTransferBeforeFirstCustody(
      VALUES ($1, $2::uuid, $3::uuid)`,
     [publicCode, actor.userId, actor.partyId],
   );
+  await cancelQueuedNotificationsForTransferDelete(client, row.id);
   await clearPersonalFlagsForTransfer(client, row.id);
   await client.query(`DELETE FROM tt_transfers WHERE id = $1`, [row.id]);
   return { ok: true, publicCode };

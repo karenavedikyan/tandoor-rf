@@ -522,6 +522,7 @@
     messengerInviteError: "",
     messengerInviteManualKey: null,
     messengerInviteManualVisible: false,
+    messengerInviteActionGen: 0,
     registryPersonal: null,
     registryPersonalView: "main",
     registrySelection: [],
@@ -622,7 +623,20 @@
   function resetMessengerInviteManualFallback() {
     state.messengerInviteManualKey = null;
     state.messengerInviteManualVisible = false;
+    state.messengerInviteBusy = false;
+    state.messengerInviteActionGen += 1;
     pendingClipboardFallbackSelect = null;
+  }
+
+  function messengerInviteActionStillValid(token, url) {
+    if (!token || state.messengerInviteActionGen !== token.gen) return false;
+    if (state.orderId !== token.orderId) return false;
+    const cur = orders.find((x) => x.id === token.orderId);
+    if (!cur) return false;
+    if (messengerPortalCacheKey(cur) !== token.recipientKey) return false;
+    if (url && !messengerPortalUrlValid(cur)) return false;
+    if (url && cur.messengerPortalUrl !== url) return false;
+    return true;
   }
 
   function messengerInviteShareSupported() {
@@ -864,15 +878,29 @@
       renderTracker();
       return;
     }
+    const token = {
+      orderId: o.id,
+      recipientKey: messengerPortalCacheKey(o),
+      gen: state.messengerInviteActionGen,
+    };
     const finish = (url) => {
       state.messengerInviteBusy = false;
-      if (!url) {
+      if (!messengerInviteActionStillValid(token, url)) {
         renderTracker();
         return;
       }
-      void deliverMessengerInvitation(o, url);
+      const cur = orders.find((x) => x.id === token.orderId);
+      if (!url || !cur) {
+        renderTracker();
+        return;
+      }
+      void deliverMessengerInvitation(cur, url);
     };
     if (messengerPortalUrlValid(o)) {
+      if (!messengerInviteActionStillValid(token, o.messengerPortalUrl)) {
+        renderTracker();
+        return;
+      }
       void deliverMessengerInvitation(o, o.messengerPortalUrl);
       return;
     }

@@ -99,15 +99,11 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
           window.__ttInvitationCopied = text; return Promise.resolve();
         } }
       })`);
-      const inviteResp = holderPage.waitForResponse(
-        (r) =>
-          r.request().method() === "POST" &&
-          r.url().includes("/messenger-invite") &&
-          r.status() === 201,
-        { timeout: 30000 },
-      );
+      let invitePosts = 0;
+      holderPage.on("request", (req) => {
+        if (req.method() === "POST" && req.url().includes("/messenger-invite")) invitePosts += 1;
+      });
       await holderPage.click('[data-tt="messenger-invite-action"]');
-      await inviteResp;
       await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 15000 });
       const copiedMessage = await holderPage.evaluate("window.__ttInvitationCopied");
       assert.match(String(copiedMessage), /Messenger holder UI box/);
@@ -116,6 +112,8 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       assert.equal(urlMatches.length, 1);
       assert.match(urlMatches[0]!, /\/tan-tracker\/recipient\?mst=er/);
       assert.equal(await holderPage.locator('[data-tt="messenger-invite-message-text"]').count(), 0);
+      assert.ok(qrPayload!.includes("mst=er"), "QR must use current messenger invitation token");
+      const portalUrl = urlMatches[0]!;
 
       const guestContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
       try {
