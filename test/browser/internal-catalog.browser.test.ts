@@ -29,7 +29,8 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
     const products = options.products ?? catalogueFixture();
     const parsed = parseProductsJson(Buffer.from(JSON.stringify(products)));
-    const control = { failList: false, hold: "", release: null as (() => void) | null };
+    const control = { failList: false, hold: "", release: null as (() => void) | null,
+      imported: false, uploadCalls: 0, uploadHash: "", failUpload: false };
     // Synthetic UI only. Real HTML/admin authorization is covered in integration.
     await page.route(url => url.pathname === "/internal-catalog", async route => {
       await route.fulfill({ contentType: "text/html",
@@ -38,9 +39,14 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     await page.route("**/api/**", async route => {
       const url = new URL(route.request().url()), pathname = url.pathname;
       let status = 200, data: unknown;
-      if (pathname === "/api/internal-catalog/meta") {
+      if (pathname === "/api/internal-catalog/bootstrap") {
+        control.uploadCalls++; control.uploadHash = route.request().headers()["x-content-sha256"];
+        status = control.failUpload ? 400 : 201;
+        data = { status: control.failUpload ? "invalid" : "imported" };
+        if (!control.failUpload) control.imported = true;
+      } else if (pathname === "/api/internal-catalog/meta") {
         status = options.metaStatus ?? 200;
-        data = status !== 200 ? { error: { message: "Нет доступа" } } : { imagesConfigured: options.images === true, snapshot: options.empty ? null : {
+        data = status !== 200 ? { error: { message: "Нет доступа" } } : { imagesConfigured: options.images === true, snapshot: options.empty && !control.imported ? null : {
           id: fixtureGuid(900), sha256: parsed.sha256, sourceName: "synthetic.json",
           importedAt: "2026-10-31T08:00:00Z", summary: parsed.summary,
         } };
@@ -82,6 +88,23 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     await page.waitForFunction(expected => document.querySelector("#ic-count")?.textContent === `Найдено: ${expected} из 30` &&
       document.querySelector("#ic-results")?.getAttribute("aria-busy") === "false", count);
   }
+  it("uploads only after explicit confirmation and removes the form after success", async () => {
+    const { page, context, errors, control } = await open({ empty: true, mobile: true });
+    try {
+      const button = page.getByRole("button", { name: "Загрузить каталог", exact: true });
+      assert.equal(await button.isDisabled(), true);
+      await page.locator("#ic-import-file").setInputFiles({ name: "products.json", mimeType: "application/json", buffer: Buffer.from("synthetic bytes") });
+      assert.equal(control.uploadCalls, 0); assert.equal(await button.isEnabled(), true);
+      control.failUpload = true; await button.click();
+      await page.getByText("Не удалось принять выгрузку. Проверьте JSON и повторите попытку.", { exact: true }).waitFor();
+      assert.equal(control.uploadCalls, 1);
+      control.failUpload = false; await button.click(); await page.locator(".ic-card").first().waitFor();
+      assert.equal(control.uploadCalls, 2); assert.match(control.uploadHash, /^[a-f0-9]{64}$/);
+      assert.equal(await page.locator("#ic-import-file").count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
   it("hides catalogue navigation and blocks UI boot for non-admin staff", async () => {
     const { page, context, errors } = await open({ role: "manager", forbidden: true, mobile: true });
     try {
@@ -190,7 +213,7 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     assert.equal(await empty.page.locator(".ic-card").count(), 0); await empty.context.close();
     const denied = await open({ metaStatus: 403 });
     await denied.page.getByRole("heading", { name: "Каталог недоступен" }).waitFor();
-    assert.match(await denied.page.locator("#ic-state").textContent() ?? "", /Нет доступа/);
+    assert.match(await denied.page.locator("#ic-state").textContent() ?? "", /только администратору/);
     assert.equal(await denied.page.locator("#ic-app").isVisible(), false); await denied.context.close();
   });
   it("fits 375px, opens/closes a full-height card, and remains usable in dark/large type", async () => {

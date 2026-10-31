@@ -1,8 +1,9 @@
 import express from "express";
+import { csrfOriginProtection } from "../middleware/csrf";
 import { requirePool } from "../db/pool";
 import { internalCatalogAccess } from "./access";
-import { GUID, normalizeSearch } from "./model";
-import { loadProduct, loadSnapshot, searchProducts } from "./repository";
+import { GUID, normalizeSearch, MAX_JSON_BYTES, parseProductsJson } from "./model";
+import { importSnapshot, loadProduct, loadSnapshot, searchProducts } from "./repository";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "./images";
 
 export function createInternalCatalogRouter(): express.Router {
@@ -13,6 +14,33 @@ export function createInternalCatalogRouter(): express.Router {
   function invalid(res: express.Response, message = "Проверьте параметры поиска.") {
     res.status(400).json({ error: { code: "BAD_REQUEST", message } });
   }
+  const upload = express.raw({ type: "application/octet-stream", limit: MAX_JSON_BYTES });
+  router.post("/bootstrap", csrfOriginProtection,
+    (req: express.Request, res: express.Response, next: express.NextFunction) => upload(req, res, error => {
+      if (error) {
+        res.status(error.type === "entity.too.large" ? 413 : 400)
+          .json({ error: { code: "INVALID_FILE", message: "Проверьте размер и формат файла." } }); return;
+      }
+      next();
+    }),
+    wrap(async (req, res) => {
+      if (await loadSnapshot(requirePool())) {
+        res.status(409).json({ error: { code: "CATALOG_NOT_EMPTY", message: "Каталог уже загружен." } }); return;
+      }
+      const expected = req.get("x-content-sha256") ?? "";
+      if (!req.is("application/octet-stream") || !Buffer.isBuffer(req.body) ||
+          !/^[a-f0-9]{64}$/.test(expected)) { invalid(res, "Проверьте файл и контрольную сумму."); return; }
+      try {
+        const parsed = parseProductsJson(req.body);
+        if (parsed.sha256 !== expected) { invalid(res, "Контрольная сумма не совпала."); return; }
+        res.status(201).json(await importSnapshot(requirePool(), parsed, "products.json", expected, true));
+      } catch (error) {
+        if (error instanceof Error && error.message === "CATALOG_NOT_EMPTY") {
+          res.status(409).json({ error: { code: "CATALOG_NOT_EMPTY", message: "Каталог уже загружен." } }); return;
+        }
+        invalid(res, "Выгрузка не прошла проверку. Данные каталога не изменены.");
+      }
+    }));
   function field(req: express.Request, name: string, max: number): string | null {
     const value = req.query[name];
     return value === undefined ? "" : typeof value === "string" && value.length <= max ? value : null;

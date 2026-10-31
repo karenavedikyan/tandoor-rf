@@ -72,6 +72,26 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
       assert.equal(denied.body.snapshot, undefined);
     }
   });
+  it("rejects unauthorized, cross-origin, malformed and oversized initial uploads without writes", async () => {
+    const bytes = Buffer.from(JSON.stringify(catalogueFixture()));
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const send = (session?: string, origin?: string, body = bytes, checksum = hash) => {
+      let call = request(app).post("/api/internal-catalog/bootstrap").set("Content-Type", "application/octet-stream")
+        .set("X-Content-Sha256", checksum);
+      if (session) call = call.set("Cookie", session);
+      if (origin) call = call.set("Origin", origin);
+      return call.send(body);
+    };
+    assert.equal((await send(undefined, ORIGIN)).status, 401);
+    for (const session of nonAdminCookies) assert.equal((await send(session, ORIGIN)).status, 403);
+    assert.equal((await send(cookie)).status, 403);
+    assert.equal((await send(cookie, "https://other.test")).status, 403);
+    assert.equal((await send(cookie, ORIGIN, bytes, "bad")).status, 400);
+    assert.equal((await send(cookie, ORIGIN, bytes, "0".repeat(64))).status, 400);
+    assert.equal((await send(cookie, ORIGIN, Buffer.from("invalid JSON"))).status, 400);
+    assert.equal((await send(cookie, ORIGIN, Buffer.alloc(40 * 1024 * 1024 + 1))).status, 413);
+    assert.equal((await get("/meta")).body.snapshot, null);
+  });
   it("limits HTML, API and photos to admins, including every other business role", async () => {
     const paths = ["/internal-catalog", "/internal-catalog.html", "/api/internal-catalog/meta",
       "/api/internal-catalog/products", "/api/internal-catalog/products/" + fixtureGuid(1),
@@ -114,13 +134,24 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     const before = await pool.query("SELECT * FROM onec_catalog_state");
     const count = await pool.query("SELECT COUNT(*) FROM onec_catalog_products");
     const parsed = parseProductsJson(Buffer.from(JSON.stringify(catalogueFixture())));
-    const result = await importSnapshot(pool, parsed, "synthetic.json", parsed.sha256);
+    const response = await request(app).post("/api/internal-catalog/bootstrap").set("Cookie", cookie).set("Origin", ORIGIN)
+      .set("Content-Type", "application/octet-stream").set("X-Content-Sha256", parsed.sha256)
+      .send(Buffer.from(JSON.stringify(catalogueFixture())));
+    assert.equal(response.status, 201);
+    const result = response.body;
     assert.equal(result.status, "imported"); snapshotId = result.snapshotId;
     const duplicate = await importSnapshot(pool, parsed, "same-content.json", parsed.sha256);
     assert.equal(duplicate.status, "unchanged"); assert.equal(duplicate.snapshotId, snapshotId);
     assert.deepEqual((await pool.query("SELECT * FROM onec_catalog_state")).rows, before.rows);
     assert.deepEqual((await pool.query("SELECT COUNT(*) FROM onec_catalog_products")).rows, count.rows);
     assert.equal(Number((await pool.query("SELECT COUNT(*) FROM internal_catalog_products")).rows[0].count), 30);
+    const replacement = catalogueFixture(); replacement[0].name = "Forbidden replacement";
+    const bytes = Buffer.from(JSON.stringify(replacement));
+    const repeated = await request(app).post("/api/internal-catalog/bootstrap").set("Cookie", cookie).set("Origin", ORIGIN)
+      .set("Content-Type", "application/octet-stream").set("X-Content-Sha256", createHash("sha256").update(bytes).digest("hex")).send(bytes);
+    assert.equal(repeated.status, 409);
+    await assert.rejects(importSnapshot(pool, parsed, "race.json", parsed.sha256, true), /CATALOG_NOT_EMPTY/);
+    assert.equal((await loadSnapshot(pool))?.id, snapshotId);
   });
   it("searches names, article, GUID, multiple words and ё without interpreting wildcards", async () => {
     const staffResult = await request(app).get("/api/internal-catalog/products").set("Cookie", staffCookie);

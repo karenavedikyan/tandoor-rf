@@ -38,11 +38,48 @@
     try { result = await api.apiRequest("/api/internal-catalog" + path); }
     catch (error) { throw new Error(api.mapRequestError(error, api.REQUEST_TIMEOUT_MS / 1000)); }
     if (result.response.status === 401) { window.location.replace("/login"); throw new Error("Требуется вход в личный кабинет."); }
-    if (result.response.status === 403) throw new Error("Нет доступа. Каталог доступен сотрудникам с правами просмотра раздела «Клиенты».");
+    if (result.response.status === 403) throw new Error("Каталог доступен только администратору для тестирования.");
     if (!result.response.ok) throw new Error(api.extractErrorMessage(result.data, "Не удалось загрузить данные. Попробуйте ещё раз."));
     return result.data;
   }
   function tags(items) { return '<div class="ic-sections">' + items.map(function (x) { return '<span class="ic-tag">' + esc(x.name) + "</span>"; }).join("") + "</div>"; }
+  function initialUpload() {
+    state("Каталог ещё не загружен", "Выберите проверенный products.json. Он создаст отдельный справочник; действующие данные 1С и трекер не изменятся.", false);
+    var form = document.createElement("form");
+    form.innerHTML = '<label for="ic-import-file">Файл выгрузки JSON, до 40 МиБ</label>' +
+      '<p><input id="ic-import-file" type="file" accept=".json,application/json" required></p>' +
+      '<p id="ic-import-status" role="status" aria-live="polite"></p>' +
+      '<button class="ic-button ic-button-primary" type="submit" disabled>Загрузить каталог</button>';
+    el.state.appendChild(form);
+    var input = byId("import-file"), message = byId("import-status"), button = form.querySelector("button");
+    input.onchange = function () {
+      var file = input.files[0];
+      button.disabled = !file || file.size > 40 * 1024 * 1024 || !file.size;
+      message.textContent = file ? (button.disabled ? "Выберите непустой файл до 40 МиБ." :
+        file.name + " · " + number(file.size) + " байт. Нажмите «Загрузить каталог» для подтверждения.") : "";
+    };
+    form.onsubmit = async function (event) {
+      event.preventDefault();
+      var file = input.files[0]; if (!file || button.disabled) return;
+      input.disabled = true; button.disabled = true; button.textContent = "Загружаем каталог…";
+      var controller = new AbortController(), deadline = setTimeout(function () { controller.abort(); }, 120000);
+      try {
+        var bytes = await file.arrayBuffer();
+        var hash = await crypto.subtle.digest("SHA-256", bytes);
+        var hex = Array.from(new Uint8Array(hash)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+        var response = await fetch("/api/internal-catalog/bootstrap", { method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/octet-stream", "X-Content-Sha256": hex },
+          body: bytes, signal: controller.signal });
+        if (response.ok || response.status === 409) { await boot(); return; }
+        throw new Error(response.status === 401 || response.status === 403 ? "Нет доступа. Войдите как администратор." :
+          "Не удалось принять выгрузку. Проверьте JSON и повторите попытку.");
+      } catch (error) {
+        message.textContent = error.name === "AbortError" ? "Ответ не получен вовремя. Обновите страницу, чтобы проверить результат загрузки." :
+          error.message || "Ошибка загрузки. Проверьте соединение.";
+        input.disabled = false; button.disabled = false; button.textContent = "Загрузить каталог";
+      } finally { clearTimeout(deadline); }
+    };
+  }
   function productUrl(guid) { var p = paramsWithFilters(); p.set("product", guid); return url(p); }
   var imagesConfigured = false;
   function imageUrl(guid, fileGuid) {
@@ -181,7 +218,7 @@
       snapshot = data.snapshot;
       imagesConfigured = data.imagesConfigured === true;
       byId("photo-status").textContent = imagesConfigured ? "Источник фотографий задан; доступность каждого файла проверяется при загрузке." : "Изображения ещё не подключены.";
-      if (!snapshot) { state("Каталог ещё не загружен", "Данные появятся после загрузки проверенного products.json администратором.", false); return; }
+      if (!snapshot) { initialUpload(); return; }
       el.section.innerHTML = '<option value="">Все разделы</option>' + snapshot.summary.sections.map(function (s) {
         return '<option value="' + esc(s.guid) + '">' + esc(s.name) + "</option>";
       }).join("");

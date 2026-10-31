@@ -57,6 +57,7 @@
 .ic-empty { grid-column: 1 / -1; }
 .ic-state h2, .ic-empty h2 { font-size: 1.125rem; margin: 0 0 var(--ic-space-2); }
 .ic-state p, .ic-empty p { font-size: 1rem; color: var(--rf-text-muted); margin: 0 0 var(--ic-space-4); }
+.ic-state input[type="file"] { max-width: 100%; min-height: 44px; }
 .ic-detail { width: min(760px, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); padding: 0; border: 1px solid var(--rf-border); border-radius: .75rem; background: var(--rf-surface); color: var(--rf-text); font: inherit; overflow: auto; }
 .ic-detail::backdrop { background: rgb(12 22 16 / .55); }
 .ic-detail-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--ic-space-4); position: sticky; top: 0; padding: var(--ic-space-4) var(--ic-space-6); background: var(--rf-surface); border-bottom: 1px solid var(--rf-border); z-index: 1; }

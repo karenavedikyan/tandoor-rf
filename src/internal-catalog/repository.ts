@@ -14,12 +14,15 @@ export async function loadSnapshot(db: Pool | PoolClient, id?: string): Promise<
   return result.rows[0] ? dto(result.rows[0]) : null;
 }
 /** Only this isolated reference store is written; XML/business catalogue tables are never touched. */
-export async function importSnapshot(pool: Pool, parsed: ParsedSnapshot, sourceName: string, expectedSha: string) {
+export async function importSnapshot(pool: Pool, parsed: ParsedSnapshot, sourceName: string, expectedSha: string, firstOnly = false) {
   if (expectedSha !== parsed.sha256) throw new Error("HASH_MISMATCH");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1)", [902_451_017]);
+    if (firstOnly && (await client.query("SELECT id FROM internal_catalog_snapshots LIMIT 1")).rowCount) {
+      throw new Error("CATALOG_NOT_EMPTY");
+    }
     const existing = await client.query<{ id: string }>("SELECT id FROM internal_catalog_snapshots WHERE sha256=$1", [parsed.sha256]);
     if (existing.rows[0]) {
       await client.query("COMMIT");
