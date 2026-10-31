@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
@@ -162,6 +162,47 @@ describe("external request wizard photo + comment UX (browser)", { concurrency: 
   after(async () => {
     await stopBrowserHttpFixture(fixture);
   });
+
+  for (const engine of [chromium, webkit] as const) {
+    it(`recipient selection is explicit before next (${engine.name()} mobile)`, async () => {
+      const browser = await engine.launch({ headless: true });
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 }, baseURL: fixture.baseUrl });
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", error => errors.push(error.message));
+      try {
+        await openExternalHome(page, fixture.baseUrl, fixture.estToken!);
+        await startWizardItemStep(page);
+        await page.locator('[data-tt="ext-request-next"]').click();
+        await page.locator('[data-tt-field="extComment"]').waitFor();
+        await page.fill('[data-tt-field="extComment"]', "Synthetic recipient selection");
+        await page.locator('[data-tt="ext-request-next"]').click();
+        const recipient = page.locator('[data-tt="ext-pick-recipient"]').filter({ hasText: "Wizard Staff" }).first();
+        await recipient.waitFor();
+        const next = page.locator('[data-tt="ext-request-next"]');
+        assert.equal(await next.isDisabled(), true, "must explain required selection rather than silently ignore Next");
+        assert.match(await page.locator('[data-tt="ext-recipient-hint"]').innerText(), /нажмите.*карточк/iu);
+        await recipient.click();
+        assert.equal(await recipient.getAttribute("aria-pressed"), "true");
+        assert.equal(await next.isEnabled(), true);
+        assert.match(await page.locator('[data-tt="ext-recipient-hint"]').innerText(), /получатель выбран/iu);
+        await mkdir("/home/user/workspace/tandoor-recipient-choice-qa", { recursive: true });
+        await page.screenshot({
+          path: `/home/user/workspace/tandoor-recipient-choice-qa/${engine.name()}-selected.png`, fullPage: true,
+        });
+        await next.click();
+        await page.locator('[data-tt="ext-due-today"]').waitFor();
+        await page.locator('[data-tt="ext-request-back"]').click();
+        await recipient.waitFor();
+        assert.equal(await recipient.getAttribute("aria-pressed"), "true");
+        assert.equal(await next.isEnabled(), true, "Back preserves selected recipient");
+        assert.deepEqual(errors, []);
+      } finally {
+        await context.close();
+        await browser.close();
+      }
+    });
+  }
 
   for (const engine of [chromium, webkit] as const) {
     for (const mobile of [false, true] as const) {

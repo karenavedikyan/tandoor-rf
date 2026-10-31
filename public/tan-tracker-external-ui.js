@@ -572,6 +572,11 @@
     } else if (phase === "recipient") {
       body =
         extRequestBotBubble("Кому передать?") +
+        '<p class="tt-muted" data-tt="ext-recipient-hint" role="status">' +
+        E(f.recipientUserId
+          ? "Получатель выбран. Нажмите «Далее»."
+          : "Выберите получателя: нажмите на карточку ниже.") +
+        "</p>" +
         '<div class="tt-contact-pick tt-ext-chat-pick" data-tt="ext-request-recipients">' +
         staffOptions(st.actingContactId)
           .map(function (c) {
@@ -624,7 +629,8 @@
     var uploadsPending = hPending ? hPending.hasPendingUploads(f.photos) : false;
     var saveInFlight = !!st.extRequestPhaseSaveInFlight;
     var nextDisabled =
-      uploadsPending || saveInFlight ? ' disabled aria-disabled="true"' : "";
+      uploadsPending || saveInFlight || (phase === "recipient" && !f.recipientUserId)
+        ? ' disabled aria-disabled="true"' : "";
     var viewer =
       st.extRequestViewerUrl
         ? '<div class="tt-ext-photo-viewer" data-tt="ext-photo-viewer" role="dialog" aria-modal="true" aria-label="Просмотр фото">' +
@@ -1038,6 +1044,9 @@
           return c.id === st.extRequestForm.recipientId;
         });
         st.extRequestForm.recipientUserId = (picked && (picked.userId || picked.employeeId)) || "";
+        st.error = st.extRequestForm.recipientUserId
+          ? ""
+          : "Не удалось выбрать получателя. Обновите список передач и попробуйте снова.";
         if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
         return;
       }
