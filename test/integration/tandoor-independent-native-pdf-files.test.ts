@@ -86,8 +86,8 @@ async function actor(channel: Channel, staff: boolean): Promise<Actor> {
     const user = await createTestUser({ databaseUrl, email: `pdf-${id}@test.local`, password: "StrongPass123!",
       fullName: `Synthetic PDF Sender ${id}`, role: "admin" });
     await ensurePartyForUserOnWrite(getPool()!, user.id, `Synthetic PDF Sender ${id}`, null);
-    await getPool()!.query(`INSERT INTO tanbot_${channel}_accounts(user_id,${channel}_user_id,${channel}_chat_id,enabled,notifications_enabled)
-      VALUES($1,$2,$3,TRUE,TRUE)`, [user.id, String(id), String(chatId)]);
+    await getPool()!.query(`INSERT INTO tanbot_${channel}_accounts(user_id,${channel}_user_id,${channel}_chat_id,notifications_enabled)
+      VALUES($1,$2,$3,TRUE)`, [user.id, String(id), String(chatId)]);
     return { channel, id, chatId, staffId: user.id };
   }
   const partyId = randomUUID(), personId = randomUUID(), phone = `+7997${String(id).padStart(7, "0")}`;
