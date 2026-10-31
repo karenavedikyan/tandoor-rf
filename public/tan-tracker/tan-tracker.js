@@ -452,6 +452,12 @@
   let detailDockObserver = null;
   let lastViewKey = "";
   let pendingClipboardFallbackSelect = null;
+  let createWizardRenderGen = 0;
+  let createWizardScrollRaf = 0;
+  /** @type {null | { type: string; phase?: string; anchor?: string; selector?: string; focus?: boolean; preferNext?: boolean }} */
+  let pendingCreateWizardNav = null;
+  const CREATE_WIZARD_HEAD_MARGIN = 88;
+  const CREATE_WIZARD_DOCK_MARGIN = 140;
 
   function trackerShellLive(main) {
     return !!(main && main.querySelector("#tt-root") && main.querySelector("#tt-content"));
@@ -485,6 +491,7 @@
     extDeclineConfirmOrderId: null,
     createPhase: "item",
     createReturnPhase: null,
+    createReviewScrollAnchor: null,
     attachStaging: [],
     attachOrderStaging: [],
     attachError: "",
@@ -1361,7 +1368,7 @@
     return null;
   }
 
-  function restoreFocus(snap) {
+  function restoreFocus(snap, opts = {}) {
     if (!snap) return;
     requestAnimationFrame(() => {
       const el =
@@ -1369,8 +1376,196 @@
           ? document.querySelector('[data-tt="search"]')
           : document.querySelector(`[data-tt-field="${snap.field}"]`);
       if (!el) return;
-      el.focus();
+      try {
+        el.focus({ preventScroll: !!opts.preventScroll });
+      } catch (_) {
+        el.focus();
+      }
       if (snap.start != null && el.setSelectionRange) el.setSelectionRange(snap.start, snap.end);
+    });
+  }
+
+  function isInternalCreateWizardView() {
+    return state.view === "create" && !isExternalShell();
+  }
+
+  function queueCreateWizardNav(nav) {
+    pendingCreateWizardNav = nav;
+  }
+
+  function takeCreateWizardNav() {
+    const nav = pendingCreateWizardNav;
+    pendingCreateWizardNav = null;
+    return nav;
+  }
+
+  function cancelCreateWizardScrollJob() {
+    createWizardRenderGen += 1;
+    if (createWizardScrollRaf) {
+      cancelAnimationFrame(createWizardScrollRaf);
+      createWizardScrollRaf = 0;
+    }
+  }
+
+  function createWizardNestedScrollSnapshot(root) {
+    const nested = [];
+    if (!root) return nested;
+    root.querySelectorAll(".tt-wizard-contact-list").forEach((el) => {
+      if (el.scrollHeight > el.clientHeight + 1) nested.push({ el, top: el.scrollTop });
+    });
+    return nested;
+  }
+
+  function restoreCreateWizardNestedScroll(nested) {
+    for (const row of nested || []) {
+      if (document.contains(row.el)) row.el.scrollTop = row.top;
+    }
+  }
+
+  function reviewAnchorSelector(name) {
+    if (name === "relay") return '[data-tt-wizard-anchor="review-relay"], [data-tt="review-handoff"]';
+    return `[data-tt-wizard-anchor="review-${name}"]`;
+  }
+
+  function nextReviewActionAfterAnchor(anchor, f) {
+    const form = f || state.form || defaultCreateForm();
+    const order = ["item", "recipient", "relay", "due", "files", "comment", "submit"];
+    const start = Math.max(0, order.indexOf(anchor));
+    for (let i = start + 1; i < order.length; i++) {
+      const key = order[i];
+      if (key === "due" && !form.due) return reviewAnchorSelector("due");
+      if (key === "files" && !state.attachStaging.length) return reviewAnchorSelector("files");
+      if (key === "comment" && !(form.comment || "").trim()) return reviewAnchorSelector("comment");
+      if (key === "submit") return '[data-tt="create-wizard-submit"]';
+    }
+    return '[data-tt="create-wizard-submit"]';
+  }
+
+  function createWizardPhaseRevealSelector(phase) {
+    const f = state.form || defaultCreateForm();
+    if (phase === "item") return '[data-tt-field="item"]';
+    if (phase === "files") return ".tt-att-picker, [data-tt=\"create-wizard-next\"]";
+    if (phase === "edit-comment") return '[data-tt-field="comment"]';
+    if (phase === "edit-due") return '[data-tt-field="due"]';
+    if (phase === "recipient-new-phone") return '[data-tt-field="newPhone"]';
+    if (phase === "recipient-new-name") return '[data-tt-field="newName"]';
+    if (phase === "relay-pick") return '[data-tt-field="pickQ"]';
+    if (phase === "recipient") {
+      if (f.recipientStep === "pick-list") return '[data-tt-field="pickQ"]';
+      if (f.recipientStep === "confirmed") return '[data-tt="create-wizard-next"]';
+      return '[data-tt="create-recipient-browse"], [data-tt="recipient-choose"]';
+    }
+    if (phase === "review") return '[data-tt="create-wizard-submit"], [data-tt-wizard-anchor="review-due"]';
+    return '[data-tt="create-wizard-next"]';
+  }
+
+  function createWizardPhaseShouldFocus(phase) {
+    if (phase === "files" || phase === "review") return false;
+    if (phase === "recipient") {
+      const step = state.form?.recipientStep;
+      return step === "pick-list";
+    }
+    return (
+      phase === "item" ||
+      phase === "edit-comment" ||
+      phase === "edit-due" ||
+      phase === "recipient-new-phone" ||
+      phase === "recipient-new-name" ||
+      phase === "relay-pick"
+    );
+  }
+
+  function queryFirstVisible(selectors) {
+    for (const sel of selectors.split(",")) {
+      const el = document.querySelector(sel.trim());
+      if (el) return el;
+    }
+    return null;
+  }
+
+  function revealCreateWizardElement(el, behavior) {
+    if (!el || !document.contains(el)) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const beh = reduce ? "auto" : behavior;
+    let node = el.parentElement;
+    while (node && node !== document.documentElement) {
+      const style = getComputedStyle(node);
+      const scrollable =
+        (/(auto|scroll)/.test(style.overflowY) || node.classList.contains("tt-wizard-contact-list")) &&
+        node.scrollHeight > node.clientHeight + 1;
+      if (scrollable) {
+        const cr = node.getBoundingClientRect();
+        const er = el.getBoundingClientRect();
+        if (er.top < cr.top + CREATE_WIZARD_HEAD_MARGIN) {
+          node.scrollBy({ top: er.top - cr.top - CREATE_WIZARD_HEAD_MARGIN, behavior: beh });
+        } else if (er.bottom > cr.bottom - CREATE_WIZARD_DOCK_MARGIN) {
+          node.scrollBy({ top: er.bottom - cr.bottom + CREATE_WIZARD_DOCK_MARGIN, behavior: beh });
+        }
+      }
+      node = node.parentElement;
+    }
+    const r = el.getBoundingClientRect();
+    const vh = window.innerHeight;
+    let delta = 0;
+    if (r.top < CREATE_WIZARD_HEAD_MARGIN) delta = r.top - CREATE_WIZARD_HEAD_MARGIN;
+    else if (r.bottom > vh - CREATE_WIZARD_DOCK_MARGIN) delta = r.bottom - (vh - CREATE_WIZARD_DOCK_MARGIN);
+    if (delta) window.scrollBy({ top: delta, behavior: beh });
+  }
+
+  function finishCreateWizardScroll(ctx) {
+    const nav = takeCreateWizardNav();
+    const gen = ++createWizardRenderGen;
+    if (ctx.opts?.soft && !nav && !ctx.viewKeyChanged) {
+      requestAnimationFrame(() => {
+        if (gen !== createWizardRenderGen) return;
+        if (!isInternalCreateWizardView()) return;
+        if (ctx.preserve) {
+          window.scrollTo({ top: ctx.preserve.windowY, left: 0, behavior: "auto" });
+          restoreCreateWizardNestedScroll(ctx.preserve.nested);
+        }
+        restoreFocus(ctx.snap, { preventScroll: true });
+      });
+      return;
+    }
+    createWizardScrollRaf = requestAnimationFrame(() => {
+      createWizardScrollRaf = requestAnimationFrame(() => {
+        createWizardScrollRaf = 0;
+        if (gen !== createWizardRenderGen) return;
+        if (!isInternalCreateWizardView()) return;
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const behavior = reduce ? "auto" : "smooth";
+        let el = null;
+        let focusField = false;
+        if (nav?.type === "validation") {
+          el =
+            document.querySelector('[data-tt="form-error"]') ||
+            queryFirstVisible(createWizardPhaseRevealSelector(nav.phase || state.createPhase));
+        } else if (nav?.type === "review-return") {
+          const anchor = nav.anchor || "comment";
+          el = document.querySelector(
+            nav.preferNext ? nextReviewActionAfterAnchor(anchor) : reviewAnchorSelector(anchor),
+          );
+          if (!el && nav.preferNext) {
+            el = document.querySelector(reviewAnchorSelector(anchor));
+          }
+        } else if (nav?.type === "reveal") {
+          el = document.querySelector(nav.selector || "");
+          focusField = !!nav.focus;
+        } else if (nav?.type === "phase-enter") {
+          el = queryFirstVisible(createWizardPhaseRevealSelector(nav.phase || state.createPhase));
+          focusField = createWizardPhaseShouldFocus(nav.phase || state.createPhase);
+        } else if (ctx.viewKeyChanged) {
+          el = queryFirstVisible(createWizardPhaseRevealSelector(state.createPhase));
+          focusField = createWizardPhaseShouldFocus(state.createPhase);
+        }
+        if (!el) return;
+        revealCreateWizardElement(el, behavior);
+        if (focusField && el.matches("input, textarea, select")) {
+          try {
+            el.focus({ preventScroll: true });
+          } catch (_) {}
+        }
+      });
     });
   }
 
@@ -1982,7 +2177,7 @@
       }
     </li>`;
     if (relay) {
-      const relayLi = `<li class="tt-wizard-route-stop" data-tt="review-handoff">
+      const relayLi = `<li class="tt-wizard-route-stop" data-tt="review-handoff" data-tt-wizard-anchor="review-relay">
         <div class="tt-wizard-review-block-head">
           <span class="tt-wizard-route-role">Передать сейчас</span>
           <span class="tt-wizard-route-subrole">Посредник</span>
@@ -1991,12 +2186,12 @@
         <div class="tt-wizard-route-person">${reviewPersonHtml(relay)}</div>
         <p class="tt-wizard-review-handoff-hint">${E(relayHint)}</p>
       </li>`;
-      return `<section class="tt-wizard-review-route-nav tt-wizard-review-route-card" data-tt="review-route-nav" aria-label="План маршрута до создания">
+      return `<section class="tt-wizard-review-route-nav tt-wizard-review-route-card" data-tt="review-route-nav" data-tt-wizard-anchor="review-recipient" aria-label="План маршрута до создания">
         <p class="tt-wizard-route-plan-note">План маршрута · передача ещё не создана</p>
         <ol class="tt-wizard-route-scheme tt-wizard-route-scheme--relay">${senderLi}${wizardRouteConnectorLi()}${relayLi}${wizardRouteConnectorLi()}${finalLi}</ol>
       </section>`;
     }
-    return `<section class="tt-wizard-review-route-nav tt-wizard-review-route-card" data-tt="review-route-nav" aria-label="План маршрута до создания">
+    return `<section class="tt-wizard-review-route-nav tt-wizard-review-route-card" data-tt="review-route-nav" data-tt-wizard-anchor="review-recipient" aria-label="План маршрута до создания">
       <p class="tt-wizard-route-plan-note">План маршрута · передача ещё не создана</p>
       <ol class="tt-wizard-route-scheme tt-wizard-route-scheme--direct">${senderLi}${wizardRouteConnectorLi()}${finalLi}</ol>
     </section>`;
@@ -3757,7 +3952,7 @@
     const finSummary = recipientSummary(f);
     const dueValue = f.due ? f.due.replace("T", " · ") : "";
     const reviewBody = `<div class="tt-wizard-review" data-tt="wizard-review">
-      <header class="tt-wizard-review-hero">
+      <header class="tt-wizard-review-hero" data-tt-wizard-anchor="review-item">
         <div class="tt-wizard-review-hero-head">
           <span class="tt-wizard-review-kicker">Предмет</span>
           ${wizardReviewLink("Изменить предмет", "create-edit-item", "Изменить предмет")}
@@ -3765,7 +3960,7 @@
         <h3 class="tt-wizard-review-item-title">${E(f.item)}</h3>
       </header>
       ${wizardReviewRouteNav(f, finContact, finSummary, relay)}
-      <section class="tt-wizard-review-due${f.due ? " tt-wizard-review-due--set" : " tt-wizard-review-due--empty"}">
+      <section class="tt-wizard-review-due${f.due ? " tt-wizard-review-due--set" : " tt-wizard-review-due--empty"}" data-tt-wizard-anchor="review-due">
         <div class="tt-wizard-review-block-head">
           <span class="tt-wizard-review-person-label">Срок доставки</span>
           ${wizardReviewLink(f.due ? "Изменить срок доставки" : "Указать срок доставки", "create-edit-due", f.due ? "Изменить срок доставки" : "Указать срок доставки")}
@@ -3773,14 +3968,14 @@
         <p class="tt-wizard-review-due-value">${f.due ? E(dueValue) : "Срок не указан"}</p>
       </section>
       <section class="tt-wizard-review-details" aria-label="Дополнительно">
-        <div class="tt-wizard-review-detail-row">
+        <div class="tt-wizard-review-detail-row" data-tt-wizard-anchor="review-files">
           <div class="tt-wizard-review-block-head">
             <span class="tt-wizard-review-detail-label">Фото и файлы</span>
             ${wizardReviewLink(attCount ? "Изменить фото и файлы" : "Добавить фото или файл", "create-edit-files", attCount ? "Изменить фото и файлы" : "Добавить фото или файл")}
           </div>
           <p class="tt-wizard-review-detail-value">${E(attLabel)}</p>
         </div>
-        <div class="tt-wizard-review-detail-row">
+        <div class="tt-wizard-review-detail-row" data-tt-wizard-anchor="review-comment">
           <div class="tt-wizard-review-block-head">
             <span class="tt-wizard-review-detail-label">Комментарий</span>
             ${wizardReviewLink(f.comment ? "Изменить комментарий" : "Добавить комментарий", "create-edit-comment", f.comment ? "Изменить комментарий" : "Добавить комментарий")}
@@ -4581,9 +4776,24 @@
     syncTrackerShellMountFlag(main);
 
     const viewKey = `${state.view}|${state.orderId}|${state.recipientMode}|${state.handoffTab}|${state.createPhase}`;
-    if (viewKey !== lastViewKey && !opts.soft) {
-      window.scrollTo(0, 0);
+    const prevViewKey = lastViewKey;
+    const inInternalCreateNow = state.view === "create" && !isExternalShell();
+    const viewKeyChanged = viewKey !== lastViewKey && !opts.soft;
+    if (viewKeyChanged) {
+      const prevView = prevViewKey.split("|")[0] || "";
+      const leavingInternalCreate = prevView === "create" && !inInternalCreateNow;
+      const enteringInternalCreate = inInternalCreateNow && prevView !== "create";
+      if (leavingInternalCreate || enteringInternalCreate || !inInternalCreateNow) {
+        window.scrollTo(0, 0);
+      }
       lastViewKey = viewKey;
+    }
+    let createScrollPreserve = null;
+    if (inInternalCreateNow && document.getElementById("tt-content")) {
+      createScrollPreserve = {
+        windowY: window.scrollY,
+        nested: createWizardNestedScrollSnapshot(document.getElementById("tt-content")),
+      };
     }
 
     if (state.view === "public-receipt" && isPublicGuestPage()) {
@@ -4628,7 +4838,11 @@
     }
 
     const snap =
-      opts.soft || document.activeElement?.matches?.('[data-tt="search"]') ? captureFocus() : null;
+      opts.soft ||
+      document.activeElement?.matches?.('[data-tt="search"]') ||
+      (inInternalCreateNow && document.activeElement?.dataset?.ttField)
+        ? captureFocus()
+        : null;
     if (opts.soft && state.view === "list" && patchRegistry()) {
       restoreFocus(snap);
       return;
@@ -4744,7 +4958,10 @@
     setupDetailOverflowMenu();
     if (pendingClipboardFallbackSelect) {
       applyPendingClipboardFallbackSelect();
+    } else if (inInternalCreateNow) {
+      finishCreateWizardScroll({ opts, viewKeyChanged, prevViewKey, preserve: createScrollPreserve, snap });
     } else {
+      cancelCreateWizardScrollJob();
       restoreFocus(snap);
     }
   }
@@ -4989,11 +5206,13 @@
       state.view = "create";
       state.createPhase = "item";
       state.createReturnPhase = null;
+      state.createReviewScrollAnchor = null;
       state.form = defaultCreateForm();
       state.error = "";
       clearCompleteConfirm();
       clearAttachStaging();
       writeUrl();
+      queueCreateWizardNav({ type: "phase-enter", phase: "item" });
       renderTracker();
       return;
     }
@@ -5002,8 +5221,35 @@
         renderTracker();
         return;
       }
+      const fromPhase = state.createPhase;
+      const returnAnchor = state.createReviewScrollAnchor;
       if (wizardAdvance()) {
         writeUrl();
+        if (
+          state.createPhase === "review" &&
+          (fromPhase === "edit-comment" ||
+            fromPhase === "edit-due" ||
+            fromPhase === "edit-relay" ||
+            fromPhase === "item" ||
+            fromPhase === "files")
+        ) {
+          const anchor =
+            returnAnchor ||
+            (fromPhase === "edit-comment"
+              ? "comment"
+              : fromPhase === "edit-due"
+                ? "due"
+                : fromPhase === "edit-relay"
+                  ? "relay"
+                  : fromPhase === "item"
+                    ? "item"
+                    : "files");
+          queueCreateWizardNav({ type: "review-return", anchor, preferNext: true });
+        } else {
+          queueCreateWizardNav({ type: "phase-enter", phase: state.createPhase });
+        }
+      } else if (state.error) {
+        queueCreateWizardNav({ type: "validation", phase: fromPhase });
       }
       renderTracker();
       return;
@@ -5014,6 +5260,8 @@
         state.attachBusy = false;
         state.attachBusyGen = null;
       }
+      const fromPhase = state.createPhase;
+      const returnAnchor = state.createReviewScrollAnchor;
       const r = wizardBack();
       if (r === "cancel") {
         if (state.editDraftOrderId) {
@@ -5032,6 +5280,15 @@
         clearCompleteConfirm();
         clearAttachStaging();
       }
+      if (r !== "cancel" && state.createPhase === "review" && (fromPhase.startsWith("edit-") || state.createReturnPhase === "review")) {
+        queueCreateWizardNav({
+          type: "review-return",
+          anchor: returnAnchor || "comment",
+          preferNext: false,
+        });
+      } else if (r !== "cancel" && state.view === "create") {
+        queueCreateWizardNav({ type: "phase-enter", phase: state.createPhase });
+      }
       writeUrl();
       renderTracker();
       return;
@@ -5045,6 +5302,7 @@
         state.error = "";
         state.createPhase = "recipient";
         writeUrl();
+        queueCreateWizardNav({ type: "phase-enter", phase: "recipient" });
       }
       renderTracker();
       return;
@@ -5059,22 +5317,27 @@
       state.form.existingMatchId = "";
       state.form.recipientStep = "choose";
       writeUrl();
+      queueCreateWizardNav({ type: "phase-enter", phase: "recipient-new-phone" });
       renderTracker();
       return;
     }
     if (action === "create-edit-item") {
       state.createReturnPhase = "review";
+      state.createReviewScrollAnchor = "item";
       state.createPhase = "item";
       state.error = "";
       writeUrl();
+      queueCreateWizardNav({ type: "phase-enter", phase: "item" });
       renderTracker();
       return;
     }
     if (action === "create-edit-files") {
       state.createReturnPhase = "review";
+      state.createReviewScrollAnchor = "files";
       state.createPhase = "files";
       state.error = "";
       writeUrl();
+      queueCreateWizardNav({ type: "phase-enter", phase: "files" });
       renderTracker();
       return;
     }
@@ -5083,6 +5346,7 @@
       state.form.recipientStep = "pick-list";
       state.error = "";
       writeUrl();
+      queueCreateWizardNav({ type: "reveal", selector: '[data-tt-field="pickQ"]', focus: true });
       renderTracker();
       return;
     }
@@ -5091,25 +5355,37 @@
       state.form.recipientStep = action === "create-recipient-change" ? "pick-list" : "choose";
       state.error = "";
       writeUrl();
+      queueCreateWizardNav({
+        type: "reveal",
+        selector:
+          action === "create-recipient-change"
+            ? '[data-tt-field="pickQ"]'
+            : '[data-tt="create-recipient-browse"], [data-tt="recipient-choose"]',
+        focus: action === "create-recipient-change",
+      });
       renderTracker();
       return;
     }
     if (action === "create-edit-recipient") {
       state.createReturnPhase = "review";
+      state.createReviewScrollAnchor = "recipient";
       state.createPhase = "recipient";
       if (!state.form) state.form = defaultCreateForm();
       state.form.recipientStep =
         state.form.finalRecipientId || state.form.recipientId ? "confirmed" : "choose";
       state.error = "";
       writeUrl();
+      queueCreateWizardNav({ type: "phase-enter", phase: "recipient" });
       renderTracker();
       return;
     }
     if (action === "create-edit-relay") {
       state.createReturnPhase = "review";
+      state.createReviewScrollAnchor = "relay";
       state.createPhase = "relay-pick";
       state.error = "";
       writeUrl();
+      queueCreateWizardNav({ type: "phase-enter", phase: "relay-pick" });
       renderTracker();
       return;
     }
@@ -5208,17 +5484,21 @@
     }
     if (action === "create-edit-comment") {
       state.createReturnPhase = "review";
+      state.createReviewScrollAnchor = "comment";
       state.createPhase = "edit-comment";
       state.error = "";
       writeUrl();
+      queueCreateWizardNav({ type: "phase-enter", phase: "edit-comment" });
       renderTracker();
       return;
     }
     if (action === "create-edit-due") {
       state.createReturnPhase = "review";
+      state.createReviewScrollAnchor = "due";
       state.createPhase = "edit-due";
       state.error = "";
       writeUrl();
+      queueCreateWizardNav({ type: "phase-enter", phase: "edit-due" });
       renderTracker();
       return;
     }
