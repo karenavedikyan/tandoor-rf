@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { generateHandoffCodeForPendingParty } from "../tan-tracker/handoff-code-generate";
 import { ensurePartyForUserOnWrite } from "../tan-tracker/repository";
+import { tanTrackerNavAllowed } from "../tan-tracker/scope";
 import { findAccountByMaxUserId } from "../tanbot-max/link-repository";
 import { findAccountByTelegramUserId } from "../tanbot-telegram/link-repository";
 import { isTanbotHandoffCodePilotEnabled } from "./handoff-code-pilot-config";
@@ -23,7 +24,7 @@ export type ParsedHandoffGenCallback = { publicCode: string; handoffVersion: num
 
 export function buildHandoffGenCallback(publicCode: string, handoffVersion?: number): string {
   const code = publicCode.trim().slice(0, 32);
-  if (handoffVersion != null && Number.isInteger(handoffVersion) && handoffVersion > 0) {
+  if (handoffVersion != null && Number.isSafeInteger(handoffVersion) && handoffVersion > 0) {
     return `${HANDOFF_CALLBACK_GEN}${code}:${handoffVersion}`.slice(0, 64);
   }
   return `${HANDOFF_CALLBACK_GEN}${code}`.slice(0, 64);
@@ -34,13 +35,16 @@ export function parseHandoffGenCallbackDetail(payload: string): ParsedHandoffGen
   const rest = payload.slice(HANDOFF_CALLBACK_GEN.length).trim();
   if (!rest) return null;
   const lastColon = rest.lastIndexOf(":");
-  if (lastColon > 0) {
+  if (lastColon >= 0) {
     const hvStr = rest.slice(lastColon + 1);
     const hv = Number(hvStr);
-    if (Number.isInteger(hv) && hv > 0 && hvStr === String(hv)) {
-      const pub = rest.slice(0, lastColon).trim().slice(0, 32);
-      if (pub) return { publicCode: pub, handoffVersion: hv };
+    if (Number.isSafeInteger(hv) && hv > 0 && hvStr === String(hv)) {
+      const pub = rest.slice(0, lastColon);
+      if (pub && pub.length <= 32 && pub === pub.trim() && !pub.includes(":")) {
+        return { publicCode: pub, handoffVersion: hv };
+      }
     }
+    return null;
   }
   return { publicCode: rest.slice(0, 32), handoffVersion: null };
 }
@@ -63,8 +67,8 @@ export async function resolveStaffUserIdForBotChannel(
 }
 
 export async function loadStaffUserRow(client: PoolClient, userId: string) {
-  const res = await client.query<{ id: string; status: string; full_name: string; phone: string | null }>(
-    `SELECT id::text, status, full_name, phone FROM users WHERE id = $1::uuid`,
+  const res = await client.query<{ id: string; status: string; role: string; full_name: string; phone: string | null }>(
+    `SELECT id::text, status, role, full_name, phone FROM users WHERE id = $1::uuid`,
     [userId],
   );
   return res.rows[0];
@@ -86,7 +90,7 @@ export async function assertHandoffCodeBotAccess(
   }
 
   const user = await loadStaffUserRow(client, userId);
-  if (!user || user.status !== "active") {
+  if (!user || user.status !== "active" || !tanTrackerNavAllowed(user.role)) {
     return { ok: false, message: "Аккаунт недоступен." };
   }
 
@@ -179,7 +183,7 @@ export async function issueHandoffCodeViaBot(
     pending_party_id: string | null;
     status: string;
   }>(
-    `SELECT id, handoff_version, pending_party_id::text, status FROM tt_transfers WHERE public_code = $1 LIMIT 1`,
+    `SELECT id, handoff_version, pending_party_id::text, status FROM tt_transfers WHERE public_code = $1 LIMIT 1 FOR UPDATE`,
     [input.transferPublicCode],
   );
   const transfer = transferRow.rows[0];

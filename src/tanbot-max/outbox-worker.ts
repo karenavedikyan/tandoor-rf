@@ -107,6 +107,24 @@ export async function processTanbotMaxNotificationOutbox(
         }
       }
 
+      if (row.event_type === "tan_tracker.external_created") {
+        const intended = await client.query(
+          `SELECT 1 FROM tt_transfers t
+           JOIN tt_parties p ON p.id=t.pending_party_id AND p.kind='user'
+           WHERE t.id=$1 AND t.handoff_version=$2 AND p.user_id=$3::uuid
+             AND t.status IN ('waiting','active')`,
+          [String(row.payload.transferId ?? ""), Number(row.payload.handoffVersion ?? 0), row.user_id],
+        );
+        if (!intended.rows.length) {
+          await client.query(
+            `UPDATE tanbot_notification_outbox SET status='cancelled',last_error_code='STALE_EXTERNAL_INTAKE' WHERE id=$1::uuid`,
+            [row.id],
+          );
+          result.cancelled += 1;
+          continue;
+        }
+      }
+
       const delivery = isTanTrackerStaffOutboxEvent(row.event_type)
         ? buildTanTrackerStaffMaxOutboxDelivery(row.event_type, row.payload, config.appOrigin)
         : { text: "Уведомление Тандор." };
