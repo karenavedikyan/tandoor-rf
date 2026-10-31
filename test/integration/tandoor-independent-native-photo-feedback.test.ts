@@ -227,6 +227,7 @@ for (const channel of ["max", "telegram"] as const) {
       reply = await send(a, { callback: action(reply, /^далее$/iu) });
       assert.equal((await draft(a)).step, "comment", "fresh Next advances to comment");
       reply = await send(a, { callback: action(reply, /пропустить/iu) });
+      reply = await send(a, { text: "AAA Native Photo Receiver" });
       reply = await send(a, { callback: action(reply, /AAA Native Photo Receiver/u) });
       reply = await send(a, { callback: action(reply, /без срока/iu) });
       assert.match(reply.text, /Фото:\s*5/iu);

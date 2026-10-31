@@ -248,7 +248,7 @@ for (const channel of ["max", "telegram"] as const) {
     let r = await send(a, { text: "Поиск" });
     assert.ok(r.buttons.filter(b => /Поиск Тестовый/u.test(b.text)).length <= 5);
     const first = button(r, /Поиск Тестовый/u);
-    r = await send(a, { callback: button(r, /впер|следующ|дальше/iu) });
+    r = await send(a, { callback: button(r, /впер|следующ|дальше|Стр\. ▶/iu) });
     assert.ok(r.buttons.some(b => /Поиск Тестовый/u.test(b.text)));
     r = await send(a, { text: "Петров" });
     await send(a, { callback: first }); assert.equal((await draft(a)).step, "recipient");
@@ -270,7 +270,7 @@ for (const channel of ["max", "telegram"] as const) {
     await getPool()!.query(`UPDATE tt_external_request_drafts
       SET payload=jsonb_set(payload,'{eligibleRecipients}',$2::jsonb) WHERE id=$1`,
     [d.id, JSON.stringify([{ userId: targetId, fullName: privateName }])]);
-    const forged = buildNativeCreateCallback("recipient_pick", d.id, d.payload.revision, "0"); assert.ok(forged);
+    const forged = buildNativeCreateCallback("recipient", d.id, d.payload.revision, "0"); assert.ok(forged);
     noPrivateData(await send(a, { callback: forged }));
     assert.equal((await draft(a)).step, "recipient", "cannot enumerate cached internal choices via forged callback");
     assert.deepEqual(await counts(), before);
