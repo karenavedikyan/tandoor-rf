@@ -30,6 +30,11 @@ import {
 } from "./access-guard";
 import { type NativeReplyMediaItem, nativeMediaQueueFromDraftPhoto } from "./reply-media";
 import { isNativeMenuDraftHex, NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
+import {
+  parseRecipientContactFromTelegram,
+  parseRecipientContactFromVcf,
+  type ParsedRecipientContact,
+} from "./recipient-contact-parse";
 
 export type NativeCreateReply = {
   text: string;
@@ -90,9 +95,19 @@ function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount:
         ? `Получатели (поиск «${payload.recipientSearchQuery}»). Выберите кнопкой или уточните текст.`
         : "Выберите получателя кнопкой ниже.";
     case "recipient_ext_name":
-      return "Имя внешнего получателя (как в контакте).";
-    case "recipient_ext_phone":
-      return "Телефон получателя: 10 цифр после +7.";
+      return (
+        "Имя внешнего получателя.\n" +
+        "Введите текстом или отправьте контакт через скрепку → «Контакт» (не кнопку «Отправить мой номер»)."
+      );
+    case "recipient_ext_phone": {
+      const ext = payload.recipientExternal;
+      const lines = [
+        "Телефон получателя: введите цифрами, отправьте контакт из телефонной книги или нажмите «Далее».",
+      ];
+      if (ext?.name?.trim()) lines.push(`Имя: ${ext.name.trim()}.`);
+      if (ext?.phone) lines.push(`Телефон: ${ext.phone}.`);
+      return lines.join("\n");
+    }
     case "due":
       return "Выберите срок передачи.";
     case "edit":
@@ -198,6 +213,11 @@ async function renderDraftPrompt(
       },
       staffExternalRecipient: payload.actor === "staff",
     });
+  } else if (step === "recipient_ext_phone") {
+    const ext = payload.recipientExternal;
+    if (ext?.phone && ext.name?.trim()) {
+      ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient_ext_phone");
+    }
   }
   return {
     text,
@@ -289,6 +309,10 @@ function callbackAllowedForStep(action: ParsedNativeCreateCallback["action"], st
     case "recipient_page":
     case "recipient_ext":
       return step === "recipient";
+    case "recipient_ext_tel":
+      return step === "recipient_ext_name" || step === "recipient_ext_phone";
+    case "recipient_ext_next":
+      return step === "recipient_ext_phone";
     case "photo_skip":
     case "photo_next":
       return step === "photo";
@@ -487,6 +511,30 @@ export async function handleNativeCreateCallback(
     return renderDraftPrompt(client, ctx.channel, id, "recipient_ext_name", nextPayload);
   }
 
+  if (parsed.action === "recipient_ext_tel" && parsed.arg != null) {
+    const idx = Number(parsed.arg);
+    const options = payload.recipientPhonePickOptions ?? [];
+    const phone = options[idx];
+    if (!phone) return renderDraftPrompt(client, ctx.channel, id, step, payload);
+    delete payload.recipientPhonePickOptions;
+    const mode = step === "recipient_ext_phone" ? "phone_only" : "contact_first";
+    return applyRecipientContactData(client, ctx, id, step, payload, {
+      phonesE164: [phone],
+      suggestedName: payload.recipientExternal?.name ?? null,
+    }, mode);
+  }
+
+  if (parsed.action === "recipient_ext_next") {
+    const ext = payload.recipientExternal;
+    if (!ext?.phone || !ext.name?.trim()) {
+      return navError("Укажите имя и телефон получателя.", ctx.channel);
+    }
+    delete payload.recipientPhonePickOptions;
+    payload.recipientDisplayName = ext.name.trim();
+    const nextPayload = await bumpDraftRevision(client, id, "due", payload);
+    return renderDraftPrompt(client, ctx.channel, id, "due", nextPayload);
+  }
+
   if (parsed.action === "recipient_page") {
     const page = payload.recipientPage ?? 0;
     const nextPage = parsed.arg === "n" ? page + 1 : Math.max(0, page - 1);
@@ -668,6 +716,7 @@ export async function handleNativeCreateMessage(
   if (step === "recipient_ext_phone") {
     const phone = normalizeRuPhoneE164(trimmed);
     if (!phone) return navError("Введите телефон: 10 цифр после +7.", ctx.channel);
+    delete payload.recipientPhonePickOptions;
     payload.recipientExternal = {
       name: payload.recipientExternal?.name ?? "",
       phone,
@@ -742,4 +791,113 @@ export async function handleNativeCreatePhoto(
   );
   const nextPayload = await bumpDraftRevision(client, draft.id, "photo", payload);
   return renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
+}
+
+async function applyRecipientContactData(
+  client: PoolClient,
+  ctx: NativeCreateContext,
+  draftId: string,
+  step: string,
+  payload: NativeCreateDraftPayload,
+  parsed: ParsedRecipientContact,
+  mode: "contact_first" | "phone_only",
+): Promise<NativeCreateReply> {
+  const phones = parsed.phonesE164;
+  if (phones.length > 1) {
+    payload.recipientPhonePickOptions = phones;
+    const nextPayload = await bumpDraftRevision(client, draftId, step, payload);
+    const pickButtons = phones.map((p, i) => ({
+      label: p.length > 14 ? `${p.slice(0, 8)}…${p.slice(-4)}` : p,
+      arg: String(i),
+    }));
+    const ui = buildStepUi(ctx.channel, draftId, nextPayload.revision ?? 1, "recipient_ext_pick", {
+      recipientButtons: pickButtons,
+    });
+    const rendered = await renderDraftPrompt(client, ctx.channel, draftId, step, nextPayload);
+    return {
+      ...rendered,
+      text:
+        `${rendered.text}\n\n` +
+        `В контакте несколько номеров. Выберите нужный кнопкой или отправьте контакт с одним номером.`,
+      telegramInlineKeyboard: ui.telegramInlineKeyboard ?? rendered.telegramInlineKeyboard,
+      maxInlineButtons: ui.maxInlineButtons ?? rendered.maxInlineButtons,
+    };
+  }
+  const phone = phones[0]!;
+  delete payload.recipientPhonePickOptions;
+  if (mode === "phone_only") {
+    payload.recipientExternal = {
+      name: payload.recipientExternal?.name ?? "",
+      phone,
+    };
+  } else {
+    const name =
+      payload.recipientExternal?.name?.trim() ||
+      parsed.suggestedName ||
+      "";
+    payload.recipientExternal = { name, phone };
+  }
+  payload.recipientPartyId = undefined;
+  payload.recipientUserId = undefined;
+  payload.recipientDisplayName = payload.recipientExternal.name || undefined;
+
+  if (mode === "contact_first" && !payload.recipientExternal.name.trim()) {
+    const nextPayload = await bumpDraftRevision(client, draftId, "recipient_ext_name", payload);
+    return renderDraftPrompt(client, ctx.channel, draftId, "recipient_ext_name", nextPayload);
+  }
+  const nextPayload = await bumpDraftRevision(client, draftId, "recipient_ext_phone", payload);
+  return renderDraftPrompt(client, ctx.channel, draftId, "recipient_ext_phone", nextPayload);
+}
+
+export async function tryHandleNativeCreateRecipientContact(
+  client: PoolClient,
+  ctx: NativeCreateContext,
+  input:
+    | {
+        kind: "telegram";
+        phoneRaw: string;
+        firstName?: string | null;
+        lastName?: string | null;
+        vcard?: string | null;
+        isForwarded: boolean;
+      }
+    | { kind: "max"; vcfInfo: string; isForwarded: boolean },
+): Promise<NativeCreateReply | null> {
+  if (!ctx.isLinkedStaff || !ctx.privateDialogOk) return null;
+  if (input.isForwarded) return null;
+
+  await lockNativeCreateMessenger(client, ctx);
+  try {
+    await assertNativeCreateContext(client, ctx);
+  } catch {
+    return null;
+  }
+
+  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, "staff", { forUpdate: true });
+  if (!draft) return null;
+  assertDraftPersonRow(draft, ctx);
+  const payload = { ...(draft.payload as NativeCreateDraftPayload) };
+  assertDraftBoundToCaller(payload, ctx);
+  if (payload.actor !== "staff") return null;
+
+  const step = draft.step;
+  if (step !== "recipient_ext_name" && step !== "recipient_ext_phone") return null;
+
+  const parsed =
+    input.kind === "telegram"
+      ? parseRecipientContactFromTelegram(input)
+      : parseRecipientContactFromVcf(input.vcfInfo);
+  if (!parsed.ok) {
+    return navError(parsed.message, ctx.channel);
+  }
+
+  return applyRecipientContactData(
+    client,
+    ctx,
+    draft.id,
+    step,
+    payload,
+    parsed.data,
+    step === "recipient_ext_phone" ? "phone_only" : "contact_first",
+  );
 }

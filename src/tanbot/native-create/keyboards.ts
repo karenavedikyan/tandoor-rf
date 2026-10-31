@@ -75,7 +75,9 @@ export function buildStepUi(
     | "due"
     | "recipient"
     | "edit"
-    | "photo_inspect",
+    | "photo_inspect"
+    | "recipient_ext_pick"
+    | "recipient_ext_phone",
   extra?: {
     recipientButtons?: Array<{ label: string; arg: string }>;
     pageNav?: { hasPrev: boolean; hasNext: boolean };
@@ -165,6 +167,22 @@ export function buildStepUi(
     return channel === "telegram"
       ? { telegramInlineKeyboard: [tgRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }])] }
       : { maxInlineButtons: [maxRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }])] };
+  }
+  if (kind === "recipient_ext_phone") {
+    const primary: BtnDef[] = [{ label: "Далее", action: "recipient_ext_next" }];
+    return channel === "telegram"
+      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, NAV)] }
+      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)] };
+  }
+  if (kind === "recipient_ext_pick" && extra?.recipientButtons?.length) {
+    const pickBtns: BtnDef[] = extra.recipientButtons.map((b) => ({
+      label: b.label,
+      action: "recipient_ext_tel" as const,
+      arg: b.arg,
+    }));
+    return channel === "telegram"
+      ? { telegramInlineKeyboard: [tgRow(draftId, revision, pickBtns), tgRow(draftId, revision, NAV)] }
+      : { maxInlineButtons: [maxRow(draftId, revision, pickBtns), maxRow(draftId, revision, NAV)] };
   }
   if (kind === "recipient") {
     const tgRows: Array<Array<{ text: string; callback_data: string }>> = [];

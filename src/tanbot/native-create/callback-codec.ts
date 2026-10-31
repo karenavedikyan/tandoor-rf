@@ -16,7 +16,9 @@ export type NativeCreateCallbackAction =
   | "restart"
   | "menu"
   | "menu_create"
-  | "menu_my";
+  | "menu_my"
+  | "recipient_ext_tel"
+  | "recipient_ext_next";
 
 const ACTION_CODE: Record<NativeCreateCallbackAction, string> = {
   confirm: "1",
@@ -35,6 +37,8 @@ const ACTION_CODE: Record<NativeCreateCallbackAction, string> = {
   photo_view: "c",
   menu_create: "e",
   menu_my: "f",
+  recipient_ext_tel: "h",
+  recipient_ext_next: "g",
 };
 
 const CODE_ACTION: Record<string, NativeCreateCallbackAction> = Object.fromEntries(

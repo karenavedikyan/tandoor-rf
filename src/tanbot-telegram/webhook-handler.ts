@@ -59,6 +59,35 @@ async function processParsedUpdate(
     if (claim.kind === "ignore") return null;
     if (claim.kind === "resend") return claim.reply;
     try {
+      const account = await findAccountByTelegramUserId(client, update.telegramUserId);
+      if (account) {
+        const { tryNativeCreateTelegramContact } = await import("../tanbot/native-create/adapters");
+        const native = await tryNativeCreateTelegramContact(client, {
+          chatId: update.chatId,
+          telegramUserId: update.telegramUserId,
+          phoneRaw: update.phoneNumber,
+          contactFirstName: update.contactFirstName,
+          contactLastName: update.contactLastName,
+          vcard: update.vcard,
+          isForwarded: update.isForwarded,
+        });
+        if (native) {
+          const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
+          const reply: WebhookReply = {
+            chatId: update.chatId,
+            text: native.text,
+            replyMarkup: native.replyMarkup,
+            replyExtra: nativeTelegramReplyExtra(native, {
+              messengerChatId: update.chatId.toString(),
+              messengerUserId: update.telegramUserId.toString(),
+              actor: "staff",
+              channel: "telegram",
+            }),
+          };
+          await commitTelegramUpdateReply(client, update.updateId, reply);
+          return reply;
+        }
+      }
       let ext =
         (await handleExternalRecipientTelegramContact(client, {
           telegramChatId: update.chatId,
@@ -72,7 +101,7 @@ async function processParsedUpdate(
           chatId: update.chatId,
           telegramUserId: update.telegramUserId,
           phoneRaw: update.phoneNumber,
-          firstName: null,
+          firstName: update.contactFirstName,
           contactUserId: update.contactUserId,
           isForwarded: update.isForwarded,
         });

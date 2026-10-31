@@ -1,6 +1,9 @@
 import { MAX_START_PAYLOAD_MAX_LEN } from "./stage2-config";
 import { computeMaxUpdateDedupKey } from "./update-dedup-key";
-import { parseMaxContactFromMessage } from "../tanbot/external-recipient/max-contact-verify";
+import {
+  parseMaxContactFromMessage,
+  parseMaxUnsignedRecipientVcfFromMessage,
+} from "../tanbot/external-recipient/max-contact-verify";
 import { parseMaxImageFromMessage } from "../tanbot/external-person/max-image-parse";
 
 const MAX_MESSAGE_TEXT_LEN = 4096;
@@ -27,6 +30,17 @@ export type ParsedMaxContactWebhookUpdate = {
   chatId: bigint;
   maxUserId: bigint;
   contact: NonNullable<ReturnType<typeof parseMaxContactFromMessage>>;
+  recipientChatType: string | null;
+  isForwarded: boolean;
+};
+
+export type ParsedMaxUnsignedRecipientContactUpdate = {
+  dedupKey: string;
+  updateType: string;
+  chatId: bigint;
+  maxUserId: bigint;
+  unsignedVcfInfo: string;
+  recipientChatType: string | null;
   isForwarded: boolean;
 };
 
@@ -63,7 +77,10 @@ function readUserIdFromRow(row: Record<string, unknown>): number | null {
   return null;
 }
 
-export type ParsedMaxWebhookUpdateUnion = ParsedMaxWebhookUpdate | ParsedMaxContactWebhookUpdate;
+export type ParsedMaxWebhookUpdateUnion =
+  | ParsedMaxWebhookUpdate
+  | ParsedMaxContactWebhookUpdate
+  | ParsedMaxUnsignedRecipientContactUpdate;
 
 export function parseMaxWebhookUpdate(raw: unknown):
   | { ok: true; update: ParsedMaxWebhookUpdateUnion }
@@ -211,6 +228,42 @@ export function parseMaxWebhookUpdate(raw: unknown):
     if (!chatId && typeof row.chat_id === "number") chatId = row.chat_id;
     if (!chatId) chatId = userId;
 
+    const unsigned = parseMaxUnsignedRecipientVcfFromMessage(msg);
+    if (unsigned && chatType === "dialog") {
+      let mid: string | null = null;
+      const body = msg.body;
+      if (typeof body === "object" && body && !Array.isArray(body)) {
+        const bodyMid = (body as Record<string, unknown>).mid;
+        if (typeof bodyMid === "string") mid = bodyMid;
+      }
+      if (!mid && typeof msg.mid === "string") mid = msg.mid;
+      const isForwarded =
+        msg.link != null ||
+        (typeof body === "object" &&
+          body &&
+          !Array.isArray(body) &&
+          (body as Record<string, unknown>).link != null);
+      const dedupKey = computeMaxUpdateDedupKey({
+        updateType,
+        timestamp,
+        chatId,
+        userId,
+        messageMid: mid,
+      });
+      return {
+        ok: true,
+        update: {
+          dedupKey,
+          updateType,
+          chatId: BigInt(chatId),
+          maxUserId: BigInt(userId),
+          unsignedVcfInfo: unsigned.vcfInfo,
+          recipientChatType: chatType,
+          isForwarded: Boolean(isForwarded),
+        },
+      };
+    }
+
     const contact = parseMaxContactFromMessage(msg);
     if (contact) {
       let mid: string | null = null;
@@ -241,6 +294,7 @@ export function parseMaxWebhookUpdate(raw: unknown):
           chatId: BigInt(chatId),
           maxUserId: BigInt(userId),
           contact,
+          recipientChatType: chatType,
           isForwarded: Boolean(isForwarded),
         },
       };

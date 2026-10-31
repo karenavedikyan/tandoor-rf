@@ -33,6 +33,8 @@ export type NativeCreateDraftPayload = ExternalDraftPayload & {
   editReturnStep?: string;
   recipientDisplayName?: string;
   recipientSearchQuery?: string;
+  /** Distinct +7 options when a shared contact had multiple numbers (not persisted to confirm). */
+  recipientPhonePickOptions?: string[];
 };
 
 type Db = Pool | PoolClient;

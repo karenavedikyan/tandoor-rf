@@ -67,6 +67,10 @@ async function processUpdateInTransaction(
   const username = (update.username as string | null) ?? null;
   const firstName = (update.firstName as string | null) ?? null;
   const contact = update.contact as MaxContactAttachmentPayload | undefined;
+  const unsignedVcfInfo =
+    "unsignedVcfInfo" in update && typeof update.unsignedVcfInfo === "string"
+      ? update.unsignedVcfInfo
+      : undefined;
   const isForwarded = Boolean(update.isForwarded);
   const recipientChatType =
     "recipientChatType" in update && typeof update.recipientChatType === "string"
@@ -84,7 +88,25 @@ async function processUpdateInTransaction(
   const lkUrl = `${config.appOrigin}/profile`;
 
   try {
-    if (contact) {
+    if (unsignedVcfInfo) {
+      const { tryNativeCreateMaxRecipientContact } = await import("../tanbot/native-create/adapters");
+      const native = await tryNativeCreateMaxRecipientContact(client, {
+        chatId: update.chatId,
+        maxUserId: update.maxUserId,
+        vcfInfo: unsignedVcfInfo,
+        isForwarded,
+        recipientChatType,
+      });
+      if (native) {
+        reply = {
+          userId: update.maxUserId,
+          chatId: update.chatId,
+          text: native.text,
+          inlineButtons: native.inlineButtons,
+        };
+      }
+    }
+    if (!reply && contact) {
       let ext =
         (await handleExternalRecipientMaxContact(client, {
           maxChatId: update.chatId,
@@ -362,6 +384,14 @@ async function processUpdateInTransaction(
           text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",
         };
       }
+    }
+
+    if (!reply) {
+      reply = {
+        userId: update.maxUserId,
+        chatId: update.chatId,
+        text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",
+      };
     }
 
     await commitMaxUpdateReply(client, update.dedupKey, reply);
