@@ -115,6 +115,7 @@ async function drain(a: Actor): Promise<Reply[]> {
   } else {
     const cfg = loadTanbotTelegramStage2Config(); assert.ok(cfg.ok);
     await processUndeliveredTelegramWebhookReplies(getPool()!, cfg.config, async p => {
+      if (p.method === "answerCallbackQuery") return { ok: true, result: true };
       assert.equal(String(p.body.chat_id), String(a.id));
       if (["sendPhoto", "sendDocument", "sendVideo"].includes(String(p.method))) {
         media.push({ kind: String(p.method), token: String(p.body.document ?? p.body.photo ?? p.body.video ?? ""), body: p.body });
