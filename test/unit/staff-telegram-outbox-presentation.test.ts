@@ -55,4 +55,16 @@ describe("staff Telegram outbox presentation", () => {
     assert.ok(body.text.includes(staffTransferLkDetailUrl(ORIGIN, "PUB2")));
     assert.equal(body.disable_web_page_preview, true);
   });
+
+  it("falls back to LK instead of truncating a notice callback or exceeding Telegram UTF-8 limit", () => {
+    for (const publicCode of ["Я".repeat(32), "x".repeat(33), "PUB:AMBIGUOUS"]) {
+      const body = buildTanTrackerStaffTelegramOutboxSendBody("tan_tracker.external_created", {
+        transferId: "tt-unsafe-callback", publicCode, itemTitle: "Item", handoffVersion: 1,
+      }, ORIGIN);
+      assert.equal(body.reply_markup, undefined);
+      assert.match(body.text, /личном кабинете/);
+      assert.ok(body.text.includes(staffTransferLkDetailUrl(ORIGIN, publicCode)));
+      assert.equal(body.disable_web_page_preview, true);
+    }
+  });
 });

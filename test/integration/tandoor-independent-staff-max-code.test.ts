@@ -19,7 +19,7 @@ test("independent: real external draft → MAX intended recipient callback → s
     TT_EXTERNAL_MESSENGER_ENABLED: "true",
     TANBOT_HANDOFF_CODE_PILOT_ENABLED: "true",
     TANBOT_MAX_ENABLED: "true",
-    TANBOT_MAX_DELIVERY_ENABLED: "true",
+    TANBOT_MAX_DELIVERY_ENABLED: "false",
     TANBOT_MAX_WEBHOOK_ENABLED: "true",
     TANBOT_MAX_BOT_TOKEN: "SYNTHETIC_MAX_TEST_TOKEN_0123456789abcdef",
     TANBOT_MAX_BOT_USERNAME: "synthetic_test_bot",
@@ -32,6 +32,9 @@ test("independent: real external draft → MAX intended recipient callback → s
   const { createApp } = await import("../../src/server");
   const app = createApp();
   const pool = getPool()!;
+  const originalFetch = globalThis.fetch;
+  let unexpectedFetches = 0;
+  globalThis.fetch = async () => { unexpectedFetches++; throw new Error("Live fetch forbidden in synthetic bot test"); };
   try {
     const staff = await createTestUser({ databaseUrl: db, email: "ind-staff-code@test.local",
       password: "StrongPass123!", fullName: "Synthetic Receiving Staff", role: "manager" });
@@ -75,7 +78,7 @@ test("independent: real external draft → MAX intended recipient callback → s
     if (!config.ok) throw new Error("synthetic MAX configuration must load");
     const sends: Array<Parameters<MaxDeliveryTransport>[0]> = [];
     const transport: MaxDeliveryTransport = async input => { sends.push(input); return { ok: true, result: {} }; };
-    await processTanbotMaxNotificationOutbox(pool, config.config, transport);
+    await processTanbotMaxNotificationOutbox(pool, config.config, transport, { deliveryEnabled: true });
     assert.equal(sends.length, 1);
     assert.equal(sends[0].userId, 885501n, "address the verified user, never a different chat id");
     const buttons = sends[0].inlineButtons?.flat() ?? [];
@@ -110,7 +113,9 @@ test("independent: real external draft → MAX intended recipient callback → s
     assert.equal((await webhook(885501, "independent-valid-once")).status, 200);
     assert.equal(await codeCount(), 1);
     assert.deepEqual(await business(), before, "code issuance must not receive or change custody/version");
-    await runTanbotMaxOutboxWorkerOnce(pool, config.config, transport);
+    process.env.TANBOT_MAX_DELIVERY_ENABLED = "true";
+    try { await runTanbotMaxOutboxWorkerOnce(pool, config.config, transport); }
+    finally { process.env.TANBOT_MAX_DELIVERY_ENABLED = "false"; }
     const codeReply = sends.filter(s => s.userId === 885501n && /\b\d{6}\b/.test(s.text)).at(-1);
     assert.ok(codeReply, "actual callback reply must privately deliver a one-time code");
     const code = codeReply.text.match(/\b(\d{6})\b/)![1];
@@ -132,12 +137,13 @@ test("independent: real external draft → MAX intended recipient callback → s
       RETURNING id`, [publicCode])).rows;
     assert.equal(staleNotice.length, 1);
     const invitationText = sends[0].text;
-    await processTanbotMaxNotificationOutbox(pool, config.config, transport);
+    await processTanbotMaxNotificationOutbox(pool, config.config, transport, { deliveryEnabled: true });
     const staleResult = (await pool.query("SELECT status,last_error_code FROM tanbot_notification_outbox WHERE id=$1::uuid",
       [staleNotice[0].id])).rows[0];
     assert.equal(staleResult.status, "cancelled");
     assert.equal(staleResult.last_error_code, "STALE_EXTERNAL_INTAKE");
     assert.equal(sends.filter(s => s.text === invitationText).length, 1,
       "a queued obsolete receipt invitation must never be sent again");
-  } finally { await closePool(); }
+    assert.equal(unexpectedFetches, 0, "every bot send must use recording transport");
+  } finally { globalThis.fetch = originalFetch; await closePool(); }
 });

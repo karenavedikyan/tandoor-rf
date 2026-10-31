@@ -177,28 +177,31 @@ function parseCallbackUpdate(row: Record<string, unknown>): ParsedTelegramWebhoo
     return { ok: false, reason: "invalid_callback_id" };
   }
   const data = callback.data;
-  if (typeof data !== "string" || !data.trim()) {
+  if (typeof data !== "string" || !data.trim() || Buffer.byteLength(data, "utf8") > 64) {
     return { ok: false, reason: "invalid_callback_data" };
   }
   const from = callback.from;
   if (!from || typeof from !== "object") return { ok: false, reason: "invalid_from" };
   const fromRow = from as Record<string, unknown>;
   const userId = fromRow.id;
-  if (typeof userId !== "number" || !Number.isInteger(userId) || userId <= 0) {
+  if (typeof userId !== "number" || !Number.isSafeInteger(userId) || userId <= 0) {
     return { ok: false, reason: "invalid_user_id" };
   }
   if (fromRow.is_bot === true) return { ok: false, reason: "bot_sender" };
 
-  let chatId: number | null = null;
   const message = callback.message;
-  if (message && typeof message === "object" && !Array.isArray(message)) {
-    const chat = (message as Record<string, unknown>).chat;
-    if (chat && typeof chat === "object") {
-      const cid = (chat as Record<string, unknown>).id;
-      if (typeof cid === "number" && Number.isInteger(cid)) chatId = cid;
-    }
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return { ok: false, reason: "missing_private_chat" };
   }
-  if (chatId === null) chatId = userId;
+  const chat = (message as Record<string, unknown>).chat;
+  if (!chat || typeof chat !== "object" || Array.isArray(chat)) {
+    return { ok: false, reason: "missing_private_chat" };
+  }
+  const chatRow = chat as Record<string, unknown>;
+  if (chatRow.type !== "private") return { ok: false, reason: "not_private_chat" };
+  if (chatRow.id !== userId) {
+    return { ok: false, reason: "private_chat_identity_mismatch" };
+  }
 
   const username =
     typeof fromRow.username === "string" && fromRow.username.trim()
@@ -211,12 +214,12 @@ function parseCallbackUpdate(row: Record<string, unknown>): ParsedTelegramWebhoo
     kind: "callback",
     update: {
       updateId,
-      chatId: BigInt(chatId),
+      chatId: BigInt(userId),
       telegramUserId: BigInt(userId),
       username,
       firstName,
       callbackQueryId: String(callbackQueryId),
-      callbackData: data.trim().slice(0, 64),
+      callbackData: data.trim(),
     },
   };
 }

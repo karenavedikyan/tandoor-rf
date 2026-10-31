@@ -30,21 +30,24 @@ export function buildTanTrackerStaffTelegramOutboxSendBody(
   if (eventType === "tan_tracker.external_created") {
     const p = normalizeStaffOutboxPayload(payload);
     const pilot = isTanbotHandoffCodePilotEnabled();
-    const text = buildStaffExternalCreatedNoticeText(p.itemTitle, p.publicCode, pilot);
-    if (pilot && p.publicCode && p.handoffVersion > 0) {
+    const code = p.publicCode.trim();
+    const callbackData = buildHandoffGenCallback(code, p.handoffVersion);
+    if (pilot && code && code.length <= 32 && !code.includes(":") &&
+        Number.isSafeInteger(p.handoffVersion) && p.handoffVersion > 0 &&
+        Buffer.byteLength(callbackData, "utf8") <= 64) {
       return {
-        text,
+        text: buildStaffExternalCreatedNoticeText(p.itemTitle, p.publicCode, true),
         disable_web_page_preview: true,
         reply_markup: {
           inline_keyboard: [
-            [{ text: "Получить код приёма", callback_data: buildHandoffGenCallback(p.publicCode, p.handoffVersion) }],
+            [{ text: "Получить код приёма", callback_data: callbackData }],
           ],
         },
       };
     }
     const detailUrl = staffTransferLkDetailUrl(appOrigin, p.publicCode);
     return {
-      text: `${text}\n${detailUrl}`,
+      text: `${buildStaffExternalCreatedNoticeText(p.itemTitle, p.publicCode, false)}\n${detailUrl}`,
       disable_web_page_preview: true,
     };
   }

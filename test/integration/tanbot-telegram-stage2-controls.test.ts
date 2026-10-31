@@ -282,17 +282,20 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
       encoding: "utf8",
     });
     assert.equal(worker.status, 0, worker.stderr || worker.stdout);
-    const idempotencyKey = `tt-assignment:${transferId}:hv:2:telegram:${recipient.id}`;
-    const row = await pool.query(
-      `SELECT status, last_error_code FROM tanbot_notification_outbox WHERE idempotency_key = $1`,
-      [idempotencyKey],
+    const rows = await pool.query(
+      `SELECT event_type,status,last_error_code FROM tanbot_notification_outbox
+       WHERE channel='telegram' AND user_id=$1::uuid AND payload->>'transferId'=$2
+       ORDER BY event_type`,
+      [recipient.id, transferId],
     );
-    assert.equal(row.rows[0]?.status, "cancelled");
-    assert.equal(row.rows[0]?.last_error_code, "NO_ACCESS");
+    assert.deepEqual(rows.rows, [
+      { event_type: "tan_tracker.assignment", status: "cancelled", last_error_code: "NO_ACCESS" },
+      { event_type: "tan_tracker.handoff_confirmed", status: "cancelled", last_error_code: "NO_ACCESS" },
+    ]);
     process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = "false";
   });
 
-  it("runtime outbox worker CLI delivers one pending row", async () => {
+  it("runtime outbox worker CLI cancels an opted-out pending row without a real send", async () => {
     const user = await createTestUser({
       databaseUrl,
       email: "worker-cli@test.local",
@@ -303,7 +306,7 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
     const pool = getPool()!;
     await pool.query(
       `INSERT INTO tanbot_telegram_accounts (user_id, telegram_user_id, telegram_chat_id, notifications_enabled)
-       VALUES ($1::uuid, 992005, 992005, TRUE)`,
+       VALUES ($1::uuid, 992005, 992005, FALSE)`,
       [user.id],
     );
     await pool.query(
@@ -318,8 +321,9 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
       encoding: "utf8",
     });
     assert.equal(worker.status, 0, worker.stderr || worker.stdout);
-    const row = await pool.query(`SELECT status FROM tanbot_notification_outbox WHERE idempotency_key = 'test-worker-once'`);
+    const row = await pool.query(`SELECT status,last_error_code FROM tanbot_notification_outbox WHERE idempotency_key = 'test-worker-once'`);
     assert.equal(row.rows[0]?.status, "cancelled");
+    assert.equal(row.rows[0]?.last_error_code, "NO_SUBSCRIPTION");
     process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = "false";
   });
 });

@@ -1406,6 +1406,14 @@
     }
   }
 
+  function cancelCreateWizardScrollOnUserIntent() {
+    if (current === ROUTE && isInternalCreateWizardView()) cancelCreateWizardScrollJob();
+  }
+  // Do not move a button between pointer-down/up or reclaim focus once typing starts.
+  for (const eventName of ["pointerdown", "keydown", "input", "wheel"]) {
+    document.addEventListener(eventName, cancelCreateWizardScrollOnUserIntent, { capture: true, passive: true });
+  }
+
   function createWizardNestedScrollSnapshot(root) {
     if (!root) return null;
     const selector = ".tt-wizard-contact-list, .tt-contact-pick, .tt-wizard-body";
@@ -4842,7 +4850,13 @@
       return;
     }
     if (opts.soft && (state.view === "create" || state.view === "transfer") && document.activeElement?.dataset?.ttField === "pickQ" && patchContactPick()) {
-      restoreFocus(snap, inInternalCreateNow ? { preventScroll: true } : {});
+      const gen = createWizardRenderGen;
+      const phase = state.createPhase;
+      restoreFocus(snap, inInternalCreateNow ? {
+        preventScroll: true,
+        valid: () => current === ROUTE && isInternalCreateWizardView() &&
+          gen === createWizardRenderGen && state.createPhase === phase,
+      } : {});
       return;
     }
 
@@ -5205,7 +5219,6 @@
       state.createPhase = "item";
       state.createReturnPhase = null;
       state.createReviewScrollAnchor = null;
-      state.createReviewScrollAnchor = null;
       state.form = defaultCreateForm();
       state.error = "";
       clearCompleteConfirm();
@@ -5231,7 +5244,7 @@
           queueCreateWizardNav({ type: "phase-enter", phase: state.createPhase });
         }
       } else if (state.error) {
-        queueCreateWizardNav({ type: "validation", phase: fromPhase });
+        queueCreateWizardNav({ type: "validation", phase: state.createPhase });
       }
       renderTracker();
       return;
@@ -6105,7 +6118,15 @@
     e.preventDefault();
     syncWizardFieldsFromDom();
     if (state.createPhase === "review") return;
-    if (wizardAdvance()) writeUrl();
+    const returning = state.createReturnPhase === "review";
+    const anchor = state.createReviewScrollAnchor;
+    if (wizardAdvance()) {
+      writeUrl();
+      if (returning && state.createPhase === "review") {
+        queueCreateWizardNav({ type: "review-return", anchor: anchor || "recipient" });
+        state.createReviewScrollAnchor = null;
+      } else queueCreateWizardNav({ type: "phase-enter", phase: state.createPhase });
+    } else queueCreateWizardNav({ type: "validation", phase: state.createPhase });
     renderTracker();
   });
 

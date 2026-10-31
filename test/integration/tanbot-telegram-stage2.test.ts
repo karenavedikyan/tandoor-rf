@@ -231,13 +231,26 @@ describe("tanbot telegram stage2", { concurrency: false }, () => {
     const result = await processTanbotNotificationOutbox(pool, loaded.config, transport, {
       deliveryEnabled: true,
     });
-    assert.equal(result.sent, 1);
-    assert.equal(sink.calls.length, 1);
-    assert.match(String(sink.calls[0]!.body.text), /Тан-трекер/);
-    assert.match(String(sink.calls[0]!.body.text), /PUB1/);
+    // Existing canonical intermediate receipt emits confirmation + new-holder assignment.
+    // This is already true on production base 12a42b3; neither event should be dropped.
+    const sentEvents = (await pool.query<{ event_type: string }>(
+      `SELECT event_type FROM tanbot_notification_outbox
+       WHERE channel='telegram' AND user_id=$1::uuid AND status='sent'
+         AND payload->>'transferId'=$2 ORDER BY event_type`,
+      [recipientUser.id, transferId],
+    )).rows.map(row => row.event_type);
+    assert.deepEqual(sentEvents, ["tan_tracker.assignment", "tan_tracker.handoff_confirmed"]);
+    assert.equal(result.sent, 2);
+    assert.equal(sink.calls.length, 2);
+    for (const call of sink.calls) {
+      assert.equal(String(call.body.chat_id), "777001");
+      assert.match(String(call.body.text), /Тан-трекер/);
+      assert.match(String(call.body.text), /PUB1/);
+    }
 
     const again = await processTanbotNotificationOutbox(pool, loaded.config, transport);
     assert.equal(again.sent, 0);
+    process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = "false";
   });
 
   it("expired token hash not accepted", async () => {

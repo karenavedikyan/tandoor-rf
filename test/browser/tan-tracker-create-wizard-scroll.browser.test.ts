@@ -96,9 +96,13 @@ describe("internal create wizard scroll follow (browser)", { concurrency: false 
   ) {
     const context = await browser.newContext({ baseURL: fixture.baseUrl, viewport });
     const page = await context.newPage();
+    const pageErrors: string[] = [];
+    page.on("pageerror", error => pageErrors.push(error.stack || error.message));
     try {
       await loginStaff(page, fixture);
       await fn(page);
+    } catch (error) {
+      throw new Error(`${error}\nBrowser errors: ${pageErrors.join("\n")}`, { cause: error });
     } finally {
       await context.close();
     }
@@ -201,12 +205,39 @@ describe("internal create wizard scroll follow (browser)", { concurrency: false 
     await withPage(fixture.browser, { width: 1280, height: 500 }, async (page) => {
       await page.goto("/tan-tracker");
       await clickCreateEntry(page);
-      await page.fill('[data-tt-field="item"]', "   ");
-      await page.click('[data-tt="create-wizard-next"]');
-      await page.waitForSelector('[data-tt="form-error"]', { timeout: 10000 });
-      await page.waitForSelector('[data-create-phase="item"]');
-      assert.match(await page.locator('[data-tt="form-error"]').innerText(), /обязательное поле/);
-      await anchorInViewport(page, '[data-tt="form-error"]', "validation error");
+      await page.evaluate(() => {
+        const audit: string[] = [];
+        (window as unknown as { __scrollClickAudit: string[] }).__scrollClickAudit = audit;
+        document.addEventListener("click", event => {
+          audit.push((event.target as Element).closest("[data-tt]")?.getAttribute("data-tt") || "none");
+        }, true);
+      });
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await page.fill('[data-tt-field="item"]', "   ");
+        await page.click('[data-tt="create-wizard-next"]');
+        await page.waitForSelector('[data-tt="form-error"]', { timeout: 3000 }).catch(async error => {
+          const diagnostic = await page.evaluate(() => ({
+            phase: document.querySelector("[data-create-phase]")?.getAttribute("data-create-phase"),
+            item: document.querySelector<HTMLInputElement>('[data-tt-field="item"]')?.value,
+            clicks: (window as unknown as { __scrollClickAudit?: string[] }).__scrollClickAudit,
+            next: document.querySelector('[data-tt="create-wizard-next"]')?.outerHTML,
+            errors: [...document.querySelectorAll('[data-tt="form-error"]')].map(el => ({
+              text: el.textContent, rect: el.getBoundingClientRect().toJSON(),
+              display: getComputedStyle(el).display,
+            })),
+            text: document.querySelector('[data-tt="create-wizard"]')?.textContent?.slice(0, 900),
+          }));
+          throw new Error(`Validation action diagnostic: ${JSON.stringify(diagnostic)}`, { cause: error });
+        });
+        await page.waitForSelector('[data-create-phase="item"]');
+        assert.match(await page.locator('[data-tt="form-error"]').innerText(), /обязательное поле/);
+        await anchorInViewport(page, '[data-tt="form-error"]', "validation error");
+      }
+      await page.fill('[data-tt-field="item"]', "Enter advances without stale focus");
+      await page.locator('[data-tt-field="item"]').press("Enter");
+      await page.waitForSelector('[data-create-phase="files"]');
+      await waitCreateWizardScrollFrame(page);
+      await anchorInViewport(page, '[data-tt="create-skip-files"]', "Enter next action");
     });
   });
 });
