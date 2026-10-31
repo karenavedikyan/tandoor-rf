@@ -102,45 +102,29 @@ export async function handleExternalPersonMaxPhoto(
     fileName: string | null;
     recipientChatType?: string | null;
     mediaToken?: string | null;
+    images?: Array<{ downloadUrl: string; fileName: string; mediaToken?: string | null }>;
   },
 ): Promise<ExternalPersonBotReply | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
-  if (await findAccountByMaxUserId(client, input.maxUserId)) return null;
-  const ctx = await (
-    await import("../native-create/adapters")
-  ).buildMaxNativeCreateContext(client, {
+  const images =
+    input.images?.length ?
+      input.images
+    : [
+        {
+          downloadUrl: input.downloadUrl,
+          fileName: input.fileName ?? "photo.jpg",
+          mediaToken: input.mediaToken,
+        },
+      ];
+  const { ingestNativeCreateMaxPhotos } = await import("../native-create/photo-ingest");
+  const { nativeReplyToMax } = await import("../native-create/adapters");
+  const native = await ingestNativeCreateMaxPhotos(client, {
     chatId: input.chatId,
     maxUserId: input.maxUserId,
     recipientChatType: input.recipientChatType,
-  });
-  const { assertNativeCreateContext, lockNativeCreateMessenger } = await import("../native-create/access-guard");
-  const { loadNativeBotDraft } = await import("../native-create/draft-scope");
-  const { assertDraftPersonRow } = await import("../native-create/access-guard");
-  await lockNativeCreateMessenger(client, ctx);
-  try {
-    await assertNativeCreateContext(client, ctx);
-  } catch {
-    return null;
-  }
-  const actor = ctx.isLinkedStaff ? "staff" : "external";
-  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor, { forUpdate: true });
-  if (!draft || draft.step !== "photo") return null;
-  assertDraftPersonRow(draft, ctx);
-  if (!input.downloadUrl?.trim()) {
-    return { text: "Изображение принимается только с серверов MAX. Отправьте фото заново из чата." };
-  }
-  const { fetchMaxImageBytes } = await import("../../tanbot-max/file-fetch");
-  const bytes = await fetchMaxImageBytes(input.downloadUrl);
-  if (!bytes.ok) return { text: bytes.message };
-  const native = await tryNativeCreateMaxPhoto(client, {
-    chatId: input.chatId,
-    maxUserId: input.maxUserId,
-    buffer: bytes.buffer,
-    mimeType: bytes.mimeType,
-    fileName: input.fileName ?? "photo.jpg",
-    maxFileToken: input.mediaToken,
-    recipientChatType: input.recipientChatType,
+    images,
   });
   if (!native) return null;
-  return { ...native, inlineButtons: native.inlineButtons };
+  const out = nativeReplyToMax(native);
+  return { text: out.text, replyMarkup: out.replyMarkup, inlineButtons: out.inlineButtons };
 }

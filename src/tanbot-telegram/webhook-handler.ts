@@ -146,9 +146,25 @@ async function processParsedUpdate(
             fileName: update.fileName,
           })
         : null;
-      const reply: WebhookReply = ext
-        ? { chatId: update.chatId, text: ext.text, replyMarkup: ext.replyMarkup }
-        : null;
+      let reply: WebhookReply = null;
+      if (ext) {
+        const account = await findAccountByTelegramUserId(client, update.telegramUserId);
+        const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
+        reply = {
+          chatId: update.chatId,
+          text: ext.text,
+          replyMarkup: ext.replyMarkup,
+          replyExtra: nativeTelegramReplyExtra(
+            { text: ext.text, replyMarkup: ext.replyMarkup },
+            {
+              messengerChatId: update.chatId.toString(),
+              messengerUserId: update.telegramUserId.toString(),
+              actor: account ? "staff" : "external",
+              channel: "telegram",
+            },
+          ),
+        };
+      }
       if (reply) await commitTelegramUpdateReply(client, update.updateId, reply);
       return reply;
     } catch (err) {

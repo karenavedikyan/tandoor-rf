@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseMaxImageFromMessage } from "../../src/tanbot/external-person/max-image-parse";
+import {
+  parseMaxImageFromMessage,
+  parseMaxImagesFromMessage,
+} from "../../src/tanbot/external-person/max-image-parse";
 
 describe("parseMaxImageFromMessage", () => {
   it("parses official image attachment url on body.attachments", () => {
@@ -25,6 +28,18 @@ describe("parseMaxImageFromMessage", () => {
       },
     });
     assert.equal(parsed, null);
+  });
+
+  it("collects every image attachment in an album", () => {
+    const parsed = parseMaxImagesFromMessage({
+      body: {
+        attachments: [
+          { type: "image", payload: { url: "https://iu.oneme.ru/getImage?token=a" } },
+          { type: "image", payload: { url: "https://iu.oneme.ru/getImage?token=b" } },
+        ],
+      },
+    });
+    assert.equal(parsed.length, 2);
   });
 
   it("returns token-only payload without url", () => {

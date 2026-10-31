@@ -320,27 +320,47 @@ async function processUpdateInTransaction(
         };
       }
     } else if (
+      ("imageRejected" in update && update.imageRejected) ||
+      (Array.isArray(update.normalizedImages) && update.normalizedImages.length > 0) ||
       (typeof update.imageDownloadUrl === "string" && update.imageDownloadUrl) ||
       (typeof update.imageMediaToken === "string" && update.imageMediaToken)
     ) {
-      if (!update.imageDownloadUrl && update.imageMediaToken) {
+      type MaxImg = { downloadUrl: string; fileName: string; mediaToken: string | null };
+      const normalized = Array.isArray(update.normalizedImages) ? (update.normalizedImages as MaxImg[]) : [];
+      const images: MaxImg[] =
+        "imageRejected" in update && update.imageRejected ?
+          [{ downloadUrl: "", fileName: "photo.jpg", mediaToken: null }]
+        : normalized.length ?
+          normalized.map((img) => ({
+            downloadUrl: String(img.downloadUrl ?? ""),
+            fileName: String(img.fileName ?? "photo.jpg"),
+            mediaToken: img.mediaToken ?? null,
+          }))
+        : [
+            {
+              downloadUrl: typeof update.imageDownloadUrl === "string" ? update.imageDownloadUrl : "",
+              fileName: typeof update.imageFileName === "string" ? update.imageFileName : "photo.jpg",
+              mediaToken: typeof update.imageMediaToken === "string" ? update.imageMediaToken : null,
+            },
+          ];
+      const tokenOnly =
+        images.length > 0 && images.every((img) => !img.downloadUrl?.trim() && img.mediaToken);
+      if (tokenOnly) {
         reply = {
           userId: update.maxUserId,
           chatId: update.chatId,
           text: "Не удалось загрузить изображение по токену. Отправьте фото ещё раз из галереи MAX.",
         };
-      } else if (typeof update.imageDownloadUrl === "string" && update.imageDownloadUrl) {
-        const ext = isExternalMessengerFeatureEnabled()
-          ? await handleExternalPersonMaxPhoto(client, {
-              chatId: update.chatId,
-              maxUserId: update.maxUserId,
-              downloadUrl: update.imageDownloadUrl,
-              fileName: typeof update.imageFileName === "string" ? update.imageFileName : null,
-              recipientChatType,
-              mediaToken:
-                typeof update.imageMediaToken === "string" ? update.imageMediaToken : null,
-            })
-          : null;
+      } else if (isExternalMessengerFeatureEnabled()) {
+        const ext = await handleExternalPersonMaxPhoto(client, {
+          chatId: update.chatId,
+          maxUserId: update.maxUserId,
+          downloadUrl: images[0]?.downloadUrl ?? "",
+          fileName: images[0]?.fileName ?? null,
+          recipientChatType,
+          mediaToken: images[0]?.mediaToken ?? null,
+          images,
+        });
         if (ext) {
           reply = {
             userId: update.maxUserId,
