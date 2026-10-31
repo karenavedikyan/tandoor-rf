@@ -1,15 +1,15 @@
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 import type { TanbotTelegramStage2Config } from "./stage2-config";
 import type { TelegramDeliveryTransport, TelegramDeliveryResult } from "./delivery-transport";
 import type { WebhookReply } from "./webhook-handler";
 import { markTelegramReplyDelivered } from "./webhook-inbox";
 import { applyTelegramWebhookReplyLinkPreviewSafety } from "./send-message-safety";
 import {
-  loadTelegramReplyRow,
-  markTelegramExtraProgress,
+  loadTelegramReplyRowLocked,
+  mergeTelegramReplyDeliveryProgress,
   nextTelegramDeliveryStep,
-  persistTelegramReplyExtra,
   telegramExtraFromStored,
+  withTelegramReplyDeliveryLock,
 } from "../tanbot/webhook-reply-pair-delivery";
 import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
 
@@ -29,8 +29,8 @@ export function buildTelegramSendMessagePayload(input: {
   return body;
 }
 
-export async function deliverTelegramWebhookReply(
-  db: Pool | PoolClient,
+async function deliverTelegramWebhookReplyUnderLock(
+  client: import("pg").PoolClient,
   config: TanbotTelegramStage2Config,
   transport: TelegramDeliveryTransport,
   updateId: number,
@@ -38,9 +38,11 @@ export async function deliverTelegramWebhookReply(
 ): Promise<TelegramDeliveryResult | null> {
   if (!reply) return null;
 
-  const stored = await loadTelegramReplyRow(db, updateId);
-  let extra = telegramExtraFromStored(stored?.reply_extra);
-  const primaryText = stored?.reply_text ?? reply.text;
+  let row = await loadTelegramReplyRowLocked(client, updateId);
+  if (!row || row.reply_delivered_at) return null;
+
+  let extra = telegramExtraFromStored(row.reply_extra);
+  const primaryText = row.reply_text ?? reply.text;
 
   if (reply.answerCallbackQueryId && nextTelegramDeliveryStep(extra) === "primary") {
     await transport({
@@ -55,6 +57,9 @@ export async function deliverTelegramWebhookReply(
   let lastResult: TelegramDeliveryResult | null = null;
 
   for (let guard = 0; guard < 3; guard++) {
+    row = await loadTelegramReplyRowLocked(client, updateId);
+    if (!row || row.reply_delivered_at) break;
+    extra = telegramExtraFromStored(row.reply_extra);
     const step = nextTelegramDeliveryStep(extra);
     if (step === "done") break;
 
@@ -72,8 +77,7 @@ export async function deliverTelegramWebhookReply(
         maxResponseBytes: config.maxResponseBytes,
       });
       if (!lastResult.ok) return lastResult;
-      extra = markTelegramExtraProgress(extra, "primary");
-      await persistTelegramReplyExtra(db, updateId, extra);
+      await mergeTelegramReplyDeliveryProgress(client, updateId, "primary");
       continue;
     }
 
@@ -90,13 +94,26 @@ export async function deliverTelegramWebhookReply(
         maxResponseBytes: config.maxResponseBytes,
       });
       if (!lastResult.ok) return lastResult;
-      extra = markTelegramExtraProgress(extra, "copyOnly");
-      await persistTelegramReplyExtra(db, updateId, extra);
+      await mergeTelegramReplyDeliveryProgress(client, updateId, "copyOnly");
     }
   }
 
-  if (isHandoffReplyFullyDelivered(extra)) {
-    await markTelegramReplyDelivered(db, updateId);
+  row = await loadTelegramReplyRowLocked(client, updateId);
+  extra = telegramExtraFromStored(row?.reply_extra);
+  if (row && !row.reply_delivered_at && isHandoffReplyFullyDelivered(extra)) {
+    await markTelegramReplyDelivered(client, updateId);
   }
   return lastResult;
+}
+
+export async function deliverTelegramWebhookReply(
+  pool: Pool,
+  config: TanbotTelegramStage2Config,
+  transport: TelegramDeliveryTransport,
+  updateId: number,
+  reply: WebhookReply,
+): Promise<TelegramDeliveryResult | null> {
+  return withTelegramReplyDeliveryLock(pool, updateId, (client) =>
+    deliverTelegramWebhookReplyUnderLock(client, config, transport, updateId, reply),
+  );
 }

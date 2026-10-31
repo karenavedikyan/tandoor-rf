@@ -1,19 +1,19 @@
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 import type { TanbotMaxStage2Config } from "./stage2-config";
 import type { MaxDeliveryTransport, MaxDeliveryResult } from "./delivery-transport";
 import type { WebhookReply } from "./webhook-handler";
 import { markMaxReplyDelivered } from "./webhook-inbox";
 import {
-  loadMaxReplyRow,
-  markMaxExtraProgress,
+  loadMaxReplyRowLocked,
   maxExtraFromStored,
+  mergeMaxReplyDeliveryProgress,
   nextMaxDeliveryStep,
-  persistMaxReplyExtra,
+  withMaxReplyDeliveryLock,
 } from "../tanbot/webhook-reply-pair-delivery";
 import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
 
-export async function deliverMaxWebhookReply(
-  db: Pool | PoolClient,
+async function deliverMaxWebhookReplyUnderLock(
+  client: import("pg").PoolClient,
   config: TanbotMaxStage2Config,
   transport: MaxDeliveryTransport,
   dedupKey: string,
@@ -21,13 +21,18 @@ export async function deliverMaxWebhookReply(
 ): Promise<MaxDeliveryResult | null> {
   if (!reply) return null;
 
-  const stored = await loadMaxReplyRow(db, dedupKey);
-  let extra = maxExtraFromStored(stored?.reply_extra);
-  const primaryText = stored?.reply_text ?? reply.text;
+  let row = await loadMaxReplyRowLocked(client, dedupKey);
+  if (!row || row.reply_delivered_at) return null;
+
+  let extra = maxExtraFromStored(row.reply_extra);
+  const primaryText = row.reply_text ?? reply.text;
 
   let lastResult: MaxDeliveryResult | null = null;
 
   for (let guard = 0; guard < 3; guard++) {
+    row = await loadMaxReplyRowLocked(client, dedupKey);
+    if (!row || row.reply_delivered_at) break;
+    extra = maxExtraFromStored(row.reply_extra);
     const step = nextMaxDeliveryStep(extra);
     if (step === "done") break;
 
@@ -41,8 +46,7 @@ export async function deliverMaxWebhookReply(
         inlineButtons: extra.inlineButtons ?? reply.inlineButtons,
       });
       if (!lastResult.ok) return lastResult;
-      extra = markMaxExtraProgress(extra, "primary");
-      await persistMaxReplyExtra(db, dedupKey, extra);
+      await mergeMaxReplyDeliveryProgress(client, dedupKey, "primary");
       continue;
     }
 
@@ -55,13 +59,26 @@ export async function deliverMaxWebhookReply(
         maxResponseBytes: config.maxResponseBytes,
       });
       if (!lastResult.ok) return lastResult;
-      extra = markMaxExtraProgress(extra, "copyOnly");
-      await persistMaxReplyExtra(db, dedupKey, extra);
+      await mergeMaxReplyDeliveryProgress(client, dedupKey, "copyOnly");
     }
   }
 
-  if (isHandoffReplyFullyDelivered(extra)) {
-    await markMaxReplyDelivered(db, dedupKey);
+  row = await loadMaxReplyRowLocked(client, dedupKey);
+  extra = maxExtraFromStored(row?.reply_extra);
+  if (row && !row.reply_delivered_at && isHandoffReplyFullyDelivered(extra)) {
+    await markMaxReplyDelivered(client, dedupKey);
   }
   return lastResult;
+}
+
+export async function deliverMaxWebhookReply(
+  pool: Pool,
+  config: TanbotMaxStage2Config,
+  transport: MaxDeliveryTransport,
+  dedupKey: string,
+  reply: WebhookReply,
+): Promise<MaxDeliveryResult | null> {
+  return withMaxReplyDeliveryLock(pool, dedupKey, (client) =>
+    deliverMaxWebhookReplyUnderLock(client, config, transport, dedupKey, reply),
+  );
 }

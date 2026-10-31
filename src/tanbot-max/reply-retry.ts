@@ -18,6 +18,13 @@ export async function processUndeliveredMaxWebhookReplies(
   if (!deliveryEnabled) return result;
 
   const client = await pool.connect();
+  let rows: Array<{
+    dedup_key: string;
+    reply_user_id: string;
+    reply_chat_id: string | null;
+    reply_text: string;
+    reply_extra: unknown;
+  }> = [];
   try {
     await client.query("BEGIN");
     const batch = await client.query<{
@@ -37,26 +44,28 @@ export async function processUndeliveredMaxWebhookReplies(
        FOR UPDATE SKIP LOCKED`,
       [limit],
     );
-    for (const row of batch.rows) {
-      result.attempted += 1;
-      const extra = parseMaxReplyExtra(row.reply_extra);
-      const chatId = row.reply_chat_id ? BigInt(row.reply_chat_id) : BigInt(row.reply_user_id);
-      const send = await deliverMaxWebhookReply(client, config, transport, row.dedup_key, {
-        userId: BigInt(row.reply_user_id),
-        chatId,
-        text: row.reply_text,
-        inlineButtons: extra.inlineButtons,
-      });
-      if (send?.ok) {
-        result.delivered += 1;
-      }
-    }
+    rows = batch.rows;
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
+  }
+
+  for (const row of rows) {
+    result.attempted += 1;
+    const extra = parseMaxReplyExtra(row.reply_extra);
+    const chatId = row.reply_chat_id ? BigInt(row.reply_chat_id) : BigInt(row.reply_user_id);
+    const send = await deliverMaxWebhookReply(pool, config, transport, row.dedup_key, {
+      userId: BigInt(row.reply_user_id),
+      chatId,
+      text: row.reply_text,
+      inlineButtons: extra.inlineButtons,
+    });
+    if (send?.ok) {
+      result.delivered += 1;
+    }
   }
   return result;
 }
