@@ -55,10 +55,16 @@ export async function upsertExternalWebDraftHandler(req: Request, res: Response)
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Сессия недоступна."));
     return;
   }
-  const body = req.body as { step?: string; payload?: Record<string, unknown>; startFresh?: boolean };
+  const body = req.body as {
+    step?: string;
+    payload?: Record<string, unknown>;
+    startFresh?: boolean;
+    draftId?: string;
+  };
   const step = String(body?.step ?? "item").slice(0, 32);
   const payload = body?.payload ?? {};
   const startFresh = body?.startFresh === true;
+  const targetDraftId = String(body?.draftId ?? "").trim();
   const pool = getPool()!;
   const provenance = await requirePersonMessengerProvenance(pool, person.personId);
   try {
@@ -77,6 +83,21 @@ export async function upsertExternalWebDraftHandler(req: Request, res: Response)
           payload: payload as Record<string, unknown>,
         });
         return { id: created.id };
+      }
+      if (targetDraftId) {
+        await lockExternalWebDraftForMutation(client, {
+          draftId: targetDraftId,
+          personId: person.personId,
+          channel: provenance.channel,
+          messengerChatId: provenance.messengerChatId,
+        });
+        await client.query(
+          `UPDATE tt_external_request_drafts
+           SET person_id = $2::uuid, step = $3, payload = $4::jsonb, updated_at = NOW()
+           WHERE id = $1::uuid`,
+          [targetDraftId, person.personId, step, JSON.stringify(payload)],
+        );
+        return { id: targetDraftId };
       }
       const active = await loadActiveExternalRequestDraft(client, provenance.channel, provenance.messengerChatId);
       if (active) {
@@ -110,6 +131,14 @@ export async function upsertExternalWebDraftHandler(req: Request, res: Response)
     setNoStore(res);
     if (http === 403) {
       res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, message));
+      return;
+    }
+    if (http === 404) {
+      res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, message));
+      return;
+    }
+    if (http === 409) {
+      res.status(409).json(apiError(ERROR_CODES.VALIDATION_ERROR, message));
       return;
     }
     throw err;

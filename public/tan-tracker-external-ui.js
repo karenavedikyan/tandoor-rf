@@ -289,6 +289,52 @@
     return st.extRequestFlowId;
   }
 
+  function captureExtRequestToken(st, phase) {
+    return {
+      flowId: st.extRequestFlowId || 0,
+      view: st.view,
+      phase: phase,
+      form: st.extRequestForm,
+    };
+  }
+
+  function extRequestStillValid(st, token) {
+    if (!st || !token) return false;
+    if ((st.extRequestFlowId || 0) !== token.flowId) return false;
+    if (st.view !== "ext-request" || token.view !== "ext-request") return false;
+    if (st.extRequestPhase !== token.phase) return false;
+    if (st.extRequestForm !== token.form) return false;
+    return true;
+  }
+
+  function setExtRequestPhaseSaveInFlight(st, active) {
+    st.extRequestPhaseSaveInFlight = !!active;
+    if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+  }
+
+  function saveWizardDraft(_st, f, step, payload) {
+    var opts = f.draftId ? { draftId: f.draftId } : {};
+    return window.TanTrackerExternal.saveDraft(step, payload, opts).then(function (res) {
+      if (res.response.status !== 200) {
+        throw new Error((res.data && res.data.error && res.data.error.message) || "Не удалось сохранить черновик.");
+      }
+      if (res.data && res.data.draftId && !f.draftId) f.draftId = res.data.draftId;
+      return res;
+    });
+  }
+
+  function advancePhaseIfToken(st, token) {
+    if (!extRequestStillValid(st, token)) return;
+    advancePhase();
+  }
+
+  function clearExtRequestPhaseSaveIfSameForm(st, token) {
+    if (!st || !token) return;
+    if ((st.extRequestFlowId || 0) !== token.flowId) return;
+    if (st.extRequestForm !== token.form) return;
+    setExtRequestPhaseSaveInFlight(st, false);
+  }
+
   function resetExtRequestForm(st) {
     var prev = st.extRequestForm;
     if (prev) revokeExtPhotoUrls(prev);
@@ -575,7 +621,9 @@
 
     var hPending = photoHelpers();
     var uploadsPending = hPending ? hPending.hasPendingUploads(f.photos) : false;
-    var nextDisabled = uploadsPending ? ' disabled aria-disabled="true"' : "";
+    var saveInFlight = !!st.extRequestPhaseSaveInFlight;
+    var nextDisabled =
+      uploadsPending || saveInFlight ? ' disabled aria-disabled="true"' : "";
     var viewer =
       st.extRequestViewerUrl
         ? '<div class="tt-ext-photo-viewer" data-tt="ext-photo-viewer" role="dialog" aria-modal="true" aria-label="Просмотр фото">' +
@@ -833,8 +881,13 @@
     if (f.draftEnsurePromise) return f.draftEnsurePromise;
     var flowId = st.extRequestFlowId || 0;
     var startFresh = f.draftStartFresh === true;
-    f.draftEnsurePromise = window.TanTrackerExternal.saveDraft("item", {}, { startFresh: startFresh })
-      .then(function (res) {
+
+    function dispatchEnsureDraft() {
+      if ((st.extRequestFlowId || 0) !== flowId) {
+        return Promise.reject(new Error("Заявка отменена."));
+      }
+      if (f.draftId) return Promise.resolve(f.draftId);
+      return window.TanTrackerExternal.saveDraft("item", {}, { startFresh: startFresh }).then(function (res) {
         if ((st.extRequestFlowId || 0) !== flowId) {
           throw new Error("Заявка отменена.");
         }
@@ -844,10 +897,18 @@
         f.draftId = res.data.draftId;
         f.draftStartFresh = false;
         return f.draftId;
-      })
-      .finally(function () {
-        delete f.draftEnsurePromise;
       });
+    }
+
+    var chained = startFresh
+      ? (st.extRequestStartFreshTail || Promise.resolve()).then(dispatchEnsureDraft)
+      : dispatchEnsureDraft();
+    f.draftEnsurePromise = chained.finally(function () {
+      delete f.draftEnsurePromise;
+    });
+    if (startFresh) {
+      st.extRequestStartFreshTail = f.draftEnsurePromise.catch(function () {});
+    }
     return f.draftEnsurePromise;
   }
 
@@ -925,12 +986,15 @@
           if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
           return;
         }
+        var openFlowId = st.extRequestFlowId;
         void (window.TanTrackerExternal && window.TanTrackerExternal.fetchIntakeRecipients
           ? window.TanTrackerExternal.fetchIntakeRecipients().then(function (rows) {
+              if ((st.extRequestFlowId || 0) !== openFlowId) return;
               window.__TT_EXT_INTAKE_RECIPIENTS__ = rows;
             })
           : Promise.resolve()
         ).finally(function () {
+          if ((st.extRequestFlowId || 0) !== openFlowId) return;
           st.extRequestPhase = "item";
           st.view = "ext-request";
           if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
@@ -988,26 +1052,36 @@
       }
       if (action === "ext-request-next") {
         if (t.hasAttribute("disabled") || t.getAttribute("aria-disabled") === "true") return;
+        if (st.extRequestPhaseSaveInFlight) return;
         f = st.extRequestForm;
         var phase = st.extRequestPhase || "item";
         var hNext = photoHelpers();
         if (phase === "photo" && hNext && hNext.hasPendingUploads(f.photos || [])) return;
         if (phase === "summary" && hNext && hNext.hasPendingUploads(f.photos || [])) return;
+        var token = captureExtRequestToken(st, phase);
         if (phase === "item") {
           var input = document.querySelector('[data-tt-field="extItem"]');
           f.item = (input && input.value) || "";
           if (!f.item.trim()) return;
+          setExtRequestPhaseSaveInFlight(st, true);
           void ensureDraft(st, f)
             .then(function () {
-              return window.TanTrackerExternal.saveDraft("photo", {
+              if (!extRequestStillValid(st, token)) return;
+              return saveWizardDraft(st, f, "photo", {
                 item: f.item,
                 dueMode: f.duePreset === "tomorrow" ? "tomorrow" : "today",
               });
             })
-            .then(advancePhase)
+            .then(function () {
+              advancePhaseIfToken(st, token);
+            })
             .catch(function (err) {
+              if (!extRequestStillValid(st, token)) return;
               st.error = (err && err.message) || "Черновик недоступен.";
               if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+            })
+            .finally(function () {
+              clearExtRequestPhaseSaveIfSameForm(st, token);
             });
           return;
         }
@@ -1018,45 +1092,97 @@
         if (phase === "comment") {
           var cmt = document.querySelector('[data-tt-field="extComment"]');
           f.comment = (cmt && cmt.value) || "";
-          void window.TanTrackerExternal.saveDraft("recipient", {
+          setExtRequestPhaseSaveInFlight(st, true);
+          void saveWizardDraft(st, f, "recipient", {
             item: f.item,
             comment: f.comment,
             dueMode: f.duePreset === "tomorrow" ? "tomorrow" : "today",
-          }).then(advancePhase);
+          })
+            .then(function () {
+              advancePhaseIfToken(st, token);
+            })
+            .catch(function (err) {
+              if (!extRequestStillValid(st, token)) return;
+              st.error = (err && err.message) || "Не удалось сохранить черновик.";
+              if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+            })
+            .finally(function () {
+              clearExtRequestPhaseSaveIfSameForm(st, token);
+            });
           return;
         }
         if (phase === "recipient") {
           if (!f.recipientUserId) return;
-          void window.TanTrackerExternal.saveDraft("due", {
+          setExtRequestPhaseSaveInFlight(st, true);
+          void saveWizardDraft(st, f, "due", {
             item: f.item,
             comment: f.comment,
             recipientUserId: f.recipientUserId,
             dueMode: f.duePreset === "tomorrow" ? "tomorrow" : "today",
-          }).then(advancePhase);
+          })
+            .then(function () {
+              advancePhaseIfToken(st, token);
+            })
+            .catch(function (err) {
+              if (!extRequestStillValid(st, token)) return;
+              st.error = (err && err.message) || "Не удалось сохранить черновик.";
+              if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+            })
+            .finally(function () {
+              clearExtRequestPhaseSaveIfSameForm(st, token);
+            });
           return;
         }
         if (phase === "due") {
-          void window.TanTrackerExternal.saveDraft("summary", {
+          setExtRequestPhaseSaveInFlight(st, true);
+          void saveWizardDraft(st, f, "summary", {
             item: f.item,
             comment: f.comment,
             recipientUserId: f.recipientUserId,
             dueMode: f.duePreset === "tomorrow" ? "tomorrow" : "today",
-          }).then(advancePhase);
+          })
+            .then(function () {
+              advancePhaseIfToken(st, token);
+            })
+            .catch(function (err) {
+              if (!extRequestStillValid(st, token)) return;
+              st.error = (err && err.message) || "Не удалось сохранить черновик.";
+              if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+            })
+            .finally(function () {
+              clearExtRequestPhaseSaveIfSameForm(st, token);
+            });
           return;
         }
         if (phase === "summary") {
-          void window.TanTrackerExternal.confirmDraft(f.draftId).then(function (res) {
-            if (res.data && res.data.bootstrap) {
-              window.TanTrackerPrototype.hydrateFromServer(res.data.bootstrap);
-            }
-            f.createdId = res.data && res.data.publicCode;
-            if (f.createdId && window.TanTrackerPrototype && window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder) {
-              window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder(f.createdId);
-            }
-            st.extRequestPhase = "done";
-            st.error = "";
-            if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
-          });
+          if (!f.draftId) return;
+          var confirmDraftId = f.draftId;
+          setExtRequestPhaseSaveInFlight(st, true);
+          void window.TanTrackerExternal.confirmDraft(confirmDraftId)
+            .then(function (res) {
+              if (!extRequestStillValid(st, token)) return;
+              if (res.response.status !== 200) {
+                throw new Error((res.data && res.data.error && res.data.error.message) || "Не удалось создать заявку.");
+              }
+              if (res.data && res.data.bootstrap) {
+                window.TanTrackerPrototype.hydrateFromServer(res.data.bootstrap);
+              }
+              f.createdId = res.data && res.data.publicCode;
+              if (f.createdId && window.TanTrackerPrototype && window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder) {
+                window.TanTrackerPrototype.syncPublicHolderAccessTokenForOrder(f.createdId);
+              }
+              st.extRequestPhase = "done";
+              st.error = "";
+              if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+            })
+            .catch(function (err) {
+              if (!extRequestStillValid(st, token)) return;
+              st.error = (err && err.message) || "Не удалось создать заявку.";
+              if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+            })
+            .finally(function () {
+              clearExtRequestPhaseSaveIfSameForm(st, token);
+            });
         }
       }
       if (action === "ext-request-open-order" && f && f.createdId) {

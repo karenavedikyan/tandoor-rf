@@ -184,6 +184,50 @@ describe("external web draft startFresh", { concurrency: false }, () => {
     assert.equal(res.status, 403);
   });
 
+  it("rejects saveDraft when draftId is obsolete after startFresh", async () => {
+    const app = await loadApp();
+    const pool = getPool()!;
+    const extParty = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Fresh Ext5', '+79991112209') RETURNING id::text`,
+      )
+    ).rows[0]!.id;
+    const person = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO tt_external_persons (phone_e164, display_name, party_id) VALUES ('+79991112209', 'Fresh Ext5', $1::uuid) RETURNING id::text`,
+        [extParty],
+      )
+    ).rows[0]!.id;
+    await pool.query(
+      `INSERT INTO tt_external_person_verifications (person_id, channel, messenger_user_id, messenger_chat_id)
+       VALUES ($1::uuid, 'telegram', '881005', '881005')`,
+      [person],
+    );
+    const client = await pool.connect();
+    let est = "";
+    try {
+      est = await createPersonBrowserSession(client, person, "telegram");
+    } finally {
+      client.release();
+    }
+    const first = await draftPost(app, est, { step: "item", payload: {}, startFresh: true });
+    const staleId = first.body.draftId as string;
+    const second = await draftPost(app, est, { step: "item", payload: {}, startFresh: true });
+    const activeId = second.body.draftId as string;
+    assert.notEqual(staleId, activeId);
+    const staleSave = await draftPost(app, est, {
+      step: "photo",
+      draftId: staleId,
+      payload: { item: "Stale overwrite", dueMode: "today" },
+    });
+    assert.ok(staleSave.status === 404 || staleSave.status === 409);
+    const activeRow = await pool.query<{ item: string }>(
+      `SELECT payload->>'item' AS item FROM tt_external_request_drafts WHERE id = $1::uuid`,
+      [activeId],
+    );
+    assert.notEqual(activeRow.rows[0]?.item, "Stale overwrite");
+  });
+
   it("confirms transfer with only photos on active draft after startFresh", async () => {
     const app = await loadApp();
     const pool = getPool()!;
