@@ -5,6 +5,7 @@ import { resolveTanTrackerAuditUserId } from "./effective-user";
 import { ensurePartyForUserOnWrite, nextPublicTransferCode } from "./repository";
 import { resolveRecipientPartyId, type ExternalRecipientInput } from "./party-eligibility";
 import { linkStagedAttachmentsToTransfer } from "./attachments";
+import { tanTrackerCanWrite } from "./guards";
 
 export type CreateTransferInput = {
   item: string;
@@ -16,6 +17,7 @@ export type CreateTransferInput = {
   relayPartyId?: string | null;
   relayExternal?: ExternalRecipientInput;
   stagingAttachmentIds?: string[];
+  auditDetail?: Record<string, unknown>;
 };
 
 export type CreateTransferActor = {
@@ -38,6 +40,9 @@ export async function createTransferInTransaction(
   body: CreateTransferInput,
 ): Promise<string> {
   const { user, access } = actor;
+  if (!tanTrackerCanWrite(user, access)) {
+    throw Object.assign(new Error("Создание передач недоступно для этой роли или режима."), { http: 403 });
+  }
   const item = String(body.item ?? "").trim().slice(0, 500);
   if (!item) {
     throw Object.assign(new Error("Укажите, что передаёте."), { http: 400 });
@@ -102,7 +107,12 @@ export async function createTransferInTransaction(
   await client.query(
     `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
        VALUES ($1,$2::uuid,$3,'create',$4::jsonb)`,
-    [publicCode, auditUserId, holderParty.id, JSON.stringify({ item, source: "native_bot" })],
+    [
+      publicCode,
+      auditUserId,
+      holderParty.id,
+      JSON.stringify(body.auditDetail ? { item, ...body.auditDetail } : { item }),
+    ],
   );
   const stagingRaw = Array.isArray(body.stagingAttachmentIds)
     ? body.stagingAttachmentIds.map(String).filter(Boolean)

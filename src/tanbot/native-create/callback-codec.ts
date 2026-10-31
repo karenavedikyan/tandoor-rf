@@ -1,4 +1,4 @@
-const PREFIX = "nc:";
+const PREFIX = "nc";
 
 export type NativeCreateCallbackAction =
   | "confirm"
@@ -7,11 +7,16 @@ export type NativeCreateCallbackAction =
   | "edit"
   | "photo_skip"
   | "photo_next"
+  | "photo_view"
+  | "comment_skip"
   | "recipient"
   | "recipient_page"
+  | "recipient_ext"
   | "due"
   | "restart"
-  | "menu";
+  | "menu"
+  | "menu_create"
+  | "menu_my";
 
 const ACTION_CODE: Record<NativeCreateCallbackAction, string> = {
   confirm: "1",
@@ -25,14 +30,21 @@ const ACTION_CODE: Record<NativeCreateCallbackAction, string> = {
   due: "9",
   restart: "d",
   menu: "0",
+  comment_skip: "a",
+  recipient_ext: "b",
+  photo_view: "c",
+  menu_create: "e",
+  menu_my: "f",
 };
 
 const CODE_ACTION: Record<string, NativeCreateCallbackAction> = Object.fromEntries(
   Object.entries(ACTION_CODE).map(([k, v]) => [v, k as NativeCreateCallbackAction]),
 ) as Record<string, NativeCreateCallbackAction>;
 
-export function draftShortId(draftId: string): string {
-  return draftId.replace(/-/g, "").slice(0, 10);
+export function draftIdToHex32(draftId: string): string | null {
+  const hex = draftId.replace(/-/g, "").toLowerCase();
+  if (!/^[a-f0-9]{32}$/.test(hex)) return null;
+  return hex;
 }
 
 export function buildNativeCreateCallback(
@@ -40,35 +52,45 @@ export function buildNativeCreateCallback(
   draftId: string,
   revision: number,
   arg?: string,
-): string {
-  const short = draftShortId(draftId);
-  const rev = Math.max(0, Math.min(99, revision));
-  const base = `${PREFIX}${ACTION_CODE[action]}:${short}:${rev}`;
-  const withArg = arg != null && arg !== "" ? `${base}:${arg}` : base;
-  return withArg.slice(0, 64);
+): string | null {
+  const hex = draftIdToHex32(draftId);
+  if (!hex) return null;
+  if (!Number.isSafeInteger(revision) || revision < 1) return null;
+  const code = ACTION_CODE[action];
+  const parts = [PREFIX, code, hex, String(revision)];
+  if (arg != null && arg !== "") {
+    if (!/^[a-z0-9._-]{1,8}$/i.test(arg)) return null;
+    parts.push(arg);
+  }
+  const payload = parts.join(":");
+  if (Buffer.byteLength(payload, "utf8") > 64) return null;
+  return payload;
 }
 
 export type ParsedNativeCreateCallback = {
   action: NativeCreateCallbackAction;
-  draftShortId: string;
+  draftIdHex: string;
   revision: number;
   arg?: string;
 };
 
 export function parseNativeCreateCallback(data: string): ParsedNativeCreateCallback | null {
-  if (!data.startsWith(PREFIX)) return null;
-  const parts = data.slice(PREFIX.length).split(":");
-  if (parts.length < 3) return null;
-  const action = CODE_ACTION[parts[0]!];
+  if (Buffer.byteLength(data, "utf8") > 64) return null;
+  const parts = data.split(":");
+  if (parts.length < 4 || parts[0] !== PREFIX) return null;
+  const action = CODE_ACTION[parts[1]!];
   if (!action) return null;
-  const draftShortId = parts[1]!.trim();
-  if (!/^[a-f0-9]{10}$/i.test(draftShortId)) return null;
-  const revision = Number(parts[2]);
-  if (!Number.isInteger(revision) || revision < 0 || revision > 99) return null;
-  const arg = parts[3]?.trim() || undefined;
-  return { action, draftShortId, revision, arg };
+  const draftIdHex = parts[2]!.trim().toLowerCase();
+  if (!/^[a-f0-9]{32}$/.test(draftIdHex)) return null;
+  const revision = Number(parts[3]);
+  if (!Number.isSafeInteger(revision) || revision < 1) return null;
+  if (parts.length > 5) return null;
+  const arg = parts[4]?.trim() || undefined;
+  if (arg && !/^[a-z0-9._-]{1,8}$/i.test(arg)) return null;
+  return { action, draftIdHex, revision, arg };
 }
 
-export function draftIdMatchesShort(fullId: string, short: string): boolean {
-  return draftShortId(fullId).toLowerCase() === short.toLowerCase();
+export function draftIdMatchesHex(fullId: string, hex: string): boolean {
+  const normalized = draftIdToHex32(fullId);
+  return normalized != null && normalized === hex.toLowerCase();
 }
