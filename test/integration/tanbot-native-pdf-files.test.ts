@@ -153,7 +153,7 @@ describe("native bot PDF attachments (MAX + Telegram)", { concurrency: false }, 
     globalThis.fetch = originalFetch;
   });
 
-  it("Telegram: fake PDF is rejected with saved count and Next still available after one valid PDF", async () => {
+  it("Telegram: claimed PDF with HTML bytes stores as octet-stream and keeps prior valid PDF", async () => {
     const tgUserId = 88100201;
     await seedTelegramExternal(tgUserId, "+79991100201");
     const originalFetch = globalThis.fetch;
@@ -200,15 +200,23 @@ describe("native bot PDF attachments (MAX + Telegram)", { concurrency: false }, 
     const reply = await pool.query<{ reply_text: string }>(`SELECT reply_text FROM tanbot_telegram_update_dedup WHERE update_id=$1`, [
       seq,
     ]);
-    assert.match(reply.rows[0]!.reply_text, /Файлы:\s*1\/5/u);
-    assert.match(reply.rows[0]!.reply_text, /не является PDF|Поддерживаются/iu);
+    assert.match(reply.rows[0]!.reply_text, /Файлы:\s*2\/5/u);
+    const rows = await pool.query<{ mime_type: string; file_name: string }>(
+      `SELECT mime_type, file_name FROM tt_external_request_draft_files f
+       JOIN tt_external_request_drafts d ON d.id = f.draft_id
+       WHERE d.messenger_chat_id=$1 ORDER BY sort_order`,
+      [`native:ext:telegram:${tgUserId}`],
+    );
+    assert.equal(rows.rowCount, 2);
+    assert.equal(rows.rows[1]!.mime_type, "application/octet-stream");
+    assert.equal(rows.rows[1]!.file_name, "bad.pdf");
     const count = await pool.query(
       `SELECT COUNT(*)::int AS c FROM tt_external_request_draft_files f
        JOIN tt_external_request_drafts d ON d.id = f.draft_id
        WHERE d.messenger_chat_id=$1`,
       [`native:ext:telegram:${tgUserId}`],
     );
-    assert.equal(count.rows[0]!.c, 1);
+    assert.equal(count.rows[0]!.c, 2, "claimed PDF with wrong bytes is stored as octet-stream, not rejected");
     globalThis.fetch = originalFetch;
   });
 
@@ -389,9 +397,9 @@ describe("native bot PDF attachments (MAX + Telegram)", { concurrency: false }, 
 
     const viewRow = await poolAfter.query<{ dedup_key: string; reply_text: string }>(
       `SELECT dedup_key, reply_text FROM tanbot_max_update_dedup
-       WHERE reply_text LIKE 'PDF %' ORDER BY received_at DESC LIMIT 1`,
+       WHERE reply_text LIKE 'Файл %' ORDER BY received_at DESC LIMIT 1`,
     );
-    assert.equal(viewRow.rowCount, 1, "photo_view must commit a PDF inspect reply");
+    assert.equal(viewRow.rowCount, 1, "photo_view must commit a file inspect reply");
 
     const maxCfg = loadTanbotMaxStage2Config();
     assert.ok(maxCfg.ok);
@@ -481,9 +489,9 @@ describe("native bot PDF attachments (MAX + Telegram)", { concurrency: false }, 
 
     const viewRow = await pool.query<{ update_id: string; reply_text: string }>(
       `SELECT update_id::text, reply_text FROM tanbot_telegram_update_dedup
-       WHERE reply_text LIKE 'PDF %' ORDER BY received_at DESC LIMIT 1`,
+       WHERE reply_text LIKE 'Файл %' ORDER BY received_at DESC LIMIT 1`,
     );
-    assert.equal(viewRow.rowCount, 1, "photo_view must commit a PDF inspect reply");
+    assert.equal(viewRow.rowCount, 1, "photo_view must commit a file inspect reply");
 
     const tgCfg = loadTanbotTelegramStage2Config();
     assert.ok(tgCfg.ok);
