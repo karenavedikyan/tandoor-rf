@@ -221,20 +221,40 @@ async function processUpdateInTransaction(
               text: "Приглашение недоступно.",
             };
       } else if (!startPayload) {
-        const account = await findAccountByMaxUserId(client, update.maxUserId);
-        const { buildMainMenuInline } = await import("../tanbot/native-create/keyboards");
-        const menu = buildMainMenuInline("max");
-        reply = {
-          userId: update.maxUserId,
-          chatId: update.chatId,
-          text: buildMessengerPlainStartReply({
-            channelLabel: "MAX",
-            linked: !!account,
-            notificationsEnabled: account?.notifications_enabled ?? false,
-            profileUrl: lkUrl,
-          }),
-          inlineButtons: account ? menu.maxInlineButtons : menu.maxInlineButtons,
-        };
+        const { isExternalMessengerFeatureEnabled } = await import("../tan-tracker/external-messenger/config");
+        if (isExternalMessengerFeatureEnabled()) {
+          const { tryNativeCreateMaxMessage } = await import("../tanbot/native-create/adapters");
+          const native = await tryNativeCreateMaxMessage(client, {
+            chatId: update.chatId,
+            maxUserId: update.maxUserId,
+            text: "/start",
+            recipientChatType: update.recipientChatType as string | null | undefined,
+          });
+          if (native) {
+            reply = {
+              userId: update.maxUserId,
+              chatId: update.chatId,
+              text: native.text,
+              inlineButtons: native.inlineButtons,
+            };
+          }
+        }
+        if (!reply) {
+          const account = await findAccountByMaxUserId(client, update.maxUserId);
+          const { buildMainMenuInline } = await import("../tanbot/native-create/keyboards");
+          const menu = buildMainMenuInline("max");
+          reply = {
+            userId: update.maxUserId,
+            chatId: update.chatId,
+            text: buildMessengerPlainStartReply({
+              channelLabel: "MAX",
+              linked: !!account,
+              notificationsEnabled: account?.notifications_enabled ?? false,
+              profileUrl: lkUrl,
+            }),
+            inlineButtons: menu.maxInlineButtons,
+          };
+        }
       } else {
         const outcome = await consumeStartTokenForMaxUser(
           pool,

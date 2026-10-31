@@ -46,7 +46,7 @@ export async function handleExternalPersonTelegramContact(
   const origin = getAppOrigin() ?? "https://example.invalid";
   const url = `${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`;
   return {
-    text: `Номер подтверждён. Откройте «Мои передачи» или «Создать передачу»:\n${url}`,
+    text: `Номер подтверждён. Откройте «Мои передачи» или «Оформить передачу» в меню:\n${url}`,
     replyMarkup: menuReplyKeyboard(),
   };
 }
@@ -66,7 +66,8 @@ export async function handleExternalPersonTelegramMessage(
   const lower = text.toLowerCase();
   const person = await findPersonByMessenger(client, "telegram", input.telegramUserId);
 
-  if (lower === "мои передачи" || lower.startsWith("/my")) {
+  const { parseNativeBotSlashCommand } = await import("../native-create/main-menu");
+  if (lower === "мои передачи" || parseNativeBotSlashCommand(text) === "my") {
     if (!person) {
       return {
         text: "Подтвердите свой номер телефона кнопкой ниже — так мы покажем только ваши передачи.",
