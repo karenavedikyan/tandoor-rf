@@ -10,11 +10,15 @@ import {
   isTanTrackerStaffOutboxEvent,
 } from "./tan-tracker-outbox-messages";
 
+type StaffTelegramInlineButton =
+  | { text: string; callback_data: string; url?: never }
+  | { text: string; url: string; callback_data?: never };
+
 export type StaffTelegramOutboxSendBody = {
   text: string;
   disable_web_page_preview?: boolean;
   reply_markup?: {
-    inline_keyboard: Array<Array<{ text: string; callback_data?: string; url?: string }>>;
+    inline_keyboard: StaffTelegramInlineButton[][];
   };
 };
 
