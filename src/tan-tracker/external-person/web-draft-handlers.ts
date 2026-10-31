@@ -80,7 +80,7 @@ export async function upsertExternalWebDraftHandler(req: Request, res: Response)
           messengerChatId: provenance.messengerChatId,
           personId: person.personId,
           step,
-          payload: payload as Record<string, unknown>,
+          payload: { ...(payload as Record<string, unknown>), draftOrigin: "web" },
         });
         return { id: created.id };
       }

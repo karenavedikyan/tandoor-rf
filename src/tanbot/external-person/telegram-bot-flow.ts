@@ -7,45 +7,14 @@ import {
 } from "../../tan-tracker/external-person/person-service";
 import { isExternalMessengerFeatureEnabled } from "../../tan-tracker/external-messenger/config";
 import { findAccountByTelegramUserId } from "../../tanbot-telegram/link-repository";
-import { confirmExternalRequestDraft, type ExternalDraftPayload } from "../../tan-tracker/external-request/confirm";
-import { ensureActiveExternalRequestDraft, loadActiveExternalRequestDraft } from "../../tan-tracker/external-request/draft-store";
-import { listEligibleStaffForExternalParty } from "../../tan-tracker/external-request/intake-handlers";
-import { writeAttachmentBytes } from "../../tan-tracker/attachments";
-import crypto from "crypto";
-import { fetchTelegramFileBytes } from "../../tanbot-telegram/file-fetch";
+import { menuReplyKeyboard } from "../native-create/keyboards";
+import { tryNativeCreateTelegramMessage, tryNativeCreateTelegramPhoto } from "../native-create/adapters";
 
 export type ExternalPersonBotReply = {
   text: string;
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
 };
-
-const CHANNEL = "telegram" as const;
-
-function menuKeyboard(): Record<string, unknown> {
-  return {
-    keyboard: [
-      [{ text: "Мои передачи" }, { text: "Отправить предмет" }],
-    ],
-    resize_keyboard: true,
-  };
-}
-
-async function lockDraft(client: PoolClient, chatId: bigint) {
-  return loadActiveExternalRequestDraft(client, CHANNEL, chatId.toString());
-}
-
-async function ensureDraft(client: PoolClient, chatId: bigint, personId: string | null) {
-  const existing = await lockDraft(client, chatId);
-  if (existing) return existing;
-  return ensureActiveExternalRequestDraft(client, {
-    channel: CHANNEL,
-    messengerChatId: chatId.toString(),
-    personId,
-    step: "item",
-    payload: {},
-  });
-}
 
 export async function handleExternalPersonTelegramContact(
   client: PoolClient,
@@ -77,8 +46,8 @@ export async function handleExternalPersonTelegramContact(
   const origin = getAppOrigin() ?? "https://example.invalid";
   const url = `${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`;
   return {
-    text: `Номер подтверждён. Откройте «Мои передачи»:\n${url}`,
-    replyMarkup: menuKeyboard(),
+    text: `Номер подтверждён. Откройте «Мои передачи» или «Создать передачу»:\n${url}`,
+    replyMarkup: menuReplyKeyboard(),
   };
 }
 
@@ -108,129 +77,11 @@ export async function handleExternalPersonTelegramMessage(
     const origin = getAppOrigin() ?? "https://example.invalid";
     return {
       text: `Мои передачи:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
-      replyMarkup: menuKeyboard(),
+      replyMarkup: menuReplyKeyboard(),
     };
   }
 
-  if (lower === "отправить предмет" || lower.startsWith("/send")) {
-    if (!person) {
-      return { text: "Сначала подтвердите номер телефона.", requestContact: true };
-    }
-    await ensureDraft(client, input.chatId, person.id);
-    return { text: "Шаг 1 из 6. Что передаёте? (кратко)", replyMarkup: menuKeyboard() };
-  }
-
-  const draft = await lockDraft(client, input.chatId);
-  if (!draft) return null;
-  if (!person && !draft.person_id) {
-    return { text: "Подтвердите номер телефона перед продолжением.", requestContact: true };
-  }
-  const payload = { ...(draft.payload ?? {}) } as ExternalDraftPayload;
-  let step = draft.step;
-  if (step === "item") {
-    payload.item = text.slice(0, 500);
-    step = "photo";
-    await client.query(
-      `UPDATE tt_external_request_drafts SET step = $2, payload = $3::jsonb, person_id = COALESCE(person_id, $4::uuid), updated_at = NOW() WHERE id = $1::uuid`,
-      [draft.id, step, JSON.stringify(payload), person?.id ?? draft.person_id],
-    );
-    return { text: "Шаг 2 из 6. Пришлите фото (до 5) или напишите «пропустить».", replyMarkup: menuKeyboard() };
-  }
-  if (step === "photo") {
-    if (lower === "пропустить" || lower === "skip") {
-      step = "comment";
-      await client.query(
-        `UPDATE tt_external_request_drafts SET step = $2, payload = $3::jsonb, updated_at = NOW() WHERE id = $1::uuid`,
-        [draft.id, step, JSON.stringify(payload)],
-      );
-      return { text: "Шаг 3 из 6. Комментарий (или «пропустить»).", replyMarkup: menuKeyboard() };
-    }
-    return { text: "Пришлите фото сообщением или напишите «пропустить».", replyMarkup: menuKeyboard() };
-  }
-  if (step === "comment") {
-    if (lower !== "пропустить" && lower !== "skip") payload.comment = text.slice(0, 2000);
-    step = "recipient";
-    await client.query(
-      `UPDATE tt_external_request_drafts SET step = $2, payload = $3::jsonb, updated_at = NOW() WHERE id = $1::uuid`,
-      [draft.id, step, JSON.stringify(payload)],
-    );
-    const pid = person?.id ?? draft.person_id;
-    const partyRow = pid
-      ? await client.query<{ party_id: string }>(`SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid`, [pid])
-      : { rows: [] as { party_id: string }[] };
-    const eligible = partyRow.rows[0]?.party_id
-      ? await listEligibleStaffForExternalParty(client, partyRow.rows[0].party_id)
-      : [];
-    if (!eligible.length) {
-      return {
-        text: "Шаг 4 из 6. Нет доступных сотрудников для заявки. Обратитесь к менеджеру или выберите получателя в веб-интерфейсе «Мои передачи».",
-        replyMarkup: menuKeyboard(),
-      };
-    }
-    const lines = eligible.slice(0, 8).map((e, i) => `${i + 1}. ${e.fullName}`);
-    payload.recipientChoices = eligible.slice(0, 8).map((e) => e.userId);
-    await client.query(
-      `UPDATE tt_external_request_drafts SET step = $2, payload = $3::jsonb, updated_at = NOW() WHERE id = $1::uuid`,
-      [draft.id, step, JSON.stringify(payload)],
-    );
-    return {
-      text: `Шаг 4 из 6. Кому отправить заявку? Ответьте номером:\n${lines.join("\n")}`,
-      replyMarkup: menuKeyboard(),
-    };
-  }
-  if (step === "recipient") {
-    const choices = payload.recipientChoices ?? [];
-    const pick = Number.parseInt(text.trim(), 10);
-    const byIndex = Number.isFinite(pick) && pick >= 1 && pick <= choices.length ? choices[pick - 1] : null;
-    payload.recipientUserId = byIndex ?? text.trim();
-    step = "due";
-    await client.query(
-      `UPDATE tt_external_request_drafts SET step = $2, payload = $3::jsonb, updated_at = NOW() WHERE id = $1::uuid`,
-      [draft.id, step, JSON.stringify(payload)],
-    );
-    return { text: "Шаг 5 из 6. Срок: «сегодня» или «завтра».", replyMarkup: menuKeyboard() };
-  }
-  if (step === "due") {
-    payload.dueMode = lower.includes("завт") ? "tomorrow" : "today";
-    step = "summary";
-    await client.query(
-      `UPDATE tt_external_request_drafts SET step = $2, payload = $3::jsonb, updated_at = NOW() WHERE id = $1::uuid`,
-      [draft.id, step, JSON.stringify(payload)],
-    );
-    return {
-      text: `Шаг 6 из 6. Подтвердите:\n• ${payload.item}\n• срок: ${payload.dueMode === "tomorrow" ? "завтра" : "сегодня"}\nОтветьте «да» для отправки или «отмена».`,
-      replyMarkup: menuKeyboard(),
-    };
-  }
-  if (step === "summary") {
-    if (lower === "отмена" || lower === "cancel") {
-      await client.query(`DELETE FROM tt_external_request_drafts WHERE id = $1::uuid`, [draft.id]);
-      return { text: "Заявка отменена.", replyMarkup: menuKeyboard() };
-    }
-    if (lower !== "да" && lower !== "yes") {
-      return { text: "Ответьте «да» для отправки или «отмена».", replyMarkup: menuKeyboard() };
-    }
-    const pid = person?.id ?? draft.person_id;
-    if (!pid) return { text: "Сессия недействительна.", requestContact: true };
-    const personRow = await client.query<{ party_id: string }>(
-      `SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid`,
-      [pid],
-    );
-    const partyId = personRow.rows[0]?.party_id;
-    if (!partyId) return { text: "Профиль недоступен.", requestContact: true };
-    const idem = `ext-req:${draft.id}`;
-    const created = await confirmExternalRequestDraft(client, {
-      personId: pid,
-      externalPartyId: partyId,
-      draftId: draft.id,
-      idempotencyKey: idem,
-    });
-    return {
-      text: `Заявка отправлена. Номер передачи: ${created.publicCode}. Сотрудник получит уведомление.`,
-      replyMarkup: menuKeyboard(),
-    };
-  }
-  return null;
+  return tryNativeCreateTelegramMessage(client, input);
 }
 
 export async function handleExternalPersonTelegramPhoto(
@@ -239,23 +90,14 @@ export async function handleExternalPersonTelegramPhoto(
 ): Promise<ExternalPersonBotReply | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
   if (await findAccountByTelegramUserId(client, input.telegramUserId)) return null;
-  const draft = await lockDraft(client, input.chatId);
-  if (!draft || draft.step !== "photo") return null;
-  const count = await client.query<{ c: number }>(
-    `SELECT COUNT(*)::int AS c FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`,
-    [draft.id],
-  );
-  if ((count.rows[0]?.c ?? 0) >= 5) {
-    return { text: "Не более 5 фото. Напишите «пропустить» или продолжите на следующем шаге." };
-  }
+  const { fetchTelegramFileBytes } = await import("../../tanbot-telegram/file-fetch");
   const bytes = await fetchTelegramFileBytes(input.fileId);
   if (!bytes.ok) return { text: bytes.message };
-  const key = `external-draft/${draft.id}/${crypto.randomUUID()}-${input.fileName ?? "photo.jpg"}`;
-  await writeAttachmentBytes(client, key, bytes.buffer);
-  await client.query(
-    `INSERT INTO tt_external_request_draft_files (draft_id, storage_key, file_name, mime_type, byte_size, telegram_file_id, sort_order)
-     VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)`,
-    [draft.id, key, input.fileName ?? "photo.jpg", bytes.mimeType, bytes.buffer.length, input.fileId, count.rows[0]?.c ?? 0],
-  );
-  return { text: `Фото сохранено (${(count.rows[0]?.c ?? 0) + 1}/5). Ещё фото или «пропустить».`, replyMarkup: menuKeyboard() };
+  return tryNativeCreateTelegramPhoto(client, {
+    chatId: input.chatId,
+    telegramUserId: input.telegramUserId,
+    buffer: bytes.buffer,
+    mimeType: bytes.mimeType,
+    fileName: input.fileName ?? "photo.jpg",
+  });
 }

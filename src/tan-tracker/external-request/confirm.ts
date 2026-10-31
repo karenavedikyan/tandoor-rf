@@ -15,7 +15,8 @@ export type ExternalDraftPayload = {
   comment?: string;
   recipientUserId?: string;
   recipientChoices?: string[];
-  dueMode?: "today" | "tomorrow";
+  dueMode?: "today" | "tomorrow" | "none";
+  draftOrigin?: "web" | "native_bot";
 };
 
 export async function confirmExternalRequestDraft(
@@ -99,7 +100,9 @@ export async function confirmExternalRequestDraft(
   if (!staffParty) throw Object.assign(new Error("Сотрудник недоступен."), { http: 403 });
 
   const publicCode = await nextPublicTransferCode(client);
-  const dueAt = externalRequestDueAtFromMode(payload.dueMode);
+  const dueAt = externalRequestDueAtFromMode(
+    payload.dueMode === "none" ? undefined : payload.dueMode,
+  );
   await client.query(
     `INSERT INTO tt_transfers (
        id, public_code, item_title, comment_text, status, from_external,

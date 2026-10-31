@@ -132,7 +132,25 @@ async function processParsedUpdate(
     if (claim.kind === "resend") return claim.reply;
     try {
       let reply: WebhookReply = null;
-      if (isTanbotHandoffCodePilotEnabled()) {
+      const { isNativeCreateCallback, tryNativeCreateTelegramCallback } = await import(
+        "../tanbot/native-create/adapters"
+      );
+      if (isNativeCreateCallback(update.callbackData)) {
+        const native = await tryNativeCreateTelegramCallback(client, {
+          chatId: update.chatId,
+          telegramUserId: update.telegramUserId,
+          data: update.callbackData,
+        });
+        if (native) {
+          reply = {
+            chatId: update.chatId,
+            text: native.text,
+            replyMarkup: native.replyMarkup,
+            answerCallbackQueryId: update.callbackQueryId,
+          };
+        }
+      }
+      if (!reply && isTanbotHandoffCodePilotEnabled()) {
         const handoff = await buildHandoffCodeBotReply(client, "telegram", {
           externalUserId: update.telegramUserId,
           callbackPayload: update.callbackData,
@@ -273,12 +291,36 @@ async function processParsedUpdate(
         };
       }
     } else if (isExternalMessengerFeatureEnabled()) {
-      const ext = await handleExternalPersonTelegramMessage(client, {
+      const linkedStaff = await findAccountByTelegramUserId(client, update.telegramUserId);
+      if (linkedStaff) {
+        const { tryNativeCreateTelegramMessage } = await import("../tanbot/native-create/adapters");
+        const native = await tryNativeCreateTelegramMessage(client, {
+          chatId: update.chatId,
+          telegramUserId: update.telegramUserId,
+          text: update.text,
+        });
+        if (native) {
+          reply = {
+            chatId: update.chatId,
+            text: native.text,
+            replyMarkup: native.requestContact
+              ? {
+                  keyboard: [[{ text: "Отправить мой номер", request_contact: true }]],
+                  one_time_keyboard: true,
+                  resize_keyboard: true,
+                }
+              : native.replyMarkup,
+          };
+        }
+      }
+      const ext = !reply
+        ? await handleExternalPersonTelegramMessage(client, {
         chatId: update.chatId,
         telegramUserId: update.telegramUserId,
         text: update.text,
         firstName: update.firstName,
-      });
+          })
+        : null;
       if (ext) {
         reply = {
           chatId: update.chatId,

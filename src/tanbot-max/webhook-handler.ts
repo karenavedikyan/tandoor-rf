@@ -215,6 +215,25 @@ async function processUpdateInTransaction(
         }
       }
     } else if (
+      update.updateType === "message_callback" &&
+      callbackPayload &&
+      (await import("../tanbot/native-create/adapters")).isNativeCreateCallback(callbackPayload)
+    ) {
+      const { tryNativeCreateMaxCallback } = await import("../tanbot/native-create/adapters");
+      const native = await tryNativeCreateMaxCallback(client, {
+        chatId: update.chatId,
+        maxUserId: update.maxUserId,
+        payload: callbackPayload,
+      });
+      if (native) {
+        reply = {
+          userId: update.maxUserId,
+          chatId: update.chatId,
+          text: native.text,
+          inlineButtons: native.inlineButtons,
+        };
+      }
+    } else if (
       isTanbotHandoffCodePilotEnabled() &&
       (update.updateType === "message_callback" ||
         callbackPayload ||
@@ -255,25 +274,49 @@ async function processUpdateInTransaction(
             })
           : null;
         if (ext) {
-          reply = { userId: update.maxUserId, chatId: update.chatId, text: ext.text };
+          reply = {
+            userId: update.maxUserId,
+            chatId: update.chatId,
+            text: ext.text,
+            inlineButtons: ext.inlineButtons,
+          };
         }
       }
     } else if (commandText) {
       if (isExternalMessengerFeatureEnabled()) {
-        const ext = await handleExternalPersonMaxMessage(client, {
-          chatId: update.chatId,
-          maxUserId: update.maxUserId,
-          text: commandText,
-          firstName,
-        });
+        const linkedStaff = await findAccountByMaxUserId(client, update.maxUserId);
+        if (linkedStaff) {
+          const { tryNativeCreateMaxMessage } = await import("../tanbot/native-create/adapters");
+          const native = await tryNativeCreateMaxMessage(client, {
+            chatId: update.chatId,
+            maxUserId: update.maxUserId,
+            text: commandText,
+          });
+          if (native) {
+            reply = {
+              userId: update.maxUserId,
+              chatId: update.chatId,
+              text: native.text,
+              inlineButtons: native.inlineButtons,
+            };
+          }
+        }
+        const ext = !reply
+          ? await handleExternalPersonMaxMessage(client, {
+              chatId: update.chatId,
+              maxUserId: update.maxUserId,
+              text: commandText,
+              firstName,
+            })
+          : null;
         if (ext) {
           reply = {
             userId: update.maxUserId,
             chatId: update.chatId,
             text: ext.text,
-            inlineButtons: ext.requestContact
+            inlineButtons: ext.inlineButtons ?? (ext.requestContact
               ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
-              : undefined,
+              : undefined),
           };
         }
       }
