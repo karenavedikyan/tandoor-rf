@@ -51,13 +51,23 @@ function rejectMessage(reason: MaxImageIngestReject, kind: MaxAttachmentKind): s
           ? "Не удалось загрузить файл по токену. Отправьте файл ещё раз."
           : "Не удалось загрузить изображение по токену. Отправьте фото ещё раз из галереи MAX.";
     case "unsafe_url":
-      return "Ссылка на файл недоступна.";
+      return kind === "video"
+        ? "Ссылка на видео недоступна. Отправьте видео как файл."
+        : "Ссылка на файл недоступна.";
     case "malformed":
-      return "Не удалось принять файл. Отправьте вложение ещё раз.";
+      return kind === "video"
+        ? "Не удалось получить видео. Отправьте видео как файл."
+        : "Не удалось принять файл. Отправьте вложение ещё раз.";
   }
 }
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+function videoFallbackMessage(item: NormalizedMessengerAttachment, message: string): string {
+  return item.kind === "video" && !/как\s+файл/iu.test(message)
+    ? `${message} Отправьте видео как файл.`
+    : message;
+}
 
 function transportKindFor(item: NormalizedMessengerAttachment): NativeAttachmentTransportKind {
   return maxProviderKindToTransport(item.kind);
@@ -174,8 +184,8 @@ export async function ingestNativeCreateTelegramAttachments(
     if (!fileId) {
       return { ok: false, message: "Не удалось принять файл. Отправьте вложение ещё раз." };
     }
-    const bytes = await fetchTelegramNativeAttachmentBytes(fileId);
-    if (!bytes.ok) return { ok: false, message: bytes.message };
+    const bytes = await fetchTelegramNativeAttachmentBytes(fileId, item.kind);
+    if (!bytes.ok) return { ok: false, message: videoFallbackMessage(item, bytes.message) };
     return {
       ok: true,
       buffer: bytes.buffer,
@@ -205,11 +215,11 @@ export async function ingestNativeCreateMaxAttachments(
     if (!item.downloadUrl?.trim()) {
       return {
         ok: false,
-        message: "Файл принимается только с серверов MAX. Отправьте вложение заново из чата.",
+        message: videoFallbackMessage(item, "Файл принимается только с серверов MAX. Отправьте вложение заново из чата."),
       };
     }
-    const bytes = await fetchMaxNativeAttachmentBytes(item.downloadUrl);
-    if (!bytes.ok) return { ok: false, message: bytes.message };
+    const bytes = await fetchMaxNativeAttachmentBytes(item.downloadUrl, item.kind);
+    if (!bytes.ok) return { ok: false, message: videoFallbackMessage(item, bytes.message) };
     return {
       ok: true,
       buffer: bytes.buffer,

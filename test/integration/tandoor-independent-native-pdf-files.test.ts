@@ -39,6 +39,8 @@ const genericFiles: Record<string, Buffer> = {
   "video-file": mp4,
   "native-video": mp4,
   "video-manifest": Buffer.from("#EXTM3U\n#EXTINF:1\nhttps://untrusted.invalid/private-video-segment\n"),
+  "video-html": Buffer.from("<html>Temporary provider error</html>"),
+  "video-json": Buffer.from('{"error":"temporary provider error"}'),
   heic: Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypheic"), Buffer.from("Synthetic HEIC container")]),
   unknown: Buffer.from("Opaque synthetic attachment"),
 };
@@ -315,7 +317,7 @@ for (const channel of ["max", "telegram"] as const) {
       assert.deepEqual(await readAttachmentBytes(row.storage_key), bytes(sample.key));
       const { resolveAttachmentContentDisposition } = await import("../../src/tan-tracker/attachments");
       assert.equal(resolveAttachmentContentDisposition(row.mime_type, { preview: "1" }), "attachment");
-      const path = `/api/tt/attachments/${row.id}/file?preview=1`;
+      const path = `/api/tan-tracker/transfers/${encodeURIComponent(id)}/attachments/${row.id}`;
       const anonymous = await request(app).get(path);
       assert.ok([401, 403, 404].includes(anonymous.status), "canonical attachments are not public");
       const download = await request(app).get(path).set("Cookie", cookie).buffer(true)
@@ -328,6 +330,8 @@ for (const channel of ["max", "telegram"] as const) {
       assert.equal(download.status, 200);
       assert.match(download.headers["content-disposition"], /^attachment;/iu);
       assert.deepEqual(download.body, bytes(sample.key), "protected canonical download preserves exact original bytes");
+      const preview = await request(app).get(`${path}?preview=1`).set("Cookie", cookie);
+      assert.ok([400, 422].includes(preview.status), "non-image files cannot turn into executable inline previews");
     }
   });
   it(`${channel}: CSV, HEIC, unknown format and video sent as a file are not silently filtered`, async () => {
@@ -337,6 +341,7 @@ for (const channel of ["max", "telegram"] as const) {
       { key: "heic", name: "picture.heic", mime: "image/heic" },
       { key: "unknown", name: "custom-format.opaque", mime: "application/x-unknown" },
       { key: "video-file", name: "clip.mp4", mime: "video/mp4" },
+      { key: "video-manifest", name: "playlist.m3u8", mime: "application/vnd.apple.mpegurl" },
     ];
     let r: Reply = { text: "", buttons: [] };
     for (const [index, sample] of samples.entries()) {
@@ -373,9 +378,12 @@ it("MAX: mixed image/PDF/video message preserves order, caption, distinct mids a
 });
 it("MAX: native video manifest, missing URL and unsafe URL give send-as-file guidance without following playlist URLs", async () => {
   const a = await actor("max", true); await start(a);
-  let r = await send(a, { files: [{ key: "video-manifest", video: true, name: "clip.mp4" }] });
-  guidance(r, 0); assert.match(r.text, /как\s+файл/iu);
-  assert.equal((await files(a)).length, 0);
+  let r: Reply;
+  for (const key of ["video-manifest", "video-html", "video-json"]) {
+    r = await send(a, { files: [{ key, video: true, name: "clip.mp4" }] });
+    guidance(r, 0); assert.match(r.text, /как\s+файл/iu);
+    assert.equal((await files(a)).length, 0);
+  }
   const before = fetches.length;
   for (const f of [
     { key: "native-video", video: true, tokenOnly: true },
