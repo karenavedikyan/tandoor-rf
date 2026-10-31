@@ -1,10 +1,11 @@
 import type { PoolClient } from "pg";
-import { findPersonByMessenger } from "../../tan-tracker/external-person/person-service";
 import { listEligibleStaffForExternalParty } from "../../tan-tracker/external-request/intake-handlers";
 import { listTanTrackerRecipientCatalog } from "../../tan-tracker/recipient-catalog";
 import { loadAccessContext } from "../../access/context";
 import { assertPartyEligibleAsRecipient } from "../../tan-tracker/party-eligibility";
-import { writeAttachmentBytes } from "../../tan-tracker/attachments";
+import { readAttachmentBytes, writeAttachmentBytes } from "../../tan-tracker/attachments";
+import { createPersonBrowserSession } from "../../tan-tracker/external-person/person-service";
+import { getAppOrigin } from "../../config";
 import crypto from "crypto";
 import {
   bumpDraftRevision,
@@ -13,14 +14,26 @@ import {
   loadNativeBotDraft,
   type NativeCreateDraftPayload,
 } from "./draft-scope";
-import { buildStepUi, menuReplyKeyboard } from "./keyboards";
+import { buildMainMenuInline, buildStepUi, menuReplyKeyboard } from "./keyboards";
 import {
-  draftIdMatchesShort,
+  draftIdMatchesHex,
   parseNativeCreateCallback,
   type ParsedNativeCreateCallback,
 } from "./callback-codec";
 import { confirmNativeExternalDraft, confirmNativeStaffDraft } from "./confirm-native";
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
+import {
+  assertDraftBoundToCaller,
+  assertNativeCreateContext,
+  lockNativeCreateMessenger,
+} from "./access-guard";
+import { isNativeMenuDraftHex, NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
+
+export type NativeCreateMediaFollowUp = {
+  buffer: Buffer;
+  mimeType: string;
+  caption?: string;
+};
 
 export type NativeCreateReply = {
   text: string;
@@ -28,6 +41,8 @@ export type NativeCreateReply = {
   replyMarkup?: Record<string, unknown>;
   telegramInlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>;
   maxInlineButtons?: import("../../tanbot-max/delivery-transport").MaxInlineButton[][];
+  /** Additive: optional follow-up media send (preserves other reply fields for merge). */
+  mediaFollowUp?: NativeCreateMediaFollowUp[];
 };
 
 export type NativeCreateContext = {
@@ -40,13 +55,7 @@ export type NativeCreateContext = {
   personId: string | null;
 };
 
-const CREATE_TRIGGERS = new Set([
-  "создать передачу",
-  "отправить предмет",
-  "/send",
-  "/create",
-  "/create@",
-]);
+const CREATE_TRIGGERS = new Set(["создать передачу", "/send", "/create", "/create@", "отправить предмет"]);
 
 export function isNativeCreateMenuText(text: string): boolean {
   const t = text.trim().toLowerCase();
@@ -60,6 +69,16 @@ export function isNativeCreateCallback(data: string): boolean {
 
 const RECIPIENT_PAGE = 6;
 
+function navError(message: string, channel: "telegram" | "max"): NativeCreateReply {
+  const menu = buildMainMenuInline(channel);
+  return {
+    text: message,
+    replyMarkup: menuReplyKeyboard(),
+    telegramInlineKeyboard: menu.telegramInlineKeyboard,
+    maxInlineButtons: menu.maxInlineButtons,
+  };
+}
+
 function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount: number): string {
   switch (step) {
     case "item":
@@ -69,15 +88,19 @@ function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount:
         ? `Фото: ${photoCount}/5. Пришлите ещё или нажмите «Далее». «Пропустить» доступно только без фото.`
         : "Пришлите до 5 фото (по 8 МБ) или нажмите «Пропустить».";
     case "comment":
-      return "Комментарий к передаче (или отправьте «—», чтобы пропустить).";
+      return "Комментарий к передаче или нажмите «Пропустить».";
     case "recipient":
-      return "Выберите получателя кнопкой ниже.";
+      return payload.recipientSearchQuery
+        ? `Получатели (поиск «${payload.recipientSearchQuery}»). Выберите кнопкой или уточните текст.`
+        : "Выберите получателя кнопкой ниже.";
     case "recipient_ext_name":
       return "Имя внешнего получателя (как в контакте).";
     case "recipient_ext_phone":
       return "Телефон получателя: 10 цифр после +7.";
     case "due":
       return "Выберите срок передачи.";
+    case "edit":
+      return "Что изменить?";
     case "summary":
       return formatSummary(payload, photoCount);
     default:
@@ -89,9 +112,10 @@ function formatSummary(payload: NativeCreateDraftPayload, photoCount: number): s
   const due =
     payload.dueMode === "tomorrow" ? "завтра" : payload.dueMode === "none" ? "без срока" : "сегодня";
   const recipient =
+    payload.recipientDisplayName ??
     payload.recipientExternal?.name ??
     payload.eligibleRecipients?.find((c) => c.userId === payload.recipientUserId)?.fullName ??
-    payload.recipientPartyId ??
+    payload.eligibleRecipients?.find((c) => c.userId === payload.recipientPartyId)?.fullName ??
     "—";
   return (
     "Проверьте данные:\n" +
@@ -111,6 +135,24 @@ async function photoCount(client: PoolClient, draftId: string): Promise<number> 
   return c.rows[0]?.n ?? 0;
 }
 
+async function listDraftPhotoMeta(
+  client: PoolClient,
+  draftId: string,
+): Promise<Array<{ sortOrder: number; fileName: string }>> {
+  const c = await client.query<{ sort_order: number; file_name: string }>(
+    `SELECT sort_order, file_name FROM tt_external_request_draft_files WHERE draft_id = $1::uuid ORDER BY sort_order`,
+    [draftId],
+  );
+  return c.rows.map((r) => ({ sortOrder: r.sort_order, fileName: r.file_name }));
+}
+
+function filteredRecipients(payload: NativeCreateDraftPayload): Array<{ userId: string; fullName: string }> {
+  const all = payload.eligibleRecipients ?? [];
+  const q = payload.recipientSearchQuery?.trim().toLowerCase();
+  if (!q) return all;
+  return all.filter((c) => c.fullName.toLowerCase().includes(q));
+}
+
 async function renderDraftPrompt(
   client: PoolClient,
   channel: "telegram" | "max",
@@ -121,12 +163,33 @@ async function renderDraftPrompt(
   const count = await photoCount(client, draftId);
   const text = stepPrompt(step, payload, count);
   let ui = buildStepUi(channel, draftId, payload.revision ?? 1, "nav");
-  if (step === "photo") ui = buildStepUi(channel, draftId, payload.revision ?? 1, "photo");
-  if (step === "due") ui = buildStepUi(channel, draftId, payload.revision ?? 1, "due");
-  if (step === "summary") ui = buildStepUi(channel, draftId, payload.revision ?? 1, "summary");
-  if (step === "recipient") {
+  if (step === "photo") {
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "photo", { photoSkipHidden: count > 0 });
+  } else if (step === "comment") {
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "comment");
+  } else if (step === "due") {
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "due");
+  } else if (step === "edit") {
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "edit", {
+      editFields: [
+        { label: "Предмет", arg: "item" },
+        { label: "Фото", arg: "photo" },
+        { label: "Комментарий", arg: "comment" },
+        { label: "Получатель", arg: "recipient" },
+        { label: "Срок", arg: "due" },
+      ],
+    });
+  } else if (step === "summary") {
+    const photos = count > 0 ? await listDraftPhotoMeta(client, draftId) : [];
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "summary", {
+      photoInspectButtons: photos.map((p) => ({
+        label: `Фото ${p.sortOrder + 1}`,
+        arg: String(p.sortOrder),
+      })),
+    });
+  } else if (step === "recipient") {
     const page = payload.recipientPage ?? 0;
-    const choices = payload.eligibleRecipients ?? [];
+    const choices = filteredRecipients(payload);
     const slice = choices.slice(page * RECIPIENT_PAGE, (page + 1) * RECIPIENT_PAGE);
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient", {
       recipientButtons: slice.map((c, i) => ({
@@ -137,6 +200,7 @@ async function renderDraftPrompt(
         hasPrev: page > 0,
         hasNext: (page + 1) * RECIPIENT_PAGE < choices.length,
       },
+      staffExternalRecipient: payload.actor === "staff",
     });
   }
   return {
@@ -166,7 +230,7 @@ async function loadRecipientChoices(
   const catalog = await listTanTrackerRecipientCatalog(client, ctx.staffUserId);
   const access = await loadAccessContext(ctx.staffUserId, undefined, client);
   const out: Array<{ userId: string; fullName: string }> = [];
-  for (const c of catalog.slice(0, 48)) {
+  for (const c of catalog) {
     try {
       await assertPartyEligibleAsRecipient(client, access, ctx.staffUserId, c.id);
       out.push({ userId: c.id, fullName: c.name });
@@ -174,19 +238,38 @@ async function loadRecipientChoices(
       /* skip ineligible */
     }
   }
-  return out.map((c) => ({ userId: c.userId, fullName: c.fullName }));
+  return out;
+}
+
+async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext): Promise<NativeCreateReply> {
+  if (ctx.isLinkedStaff && ctx.staffUserId) {
+    const origin = getAppOrigin() ?? "https://example.invalid";
+    return {
+      text: `Мои передачи в личном кабинете:\n${origin}/tan-tracker/`,
+      replyMarkup: menuReplyKeyboard(),
+    };
+  }
+  if (!ctx.personId) {
+    return { text: "Подтвердите номер телефона, чтобы открыть передачи.", requestContact: true };
+  }
+  const sessionRaw = await createPersonBrowserSession(client, ctx.personId, ctx.channel);
+  const origin = getAppOrigin() ?? "https://example.invalid";
+  return {
+    text: `Мои передачи:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
+    replyMarkup: menuReplyKeyboard(),
+  };
 }
 
 async function startOrResumeCreate(client: PoolClient, ctx: NativeCreateContext): Promise<NativeCreateReply> {
   if (!ctx.privateDialogOk) {
-    return { text: "Создание передачи доступно только в личном чате с ботом." };
+    return navError("Создание передачи доступно только в личном чате с ботом.", ctx.channel);
   }
   const actor = ctx.isLinkedStaff ? "staff" : "external";
   if (actor === "external" && !ctx.personId) {
     return { text: "Подтвердите номер телефона, чтобы создать передачу.", requestContact: true };
   }
   if (actor === "staff" && !ctx.staffUserId) {
-    return { text: "Профиль сотрудника недоступен." };
+    return navError("Профиль сотрудника недоступен.", ctx.channel);
   }
   const draft = await ensureNativeBotDraft(client, {
     channel: ctx.channel,
@@ -196,7 +279,37 @@ async function startOrResumeCreate(client: PoolClient, ctx: NativeCreateContext)
     staffUserId: ctx.staffUserId ?? undefined,
   });
   const payload = draft.payload as NativeCreateDraftPayload;
+  assertDraftBoundToCaller(payload, ctx);
   return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload);
+}
+
+function callbackAllowedForStep(action: ParsedNativeCreateCallback["action"], step: string): boolean {
+  switch (action) {
+    case "confirm":
+      return step === "summary";
+    case "due":
+      return step === "due";
+    case "recipient":
+    case "recipient_page":
+    case "recipient_ext":
+      return step === "recipient";
+    case "photo_skip":
+    case "photo_next":
+      return step === "photo";
+    case "photo_view":
+      return step === "summary";
+    case "comment_skip":
+      return step === "comment";
+    case "edit":
+      return step === "summary" || step === "edit";
+    case "back":
+    case "cancel":
+    case "restart":
+    case "menu":
+      return true;
+    default:
+      return false;
+  }
 }
 
 async function resolveDraftForCallback(
@@ -204,15 +317,62 @@ async function resolveDraftForCallback(
   ctx: NativeCreateContext,
   parsed: ParsedNativeCreateCallback,
 ): Promise<{ id: string; step: string; payload: NativeCreateDraftPayload } | null> {
+  if (isNativeMenuDraftHex(parsed.draftIdHex)) return null;
   const actor = ctx.isLinkedStaff ? "staff" : "external";
-  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor);
+  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor, { forUpdate: true });
   if (!draft) return null;
-  if (!draftIdMatchesShort(draft.id, parsed.draftShortId)) return null;
+  if (!draftIdMatchesHex(draft.id, parsed.draftIdHex)) return null;
+  if (actor === "external" && draft.person_id && ctx.personId && draft.person_id !== ctx.personId) return null;
   const payload = draft.payload as NativeCreateDraftPayload;
-  if ((payload.revision ?? 0) !== parsed.revision) {
-    return null;
-  }
+  assertDraftBoundToCaller(payload, ctx);
+  if ((payload.revision ?? 0) !== parsed.revision) return null;
   return { id: draft.id, step: draft.step, payload };
+}
+
+async function advanceAfterComment(
+  client: PoolClient,
+  ctx: NativeCreateContext,
+  draftId: string,
+  payload: NativeCreateDraftPayload,
+): Promise<NativeCreateReply> {
+  if (payload.editReturnStep === "summary") {
+    const nextPayload = await bumpDraftRevision(client, draftId, "summary", payload);
+    return renderDraftPrompt(client, ctx.channel, draftId, "summary", nextPayload);
+  }
+  const choices = await loadRecipientChoices(client, ctx, payload);
+  if (!choices.length) {
+    return navError("Нет доступных получателей. Обратитесь к менеджеру.", ctx.channel);
+  }
+  payload.eligibleRecipients = choices;
+  payload.recipientPage = 0;
+  payload.recipientSearchQuery = undefined;
+  const nextPayload = await bumpDraftRevision(client, draftId, "recipient", payload);
+  return renderDraftPrompt(client, ctx.channel, draftId, "recipient", nextPayload);
+}
+
+async function pickRecipientByIndex(
+  client: PoolClient,
+  ctx: NativeCreateContext,
+  id: string,
+  step: string,
+  payload: NativeCreateDraftPayload,
+  idx: number,
+): Promise<NativeCreateReply> {
+  const choices = filteredRecipients(payload);
+  const pick = choices[idx];
+  if (!pick) {
+    return navError("Получатель недоступен. Выберите из списка.", ctx.channel);
+  }
+  const displayName = pick.fullName;
+  const nextStep = payload.editReturnStep === "summary" ? "summary" : "due";
+  const nextPayload = await bumpDraftRevision(client, id, nextStep, {
+    ...payload,
+    recipientDisplayName: displayName,
+    ...(payload.actor === "external"
+      ? { recipientUserId: pick.userId }
+      : { recipientPartyId: pick.userId, recipientUserId: undefined }),
+  });
+  return renderDraftPrompt(client, ctx.channel, id, nextStep, nextPayload);
 }
 
 export async function handleNativeCreateCallback(
@@ -222,17 +382,48 @@ export async function handleNativeCreateCallback(
 ): Promise<NativeCreateReply | null> {
   const parsed = parseNativeCreateCallback(callbackData);
   if (!parsed) return null;
+
+  await lockNativeCreateMessenger(client, ctx);
+
+  if (parsed.action === "menu_create" || parsed.action === "menu_my") {
+    if (!isNativeMenuDraftHex(parsed.draftIdHex)) return null;
+    try {
+      await assertNativeCreateContext(client, ctx);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Действие недоступно.";
+      return navError(message, ctx.channel);
+    }
+    if (parsed.action === "menu_create") return startOrResumeCreate(client, ctx);
+    return myTransfersReply(client, ctx);
+  }
+
+  try {
+    await assertNativeCreateContext(client, ctx);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Действие недоступно.";
+    return navError(message, ctx.channel);
+  }
+
   const draft = await resolveDraftForCallback(client, ctx, parsed);
-  if (!draft && parsed.action !== "menu") {
-    return { text: "Действие устарело. Нажмите «Создать передачу» снова.", replyMarkup: menuReplyKeyboard() };
+  if (!draft) {
+    return navError("Действие устарело. Нажмите «Создать передачу» снова.", ctx.channel);
+  }
+
+  const { id, step, payload } = draft;
+
+  if (!callbackAllowedForStep(parsed.action, step) && parsed.action !== "menu") {
+    return renderDraftPrompt(client, ctx.channel, id, step, payload);
   }
 
   if (parsed.action === "menu") {
-    return { text: "Главное меню.", replyMarkup: menuReplyKeyboard() };
+    const menu = buildMainMenuInline(ctx.channel);
+    return {
+      text: "Главное меню.",
+      replyMarkup: menuReplyKeyboard(),
+      telegramInlineKeyboard: menu.telegramInlineKeyboard,
+      maxInlineButtons: menu.maxInlineButtons,
+    };
   }
-  if (!draft) return null;
-
-  const { id, step, payload } = draft;
 
   if (parsed.action === "cancel" || parsed.action === "restart") {
     await discardNativeBotDraft(client, id);
@@ -241,6 +432,10 @@ export async function handleNativeCreateCallback(
   }
 
   if (parsed.action === "back") {
+    if (parsed.arg === "summary" && step !== "summary") {
+      const nextPayload = await bumpDraftRevision(client, id, "summary", payload);
+      return renderDraftPrompt(client, ctx.channel, id, "summary", nextPayload);
+    }
     const prev =
       step === "photo"
         ? "item"
@@ -252,45 +447,47 @@ export async function handleNativeCreateCallback(
               ? "recipient"
               : step === "summary"
                 ? "due"
-                : "item";
+                : step === "edit"
+                  ? "summary"
+                  : "item";
     const nextPayload = await bumpDraftRevision(client, id, prev, payload);
     return renderDraftPrompt(client, ctx.channel, id, prev, nextPayload);
   }
 
   if (parsed.action === "photo_skip") {
     const count = await photoCount(client, id);
-    if (count > 0) {
-      return renderDraftPrompt(client, ctx.channel, id, step, payload);
-    }
+    if (count > 0) return renderDraftPrompt(client, ctx.channel, id, step, payload);
     const nextPayload = await bumpDraftRevision(client, id, "comment", payload);
     return renderDraftPrompt(client, ctx.channel, id, "comment", nextPayload);
   }
 
   if (parsed.action === "photo_next") {
-    const nextPayload = await bumpDraftRevision(client, id, "comment", payload);
-    return renderDraftPrompt(client, ctx.channel, id, "comment", nextPayload);
+    const nextStep = payload.editReturnStep === "summary" ? "summary" : "comment";
+    const nextPayload = await bumpDraftRevision(client, id, nextStep, payload);
+    return renderDraftPrompt(client, ctx.channel, id, nextStep, nextPayload);
+  }
+
+  if (parsed.action === "comment_skip") {
+    return advanceAfterComment(client, ctx, id, { ...payload, comment: "" });
   }
 
   if (parsed.action === "due" && parsed.arg) {
     const mode = parsed.arg === "m" ? "tomorrow" : parsed.arg === "n" ? "none" : "today";
-    const nextPayload = await bumpDraftRevision(client, id, "summary", { ...payload, dueMode: mode });
-    return renderDraftPrompt(client, ctx.channel, id, "summary", nextPayload);
+    const nextStep = payload.editReturnStep === "summary" || step === "due" ? "summary" : "summary";
+    const nextPayload = await bumpDraftRevision(client, id, nextStep, { ...payload, dueMode: mode });
+    return renderDraftPrompt(client, ctx.channel, id, nextStep, nextPayload);
   }
 
   if (parsed.action === "recipient" && parsed.arg != null) {
     const idx = Number(parsed.arg);
-    const choices = payload.eligibleRecipients ?? [];
-    const pick = choices[idx];
-    if (!pick) {
-      return { text: "Получатель недоступен. Выберите из списка.", replyMarkup: menuReplyKeyboard() };
-    }
-    const nextPayload = await bumpDraftRevision(client, id, "due", {
-      ...payload,
-      ...(payload.actor === "external"
-        ? { recipientUserId: pick.userId }
-        : { recipientPartyId: pick.userId, recipientUserId: undefined }),
-    });
-    return renderDraftPrompt(client, ctx.channel, id, "due", nextPayload);
+    if (!Number.isInteger(idx) || idx < 0) return renderDraftPrompt(client, ctx.channel, id, step, payload);
+    return pickRecipientByIndex(client, ctx, id, step, payload, idx);
+  }
+
+  if (parsed.action === "recipient_ext") {
+    if (payload.actor !== "staff") return renderDraftPrompt(client, ctx.channel, id, step, payload);
+    const nextPayload = await bumpDraftRevision(client, id, "recipient_ext_name", payload);
+    return renderDraftPrompt(client, ctx.channel, id, "recipient_ext_name", nextPayload);
   }
 
   if (parsed.action === "recipient_page") {
@@ -301,25 +498,55 @@ export async function handleNativeCreateCallback(
   }
 
   if (parsed.action === "edit") {
-    const nextPayload = await bumpDraftRevision(client, id, "item", payload);
-    return renderDraftPrompt(client, ctx.channel, id, "item", nextPayload);
+    if (step === "summary" && !parsed.arg) {
+      const nextPayload = await bumpDraftRevision(client, id, "edit", payload);
+      return renderDraftPrompt(client, ctx.channel, id, "edit", nextPayload);
+    }
+    if (step === "edit" && parsed.arg) {
+      const field = parsed.arg;
+      if (field === "recipient") {
+        const choices = await loadRecipientChoices(client, ctx, payload);
+        if (!choices.length) return navError("Нет доступных получателей.", ctx.channel);
+        payload.eligibleRecipients = choices;
+        payload.recipientPage = 0;
+      }
+      const nextPayload = await bumpDraftRevision(client, id, field, { ...payload, editReturnStep: "summary" });
+      return renderDraftPrompt(client, ctx.channel, id, field, nextPayload);
+    }
+    return renderDraftPrompt(client, ctx.channel, id, step, payload);
+  }
+
+  if (parsed.action === "photo_view" && parsed.arg != null) {
+    const sortOrder = Number(parsed.arg);
+    const files = await client.query<{ storage_key: string; mime_type: string; file_name: string }>(
+      `SELECT storage_key, mime_type, file_name FROM tt_external_request_draft_files
+       WHERE draft_id = $1::uuid AND sort_order = $2`,
+      [id, sortOrder],
+    );
+    const file = files.rows[0];
+    if (!file) return renderDraftPrompt(client, ctx.channel, id, step, payload);
+    const buffer = await readAttachmentBytes(file.storage_key, client);
+    const ui = buildStepUi(ctx.channel, id, payload.revision ?? 1, "photo_inspect");
+    return {
+      text: `Фото ${sortOrder + 1}: ${file.file_name}`,
+      replyMarkup: menuReplyKeyboard(),
+      telegramInlineKeyboard: ui.telegramInlineKeyboard,
+      maxInlineButtons: ui.maxInlineButtons,
+      mediaFollowUp: [{ buffer, mimeType: file.mime_type, caption: file.file_name }],
+    };
   }
 
   if (parsed.action === "confirm") {
-    if (step !== "summary") {
-      return renderDraftPrompt(client, ctx.channel, id, step, payload);
-    }
+    if (step !== "summary") return renderDraftPrompt(client, ctx.channel, id, step, payload);
     try {
       if (payload.actor === "staff" && ctx.staffUserId) {
         const created = await confirmNativeStaffDraft(client, {
           staffUserId: ctx.staffUserId,
           draftId: id,
           payload,
+          channel: ctx.channel,
         });
-        return {
-          text: `Передача создана: ${created.publicCode}. Получатель увидит её в личном кабинете или по приглашению.`,
-          replyMarkup: menuReplyKeyboard(),
-        };
+        return { text: created.resultText, replyMarkup: menuReplyKeyboard() };
       }
       if (payload.actor === "external" && ctx.personId) {
         const party = await client.query<{ party_id: string }>(
@@ -340,7 +567,7 @@ export async function handleNativeCreateCallback(
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Не удалось создать передачу.";
-      return { text: message, replyMarkup: menuReplyKeyboard() };
+      return navError(message, ctx.channel);
     }
   }
 
@@ -356,26 +583,48 @@ export async function handleNativeCreateMessage(
   const lower = trimmed.toLowerCase();
 
   if (lower === "мои передачи" || lower.startsWith("/my")) {
-    return null;
+    await lockNativeCreateMessenger(client, ctx);
+    try {
+      await assertNativeCreateContext(client, ctx);
+    } catch {
+      return null;
+    }
+    return myTransfersReply(client, ctx);
   }
 
   if (isNativeCreateMenuText(trimmed)) {
+    await lockNativeCreateMessenger(client, ctx);
+    try {
+      await assertNativeCreateContext(client, ctx);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Создание недоступно.";
+      return navError(message, ctx.channel);
+    }
     return startOrResumeCreate(client, ctx);
   }
 
+  await lockNativeCreateMessenger(client, ctx);
+  try {
+    await assertNativeCreateContext(client, ctx);
+  } catch {
+    return null;
+  }
+
   const actor = ctx.isLinkedStaff ? "staff" : "external";
-  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor);
+  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor, { forUpdate: true });
   if (!draft) return null;
 
   const payload = { ...(draft.payload as NativeCreateDraftPayload) };
-  let step = draft.step;
+  assertDraftBoundToCaller(payload, ctx);
+  const step = draft.step;
 
   if (step === "item") {
     const item = trimmed.slice(0, 500);
-    if (!item) return { text: "Укажите название предмета.", replyMarkup: menuReplyKeyboard() };
+    if (!item) return navError("Укажите название предмета.", ctx.channel);
     payload.item = item;
-    const nextPayload = await bumpDraftRevision(client, draft.id, "photo", payload);
-    return renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
+    const nextStep = payload.editReturnStep === "summary" ? "summary" : "photo";
+    const nextPayload = await bumpDraftRevision(client, draft.id, nextStep, payload);
+    return renderDraftPrompt(client, ctx.channel, draft.id, nextStep, nextPayload);
   }
 
   if (step === "photo") {
@@ -384,18 +633,14 @@ export async function handleNativeCreateMessage(
   }
 
   if (step === "comment") {
-    if (lower !== "—" && lower !== "-") payload.comment = trimmed.slice(0, 2000);
-    else payload.comment = "";
-    const choices = await loadRecipientChoices(client, ctx, payload);
-    if (!choices.length) {
-      return {
-        text: "Нет доступных получателей. Обратитесь к менеджеру.",
-        replyMarkup: menuReplyKeyboard(),
-      };
-    }
-    payload.eligibleRecipients = choices;
+    payload.comment = trimmed.slice(0, 2000);
+    return advanceAfterComment(client, ctx, draft.id, payload);
+  }
+
+  if (step === "recipient") {
+    payload.recipientSearchQuery = trimmed.slice(0, 64);
     payload.recipientPage = 0;
-    const nextPayload = await bumpDraftRevision(client, draft.id, "recipient", payload);
+    const nextPayload = await bumpDraftRevision(client, draft.id, step, payload);
     return renderDraftPrompt(client, ctx.channel, draft.id, "recipient", nextPayload);
   }
 
@@ -407,15 +652,20 @@ export async function handleNativeCreateMessage(
 
   if (step === "recipient_ext_phone") {
     const phone = normalizeRuPhoneE164(trimmed);
-    if (!phone) return { text: "Введите телефон: 10 цифр после +7." };
+    if (!phone) return navError("Введите телефон: 10 цифр после +7.", ctx.channel);
     payload.recipientExternal = {
       name: payload.recipientExternal?.name ?? "",
       phone,
     };
     payload.recipientPartyId = undefined;
     payload.recipientUserId = undefined;
+    payload.recipientDisplayName = payload.recipientExternal.name;
     const nextPayload = await bumpDraftRevision(client, draft.id, "due", payload);
     return renderDraftPrompt(client, ctx.channel, draft.id, "due", nextPayload);
+  }
+
+  if (step === "edit" || step === "due" || step === "summary") {
+    return renderDraftPrompt(client, ctx.channel, draft.id, step, payload);
   }
 
   return renderDraftPrompt(client, ctx.channel, draft.id, step, payload);
@@ -426,16 +676,31 @@ export async function handleNativeCreatePhoto(
   ctx: NativeCreateContext,
   input: { buffer: Buffer; mimeType: string; fileName: string },
 ): Promise<NativeCreateReply | null> {
+  await lockNativeCreateMessenger(client, ctx);
+  try {
+    await assertNativeCreateContext(client, ctx);
+  } catch {
+    return null;
+  }
+
   const actor = ctx.isLinkedStaff ? "staff" : "external";
-  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor);
+  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor, { forUpdate: true });
   if (!draft || draft.step !== "photo") return null;
+  const payload = draft.payload as NativeCreateDraftPayload;
+  assertDraftBoundToCaller(payload, ctx);
+
   const count = await photoCount(client, draft.id);
   if (count >= 5) {
-    return { text: "Не более 5 фото. Нажмите «Далее».", replyMarkup: menuReplyKeyboard() };
+    return navError("Не более 5 фото. Нажмите «Далее».", ctx.channel);
   }
   if (input.buffer.length > 8 * 1024 * 1024) {
-    return { text: "Фото больше 8 МБ. Отправьте файл меньше.", replyMarkup: menuReplyKeyboard() };
+    return navError("Фото больше 8 МБ. Отправьте файл меньше.", ctx.channel);
   }
+  const mime = input.mimeType?.toLowerCase() ?? "";
+  if (!mime.startsWith("image/")) {
+    return navError("Нужен файл изображения.", ctx.channel);
+  }
+
   const key = `native-draft/${draft.id}/${crypto.randomUUID()}-${input.fileName}`;
   await writeAttachmentBytes(client, key, input.buffer);
   await client.query(
@@ -443,6 +708,6 @@ export async function handleNativeCreatePhoto(
      VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
     [draft.id, key, input.fileName, input.mimeType, input.buffer.length, count],
   );
-  const payload = draft.payload as NativeCreateDraftPayload;
-  return renderDraftPrompt(client, ctx.channel, draft.id, "photo", payload);
+  const nextPayload = await bumpDraftRevision(client, draft.id, "photo", payload);
+  return renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
 }

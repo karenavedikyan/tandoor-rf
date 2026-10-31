@@ -140,6 +140,7 @@ async function processParsedUpdate(
           chatId: update.chatId,
           telegramUserId: update.telegramUserId,
           data: update.callbackData,
+          privateDialogOk: true,
         });
         if (native) {
           reply = {
@@ -198,12 +199,14 @@ async function processParsedUpdate(
       };
     } else if (command === "/status") {
       const account = await findAccountByTelegramUserId(client, update.telegramUserId);
+      const { menuReplyKeyboard } = await import("../tanbot/native-create/keyboards");
       reply = account
         ? {
             chatId: update.chatId,
             text: account.notifications_enabled
-              ? "Telegram подключён. Уведомления о передачах Тан-трекера включены."
-              : "Telegram подключён. Уведомления о передачах выключены — включите в профиле или /stop не отключает привязку.",
+              ? "Telegram подключён. Уведомления о передачах Тан-трекера включены.\nМожно создать передачу кнопкой ниже."
+              : "Telegram подключён. Уведомления о передачах выключены — включите в профиле.\nМожно создать передачу кнопкой ниже.",
+            replyMarkup: menuReplyKeyboard(),
           }
         : {
             chatId: update.chatId,
@@ -233,15 +236,17 @@ async function processParsedUpdate(
       const lkUrl = `${config.appOrigin}/profile`;
       if (!update.startPayload) {
         const account = await findAccountByTelegramUserId(client, update.telegramUserId);
+        const { menuReplyKeyboard } = await import("../tanbot/native-create/keyboards");
         reply = {
-          chatId: update.chatId,
-          text: buildMessengerPlainStartReply({
-            channelLabel: "Telegram",
-            linked: !!account,
-            notificationsEnabled: account?.notifications_enabled ?? false,
-            profileUrl: lkUrl,
-          }),
-        };
+            chatId: update.chatId,
+            text: buildMessengerPlainStartReply({
+              channelLabel: "Telegram",
+              linked: !!account,
+              notificationsEnabled: account?.notifications_enabled ?? false,
+              profileUrl: lkUrl,
+            }),
+            ...(account ? { replyMarkup: menuReplyKeyboard() } : {}),
+          };
       } else {
         const outcome = await consumeStartTokenForTelegramUser(
           pool,
@@ -298,6 +303,7 @@ async function processParsedUpdate(
           chatId: update.chatId,
           telegramUserId: update.telegramUserId,
           text: update.text,
+          privateDialogOk: true,
         });
         if (native) {
           reply = {

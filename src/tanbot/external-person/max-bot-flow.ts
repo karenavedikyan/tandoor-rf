@@ -59,6 +59,7 @@ export async function handleExternalPersonMaxMessage(
     maxUserId: bigint;
     text: string;
     firstName: string | null;
+    recipientChatType?: string | null;
   },
 ): Promise<ExternalPersonBotReply | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
@@ -82,14 +83,25 @@ export async function handleExternalPersonMaxMessage(
     };
   }
 
-  const native = await tryNativeCreateMaxMessage(client, input);
+  const native = await tryNativeCreateMaxMessage(client, {
+    chatId: input.chatId,
+    maxUserId: input.maxUserId,
+    text: input.text,
+    recipientChatType: input.recipientChatType,
+  });
   if (!native) return null;
   return { ...native, inlineButtons: native.inlineButtons };
 }
 
 export async function handleExternalPersonMaxPhoto(
   client: PoolClient,
-  input: { chatId: bigint; maxUserId: bigint; downloadUrl: string; fileName: string | null },
+  input: {
+    chatId: bigint;
+    maxUserId: bigint;
+    downloadUrl: string;
+    fileName: string | null;
+    recipientChatType?: string | null;
+  },
 ): Promise<ExternalPersonBotReply | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
   if (await findAccountByMaxUserId(client, input.maxUserId)) return null;
@@ -105,6 +117,7 @@ export async function handleExternalPersonMaxPhoto(
     buffer: bytes.buffer,
     mimeType: bytes.mimeType,
     fileName: input.fileName ?? "photo.jpg",
+    recipientChatType: input.recipientChatType,
   });
   if (!native) return null;
   return { ...native, inlineButtons: native.inlineButtons };

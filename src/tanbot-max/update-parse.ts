@@ -18,6 +18,7 @@ export type ParsedMaxWebhookUpdate = {
   imageDownloadUrl?: string | null;
   imageFileName?: string | null;
   imageMediaToken?: string | null;
+  recipientChatType: string | null;
 };
 
 export type ParsedMaxContactWebhookUpdate = {
@@ -32,6 +33,23 @@ export type ParsedMaxContactWebhookUpdate = {
 function normalizeUsername(raw: unknown): string | null {
   if (typeof raw !== "string" || !raw.trim()) return null;
   return raw.replace(/^@+/, "").slice(0, 64);
+}
+
+function readMaxMessageRecipient(message: Record<string, unknown> | null | undefined): {
+  chatId: number;
+  chatType: string | null;
+} {
+  if (!message || typeof message !== "object") {
+    return { chatId: 0, chatType: null };
+  }
+  const recipient = (message as Record<string, unknown>).recipient;
+  if (!recipient || typeof recipient !== "object") {
+    return { chatId: 0, chatType: null };
+  }
+  const r = recipient as Record<string, unknown>;
+  const chatId = typeof r.chat_id === "number" && Number.isInteger(r.chat_id) ? r.chat_id : 0;
+  const chatType = typeof r.chat_type === "string" ? r.chat_type : null;
+  return { chatId, chatType };
 }
 
 function readUserIdFromRow(row: Record<string, unknown>): number | null {
@@ -80,16 +98,9 @@ export function parseMaxWebhookUpdate(raw: unknown):
       return { ok: false, reason: "invalid_user_id" };
     }
     if (userRow.is_bot === true) return { ok: false, reason: "bot_sender" };
-    let chatId = 0;
-    const message = row.message;
-    if (message && typeof message === "object" && !Array.isArray(message)) {
-      const recipient = (message as Record<string, unknown>).recipient;
-      if (recipient && typeof recipient === "object") {
-        const cid = (recipient as Record<string, unknown>).chat_id;
-        if (typeof cid === "number" && Number.isInteger(cid)) chatId = cid;
-      }
-    }
-    if (!chatId) chatId = userId;
+    const message = row.message && typeof row.message === "object" ? (row.message as Record<string, unknown>) : null;
+    const { chatId: recChatId, chatType } = readMaxMessageRecipient(message);
+    const chatId = recChatId || userId;
     const dedupKey = computeMaxUpdateDedupKey({
       updateType,
       timestamp,
@@ -110,6 +121,7 @@ export function parseMaxWebhookUpdate(raw: unknown):
         startPayload: null,
         commandText: null,
         callbackPayload: payload,
+        recipientChatType: chatType,
       },
     };
   }
@@ -146,6 +158,7 @@ export function parseMaxWebhookUpdate(raw: unknown):
         startPayload,
         commandText: null,
         callbackPayload: null,
+        recipientChatType: null,
       },
     };
   }
@@ -173,6 +186,7 @@ export function parseMaxWebhookUpdate(raw: unknown):
         startPayload: null,
         commandText: "/stop",
         callbackPayload: null,
+        recipientChatType: null,
       },
     };
   }
@@ -192,12 +206,8 @@ export function parseMaxWebhookUpdate(raw: unknown):
     }
     if (senderRow.is_bot === true) return { ok: false, reason: "bot_sender" };
 
-    let chatId = 0;
-    const recipient = msg.recipient;
-    if (recipient && typeof recipient === "object") {
-      const cid = (recipient as Record<string, unknown>).chat_id;
-      if (typeof cid === "number" && Number.isInteger(cid)) chatId = cid;
-    }
+    const { chatId: recChatId, chatType } = readMaxMessageRecipient(msg);
+    let chatId = recChatId;
     if (!chatId && typeof row.chat_id === "number") chatId = row.chat_id;
     if (!chatId) chatId = userId;
 
@@ -267,6 +277,7 @@ export function parseMaxWebhookUpdate(raw: unknown):
             imageDownloadUrl: image.downloadUrl || null,
             imageFileName: image.fileName,
             imageMediaToken: image.mediaToken,
+            recipientChatType: chatType,
           },
         };
       }
@@ -302,6 +313,7 @@ export function parseMaxWebhookUpdate(raw: unknown):
         startPayload: null,
         commandText: text,
         callbackPayload: null,
+        recipientChatType: chatType,
       },
     };
   }

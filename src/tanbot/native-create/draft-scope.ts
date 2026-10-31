@@ -31,6 +31,8 @@ export type NativeCreateDraftPayload = ExternalDraftPayload & {
   eligibleRecipients?: Array<{ userId: string; fullName: string }>;
   dueMode?: "today" | "tomorrow" | "none";
   editReturnStep?: string;
+  recipientDisplayName?: string;
+  recipientSearchQuery?: string;
 };
 
 export async function loadNativeBotDraft(
@@ -38,14 +40,24 @@ export async function loadNativeBotDraft(
   channel: "telegram" | "max",
   messengerChatId: string,
   actor: NativeCreateActorKind,
+  options: { forUpdate?: boolean } = {},
 ): Promise<ExternalRequestDraftRow | null> {
   const key = nativeBotDraftChatKey({ channel, messengerChatId, actor });
-  const row = await loadActiveExternalRequestDraft(client, channel, key);
-  if (!row) return null;
-  const payload = row.payload as NativeCreateDraftPayload;
+  const row = options.forUpdate
+    ? await client.query<ExternalRequestDraftRow>(
+        `SELECT id::text, step, payload, person_id::text
+         FROM tt_external_request_drafts
+         WHERE channel = $1 AND messenger_chat_id = $2 AND confirmed_transfer_id IS NULL
+         ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
+        [channel, key],
+      )
+    : null;
+  const active = row?.rows[0] ?? (await loadActiveExternalRequestDraft(client, channel, key));
+  if (!active) return null;
+  const payload = active.payload as NativeCreateDraftPayload;
   if (payload?.draftOrigin !== "native_bot") return null;
   if (payload.actor !== actor) return null;
-  return row;
+  return active;
 }
 
 export async function ensureNativeBotDraft(

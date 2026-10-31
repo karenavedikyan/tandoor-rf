@@ -128,15 +128,20 @@ describe("native bot create (Telegram external, PostgreSQL)", { concurrency: fal
       200,
     );
 
+    const draftAfterPhoto = await poolAfter.query<{ payload: { revision: number } }>(
+      `SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`,
+      [draftId],
+    );
+    const revComment = Number(draftAfterPhoto.rows[0]!.payload.revision);
+
     assert.equal(
       (
         await wh(++seq, {
-          message: {
-            message_id: 3,
-            date: 3,
-            chat: { id: tgChatId, type: "private" },
+          callback_query: {
+            id: "cb-skip-comment",
             from: { id: tgUserId, is_bot: false },
-            text: "—",
+            message: { chat: { id: tgChatId, type: "private" } },
+            data: buildNativeCreateCallback("comment_skip", draftId, revComment),
           },
         })
       ).status,

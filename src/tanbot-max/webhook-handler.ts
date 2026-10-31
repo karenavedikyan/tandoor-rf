@@ -66,6 +66,10 @@ async function processUpdateInTransaction(
   const firstName = (update.firstName as string | null) ?? null;
   const contact = update.contact as MaxContactAttachmentPayload | undefined;
   const isForwarded = Boolean(update.isForwarded);
+  const recipientChatType =
+    "recipientChatType" in update && typeof update.recipientChatType === "string"
+      ? update.recipientChatType
+      : null;
   const claim = await claimMaxUpdate(client, update.dedupKey);
   if (claim.kind === "ignore") {
     return null;
@@ -130,13 +134,16 @@ async function processUpdateInTransaction(
       };
     } else if (commandText?.split(/\s+/)[0]?.toLowerCase() === "/status") {
       const account = await findAccountByMaxUserId(client, update.maxUserId);
+      const { buildMainMenuInline } = await import("../tanbot/native-create/keyboards");
+      const menu = buildMainMenuInline("max");
       reply = account
         ? {
             userId: update.maxUserId,
             chatId: update.chatId,
             text: account.notifications_enabled
-              ? "MAX подключён. Уведомления о передачах Тан-трекера включены."
-              : "MAX подключён. Уведомления о передачах выключены — включите в профиле.",
+              ? "MAX подключён. Уведомления о передачах Тан-трекера включены.\nМожно создать передачу кнопкой ниже."
+              : "MAX подключён. Уведомления о передачах выключены — включите в профиле.\nМожно создать передачу кнопкой ниже.",
+            inlineButtons: menu.maxInlineButtons,
           }
         : {
             userId: update.maxUserId,
@@ -167,6 +174,8 @@ async function processUpdateInTransaction(
             };
       } else if (!startPayload) {
         const account = await findAccountByMaxUserId(client, update.maxUserId);
+        const { buildMainMenuInline } = await import("../tanbot/native-create/keyboards");
+        const menu = buildMainMenuInline("max");
         reply = {
           userId: update.maxUserId,
           chatId: update.chatId,
@@ -176,6 +185,7 @@ async function processUpdateInTransaction(
             notificationsEnabled: account?.notifications_enabled ?? false,
             profileUrl: lkUrl,
           }),
+          inlineButtons: account ? menu.maxInlineButtons : menu.maxInlineButtons,
         };
       } else {
         const outcome = await consumeStartTokenForMaxUser(
@@ -224,6 +234,7 @@ async function processUpdateInTransaction(
         chatId: update.chatId,
         maxUserId: update.maxUserId,
         payload: callbackPayload,
+        recipientChatType,
       });
       if (native) {
         reply = {
@@ -271,6 +282,7 @@ async function processUpdateInTransaction(
               maxUserId: update.maxUserId,
               downloadUrl: update.imageDownloadUrl,
               fileName: typeof update.imageFileName === "string" ? update.imageFileName : null,
+              recipientChatType,
             })
           : null;
         if (ext) {
@@ -291,6 +303,7 @@ async function processUpdateInTransaction(
             chatId: update.chatId,
             maxUserId: update.maxUserId,
             text: commandText,
+            recipientChatType,
           });
           if (native) {
             reply = {
@@ -307,6 +320,7 @@ async function processUpdateInTransaction(
               maxUserId: update.maxUserId,
               text: commandText,
               firstName,
+              recipientChatType,
             })
           : null;
         if (ext) {
