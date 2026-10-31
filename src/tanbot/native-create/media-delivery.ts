@@ -39,12 +39,11 @@ function scopeChannel(scope: NativeMediaScope, item: NativeReplyMediaItem): "tel
 }
 
 async function buildMediaDeliveryContext(
-  client: Db,
   scope: NativeMediaScope,
+  channel: "telegram" | "max",
   draftPayload: NativeCreateDraftPayload,
   personId: string | null,
 ): Promise<NativeCreateContext> {
-  const channel = scope.channel;
   const messengerUserId = BigInt(scope.messengerUserId);
   const isStaff = scope.actor === "staff";
   return {
@@ -76,9 +75,9 @@ async function validateMediaItemSend(
     return { ok: false, terminal: true, reason: "file_missing" };
   }
   const payload = draft.payload as NativeCreateDraftPayload;
-  const ctx = await buildMediaDeliveryContext(client, scope, payload, draft.person_id);
+  const ctx = await buildMediaDeliveryContext(scope, channel, payload, draft.person_id);
   try {
-    await assertNativeCreateContext(client, ctx);
+    await assertNativeCreateContext(client as PoolClient, ctx);
     assertDraftBoundToCaller(payload, ctx);
     assertDraftPersonRow(draft, ctx);
   } catch {
