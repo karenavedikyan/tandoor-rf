@@ -86,7 +86,7 @@ async function send(
   input:
     | { kind: "text"; text: string }
     | { kind: "callback"; data: string }
-    | { kind: "tg_contact"; phone: string; firstName?: string; lastName?: string; contactUserId?: number }
+    | { kind: "tg_contact"; phone: string; firstName?: string; lastName?: string; contactUserId?: number; vcard?: string }
     | { kind: "max_unsigned_vcf"; vcfRaw: string; chatType?: string }
     | { kind: "max_signed_contact"; vcfRaw: string; hash: string; contactUserId: number },
   options: { skipDrain?: boolean } = {},
@@ -117,6 +117,7 @@ async function send(
             first_name: input.firstName ?? "Card",
             last_name: input.lastName ?? "",
             user_id: input.contactUserId ?? 42424242,
+            ...(input.vcard ? { vcard: input.vcard } : {}),
           },
         },
       };
@@ -249,6 +250,15 @@ async function draftPayload(staffId: string): Promise<Record<string, unknown>> {
     [staffId],
   );
   return row.rows[0]?.payload ?? {};
+}
+
+async function draftStep(staffId: string): Promise<string | undefined> {
+  const row = await getPool()!.query<{ step: string }>(
+    `SELECT step FROM tt_external_request_drafts
+     WHERE payload->>'staffUserId' = $1 AND confirmed_transfer_id IS NULL LIMIT 1`,
+    [staffId],
+  );
+  return row.rows[0]?.step;
 }
 
 async function openExternalPhoneStep(actor: Actor, manualName: string): Promise<Reply> {
@@ -440,19 +450,23 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
       assert.equal(ver.rowCount, 0);
     });
 
-    it(`${channel}: contact-first — suggested name then phone step`, async () => {
+    it(`${channel}: contact-first — keep/rename then phone step`, async () => {
       const actor = await staffActor(channel);
       const phone = "+79032223344";
-      await openExternalNameStep(actor);
+      let reply = await openExternalNameStep(actor);
       if (channel === "telegram") {
-        await send(actor, { kind: "tg_contact", phone, firstName: "Иван", lastName: "Карточkin" });
+        reply = await send(actor, { kind: "tg_contact", phone, firstName: "Иван", lastName: "Карточkin" });
       } else {
-        await send(actor, { kind: "max_unsigned_vcf", vcfRaw: unsignedMaxVcf("Иван Карточkin", phone) });
+        reply = await send(actor, { kind: "max_unsigned_vcf", vcfRaw: unsignedMaxVcf("Иван Карточkin", phone) });
       }
+      assert.ok(reply.buttons.some(b => /оставить|изменить/i.test(b.text)));
       const payload = await draftPayload(actor.staffId);
       const ext = payload.recipientExternal as { name: string; phone: string };
       assert.match(ext.name ?? "", /Иван/);
       assert.equal(ext.phone, phone);
+      reply = await send(actor, { kind: "callback", data: action(reply, /оставить/i) });
+      reply = await send(actor, { kind: "callback", data: action(reply, /Далее/i) });
+      assert.equal(await draftStep(actor.staffId), "due");
     });
 
     it(`${channel}: invalid contact preserves prior draft state`, async () => {
@@ -487,7 +501,8 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
       } else {
         reply = await send(actor, { kind: "max_unsigned_vcf", vcfRaw: unsignedMaxVcf("Карта Получатель", phone) });
       }
-      reply = await send(actor, { kind: "callback", data: action(reply, /далее/iu) });
+      reply = await send(actor, { kind: "callback", data: action(reply, /оставить/i) });
+      reply = await send(actor, { kind: "callback", data: action(reply, /Далее/i) });
       reply = await send(actor, { kind: "callback", data: action(reply, /^Без срока$/u) });
       assert.match(reply.text, /Карта/u);
       assert.equal(
@@ -555,6 +570,41 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
       ])).rows[0].n,
       0,
     );
+  });
+
+  it("max: signed own-contact inside eligible external step is recipient data only", async () => {
+    const actor = await staffActor("max");
+    const phone = "+79037778899";
+    const { vcfRaw, hash } = signedMaxVcf(phone, actor.messengerId);
+    await openExternalNameStep(actor);
+    const before = await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_person_verifications`);
+    const reply = await send(actor, {
+      kind: "max_signed_contact",
+      vcfRaw,
+      hash,
+      contactUserId: actor.messengerId,
+    });
+    const payload = await draftPayload(actor.staffId);
+    assert.equal(payload.recipientExternal?.phone, phone);
+    assert.match(String(payload.recipientExternal?.name ?? ""), /Own/i);
+    assert.equal(before.rows[0].n, (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_person_verifications`)).rows[0].n);
+    assert.doesNotMatch(reply.text, /\d{6}/, "signed own card in wizard must not trigger verification code handoff");
+  });
+
+  it("both channels: multi-number card is rejected without mutating draft", async () => {
+    for (const channel of ["telegram", "max"] as const) {
+      const actor = await staffActor(channel);
+      await openExternalNameStep(actor);
+      const before = await draftPayload(actor.staffId);
+      const vcf =
+        "BEGIN:VCARD\r\nTEL:+79991111111\r\nTEL:+79992222222\r\nEND:VCARD";
+      const reply =
+        channel === "telegram"
+          ? await send(actor, { kind: "tg_contact", phone: "+79991111111", vcard: vcf })
+          : await send(actor, { kind: "max_unsigned_vcf", vcfRaw: vcf.replace(/\r\n/g, "\\r\\n") });
+      assert.match(reply.text, /несколько|один/i);
+      assert.deepEqual((await draftPayload(actor.staffId)).recipientExternal, before.recipientExternal);
+    }
   });
 
   it("max: signed own-contact outside eligible draft is not treated as recipient card", async () => {
