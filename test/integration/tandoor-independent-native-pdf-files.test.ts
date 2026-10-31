@@ -38,6 +38,7 @@ const genericFiles: Record<string, Buffer> = {
   exe: Buffer.from("MZ-not-an-executable-fixture"),
   "video-file": mp4,
   "native-video": mp4,
+  "video-manifest": Buffer.from("#EXTM3U\n#EXTINF:1\nhttps://untrusted.invalid/private-video-segment\n"),
   heic: Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypheic"), Buffer.from("Synthetic HEIC container")]),
   unknown: Buffer.from("Opaque synthetic attachment"),
 };
@@ -251,7 +252,7 @@ for (const channel of ["max", "telegram"] as const) {
     for (const key of ["empty", "oversize", "failed"]) {
       r = await send(a, { files: [{ key, name: `${key}.pdf` }] }); guidance(r, 1);
       assert.deepEqual(await files(a), kept);
-      assert.match(r.text, /не удалось|недопуст|не поддерж|допустим|формат|размер|8\s*мб/iu);
+      assert.match(r.text, /не удалось|недопуст|не поддерж|допустим|формат|размер|8\s*мб|пуст.*файл/iu);
     }
     for (let i = 0; i < 4; i++) r = await send(a, { files: [{ key: `extra-${i}` }] });
     guidance(r, 5); const beforeLimit = fetches.length;
@@ -340,17 +341,32 @@ for (const channel of ["max", "telegram"] as const) {
     assert.equal(media.at(-1)!.token, channel === "max" ? "video-token-native-video" : "native-video");
   });
 }
-it("MAX: mixed image/PDF message preserves order, caption, distinct mids and replay dedup", async () => {
+it("MAX: mixed image/PDF/video message preserves order, caption, distinct mids and replay dedup", async () => {
   const a = await actor("max", true); await start(a); const before = await counts(), id = ++seq, timestamp = id;
-  const input = { id, timestamp, text: "подпись", files: [{ key: "image-mixed", image: true }, { key: "mixed", payloadName: true }] };
-  let r = await send(a, input); guidance(r, 2);
-  const stored = await files(a); assert.deepEqual(stored.map(x => x.mime_type), ["image/jpeg", "application/pdf"]);
+  const input = { id, timestamp, text: "подпись", files: [{ key: "image-mixed", image: true }, { key: "mixed", payloadName: true }, { key: "native-video", video: true, name: "clip.mp4" }] };
+  let r = await send(a, input); guidance(r, 3);
+  const stored = await files(a); assert.deepEqual(stored.slice(0, 2).map(x => x.mime_type), ["image/jpeg", "application/pdf"]);
   assert.deepEqual(await readAttachmentBytes(stored[0].storage_key), jpg("image-mixed"));
   assert.deepEqual(await readAttachmentBytes(stored[1].storage_key), pdf("mixed"));
+  assert.deepEqual(await readAttachmentBytes(stored[2].storage_key), mp4);
   const f = fetches.length;
-  await send(a, { ...input, optional: true }); assert.equal(fetches.length, f); assert.equal((await files(a)).length, 2);
-  r = await send(a, { id: ++seq, timestamp, files: [{ key: "same-timestamp" }] }); guidance(r, 3);
+  await send(a, { ...input, optional: true }); assert.equal(fetches.length, f); assert.equal((await files(a)).length, 3);
+  r = await send(a, { id: ++seq, timestamp, files: [{ key: "same-timestamp" }] }); guidance(r, 4);
   assert.deepEqual(await counts(), before);
+});
+it("MAX: native video manifest, missing URL and unsafe URL give send-as-file guidance without following playlist URLs", async () => {
+  const a = await actor("max", true); await start(a);
+  let r = await send(a, { files: [{ key: "video-manifest", video: true, name: "clip.mp4" }] });
+  guidance(r, 0); assert.match(r.text, /как\s+файл/iu);
+  assert.equal((await files(a)).length, 0);
+  const before = fetches.length;
+  for (const f of [
+    { key: "native-video", video: true, tokenOnly: true },
+    { key: "native-video", video: true, unsafe: true },
+  ]) {
+    r = await send(a, { files: [f] }); guidance(r, 0); assert.match(r.text, /как\s+файл/iu);
+    assert.equal(fetches.length, before); assert.equal((await files(a)).length, 0);
+  }
 });
 it("MAX: unsafe URL and token-only document return feedback without any download", async () => {
   const a = await actor("max", false); await start(a); const before = await counts(), f = fetches.length;
