@@ -230,14 +230,32 @@ export async function createExternalParty(
   return res.rows[0].id;
 }
 
+/** Transaction-scoped: one public-code sequence allocator per calendar year. */
+const TT_PUBLIC_TRANSFER_CODE_LOCK_NS = 902_451_020;
+
 export async function nextPublicTransferCode(client: Db): Promise<string> {
   const year = new Date().getFullYear();
+  await client.query(`SELECT pg_advisory_xact_lock($1, $2)`, [TT_PUBLIC_TRANSFER_CODE_LOCK_NS, year]);
+
   const prefix = `TT-${year}-`;
+  const codePattern = `^TT-${year}-[0-9]+$`;
+  const seqCapture = `^TT-${year}-([0-9]+)$`;
   const res = await client.query<{ n: string }>(
-    `SELECT COALESCE(MAX(CAST(SUBSTRING(public_code FROM '[0-9]+$') AS INTEGER)), 0) + 1 AS n
-     FROM tt_transfers WHERE public_code LIKE $1`,
-    [`${prefix}%`],
+    `SELECT COALESCE(MAX(seq), 0) + 1 AS n
+     FROM (
+       SELECT CAST(SUBSTRING(public_code FROM $2) AS INTEGER) AS seq
+       FROM tt_transfers
+       WHERE public_code ~ $1
+       UNION ALL
+       SELECT CAST(SUBSTRING(transfer_public_code FROM $2) AS INTEGER) AS seq
+       FROM tt_transfer_delete_audit
+       WHERE transfer_public_code ~ $1
+     ) taken`,
+    [codePattern, seqCapture],
   );
   const n = Number(res.rows[0]?.n ?? 1);
+  if (!Number.isFinite(n) || n < 1) {
+    return `${prefix}001`;
+  }
   return `${prefix}${String(n).padStart(3, "0")}`;
 }
