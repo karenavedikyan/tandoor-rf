@@ -259,11 +259,158 @@
     );
   }
 
+  function photoHelpers() {
+    return window.TtExtRequestPhotos || null;
+  }
+
+  function syncPhotoCount(f) {
+    var h = photoHelpers();
+    var photos = f.photos || [];
+    f.photoCount = h ? h.countSuccessfulPhotos(photos) : photos.filter(function (p) {
+      return p.status === "success";
+    }).length;
+    return f.photoCount;
+  }
+
+  function revokeExtPhotoUrls(f) {
+    if (!f || !f.photos) return;
+    f.photos.forEach(function (p) {
+      if (p.previewUrl) {
+        try {
+          URL.revokeObjectURL(p.previewUrl);
+        } catch (_e) {}
+        p.previewUrl = "";
+      }
+    });
+  }
+
+  function bumpExtRequestFlow(st) {
+    st.extRequestFlowId = (st.extRequestFlowId || 0) + 1;
+    return st.extRequestFlowId;
+  }
+
+  function resetExtRequestForm(st) {
+    var prev = st.extRequestForm;
+    if (prev) revokeExtPhotoUrls(prev);
+    bumpExtRequestFlow(st);
+    st.extRequestForm = {
+      item: "",
+      comment: "",
+      recipientId: "",
+      duePreset: "today",
+      draftId: "",
+      photoCount: 0,
+      photos: [],
+    };
+    st.extRequestViewerUrl = "";
+  }
+
+  function extPhotoGridHtml(f, phase) {
+    var photos = f.photos || [];
+    var h = photoHelpers();
+    var canAdd = h ? h.canAddMorePhotos(photos) : photos.filter(function (p) {
+      return p.status === "success";
+    }).length < 5;
+    var tiles = photos
+      .map(function (p) {
+        var statusClass =
+          p.status === "success"
+            ? "tt-ext-photo--ok"
+            : p.status === "error"
+              ? "tt-ext-photo--err"
+              : "tt-ext-photo--pending";
+        var statusText =
+          p.status === "uploading"
+            ? "Загрузка…"
+            : p.status === "error"
+              ? p.errorMessage || "Ошибка"
+              : "Загружено";
+        var thumb =
+          p.previewUrl && p.status !== "error"
+            ? '<img src="' + E(p.previewUrl) + '" alt="" loading="lazy" />'
+            : '<span class="tt-ext-photo-placeholder" aria-hidden="true"></span>';
+        var retry =
+          p.status === "error"
+            ? btn("Повторить", "ext-photo-retry", "tt-ext-photo-retry") +
+              ' <span class="tt-visually-hidden" data-tt-ext-retry-id="' +
+              E(p.localId) +
+              '"></span>'
+            : "";
+        return (
+          '<li class="tt-ext-photo ' +
+          statusClass +
+          '" data-tt="ext-photo-tile" data-local-id="' +
+          E(p.localId) +
+          '">' +
+          '<button type="button" class="tt-ext-photo-open" data-tt="ext-photo-open" data-local-id="' +
+          E(p.localId) +
+          '" aria-label="Открыть фото">' +
+          thumb +
+          "</button>" +
+          '<p class="tt-ext-photo-status">' +
+          E(statusText) +
+          "</p>" +
+          retry +
+          "</li>"
+        );
+      })
+      .join("");
+    var addBtn =
+      canAdd && phase === "photo"
+        ? btn("Добавить фото", "ext-photo-add", "tt-ext-photo-add tt-btn-block") +
+          '<input type="file" accept="image/*" class="tt-ext-photo-input-hidden" data-tt="ext-photo-input" />'
+        : "";
+    if (!tiles && !addBtn && phase !== "photo" && phase !== "summary") return "";
+    return (
+      '<div class="tt-ext-photo-wrap" data-tt="ext-photo-wrap">' +
+      (phase === "photo"
+        ? '<p class="tt-muted tt-att-hint">До 5 фото, каждое до 8 МБ. JPEG, PNG, GIF или WebP.</p>'
+        : "") +
+      '<ul class="tt-ext-photo-grid" data-tt="ext-photo-grid">' +
+      tiles +
+      "</ul>" +
+      addBtn +
+      "</div>"
+    );
+  }
+
+  function extSummaryPhotosHtml(f) {
+    syncPhotoCount(f);
+    if (!f.photoCount) return "без фото";
+    var photos = (f.photos || []).filter(function (p) {
+      return p.status === "success" && p.previewUrl;
+    });
+    if (!photos.length) return f.photoCount + " шт.";
+    return (
+      '<span class="tt-ext-summary-photo-count">' +
+      f.photoCount +
+      " шт.</span>" +
+      '<ul class="tt-ext-photo-grid tt-ext-photo-grid--summary">' +
+      photos
+        .map(function (p) {
+          return (
+            '<li class="tt-ext-photo tt-ext-photo--ok" data-tt="ext-photo-tile" data-local-id="' +
+            E(p.localId) +
+            '">' +
+            '<button type="button" class="tt-ext-photo-open" data-tt="ext-photo-open" data-local-id="' +
+            E(p.localId) +
+            '" aria-label="Открыть фото">' +
+            '<img src="' +
+            E(p.previewUrl) +
+            '" alt="" loading="lazy" />' +
+            "</button></li>"
+          );
+        })
+        .join("") +
+      "</ul>"
+    );
+  }
+
   function extRequestAnswersHtml(f, phase) {
     var idx = PHASES.indexOf(phase);
     var rows = [];
     if (idx > 0 && f.item) rows.push(extRequestChatRow("Предмет", f.item));
-    if (idx > 1) rows.push(extRequestChatRow("Фото", f.photoCount ? f.photoCount + " шт." : "без фото"));
+    if (idx > 1) rows.push(extRequestChatRow("Фото", syncPhotoCount(f) ? f.photoCount + " шт." : "без фото"));
     if (idx > 2) rows.push(extRequestChatRow("Комментарий", (f.comment && f.comment.trim()) || "—"));
     if (idx > 3 && (f.recipientId || f.recipientUserId)) {
       var stAct = state();
@@ -310,8 +457,11 @@
       duePreset: "today",
       draftId: "",
       photoCount: 0,
+      photos: [],
     };
+    if (!f.photos) f.photos = [];
     st.extRequestForm = f;
+    syncPhotoCount(f);
 
     if (phase === "blocked") {
       return extRequestFrame(
@@ -354,17 +504,21 @@
         E(f.item) +
         '" autocomplete="off" placeholder="Например: ключи, договор, образцы"></label>';
     } else if (phase === "photo") {
+      var hPhoto = photoHelpers();
       body =
         extRequestBotBubble("Пришлите фото предмета — так сотруднику проще его узнать. Можно пропустить.") +
-        '<div class="tt-ext-chat-attach"><p class="tt-muted tt-att-hint">Фото попадёт в карточку передачи.</p><input type="file" accept="image/*" data-tt="ext-photo-input" /></div>';
-      if (!f.photoCount) nextLabel = "Пропустить";
+        '<div class="tt-ext-chat-attach">' +
+        extPhotoGridHtml(f, "photo") +
+        "</div>";
+      nextLabel = hPhoto ? hPhoto.photoStepNextLabel(f.photos) : f.photoCount ? "Далее" : "Пропустить";
     } else if (phase === "comment") {
       body =
         extRequestBotBubble("Добавите комментарий? Можно пропустить.") +
         '<label class="tt-wizard-field tt-ext-chat-field"><span class="tt-visually-hidden">Комментарий</span><input data-tt-field="extComment" value="' +
         E(f.comment) +
         '" placeholder="Комментарий (необязательно)"></label>';
-      if (!(f.comment && f.comment.trim())) nextLabel = "Пропустить";
+      var hCmt = photoHelpers();
+      nextLabel = hCmt ? hCmt.commentStepNextLabel(f.comment) : f.comment && f.comment.trim() ? "Далее" : "Пропустить";
     } else if (phase === "recipient") {
       body =
         extRequestBotBubble("Кому передать?") +
@@ -400,8 +554,8 @@
         "<div><dt>Предмет</dt><dd>" +
         E(f.item) +
         "</dd></div>" +
-        "<div><dt>Фото</dt><dd>" +
-        (f.photoCount ? f.photoCount + " шт." : "без фото") +
+        "<div><dt>Фото</dt><dd class=\"tt-ext-summary-photos-dd\">" +
+        extSummaryPhotosHtml(f) +
         "</dd></div>" +
         "<div><dt>Комментарий</dt><dd>" +
         E((f.comment && f.comment.trim()) || "—") +
@@ -416,18 +570,174 @@
       nextLabel = "Создать заявку";
     }
 
-    return extRequestFrame(
-      extRequestAnswersHtml(f, phase) +
-        body +
-        (st.error ? '<p class="tt-error">' + E(st.error) + "</p>" : "") +
-        '<div class="tt-ext-chat-actions">' +
-        btn(nextLabel, "ext-request-next", "tt-primary tt-btn-block") +
-        '<div class="tt-ext-chat-secondary">' +
-        btn(step > 1 ? "Назад" : "К списку", "ext-request-back", "tt-link") +
-        btn("Отмена", "ext-request-close", "tt-link") +
-        "</div></div>",
-      { step: step, total: PHASES.length },
+    var hPending = photoHelpers();
+    var uploadsPending = hPending ? hPending.hasPendingUploads(f.photos) : false;
+    var nextDisabled = uploadsPending ? ' disabled aria-disabled="true"' : "";
+    var viewer =
+      st.extRequestViewerUrl
+        ? '<div class="tt-ext-photo-viewer" data-tt="ext-photo-viewer" role="dialog" aria-modal="true" aria-label="Просмотр фото">' +
+          '<button type="button" class="tt-ext-photo-viewer-close" data-tt="ext-photo-viewer-close" aria-label="Закрыть">×</button>' +
+          '<img src="' +
+          E(st.extRequestViewerUrl) +
+          '" alt="" class="tt-ext-photo-viewer-img" />' +
+          "</div>"
+        : "";
+
+    return (
+      extRequestFrame(
+        extRequestAnswersHtml(f, phase) +
+          body +
+          (st.error ? '<p class="tt-error">' + E(st.error) + "</p>" : "") +
+          '<div class="tt-ext-chat-actions">' +
+          btn(nextLabel, "ext-request-next", "tt-primary tt-btn-block") +
+          '<div class="tt-ext-chat-secondary">' +
+          btn(step > 1 ? "Назад" : "К списку", "ext-request-back", "tt-link") +
+          btn("Отмена", "ext-request-close", "tt-link") +
+          "</div></div>",
+        { step: step, total: PHASES.length },
+      ).replace(
+        'data-tt="ext-request-next"',
+        'data-tt="ext-request-next"' + nextDisabled,
+      ) + viewer
     );
+  }
+
+  function findExtPhotoByLocalId(f, localId) {
+    return (f.photos || []).find(function (p) {
+      return p.localId === localId;
+    });
+  }
+
+  function extRequestAfterRender() {
+    var st = state();
+    if (!st || st.view !== "ext-request") return;
+    var phase = st.extRequestPhase;
+    if (phase === "comment") {
+      var cmt = document.querySelector('[data-tt-field="extComment"]');
+      if (cmt && !cmt.dataset.ttExtBound) {
+        cmt.dataset.ttExtBound = "1";
+        cmt.addEventListener("input", function () {
+          st.extRequestForm.comment = cmt.value;
+          var next = document.querySelector('[data-tt="ext-request-next"]');
+          if (!next) return;
+          var h = photoHelpers();
+          next.textContent = h ? h.commentStepNextLabel(cmt.value) : cmt.value.trim() ? "Далее" : "Пропустить";
+        });
+      }
+    }
+  }
+
+  function photoPickDedupeKey(file) {
+    return [file.name, file.size, file.lastModified].join(":");
+  }
+
+  function queueExtPhotoUpload(st, file, retryLocalId) {
+    var f = st.extRequestForm;
+    if (!f) return;
+    if (!retryLocalId) {
+      var pickKey = photoPickDedupeKey(file);
+      var now = Date.now();
+      if (
+        st.extRequestLastPhotoPickKey === pickKey &&
+        now - (st.extRequestLastPhotoPickAt || 0) < 800
+      ) {
+        return;
+      }
+      st.extRequestLastPhotoPickKey = pickKey;
+      st.extRequestLastPhotoPickAt = now;
+      f.photos = f.photos || [];
+      var dupUpload = f.photos.some(function (p) {
+        return p.status === "uploading" && p.file === file;
+      });
+      if (dupUpload) return;
+    }
+    var h = photoHelpers();
+    if (!retryLocalId && h && h.hasPendingUploads(f.photos || [])) {
+      return;
+    }
+    var v = h ? h.validatePhotoFile(file) : { ok: true };
+    if (!v.ok) {
+      st.error = v.message || "Некорректный файл.";
+      if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+      return;
+    }
+    st.error = "";
+    var flowId = st.extRequestFlowId || 0;
+    var localId =
+      retryLocalId ||
+      "p-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    var previewUrl = URL.createObjectURL(file);
+    if (retryLocalId) {
+      var existing = findExtPhotoByLocalId(f, retryLocalId);
+      if (existing) {
+        if (existing.previewUrl) {
+          try {
+            URL.revokeObjectURL(existing.previewUrl);
+          } catch (_e) {}
+        }
+        existing.previewUrl = previewUrl;
+        existing.status = "uploading";
+        existing.errorMessage = "";
+        existing.file = file;
+      }
+    } else {
+      if (h && !h.canAddMorePhotos(f.photos || [])) {
+        try {
+          URL.revokeObjectURL(previewUrl);
+        } catch (_e2) {}
+        st.error = "Не более 5 фото.";
+        if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+        return;
+      }
+      f.photos = f.photos || [];
+      f.photos.push({
+        localId: localId,
+        previewUrl: previewUrl,
+        status: "uploading",
+        errorMessage: "",
+        file: file,
+        fileName: file.name || "photo.jpg",
+      });
+    }
+    syncPhotoCount(f);
+    if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+
+    void ensureDraft(f)
+      .then(function (draftId) {
+        if ((st.extRequestFlowId || 0) !== flowId) return null;
+        if (st.view !== "ext-request") return null;
+        return window.TanTrackerExternal.uploadPhoto(draftId, file).then(function () {
+          return { ok: true };
+        });
+      })
+      .then(function (result) {
+        if (!result || !result.ok) return;
+        if ((st.extRequestFlowId || 0) !== flowId) {
+          try {
+            URL.revokeObjectURL(previewUrl);
+          } catch (_e3) {}
+          return;
+        }
+        var entry = findExtPhotoByLocalId(st.extRequestForm, localId);
+        if (!entry || entry.status !== "uploading") return;
+        entry.status = "success";
+        entry.errorMessage = "";
+        syncPhotoCount(st.extRequestForm);
+        if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+      })
+      .catch(function (err) {
+        if ((st.extRequestFlowId || 0) !== flowId) {
+          try {
+            URL.revokeObjectURL(previewUrl);
+          } catch (_e4) {}
+          return;
+        }
+        var entry = findExtPhotoByLocalId(st.extRequestForm, localId);
+        if (!entry) return;
+        entry.status = "error";
+        entry.errorMessage = (err && err.message) || "Не удалось загрузить фото.";
+        if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+      });
   }
 
   function isConfirmedHandoffNote(note) {
@@ -529,9 +839,38 @@
       var st = state();
       if (!st) return;
       var f = st.extRequestForm;
+      if (action === "ext-photo-add") {
+        var addInput = document.querySelector('[data-tt="ext-photo-input"]');
+        if (addInput) addInput.click();
+        return;
+      }
+      if (action === "ext-photo-retry") {
+        var tile = t.closest('[data-tt="ext-photo-tile"]');
+        var lid = tile && tile.getAttribute("data-local-id");
+        f = st.extRequestForm;
+        if (!lid || !f) return;
+        var ent = findExtPhotoByLocalId(f, lid);
+        if (ent && ent.file) queueExtPhotoUpload(st, ent.file, lid);
+        return;
+      }
+      if (action === "ext-photo-open") {
+        var openId = t.getAttribute("data-local-id");
+        f = st.extRequestForm;
+        var shot = openId && f && findExtPhotoByLocalId(f, openId);
+        if (shot && shot.previewUrl && shot.status === "success") {
+          st.extRequestViewerUrl = shot.previewUrl;
+          if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+        }
+        return;
+      }
+      if (action === "ext-photo-viewer-close") {
+        st.extRequestViewerUrl = "";
+        if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+        return;
+      }
       if (action === "ext-request-open") {
         st.view = "list";
-        st.extRequestForm = { item: "", comment: "", recipientId: "", duePreset: "today", draftId: "", photoCount: 0 };
+        resetExtRequestForm(st);
         st.error = "";
         if (externalOpenRequestCount(st.actingContactId) >= 5) {
           st.extRequestPhase = "blocked";
@@ -552,8 +891,11 @@
         return;
       }
       if (action === "ext-request-close") {
+        revokeExtPhotoUrls(st.extRequestForm);
+        bumpExtRequestFlow(st);
         st.view = "list";
         st.extRequestPhase = null;
+        st.extRequestViewerUrl = "";
         st.error = "";
         if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
         return;
@@ -598,8 +940,12 @@
         return;
       }
       if (action === "ext-request-next") {
+        if (t.hasAttribute("disabled") || t.getAttribute("aria-disabled") === "true") return;
         f = st.extRequestForm;
         var phase = st.extRequestPhase || "item";
+        var hNext = photoHelpers();
+        if (phase === "photo" && hNext && hNext.hasPendingUploads(f.photos || [])) return;
+        if (phase === "summary" && hNext && hNext.hasPendingUploads(f.photos || [])) return;
         if (phase === "item") {
           var input = document.querySelector('[data-tt-field="extItem"]');
           f.item = (input && input.value) || "";
@@ -682,15 +1028,34 @@
       var st = state();
       if (!st || !st.extRequestForm) return;
       var file = e.target.files && e.target.files[0];
+      e.target.value = "";
       if (!file) return;
-      void ensureDraft(st.extRequestForm).then(function (draftId) {
-        return window.TanTrackerExternal.uploadPhoto(draftId, file).then(function () {
-          st.extRequestForm.photoCount = (st.extRequestForm.photoCount || 0) + 1;
-          if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
-        });
-      });
+      if (st.extRequestPhotoPickBusy) return;
+      st.extRequestPhotoPickBusy = true;
+      try {
+        queueExtPhotoUpload(st, file, null);
+      } finally {
+        st.extRequestPhotoPickBusy = false;
+      }
     }
   });
+
+  document.addEventListener("keydown", function (e) {
+    if (!window.__TT_EXTERNAL_PERSON__) return;
+    if (e.key !== "Escape") return;
+    var st = state();
+    if (!st || !st.extRequestViewerUrl) return;
+    st.extRequestViewerUrl = "";
+    if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+  });
+
+  (function wrapExtRenderHook() {
+    var prev = window.__ttLkRenderTracker;
+    window.__ttLkRenderTracker = function () {
+      if (typeof prev === "function") prev();
+      extRequestAfterRender();
+    };
+  })();
 
   window.TtExternalUi = {
     externalActionBarHtml: externalActionBarHtml,

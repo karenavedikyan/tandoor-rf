@@ -32,7 +32,7 @@ describe("external person UI markup (prototype parity hooks)", () => {
         actingContactId: "ext1",
         view: "ext-request",
         extRequestPhase: "item",
-        extRequestForm: { item: "", comment: "", recipientId: "", duePreset: "today", draftId: "", photoCount: 0 },
+        extRequestForm: { item: "", comment: "", recipientId: "", duePreset: "today", draftId: "", photoCount: 0, photos: [] },
         historicalSummaries: [],
       },
       orders: () => [
@@ -43,6 +43,10 @@ describe("external person UI markup (prototype parity hooks)", () => {
       registryCardHtml: (o: { id: string; item: string }) =>
         `<article data-tt="open-order" data-order-id="${o.id}">${o.item}</article>`,
     };
+    const photosScript = readFileSync(join(root, "public/tan-tracker-external-request-photos.js"), "utf8");
+    const photosEl = dom.window.document.createElement("script");
+    photosEl.textContent = photosScript;
+    dom.window.document.body.appendChild(photosEl);
     const script = readFileSync(join(root, "public/tan-tracker-external-ui.js"), "utf8");
     const scriptEl = dom.window.document.createElement("script");
     scriptEl.textContent = script;

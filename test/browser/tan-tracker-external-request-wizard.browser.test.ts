@@ -1,0 +1,285 @@
+import assert from "node:assert/strict";
+import path from "node:path";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { after, before, describe, it } from "node:test";
+import { Pool } from "pg";
+import { chromium, devices, webkit, type Browser, type BrowserType, type Page } from "playwright";
+import {
+  startBrowserHttpFixture,
+  stopBrowserHttpFixture,
+  type BrowserHttpFixture,
+} from "./helpers/http-integration-browser";
+import { createPersonBrowserSession } from "../../src/tan-tracker/external-person/person-service";
+import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
+import { createTestUser } from "../helpers/test-db";
+
+const FIXTURE_A = path.join(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/tan-tracker-admin-wizard.png");
+const FIXTURE_B = path.join(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/tan-tracker-external-photo-b.png");
+const STAFF_EMAIL = "ext-wizard-staff@test.local";
+
+type ExtFixture = BrowserHttpFixture & { estToken?: string; personId?: string };
+
+async function clearActiveDraftsForPerson(databaseUrl: string, personId: string): Promise<void> {
+  const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+  try {
+    await pool.query(
+      `DELETE FROM tt_external_request_draft_files
+       WHERE draft_id IN (
+         SELECT id FROM tt_external_request_drafts
+         WHERE person_id = $1::uuid AND confirmed_transfer_id IS NULL
+       )`,
+      [personId],
+    );
+    await pool.query(
+      `DELETE FROM tt_external_request_drafts WHERE person_id = $1::uuid AND confirmed_transfer_id IS NULL`,
+      [personId],
+    );
+  } finally {
+    await pool.end();
+  }
+}
+
+async function openExternalHome(page: Page, baseUrl: string, est: string): Promise<void> {
+  await page.goto(`${baseUrl}/tan-tracker?est=${encodeURIComponent(est)}`);
+  await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 30000 });
+  await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 15000 });
+}
+
+async function startWizardItemStep(page: Page): Promise<void> {
+  await page.click('[data-tt="ext-request-open"]');
+  await page.waitForSelector('[data-tt-field="extItem"]', { timeout: 10000 });
+  await page.fill('[data-tt-field="extItem"]', "Wizard photo E2E");
+  const draftItem = page.waitForResponse(
+    (r) => r.url().includes("/api/tan-tracker/public/external/request/draft") && r.request().method() === "POST",
+    { timeout: 30000 },
+  );
+  await page.click('[data-tt="ext-request-next"]');
+  assert.equal((await draftItem).status(), 200);
+  await page.waitForSelector('[data-tt="ext-photo-add"]', { timeout: 10000 });
+}
+
+async function launchRequired(engine: BrowserType<Browser>, t: { skip: (message?: string) => void }) {
+  try {
+    if (engine === chromium) {
+      return await chromium.launch({ headless: true, channel: "chromium" });
+    }
+    return await webkit.launch({ headless: true });
+  } catch (err) {
+    t.skip(`${engine.name()} required: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function runWizardPhotoCommentScenario(
+  page: Page,
+  baseUrl: string,
+  est: string,
+  databaseUrl: string,
+  personId: string,
+): Promise<void> {
+  await clearActiveDraftsForPerson(databaseUrl, personId);
+  await openExternalHome(page, baseUrl, est);
+  await startWizardItemStep(page);
+
+  const nextBtn = page.locator('[data-tt="ext-request-next"]');
+  assert.equal(await nextBtn.textContent(), "Пропустить");
+
+  const photoUp1 = page.waitForResponse(
+    (r) => r.url().includes("/api/tan-tracker/public/external/request/photo") && r.request().method() === "POST",
+    { timeout: 30000 },
+  );
+  await page.locator('[data-tt="ext-photo-input"]').setInputFiles(FIXTURE_A);
+  assert.equal((await photoUp1).status(), 201);
+  await page.waitForSelector('.tt-ext-photo--ok img', { timeout: 15000 });
+  assert.equal(await nextBtn.textContent(), "Далее");
+
+  const photoUp2 = page.waitForResponse(
+    (r) => r.url().includes("/api/tan-tracker/public/external/request/photo") && r.request().method() === "POST",
+    { timeout: 30000 },
+  );
+  await page.locator('[data-tt="ext-photo-input"]').setInputFiles(FIXTURE_B);
+  assert.equal((await photoUp2).status(), 201);
+  await page.waitForSelector('.tt-ext-photo--ok img >> nth=1', { timeout: 15000 });
+
+  await page.click('[data-tt="ext-request-next"]');
+  await page.waitForSelector('[data-tt-field="extComment"]', { timeout: 10000 });
+  assert.equal(await nextBtn.textContent(), "Пропустить");
+
+  await page.fill('[data-tt-field="extComment"]', "Need box");
+  assert.equal(await nextBtn.textContent(), "Далее");
+
+  await page.fill('[data-tt-field="extComment"]', "   ");
+  assert.equal(await nextBtn.textContent(), "Пропустить");
+
+  await page.fill('[data-tt-field="extComment"]', "Final note");
+  await page.click('[data-tt="ext-request-back"]');
+  await page.waitForSelector('[data-tt="ext-photo-add"]', { timeout: 10000 });
+  const okCount = await page.locator(".tt-ext-photo--ok").count();
+  assert.equal(okCount, 2);
+
+  await page.click('[data-tt="ext-request-next"]');
+  await page.waitForSelector('[data-tt-field="extComment"]', { timeout: 10000 });
+  const cmtVal = await page.inputValue('[data-tt-field="extComment"]');
+  assert.equal(cmtVal, "Final note");
+
+  await page.click('[data-tt="ext-request-next"]');
+  await page.waitForSelector('[data-tt="ext-pick-recipient"]', { timeout: 15000 });
+  await page.locator('[data-tt="ext-pick-recipient"]').filter({ hasText: "Wizard Staff" }).first().click();
+  await page.click('[data-tt="ext-request-next"]');
+  await page.waitForSelector('[data-tt="ext-due-today"]', { timeout: 10000 });
+  await page.click('[data-tt="ext-request-next"]');
+  await page.waitForSelector(".tt-ext-chat-summary", { timeout: 15000 });
+
+  const summaryPhotos = page.locator(".tt-ext-summary-photos-dd .tt-ext-photo--ok img");
+  assert.equal(await summaryPhotos.count(), 2);
+
+  await summaryPhotos.first().click();
+  await page.waitForSelector('[data-tt="ext-photo-viewer"]', { timeout: 5000 });
+  await page.keyboard.press("Escape");
+  await page.waitForSelector('[data-tt="ext-photo-viewer"]', { state: "detached", timeout: 5000 });
+}
+
+describe("external request wizard photo + comment UX (browser)", { concurrency: false }, () => {
+  let fixture: ExtFixture;
+
+  before(async () => {
+    process.env.TT_OTP_PEPPER = "test-otp-pepper-min-16-chars";
+    fixture = await startBrowserHttpFixture({
+      attachmentsDir: "var/tt-ext-wizard-browser",
+      extraEnv: { TT_OTP_PEPPER: "test-otp-pepper-min-16-chars" },
+    });
+    const pool = new Pool({ connectionString: fixture.databaseUrl, max: 2 });
+    const staff = await createTestUser({
+      databaseUrl: fixture.databaseUrl,
+      email: STAFF_EMAIL,
+      password: fixture.password,
+      fullName: "Wizard Staff",
+      role: "manager",
+    });
+    await pool.query(`UPDATE users SET accepts_external_tt_intake = TRUE WHERE id = $1::uuid`, [staff.id]);
+    const extParty = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Wizard Ext', '+79991234099') RETURNING id::text`,
+      )
+    ).rows[0]!.id;
+    const person = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO tt_external_persons (phone_e164, display_name, party_id) VALUES ('+79991234099', 'Wizard Ext', $1::uuid) RETURNING id::text`,
+        [extParty],
+      )
+    ).rows[0]!.id;
+    await pool.query(
+      `INSERT INTO tt_external_person_verifications (person_id, channel, messenger_user_id, messenger_chat_id)
+       VALUES ($1::uuid, 'telegram', '880099', '880099')`,
+      [person],
+    );
+    const client = await pool.connect();
+    let est = "";
+    try {
+      est = await createPersonBrowserSession(client, person, "telegram");
+    } finally {
+      client.release();
+      await pool.end();
+    }
+    fixture.estToken = est;
+    fixture.personId = person;
+  });
+
+  after(async () => {
+    await stopBrowserHttpFixture(fixture);
+  });
+
+  for (const engine of [chromium, webkit] as const) {
+    for (const mobile of [false, true] as const) {
+      const label = `${engine.name()}${mobile ? " mobile" : " desktop"}`;
+      it(`photos, comment labels, summary viewer (${label})`, async (t) => {
+        const browser = await launchRequired(engine, t);
+        assert.ok(browser);
+        const est = fixture.estToken;
+        assert.ok(est);
+        assert.ok(fixture.personId);
+        const context = mobile
+          ? await browser.newContext({ ...devices["iPhone 13"], baseURL: fixture.baseUrl })
+          : await browser.newContext({ baseURL: fixture.baseUrl, viewport: { width: 1280, height: 900 } });
+        const page = await context.newPage();
+        try {
+          await runWizardPhotoCommentScenario(page, fixture.baseUrl, est, fixture.databaseUrl, fixture.personId!);
+        } finally {
+          await context.close();
+          await browser.close();
+        }
+      });
+    }
+  }
+
+  it("failed upload retry and pending lock (Chromium)", async (t) => {
+    const browser = await launchRequired(chromium, t);
+    assert.ok(browser);
+    const est = fixture.estToken!;
+    const page = await browser.newPage();
+    let failRemaining = 1;
+    await page.route("**/api/tan-tracker/public/external/request/photo?*", async (route) => {
+      if (failRemaining > 0 && route.request().method() === "POST") {
+        failRemaining -= 1;
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { message: "Не удалось загрузить фото." } }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    try {
+      await clearActiveDraftsForPerson(fixture.databaseUrl, fixture.personId!);
+      await openExternalHome(page, fixture.baseUrl, est);
+      await startWizardItemStep(page);
+      const nextBtn = page.locator('[data-tt="ext-request-next"]');
+      const firstUp = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/photo") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.locator('[data-tt="ext-photo-input"]').setInputFiles(FIXTURE_A);
+      assert.equal((await firstUp).status(), 400);
+      await page.waitForSelector(".tt-ext-photo--err", { timeout: 15000 });
+      const retryUp = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/photo") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-photo-retry"]');
+      assert.equal((await retryUp).status(), 201);
+      await page.waitForSelector(".tt-ext-photo--ok", { timeout: 20000 });
+      assert.equal(await nextBtn.textContent(), "Далее");
+      assert.equal(await nextBtn.getAttribute("disabled"), null);
+    } finally {
+      await page.close();
+      await browser.close();
+    }
+  });
+
+  it("cancel during upload ignores stale success (Chromium)", async (t) => {
+    const browser = await launchRequired(chromium, t);
+    assert.ok(browser);
+    const est = fixture.estToken!;
+    const page = await browser.newPage();
+    await page.route("**/api/tan-tracker/public/external/request/photo?*", async (route) => {
+      await new Promise((r) => setTimeout(r, 800));
+      await route.continue();
+    });
+    try {
+      await clearActiveDraftsForPerson(fixture.databaseUrl, fixture.personId!);
+      await openExternalHome(page, fixture.baseUrl, est);
+      await startWizardItemStep(page);
+      void page.locator('[data-tt="ext-photo-input"]').setInputFiles(FIXTURE_A);
+      await page.waitForSelector(".tt-ext-photo--pending", { timeout: 5000 });
+      await page.click('[data-tt="ext-request-close"]');
+      await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 10000 });
+      await page.waitForTimeout(1200);
+      const staleOk = await page.locator(".tt-ext-photo--ok").count();
+      assert.equal(staleOk, 0);
+    } finally {
+      await page.close();
+      await browser.close();
+    }
+  });
+});
