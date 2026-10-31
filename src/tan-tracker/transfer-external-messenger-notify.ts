@@ -5,14 +5,33 @@ import { signExternalPersonMessengerLinks } from "./external-person/holder-links
 import { resolveInvitationHandoffForNotify } from "./external-person/invitation-person-bridge";
 import type { ExternalMessengerChannel } from "./external-person/messenger-provenance";
 import { isExternalParty } from "./transfer-lk-notify";
+import { buildNotificationRouteSnapshot } from "./staff-notification-route";
 
 async function transferMeta(client: PoolClient, transferId: string) {
   return (
-    await client.query<{ public_code: string; item_title: string }>(
-      `SELECT public_code, item_title FROM tt_transfers WHERE id = $1 LIMIT 1`,
+    await client.query<{
+      public_code: string;
+      item_title: string;
+      holder_party_id: string | null;
+      pending_party_id: string | null;
+    }>(
+      `SELECT public_code, item_title, holder_party_id::text, pending_party_id::text FROM tt_transfers WHERE id = $1 LIMIT 1`,
       [transferId],
     )
   ).rows[0];
+}
+
+async function routeForTransferMeta(
+  client: PoolClient,
+  meta: { holder_party_id: string | null; pending_party_id: string | null },
+  fromPartyId?: string | null,
+  toPartyId?: string | null,
+) {
+  return buildNotificationRouteSnapshot(
+    client,
+    fromPartyId ?? meta.holder_party_id,
+    toPartyId ?? meta.pending_party_id,
+  );
 }
 
 export async function notifyExternalPartyAfterHandoff(
@@ -51,12 +70,15 @@ export async function notifyExternalPartyAfterHandoff(
     transferId: input.transferId,
     handoffVersion: input.handoffVersion,
   });
+  const route = await routeForTransferMeta(client, meta);
   const body = buildExternalPersonMessengerBody({
     event: input.event === "after_code" ? "after_code" : input.event,
     publicCode: meta.public_code,
     itemTitle: meta.item_title,
     holderUrl: links?.holderUrl,
     shellUrl: links?.shellUrl,
+    routeFromDisplayName: route.routeFromDisplayName,
+    routeToDisplayName: route.routeToDisplayName,
   });
   await enqueueExternalPersonMessengerEvent(client, {
     externalPartyId: input.externalPartyId,
@@ -82,19 +104,22 @@ export async function notifyExternalPartyHandoffCode(
   if (!(await isExternalParty(client, input.externalPartyId))) return;
   const meta = await transferMeta(client, input.transferId);
   if (!meta) return;
+  const route = await routeForTransferMeta(client, meta);
   const body = buildExternalPersonMessengerBody({
     event: "handoff_code",
     publicCode: meta.public_code,
     itemTitle: meta.item_title,
-    extraLine: input.code,
+    routeFromDisplayName: route.routeFromDisplayName,
+    routeToDisplayName: route.routeToDisplayName,
   });
   await enqueueExternalPersonMessengerEvent(client, {
     externalPartyId: input.externalPartyId,
     publicCode: meta.public_code,
     event: "handoff_code",
     body,
-    idempotencyKey: `tt-ext-msg:handoff_code:${input.transferId}:hv:${input.handoffVersion}:${input.preferredChannel}`,
+    idempotencyKey: `tt-ext-msg:handoff_code:${input.transferId}:hv:${input.handoffVersion}`,
     preferredChannel: input.preferredChannel,
     singleChannel: true,
+    copyOnlyCode: input.code,
   });
 }

@@ -36,7 +36,7 @@ export function buildTanTrackerStaffTelegramOutboxSendBody(
         Number.isSafeInteger(p.handoffVersion) && p.handoffVersion > 0 &&
         Buffer.byteLength(callbackData, "utf8") <= 64) {
       return {
-        text: buildStaffExternalCreatedNoticeText(p.itemTitle, p.publicCode, true),
+        text: buildStaffExternalCreatedNoticeText(p, true),
         disable_web_page_preview: true,
         reply_markup: {
           inline_keyboard: [
@@ -47,7 +47,7 @@ export function buildTanTrackerStaffTelegramOutboxSendBody(
     }
     const detailUrl = staffTransferLkDetailUrl(appOrigin, p.publicCode);
     return {
-      text: `${buildStaffExternalCreatedNoticeText(p.itemTitle, p.publicCode, false)}\n${detailUrl}`,
+      text: `${buildStaffExternalCreatedNoticeText(p, false)}\n${detailUrl}`,
       disable_web_page_preview: true,
     };
   }

@@ -85,6 +85,8 @@ export async function declineExternalRequestHandler(req: AccessRequest, res: Res
       publicCode: row.public_code,
       reason: reason || null,
       handoffVersion: row.handoff_version + 1,
+      externalPartyId: row.creator_party_id,
+      staffPartyId: party.id,
     });
     await enqueueExternalPersonMessengerNotice(client, {
       externalPartyId: row.creator_party_id,

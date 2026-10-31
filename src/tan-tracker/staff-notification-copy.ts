@@ -1,5 +1,7 @@
 /** LK + messenger copy for staff tan_tracker.* events (never include OTP / handoff codes). */
 
+import { formatTransferContextHeader } from "./staff-notification-route";
+
 export type StaffTransferEventType =
   | "tan_tracker.assignment"
   | "tan_tracker.external_created"
@@ -18,7 +20,45 @@ export type StaffNotificationPayload = {
   itemTitle: string;
   handoffVersion: number;
   reason?: string | null;
+  routeFromDisplayName?: string;
+  routeToDisplayName?: string;
 };
+
+function eventActionLine(eventType: StaffTransferEventType, payload: StaffNotificationPayload): string {
+  switch (eventType) {
+    case "tan_tracker.assignment":
+      return "Вам назначена передача.";
+    case "tan_tracker.external_created":
+      return "Вам передают от клиента.";
+    case "tan_tracker.external_declined":
+      return payload.reason ? `Заявка отклонена: ${payload.reason}` : "Заявка отклонена.";
+    case "tan_tracker.code_obtained":
+      return "Получатель запросил код приёма.";
+    case "tan_tracker.handoff_confirmed":
+      return "Передача подтверждена по коду.";
+    case "tan_tracker.delivered":
+      return "Доставлено конечному получателю.";
+    case "tan_tracker.continued":
+      return "Назначен следующий получатель.";
+    case "tan_tracker.pending_cancelled":
+      return "Ожидание передачи отменено.";
+    case "tan_tracker.returned":
+      return "Возврат создателю.";
+    case "tan_tracker.closed":
+      return "Передача завершена.";
+    default:
+      return "Событие Тан-трекера.";
+  }
+}
+
+export function staffNotificationContextBlock(payload: StaffNotificationPayload): string {
+  return formatTransferContextHeader({
+    publicCode: payload.publicCode,
+    itemTitle: payload.itemTitle,
+    routeFromDisplayName: payload.routeFromDisplayName,
+    routeToDisplayName: payload.routeToDisplayName,
+  });
+}
 
 export function staffNotificationLkCopy(
   eventType: StaffTransferEventType,
@@ -26,33 +66,31 @@ export function staffNotificationLkCopy(
 ): { title: string; body: string } {
   const item = payload.itemTitle.trim() || "Передача";
   const code = payload.publicCode;
-  const body = `${item} (${code})`;
+  const ctx = staffNotificationContextBlock(payload);
+  const action = eventActionLine(eventType, payload);
   switch (eventType) {
     case "tan_tracker.assignment":
-      return { title: "Вам назначена передача", body };
+      return { title: "Вам назначена передача", body: `${ctx}\n\n${action}` };
     case "tan_tracker.external_created":
-      return { title: "Вам передают от клиента", body: item };
+      return { title: "Вам передают от клиента", body: `${ctx}\n\n${action}` };
     case "tan_tracker.external_declined":
-      return {
-        title: "Заявка отклонена",
-        body: payload.reason ? `${item}: ${payload.reason}` : item,
-      };
+      return { title: "Заявка отклонена", body: `${ctx}\n\n${action}` };
     case "tan_tracker.code_obtained":
-      return { title: "Получатель запросил код", body };
+      return { title: "Получатель запросил код", body: `${ctx}\n\n${action}` };
     case "tan_tracker.handoff_confirmed":
-      return { title: "Передача подтверждена", body };
+      return { title: "Передача подтверждена", body: `${ctx}\n\n${action}` };
     case "tan_tracker.delivered":
-      return { title: "Доставлено конечному получателю", body };
+      return { title: "Доставлено конечному получателю", body: `${ctx}\n\n${action}` };
     case "tan_tracker.continued":
-      return { title: "Назначен следующий получатель", body };
+      return { title: "Назначен следующий получатель", body: `${ctx}\n\n${action}` };
     case "tan_tracker.pending_cancelled":
-      return { title: "Ожидание передачи отменено", body };
+      return { title: "Ожидание передачи отменено", body: `${ctx}\n\n${action}` };
     case "tan_tracker.returned":
-      return { title: "Возврат создателю", body };
+      return { title: "Возврат создателю", body: `${ctx}\n\n${action}` };
     case "tan_tracker.closed":
-      return { title: "Передача завершена", body };
+      return { title: "Передача завершена", body: `${ctx}\n\n${action}` };
     default:
-      return { title: "Тан-трекер", body };
+      return { title: "Тан-трекер", body: `${item} (${code})` };
   }
 }
 
@@ -63,5 +101,5 @@ export function staffNotificationMessengerText(
 ): string {
   const lk = staffNotificationLkCopy(eventType, payload);
   const url = `${appOrigin.replace(/\/$/, "")}/tan-tracker`;
-  return `Тан-трекер: ${lk.title}. «${payload.itemTitle || "Передача"}» (${payload.publicCode}).\nОткрыть: ${url}`;
+  return `${lk.body}\n\n${lk.title}.\nОткрыть: ${url}`;
 }

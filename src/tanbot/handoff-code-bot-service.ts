@@ -1,5 +1,9 @@
 import type { PoolClient } from "pg";
 import { generateHandoffCodeForPendingParty } from "../tan-tracker/handoff-code-generate";
+import {
+  buildNotificationRouteSnapshot,
+  formatTransferContextHeader,
+} from "../tan-tracker/staff-notification-route";
 import { ensurePartyForUserOnWrite } from "../tan-tracker/repository";
 import { tanTrackerNavAllowed } from "../tan-tracker/scope";
 import { findAccountByMaxUserId } from "../tanbot-max/link-repository";
@@ -147,17 +151,24 @@ export function formatPendingTransfersMessage(transfers: PendingTransferRow[]): 
 export function formatIssuedCodeMessage(input: {
   publicCode: string;
   itemTitle: string;
-  code: string;
   expiresAt: number;
   replacedPrevious: boolean;
+  routeFromDisplayName?: string | null;
+  routeToDisplayName?: string | null;
 }): string {
   const until = new Date(input.expiresAt).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
   const replaced = input.replacedPrevious
     ? "\nПрежний код больше не действует."
     : "";
+  const ctx = formatTransferContextHeader({
+    publicCode: input.publicCode,
+    itemTitle: input.itemTitle,
+    routeFromDisplayName: input.routeFromDisplayName,
+    routeToDisplayName: input.routeToDisplayName,
+  });
   return (
-    `Код приёма для «${input.itemTitle}» (${input.publicCode}):\n` +
-    `${input.code}\n` +
+    `${ctx}\n\n` +
+    `Код приёма: следующим сообщением шесть цифр для копирования.\n` +
     `Действует до: ${until} (МСК).` +
     `${replaced}\n` +
     `Сообщите код передающему для ввода в Тан-трекере. Это не SMS-код входа.`
@@ -181,9 +192,10 @@ export async function issueHandoffCodeViaBot(
     id: string;
     handoff_version: number;
     pending_party_id: string | null;
+    holder_party_id: string | null;
     status: string;
   }>(
-    `SELECT id, handoff_version, pending_party_id::text, status FROM tt_transfers WHERE public_code = $1 LIMIT 1 FOR UPDATE`,
+    `SELECT id, handoff_version, pending_party_id::text, holder_party_id::text, status FROM tt_transfers WHERE public_code = $1 LIMIT 1 FOR UPDATE`,
     [input.transferPublicCode],
   );
   const transfer = transferRow.rows[0];
@@ -224,15 +236,21 @@ export async function issueHandoffCodeViaBot(
   if (!gen.ok) {
     return { ok: false, message: gen.message };
   }
+  const route = await buildNotificationRouteSnapshot(
+    client,
+    transfer.holder_party_id,
+    transfer.pending_party_id,
+  );
   return {
     ok: true,
     code: gen.code,
     message: formatIssuedCodeMessage({
       publicCode: gen.publicCode,
       itemTitle: gen.itemTitle,
-      code: gen.code,
       expiresAt: gen.expiresAt,
       replacedPrevious: (hadActive.rowCount ?? 0) > 0,
+      routeFromDisplayName: route.routeFromDisplayName,
+      routeToDisplayName: route.routeToDisplayName,
     }),
   };
 }

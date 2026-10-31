@@ -31,7 +31,7 @@ export function buildTanTrackerStaffMaxOutboxDelivery(
   if (eventType === "tan_tracker.external_created") {
     const p = normalizeStaffOutboxPayload(payload);
     const pilot = isTanbotHandoffCodePilotEnabled();
-    const text = buildStaffExternalCreatedNoticeText(p.itemTitle, p.publicCode, pilot);
+    const text = buildStaffExternalCreatedNoticeText(p, pilot);
     if (pilot && p.publicCode && p.handoffVersion > 0) {
       return {
         text,
