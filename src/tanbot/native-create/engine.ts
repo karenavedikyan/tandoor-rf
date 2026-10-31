@@ -70,23 +70,14 @@ export type NativeCreateContext = {
   personId: string | null;
 };
 
-const CREATE_TRIGGERS = new Set([
-  "оформить передачу",
-  "создать передачу",
-  "/send",
-  "/create",
-  "/create@",
-  "отправить предмет",
-]);
-
-export function isNativeCreateMenuText(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (CREATE_TRIGGERS.has(t)) return true;
-  if (t === "/new" || /^\/new@/i.test(t)) return true;
-  return t.startsWith("/send") || t.startsWith("/create");
-}
-
-export { buildNativeMainMenuReply, parseNativeBotSlashCommand, isNativeMainMenuText, isNativeContinueDraftText } from "./main-menu";
+export {
+  buildNativeMainMenuReply,
+  nativeCompletionMenuReply,
+  nativeVerifiedContactRequiredReply,
+  parseNativeBotSlashCommand,
+  isNativeMainMenuText,
+  isNativeContinueDraftText,
+} from "./main-menu";
 
 export function isNativeCreateCallback(data: string): boolean {
   return parseNativeCreateCallback(data) != null;
@@ -340,21 +331,30 @@ export async function renderDraftPrompt(
 }
 
 async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext): Promise<NativeCreateReply> {
+  const { buildNativeMainMenuReply, nativeVerifiedContactRequiredReply } = await import("./main-menu");
+  if (!ctx.isLinkedStaff && !ctx.personId) {
+    return nativeVerifiedContactRequiredReply(
+      ctx,
+      "Подтвердите номер телефона, чтобы открыть передачи.",
+    );
+  }
+  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false });
   if (ctx.isLinkedStaff && ctx.staffUserId) {
     const origin = getAppOrigin() ?? "https://example.invalid";
     return {
       text: `Мои передачи в личном кабинете:\n${origin}/tan-tracker/`,
-      replyMarkup: menuReplyKeyboard(),
+      replyMarkup: menu.replyMarkup,
+      maxInlineButtons: menu.maxInlineButtons,
+      telegramInlineKeyboard: undefined,
     };
   }
-  if (!ctx.personId) {
-    return { text: "Подтвердите номер телефона, чтобы открыть передачи.", requestContact: true };
-  }
-  const sessionRaw = await createPersonBrowserSession(client, ctx.personId, ctx.channel);
+  const sessionRaw = await createPersonBrowserSession(client, ctx.personId!, ctx.channel);
   const origin = getAppOrigin() ?? "https://example.invalid";
   return {
     text: `Мои передачи:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
-    replyMarkup: menuReplyKeyboard(),
+    replyMarkup: menu.replyMarkup,
+    maxInlineButtons: menu.maxInlineButtons,
+    telegramInlineKeyboard: undefined,
   };
 }
 
@@ -364,7 +364,11 @@ async function startOrResumeCreate(client: PoolClient, ctx: NativeCreateContext)
   }
   const actor = ctx.isLinkedStaff ? "staff" : "external";
   if (actor === "external" && !ctx.personId) {
-    return { text: "Подтвердите номер телефона, чтобы создать передачу.", requestContact: true };
+    const { nativeVerifiedContactRequiredReply } = await import("./main-menu");
+    return nativeVerifiedContactRequiredReply(
+      ctx,
+      "Подтвердите номер телефона, чтобы создать передачу.",
+    );
   }
   if (actor === "staff" && !ctx.staffUserId) {
     return navError("Профиль сотрудника недоступен.", ctx.channel);
@@ -527,21 +531,38 @@ export async function handleNativeCreateCallback(
 
   await lockNativeCreateMessenger(client, ctx);
 
-  if (
-    parsed.action === "menu_create" ||
-    parsed.action === "menu_my" ||
-    (parsed.action === "menu" && isNativeMenuDraftHex(parsed.draftIdHex))
-  ) {
-    if (!isNativeMenuDraftHex(parsed.draftIdHex)) return null;
+  const { buildNativeMainMenuReply, nativeVerifiedContactRequiredReply } = await import("./main-menu");
+
+  if (parsed.action === "menu") {
     try {
       await assertNativeCreateContext(client, ctx);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Действие недоступно.";
-      const { buildNativeMainMenuReply } = await import("./main-menu");
       return buildNativeMainMenuReply(client, ctx, { prefix: message, lock: false });
     }
-    const { buildNativeMainMenuReply } = await import("./main-menu");
-    if (parsed.action === "menu") return buildNativeMainMenuReply(client, ctx, { lock: false });
+    return buildNativeMainMenuReply(client, ctx, { lock: false });
+  }
+
+  if (parsed.action === "menu_create" || parsed.action === "menu_my") {
+    if (!isNativeMenuDraftHex(parsed.draftIdHex)) return null;
+    if (parsed.action === "menu_create" && !ctx.isLinkedStaff && !ctx.personId) {
+      return nativeVerifiedContactRequiredReply(
+        ctx,
+        "Подтвердите номер телефона, чтобы создать передачу.",
+      );
+    }
+    if (parsed.action === "menu_my" && !ctx.isLinkedStaff && !ctx.personId) {
+      return nativeVerifiedContactRequiredReply(
+        ctx,
+        "Подтвердите номер телефона, чтобы открыть передачи.",
+      );
+    }
+    try {
+      await assertNativeCreateContext(client, ctx);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Действие недоступно.";
+      return buildNativeMainMenuReply(client, ctx, { prefix: message, lock: false });
+    }
     if (parsed.action === "menu_create") return startOrResumeCreate(client, ctx);
     return myTransfersReply(client, ctx);
   }
@@ -559,9 +580,6 @@ export async function handleNativeCreateCallback(
     const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor);
     if (!draft || !draftIdMatchesHex(draft.id, parsed.draftIdHex)) {
       return navError("Черновик недоступен.", ctx.channel);
-    }
-    if ((draft.payload as NativeCreateDraftPayload).revision !== parsed.revision) {
-      return navError("Действие устарело. Откройте меню и продолжите оформление.", ctx.channel);
     }
     const payload = draft.payload as NativeCreateDraftPayload;
     assertDraftBoundToCaller(payload, ctx);
@@ -583,13 +601,8 @@ export async function handleNativeCreateCallback(
 
   const { id, step, payload } = draft;
 
-  if (!callbackAllowedForStep(parsed.action, step) && parsed.action !== "menu") {
+  if (!callbackAllowedForStep(parsed.action, step)) {
     return renderDraftPrompt(client, ctx.channel, id, step, payload);
-  }
-
-  if (parsed.action === "menu") {
-    const { buildNativeMainMenuReply } = await import("./main-menu");
-    return buildNativeMainMenuReply(client, ctx, { lock: false });
   }
 
   if (parsed.action === "cancel" || parsed.action === "restart") {
@@ -814,7 +827,8 @@ export async function handleNativeCreateCallback(
           payload,
           channel: ctx.channel,
         });
-        return { text: created.resultText, replyMarkup: menuReplyKeyboard() };
+        const { nativeCompletionMenuReply } = await import("./main-menu");
+        return nativeCompletionMenuReply(client, ctx, created.resultText);
       }
       if (payload.actor === "external" && ctx.personId) {
         const party = await client.query<{ party_id: string }>(
@@ -840,10 +854,12 @@ export async function handleNativeCreateCallback(
           externalPartyId: partyId,
           draftId: id,
         });
-        return {
-          text: `Заявка отправлена: ${created.publicCode}. Сотрудник получит уведомление.`,
-          replyMarkup: menuReplyKeyboard(),
-        };
+        const { nativeCompletionMenuReply } = await import("./main-menu");
+        return nativeCompletionMenuReply(
+          client,
+          ctx,
+          `Заявка отправлена: ${created.publicCode}. Сотрудник получит уведомление.`,
+        );
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Не удалось создать передачу.";
@@ -861,8 +877,13 @@ export async function handleNativeCreateMessage(
 ): Promise<NativeCreateReply | null> {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
-  const { parseNativeBotSlashCommand, isNativeMainMenuText, isNativeContinueDraftText, buildNativeMainMenuReply } =
-    await import("./main-menu");
+  const {
+    parseNativeBotSlashCommand,
+    isNativeMainMenuText,
+    isNativeContinueDraftText,
+    isNativeCreateMenuText,
+    buildNativeMainMenuReply,
+  } = await import("./main-menu");
 
   const slash = parseNativeBotSlashCommand(trimmed);
   if (slash === "start" || slash === "menu") {
@@ -870,10 +891,18 @@ export async function handleNativeCreateMessage(
   }
   if (lower === "мои передачи" || slash === "my") {
     await lockNativeCreateMessenger(client, ctx);
+    if (!ctx.isLinkedStaff && !ctx.personId) {
+      const { nativeVerifiedContactRequiredReply } = await import("./main-menu");
+      return nativeVerifiedContactRequiredReply(
+        ctx,
+        "Подтвердите номер телефона, чтобы открыть передачи.",
+      );
+    }
     try {
       await assertNativeCreateContext(client, ctx);
-    } catch {
-      return buildNativeMainMenuReply(client, ctx, { lock: false });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Действие недоступно.";
+      return buildNativeMainMenuReply(client, ctx, { prefix: message, lock: false });
     }
     return myTransfersReply(client, ctx);
   }
@@ -897,6 +926,13 @@ export async function handleNativeCreateMessage(
 
   if (slash === "new" || isNativeCreateMenuText(trimmed)) {
     await lockNativeCreateMessenger(client, ctx);
+    if (!ctx.isLinkedStaff && !ctx.personId) {
+      const { nativeVerifiedContactRequiredReply } = await import("./main-menu");
+      return nativeVerifiedContactRequiredReply(
+        ctx,
+        "Подтвердите номер телефона, чтобы создать передачу.",
+      );
+    }
     try {
       await assertNativeCreateContext(client, ctx);
     } catch (err: unknown) {

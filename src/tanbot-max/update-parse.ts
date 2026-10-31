@@ -201,7 +201,7 @@ export function parseMaxWebhookUpdate(raw: unknown):
         startPayload,
         commandText: null,
         callbackPayload: null,
-        recipientChatType: null,
+        recipientChatType: "dialog",
       },
     };
   }

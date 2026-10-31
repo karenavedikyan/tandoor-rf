@@ -69,18 +69,49 @@ export async function handleExternalPersonMaxMessage(
   const lower = text.toLowerCase();
   const person = await findPersonByMessenger(client, "max", input.maxUserId);
 
-  if (lower === "мои передачи" || lower.startsWith("/my")) {
-    if (!person) {
+  const { parseNativeBotSlashCommand } = await import("../native-create/main-menu");
+  if (lower === "мои передачи" || parseNativeBotSlashCommand(text) === "my") {
+    const native = await tryNativeCreateMaxMessage(client, {
+      chatId: input.chatId,
+      maxUserId: input.maxUserId,
+      text: input.text,
+      recipientChatType: input.recipientChatType,
+    });
+    if (native) {
       return {
-        text: "Подтвердите свой номер телефона кнопкой ниже — так мы покажем только ваши передачи.",
-        requestContact: true,
+        text: native.text,
+        requestContact: native.requestContact,
+        replyMarkup: native.replyMarkup,
+        inlineButtons: native.inlineButtons,
       };
+    }
+    if (!person) {
+      const { nativeVerifiedContactRequiredReply } = await import("../native-create/main-menu");
+      const { buildMaxNativeCreateContext } = await import("../native-create/adapters");
+      const ctx = await buildMaxNativeCreateContext(client, {
+        chatId: input.chatId,
+        maxUserId: input.maxUserId,
+        recipientChatType: input.recipientChatType,
+      });
+      return nativeVerifiedContactRequiredReply(
+        ctx,
+        "Подтвердите свой номер телефона кнопкой ниже — так мы покажем только ваши передачи.",
+      );
     }
     const sessionRaw = await createPersonBrowserSession(client, person.id, "max");
     const origin = getAppOrigin() ?? "https://example.invalid";
+    const { buildNativeMainMenuReply } = await import("../native-create/main-menu");
+    const { buildMaxNativeCreateContext } = await import("../native-create/adapters");
+    const ctx = await buildMaxNativeCreateContext(client, {
+      chatId: input.chatId,
+      maxUserId: input.maxUserId,
+      recipientChatType: input.recipientChatType,
+    });
+    const menu = await buildNativeMainMenuReply(client, ctx, { lock: false });
     return {
       text: `Мои передачи:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
-      replyMarkup: menuReplyKeyboard(),
+      replyMarkup: menu.replyMarkup,
+      inlineButtons: menu.maxInlineButtons,
     };
   }
 

@@ -3,6 +3,10 @@ import {
   runNativeBotCommandInstall,
   type CommandInstallTarget,
 } from "../tanbot/native-create/bot-command-registry";
+import {
+  createMaxCommandInstallTransport,
+  createTelegramCommandInstallTransport,
+} from "../tanbot/native-create/bot-command-install-provider";
 
 function parseArgs(argv: string[]): { target: CommandInstallTarget | null; apply: boolean } {
   let target: CommandInstallTarget | null = null;
@@ -25,7 +29,12 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   const plan = buildNativeBotCommandInstallPlan(target, { dryRun: !apply });
-  const result = await runNativeBotCommandInstall(plan);
+  const transport = apply
+    ? target === "telegram"
+      ? createTelegramCommandInstallTransport()
+      : createMaxCommandInstallTransport()
+    : undefined;
+  const result = await runNativeBotCommandInstall(plan, transport);
   process.stdout.write(
     JSON.stringify(
       {
