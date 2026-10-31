@@ -21,6 +21,7 @@ import { requireDatabaseReady } from "./middleware/database";
 import { createAccessAdminRouter, createAccessRouter } from "./access/router";
 import { createAdminClientsRouter } from "./clients/admin-onec-update-router";
 import { createClientsRouter } from "./clients/router";
+import { createInternalCatalogRouter } from "./internal-catalog/router";
 import { createWorkRouter } from "./work/router";
 import { createTanTrackerRouter } from "./tan-tracker/router";
 import { createTanbotTelegramAdminRouter } from "./tanbot-telegram/admin-router";
@@ -89,6 +90,7 @@ function isStructuredApi(req: Request): boolean {
     req.path.startsWith("/api/auth") ||
     req.path.startsWith("/api/profile") ||
     req.path.startsWith("/api/clients") ||
+    req.path.startsWith("/api/internal-catalog") ||
     req.path.startsWith("/api/admin/access") ||
     req.path.startsWith("/api/admin/clients") ||
     req.path.startsWith("/api/access") ||
@@ -275,6 +277,7 @@ export function createApp(): express.Application {
   app.use("/api/tanbot-telegram/webhook", createTanbotTelegramWebhookRouter());
   app.use("/api/tanbot-max/webhook", createTanbotMaxWebhookRouter());
   app.use("/api/clients", createClientsRouter());
+  app.use("/api/internal-catalog", createInternalCatalogRouter());
   app.use("/api/admin/access", createAccessAdminRouter());
   app.use("/api/admin/clients", createAdminClientsRouter());
   app.use("/api/admin/tanbot-telegram", createTanbotTelegramAdminRouter());
@@ -319,6 +322,9 @@ export function createApp(): express.Application {
 
   app.get("/clients/:guid/catalog", (_req: Request, res: Response) => {
     sendHtmlPage(res, publicDir, "client-catalog-workspace.html");
+  });
+  app.get("/internal-catalog", (_req: Request, res: Response) => {
+    sendHtmlPage(res, publicDir, "internal-catalog.html");
   });
 
   app.get("/clients/:guid", (_req: Request, res: Response) => {

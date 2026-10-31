@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <script src="/brand/theme-init.js"></script>
+  <title>Каталог продукции | Тандор</title>
+  <link rel="stylesheet" href="/fonts/exo-2/fonts.css">
+  <link rel="stylesheet" href="/brand/legacy-shell.css">
+  <link rel="stylesheet" href="/clients.css">
+  <link rel="stylesheet" href="/brand/cabinet.css">
+  <link rel="stylesheet" href="/internal-catalog.css">
+</head>
+<body class="legacy-body internal-catalog-page">
+  <div class="legacy-app">
+    <div id="workspace-sidebar"></div>
+    <button type="button" class="legacy-backdrop" id="legacy-backdrop" hidden aria-label="Закрыть меню"></button>
+    <div class="legacy-frame">
+      <div id="workspace-topbar"></div>
+      <main class="legacy-content ic-main">
+        <header class="ic-heading">
+          <p class="ic-eyebrow">Внутренний справочник · 1С</p>
+          <h1>Каталог продукции</h1>
+          <p class="ic-description">Найдите товар и откройте его характеристики из выгрузки.</p>
+        </header>
+        <div id="ic-state" class="ic-state" role="status" aria-live="polite">Загружаем каталог…</div>
+        <section id="ic-app" hidden aria-label="Поиск по каталогу">
+          <div class="ic-source">
+            <span class="ic-source-dot" aria-hidden="true"></span>
+            <span id="ic-source-label"></span>
+            <span class="ic-source-note">Только для сотрудников</span>
+          </div>
+          <form id="ic-search-form" class="ic-filters" role="search">
+            <div class="ic-query">
+              <label for="ic-query">Найти товар</label>
+              <div class="ic-query-row">
+                <input id="ic-query" type="search" maxlength="160" placeholder="Название, артикул или характеристика" autocomplete="off" aria-describedby="ic-search-hint">
+                <button type="submit" class="ic-button ic-button-primary">Найти</button>
+              </div>
+              <p id="ic-search-hint" class="ic-hint">Можно искать по нескольким словам или GUID товара.</p>
+            </div>
+            <div class="ic-select-field">
+              <label for="ic-section">Раздел</label>
+              <select id="ic-section"><option value="">Все разделы</option></select>
+            </div>
+            <div class="ic-select-field">
+              <label for="ic-brand">Бренд</label>
+              <select id="ic-brand"><option value="">Все бренды</option></select>
+            </div>
+          </form>
+          <div class="ic-results-heading">
+            <p id="ic-count" role="status" aria-live="polite"></p>
+            <button type="button" id="ic-reset" class="ic-text-button" hidden>Сбросить фильтры</button>
+          </div>
+          <div id="ic-results" class="ic-grid" aria-label="Товары"></div>
+          <nav id="ic-pagination" class="ic-pagination" aria-label="Страницы каталога" hidden>
+            <button type="button" id="ic-prev" class="ic-button">Назад</button>
+            <span id="ic-page-label"></span>
+            <button type="button" id="ic-next" class="ic-button">Далее</button>
+          </nav>
+          <p class="ic-footnote">Справочник из JSON, отдельно от каталога образцов. Цены и остатки в карточках не заменяют актуальные данные 1С. Изображения ещё не подключены.</p>
+        </section>
+      </main>
+    </div>
+  </div>
+  <dialog id="ic-detail" class="ic-detail" aria-labelledby="ic-detail-title">
+    <div class="ic-detail-bar">
+      <span class="ic-eyebrow">Карточка продукции</span>
+      <button type="button" id="ic-close" class="ic-button" autofocus>Закрыть</button>
+    </div>
+    <div id="ic-detail-body"></div>
+  </dialog>
+  <script src="/common.js" defer></script>
+  <script src="/brand/shell-icons.js" defer></script>
+  <script src="/clients-shell.js" defer></script>
+  <script src="/internal-catalog.js" defer></script>
+</body>
+</html>

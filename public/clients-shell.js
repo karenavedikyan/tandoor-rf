@@ -181,6 +181,8 @@
       : "";
     var effectiveUser = getEffectiveUser(actorUser);
     var salesLink = showClients && (!effectiveUser || effectiveUser.role !== "assistant") ? navLink("/sales", "Продажи", "sales", active, "sales") : "";
+    var internalCatalogLink = showClients
+      ? navLink("/internal-catalog", "Каталог продукции", "catalog", active, "internal-catalog") : "";
     var launch = api && api.launch;
     var workLink = showClients && (!launch || launch.navigation.work)
       ? navLink("/work", "Моя работа", "work", active, "work")
@@ -216,6 +218,7 @@
       "</div>" +
       clientsLink +
       salesLink +
+      internalCatalogLink +
       workLink +
       tanTrackerLink +
       workspaceLink +
