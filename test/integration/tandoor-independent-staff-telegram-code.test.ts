@@ -80,6 +80,8 @@ test("independent: real external draft → Telegram intended recipient callback 
     const transport: TelegramDeliveryTransport = async input => { sends.push(input); return { ok: true, result: {} }; };
     await processTanbotNotificationOutbox(pool, config.config, transport, { deliveryEnabled: true });
     assert.equal(sends.length, 1);
+    assert.match(String(sends[0].body.text), /От:\s*Synthetic External Sender/);
+    assert.match(String(sends[0].body.text), /Кому:\s*Synthetic Receiving Staff/);
     assert.equal(String(sends[0].body.chat_id), "885501", "address the verified private user");
     const buttons = (sends[0].body.reply_markup as {
       inline_keyboard?: Array<Array<{ text: string; callback_data?: string; url?: string }>>;
@@ -136,6 +138,10 @@ test("independent: real external draft → Telegram intended recipient callback 
     const codeMessages = sends.filter(s => s.method === "sendMessage" && String(s.body.text).includes(code));
     assert.equal(codeMessages.length, 2, "one explanatory message and one plain-copy message per issuance");
     assert.notEqual(String(codeMessages[0].body.text), code);
+    assert.match(String(codeMessages[0].body.text), /От:\s*Synthetic External Sender/);
+    assert.match(String(codeMessages[0].body.text), /Кому:\s*Synthetic Receiving Staff/);
+    assert.ok(String(codeMessages[0].body.text).includes(publicCode));
+    assert.ok(String(codeMessages[0].body.text).includes("Synthetic physical keys"));
     assert.equal(codeMessages[1].body.text, code);
     assert.equal(codeMessages[1].body.chat_id, codeMessages[0].body.chat_id);
     assert.equal(codeMessages[1].body.reply_markup, undefined);

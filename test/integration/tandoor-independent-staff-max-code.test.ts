@@ -80,6 +80,8 @@ test("independent: real external draft → MAX intended recipient callback → s
     const transport: MaxDeliveryTransport = async input => { sends.push(input); return { ok: true, result: {} }; };
     await processTanbotMaxNotificationOutbox(pool, config.config, transport, { deliveryEnabled: true });
     assert.equal(sends.length, 1);
+    assert.match(sends[0].text, /От:\s*Synthetic External Sender/);
+    assert.match(sends[0].text, /Кому:\s*Synthetic Receiving Staff/);
     assert.equal(sends[0].userId, 885501n, "address the verified user, never a different chat id");
     const buttons = sends[0].inlineButtons?.flat() ?? [];
     assert.equal(buttons.length, 1);
@@ -122,6 +124,10 @@ test("independent: real external draft → MAX intended recipient callback → s
     const codeMessages = sends.filter(s => s.text.includes(code));
     assert.equal(codeMessages.length, 2, "one explanatory message and one plain-copy message per issuance");
     assert.notEqual(codeMessages[0].text, code);
+    assert.match(codeMessages[0].text, /От:\s*Synthetic External Sender/);
+    assert.match(codeMessages[0].text, /Кому:\s*Synthetic Receiving Staff/);
+    assert.ok(codeMessages[0].text.includes(publicCode));
+    assert.ok(codeMessages[0].text.includes("Synthetic physical keys"));
     assert.equal(codeMessages[1].text, code);
     assert.equal(codeMessages[1].userId, codeMessages[0].userId);
     assert.equal(codeMessages[1].inlineButtons, undefined);
