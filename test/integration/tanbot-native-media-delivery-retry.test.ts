@@ -312,7 +312,8 @@ describe("native media delivery retry and terminal cancel", { concurrency: false
     rev = Number((await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!.payload.revision);
     await maxWh(++ts, cb(buildNativeCreateCallback("comment_skip", draftId, rev)!));
     rev = Number((await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!.payload.revision);
-    await maxWh(++ts, cb(buildNativeCreateCallback("recipient", draftId, rev, "0")!));
+    assert.equal((await maxWh(++ts, msg(ts, "+79995558899", "m4"))).status, 200);
+    assert.equal((await maxWh(++ts, msg(ts, "Получатель предпросмотра MAX", "m5"))).status, 200);
     rev = Number((await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!.payload.revision);
     await maxWh(++ts, cb(buildNativeCreateCallback("due", draftId, rev, "n")!));
     rev = Number((await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!.payload.revision);
