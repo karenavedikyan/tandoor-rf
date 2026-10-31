@@ -19,14 +19,34 @@ const CALLBACK_PREFIX = "hc:";
 export const HANDOFF_CALLBACK_GEN = `${CALLBACK_PREFIX}gen:`;
 export const HANDOFF_CALLBACK_MENU = `${CALLBACK_PREFIX}menu`;
 
-export function buildHandoffGenCallback(publicCode: string): string {
-  return `${HANDOFF_CALLBACK_GEN}${publicCode}`.slice(0, 64);
+export type ParsedHandoffGenCallback = { publicCode: string; handoffVersion: number | null };
+
+export function buildHandoffGenCallback(publicCode: string, handoffVersion?: number): string {
+  const code = publicCode.trim().slice(0, 32);
+  if (handoffVersion != null && Number.isInteger(handoffVersion) && handoffVersion > 0) {
+    return `${HANDOFF_CALLBACK_GEN}${code}:${handoffVersion}`.slice(0, 64);
+  }
+  return `${HANDOFF_CALLBACK_GEN}${code}`.slice(0, 64);
+}
+
+export function parseHandoffGenCallbackDetail(payload: string): ParsedHandoffGenCallback | null {
+  if (!payload.startsWith(HANDOFF_CALLBACK_GEN)) return null;
+  const rest = payload.slice(HANDOFF_CALLBACK_GEN.length).trim();
+  if (!rest) return null;
+  const lastColon = rest.lastIndexOf(":");
+  if (lastColon > 0) {
+    const hvStr = rest.slice(lastColon + 1);
+    const hv = Number(hvStr);
+    if (Number.isInteger(hv) && hv > 0 && hvStr === String(hv)) {
+      const pub = rest.slice(0, lastColon).trim().slice(0, 32);
+      if (pub) return { publicCode: pub, handoffVersion: hv };
+    }
+  }
+  return { publicCode: rest.slice(0, 32), handoffVersion: null };
 }
 
 export function parseHandoffGenCallback(payload: string): string | null {
-  if (!payload.startsWith(HANDOFF_CALLBACK_GEN)) return null;
-  const code = payload.slice(HANDOFF_CALLBACK_GEN.length).trim();
-  return code.length ? code.slice(0, 32) : null;
+  return parseHandoffGenCallbackDetail(payload)?.publicCode ?? null;
 }
 
 export async function resolveStaffUserIdForBotChannel(
@@ -147,11 +167,41 @@ export async function issueHandoffCodeViaBot(
     userId: string;
     partyId: string;
     transferPublicCode: string;
+    expectedHandoffVersion?: number | null;
   },
 ): Promise<
   | { ok: true; message: string }
   | { ok: false; message: string }
 > {
+  const transferRow = await client.query<{
+    id: string;
+    handoff_version: number;
+    pending_party_id: string | null;
+    status: string;
+  }>(
+    `SELECT id, handoff_version, pending_party_id::text, status FROM tt_transfers WHERE public_code = $1 LIMIT 1`,
+    [input.transferPublicCode],
+  );
+  const transfer = transferRow.rows[0];
+  if (!transfer) {
+    return { ok: false, message: "Передача не найдена." };
+  }
+  if (!transfer.pending_party_id || transfer.pending_party_id !== input.partyId) {
+    return { ok: false, message: "Вы не являетесь ожидающим получателем этой передачи." };
+  }
+  if (transfer.status === "completed") {
+    return { ok: false, message: "Передача уже завершена." };
+  }
+  if (
+    input.expectedHandoffVersion != null &&
+    transfer.handoff_version !== input.expectedHandoffVersion
+  ) {
+    return {
+      ok: false,
+      message: "Передача обновилась. Откройте актуальное уведомление или раздел передач.",
+    };
+  }
+
   const hadActive = await client.query(
     `SELECT 1 FROM tt_handoff_codes hc
      JOIN tt_transfers t ON t.id = hc.transfer_id

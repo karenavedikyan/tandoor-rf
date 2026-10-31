@@ -16,7 +16,10 @@ import {
   setIntegrationEnv,
 } from "../helpers/test-db";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
-import { buildHandoffGenCallback } from "../../src/tanbot/handoff-code-bot-service";
+import {
+  buildHandoffGenCallback,
+} from "../../src/tanbot/handoff-code-bot-service";
+import { fanoutStaffTransferNotification, transferPayload } from "../../src/tan-tracker/staff-notify-fanout";
 import type { TelegramDeliveryTransport } from "../../src/tanbot-telegram/delivery-transport";
 import type { MaxDeliveryTransport } from "../../src/tanbot-max/delivery-transport";
 
@@ -501,6 +504,189 @@ describe("tanbot handoff code pilot", { concurrency: false }, () => {
       `SELECT COUNT(*)::int AS c FROM tt_handoff_codes WHERE transfer_id = 'tt-P-MAX-MENU'`,
     );
     assert.equal(codesBefore.rows[0]!.c, codesAfterResend.rows[0]!.c);
+  });
+
+  it("max external_created outbox sends one receipt-code button (structured payload)", async () => {
+    await resetPoolForTests();
+    const holder = await createTestUser({
+      databaseUrl,
+      email: "hc-ext-holder@test.local",
+      password: PASSWORD,
+      fullName: "Ext Holder",
+      role: "manager",
+    });
+    const pending = await createTestUser({
+      databaseUrl,
+      email: "hc-ext-pending@test.local",
+      password: PASSWORD,
+      fullName: "Ext Pending",
+      role: "manager",
+    });
+    const seeded = await seedTransfer(holder.id, pending.id, "P-EXT-MAX", { telegram: false });
+    const pool = getPool();
+    assert.ok(pool);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await fanoutStaffTransferNotification(client, {
+        eventType: "tan_tracker.external_created",
+        recipientUserIds: [pending.id],
+        payload: transferPayload({
+          transferId: seeded.transferId,
+          publicCode: "P-EXT-MAX",
+          itemTitle: "External box",
+          handoffVersion: 1,
+        }),
+      });
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    const sink = {
+      calls: [] as Array<{ userId: string; text: string; inlineButtons?: unknown }>,
+    };
+    const transport = createRecordingMaxDeliveryTransport(sink);
+    const maxLoaded = loadTanbotMaxStage2Config();
+    assert.equal(maxLoaded.ok, true);
+    if (!maxLoaded.ok) return;
+    await runTanbotMaxOutboxWorkerOnce(pool, maxLoaded.config, transport);
+    const call =
+      sink.calls.find((c) => String(c.text).includes("P-EXT-MAX")) ?? sink.calls.at(-1);
+    assert.ok(call, "expected MAX delivery for P-EXT-MAX");
+    assert.match(call!.text, /код приёма/i);
+    const buttons = call!.inlineButtons as Array<Array<{ payload: string; text: string }>>;
+    assert.equal(buttons?.[0]?.[0]?.text, "Получить код приёма");
+    assert.equal(buttons?.[0]?.[0]?.payload, buildHandoffGenCallback("P-EXT-MAX", 1));
+    assert.ok(!/\d{6}/.test(call!.text));
+  });
+
+  it("max: stale handoffVersion callback does not issue code or mutate transfer", async () => {
+    const holder = await createTestUser({
+      databaseUrl,
+      email: "hc-stale-holder@test.local",
+      password: PASSWORD,
+      fullName: "Stale Holder",
+      role: "manager",
+    });
+    const pending = await createTestUser({
+      databaseUrl,
+      email: "hc-stale-pending@test.local",
+      password: PASSWORD,
+      fullName: "Stale Pending",
+      role: "manager",
+    });
+    const seeded = await seedTransfer(holder.id, pending.id, "P-STALE-1", { telegram: false });
+    const app = await loadApp();
+    const pool = getPool();
+    assert.ok(pool);
+    const before = await pool.query<{
+      handoff_version: number;
+      holder_party_id: string;
+      status: string;
+    }>(`SELECT handoff_version, holder_party_id::text, status FROM tt_transfers WHERE id = $1`, [
+      seeded.transferId,
+    ]);
+
+    const sink = { calls: [] as Array<{ userId: string; text: string }> };
+    const recording = createRecordingMaxDeliveryTransport(sink);
+
+    await request(app)
+      .post("/api/tanbot-max/webhook")
+      .set("X-Max-Bot-Api-Secret", process.env.TANBOT_MAX_WEBHOOK_SECRET!)
+      .send({
+        update_type: "message_callback",
+        timestamp: 601,
+        callback: {
+          callback_id: "cb-stale",
+          payload: buildHandoffGenCallback("P-STALE-1", 99),
+          user: { user_id: seeded.maxUserId, is_bot: false },
+        },
+        message: { recipient: { chat_id: seeded.maxUserId } },
+      });
+
+    const maxLoaded = loadTanbotMaxStage2Config();
+    assert.equal(maxLoaded.ok, true);
+    if (!maxLoaded.ok) return;
+    await runTanbotMaxOutboxWorkerOnce(pool, maxLoaded.config, recording);
+    assert.equal(sink.calls.length, 1);
+    assert.match(sink.calls[0]!.text, /обновилась|недоступ/i);
+    assert.ok(!/\d{6}/.test(sink.calls[0]!.text));
+
+    const codes = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM tt_handoff_codes WHERE transfer_id = $1`,
+      [seeded.transferId],
+    );
+    assert.equal(codes.rows[0]!.c, 0);
+    const after = await pool.query<{
+      handoff_version: number;
+      holder_party_id: string;
+      status: string;
+    }>(`SELECT handoff_version, holder_party_id::text, status FROM tt_transfers WHERE id = $1`, [
+      seeded.transferId,
+    ]);
+    assert.deepEqual(after.rows[0], before.rows[0]);
+  });
+
+  it("max: issuing code does not change holder, status, or handoff_version", async () => {
+    const holder = await createTestUser({
+      databaseUrl,
+      email: "hc-issue-holder@test.local",
+      password: PASSWORD,
+      fullName: "Issue Holder",
+      role: "manager",
+    });
+    const pending = await createTestUser({
+      databaseUrl,
+      email: "hc-issue-pending@test.local",
+      password: PASSWORD,
+      fullName: "Issue Pending",
+      role: "manager",
+    });
+    const seeded = await seedTransfer(holder.id, pending.id, "P-ISSUE-1", { telegram: false });
+    const app = await loadApp();
+    const pool = getPool();
+    assert.ok(pool);
+    const before = await pool.query<{
+      handoff_version: number;
+      holder_party_id: string;
+      status: string;
+    }>(`SELECT handoff_version, holder_party_id::text, status FROM tt_transfers WHERE id = $1`, [
+      seeded.transferId,
+    ]);
+
+    const sink = { calls: [] as Array<{ userId: string; text: string }> };
+    const recording = createRecordingMaxDeliveryTransport(sink);
+    await request(app)
+      .post("/api/tanbot-max/webhook")
+      .set("X-Max-Bot-Api-Secret", process.env.TANBOT_MAX_WEBHOOK_SECRET!)
+      .send({
+        update_type: "message_callback",
+        timestamp: 602,
+        callback: {
+          callback_id: "cb-issue",
+          payload: buildHandoffGenCallback("P-ISSUE-1", 1),
+          user: { user_id: seeded.maxUserId, is_bot: false },
+        },
+        message: { recipient: { chat_id: seeded.maxUserId } },
+      });
+    const maxLoaded = loadTanbotMaxStage2Config();
+    assert.equal(maxLoaded.ok, true);
+    if (!maxLoaded.ok) return;
+    await runTanbotMaxOutboxWorkerOnce(pool, maxLoaded.config, recording);
+    assert.match(sink.calls[0]!.text, /\d{6}/);
+
+    const after = await pool.query<{
+      handoff_version: number;
+      holder_party_id: string;
+      status: string;
+    }>(`SELECT handoff_version, holder_party_id::text, status FROM tt_transfers WHERE id = $1`, [
+      seeded.transferId,
+    ]);
+    assert.deepEqual(after.rows[0], before.rows[0]);
   });
 
   it("runtime worker entrypoint starts", () => {

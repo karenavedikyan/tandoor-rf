@@ -1,5 +1,14 @@
 # QA flows (не public/dist)
 
+## Staff receipt code in MAX (pilot, 2026-10-31)
+
+- **База:** `a93c77ebc96b2495ecea93d693bcc12c184d91f3`; ветка `cursor/staff-receipt-code-max-20261031`.
+- **Флаг:** `TANBOT_HANDOFF_CODE_PILOT_ENABLED` — по умолчанию **выключен** (не менять default). Включение только на согласованном стенде вместе с `TANBOT_MAX_ENABLED` / delivery и привязкой MAX аккаунта сотрудника.
+- **Pilot on:** `tan_tracker.external_created` в MAX outbox — текст про обмен кодом + одна кнопка «Получить код приёма» (`hc:gen:<publicCode>:<handoffVersion>`); код только по callback, не в тексте уведомления.
+- **Pilot off:** то же событие — текст + deep link LK `#?tt_screen=detail&tt_id=<publicCode>` (без кнопки выдачи кода в MAX).
+- **LK:** pending staff с `fromExternal` снова видит «Получить код» в карточке (без ослабления write guards).
+- **QA:** `test/integration/tanbot-handoff-code-pilot.test.ts`, `test/unit/staff-max-outbox-presentation.test.ts`, browser staff gen-code + external-person-shell wizard.
+
 ## Тан-трекер — личные архивы и очистка треков (production, 2026-10-30)
 
 - **База разработки:** `81d7d68240037823bb91572f64ebdedcea8665c9`; ветка `cursor/track-archives-cleanup-20261030`. Эталон UX: `ecf95239` (prototype), без demo-памяти/localStorage.

@@ -4,10 +4,8 @@ import type { MaxDeliveryTransport } from "./delivery-transport";
 import { findAccountByUserId } from "./link-repository";
 import { canDeliverTanTrackerOutboxNotification } from "../tanbot-telegram/tan-tracker-access";
 import { transferStillExists } from "../tan-tracker/registry-cleanup/cancel-transfer-notifications";
-import {
-  buildTanTrackerStaffOutboxMessage,
-  isTanTrackerStaffOutboxEvent,
-} from "../tan-tracker/tan-tracker-outbox-messages";
+import { isTanTrackerStaffOutboxEvent } from "../tan-tracker/tan-tracker-outbox-messages";
+import { buildTanTrackerStaffMaxOutboxDelivery } from "../tan-tracker/staff-max-outbox-presentation";
 
 const MAX_ATTEMPTS = 8;
 
@@ -109,14 +107,16 @@ export async function processTanbotMaxNotificationOutbox(
         }
       }
 
-      const text = isTanTrackerStaffOutboxEvent(row.event_type)
-        ? buildTanTrackerStaffOutboxMessage(row.event_type, row.payload, config.appOrigin)
-        : "Уведомление Тандор.";
+      const delivery = isTanTrackerStaffOutboxEvent(row.event_type)
+        ? buildTanTrackerStaffMaxOutboxDelivery(row.event_type, row.payload, config.appOrigin)
+        : { text: "Уведомление Тандор." };
 
       const send = await transport({
         token: config.botToken,
         userId: BigInt(account.max_user_id),
-        text,
+        text: delivery.text,
+        inlineButtons: delivery.inlineButtons,
+        shareUrl: delivery.shareUrl,
         timeoutMs: config.requestTimeoutMs,
         maxResponseBytes: config.maxResponseBytes,
       });
