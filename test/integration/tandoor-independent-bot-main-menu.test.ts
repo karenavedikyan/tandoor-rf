@@ -15,7 +15,7 @@ type Channel = "max" | "telegram";
 type Actor = { channel: Channel; id: number; chatId: number; staffId?: string };
 type Button = { text: string; payload?: string; callback_data?: string; request_contact?: boolean };
 type Reply = { text: string; buttons: Button[]; markup?: Record<string, unknown> };
-type Input = { text?: string; callback?: string; start?: boolean; file?: boolean; optional?: boolean };
+type Input = { text?: string; callback?: string; start?: boolean; file?: boolean; optional?: boolean; group?: boolean };
 const databaseUrl = getIntegrationDatabaseUrl();
 let app: ReturnType<typeof import("../../src/server").createApp>;
 let seq = 6700000;
@@ -111,7 +111,7 @@ async function send(a: Actor, input: Input): Promise<Reply> {
     if (input.file) body.attachments = [{ type: "file", filename: "menu-fixture.pdf", size: PDF.length,
       payload: { url: "https://synthetic.oneme.ru/files/menu-fixture.pdf", token: "synthetic-menu-file-token" } }];
     const message = { sender: { user_id: a.id, is_bot: false },
-      recipient: { chat_id: a.chatId, chat_type: "dialog" }, body };
+      recipient: { chat_id: a.chatId, chat_type: input.group ? "chat" : "dialog" }, body };
     const raw = input.start
       ? { update_type: "bot_started", timestamp: id, chat_id: a.chatId, user: { user_id: a.id, is_bot: false } }
       : input.callback
@@ -121,7 +121,7 @@ async function send(a: Actor, input: Input): Promise<Reply> {
     const r = await request(app).post("/api/tanbot-max/webhook").set("X-Max-Bot-Api-Secret", process.env.TANBOT_MAX_WEBHOOK_SECRET!).send(raw);
     assert.equal(r.status, 200);
   } else {
-    const message: Record<string, unknown> = { message_id: id, chat: { id: a.id, type: "private" },
+    const message: Record<string, unknown> = { message_id: id, chat: { id: a.id, type: input.group ? "group" : "private" },
       from: { id: a.id, is_bot: false }, text: input.start ? "/start" : input.text ?? "" };
     if (input.file) message.document = { file_id: "menu-fixture", file_unique_id: "menu-unique", file_size: PDF.length,
       file_name: "menu-fixture.pdf", mime_type: "application/pdf" };
@@ -210,6 +210,27 @@ for (const channel of ["max", "telegram"] as const) {
     });
   }
   for (const role of ["staff", "external"] as const) {
+    it(`${channel} ${role}: rebound draft ownership is checked again before Menu or Continue`, async () => {
+      const a = await actor(channel, role);
+      await send(a, { text: "Создать передачу" });
+      const r = await send(a, { text: "Приватный предмет потерявшего доступ владельца" });
+      const d = await draft(a); assert.ok(d);
+      if (a.staffId) {
+        await getPool()!.query(`UPDATE tanbot_${channel}_accounts SET ${channel}_chat_id=$1 WHERE user_id=$2`,
+          [String(a.chatId + 123), a.staffId]);
+      } else {
+        await getPool()!.query(`UPDATE tt_external_request_drafts SET person_id=
+          (SELECT id FROM tt_external_persons WHERE id<>person_id LIMIT 1) WHERE id=$1`, [d.id]);
+      }
+      const frozen = await snapshot(a), beforeCounts = await counts();
+      for (const input of [{ text: "Меню" }, { text: "Продолжить оформление" },
+        { callback: button(r, /^Меню$/u).payload ?? button(r, /^Меню$/u).callback_data }]) {
+        const reply = await send(a, { ...input, optional: true });
+        assert.ok(!reply.buttons.some(b => /^Продолжить оформление$/u.test(b.text)));
+        assert.doesNotMatch(reply.text, /Приватный предмет потерявшего доступ владельца/u);
+        assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
+      }
+    });
     it(`${channel} ${role}: Menu and Start preserve files, revision and exact step; Continue resumes; cancel removes Continue`, async () => {
       const a = await actor(channel, role);
       let r = await send(a, { start: true });
@@ -273,4 +294,29 @@ for (const channel of ["max", "telegram"] as const) {
       assert.deepEqual(await counts(), confirmedCounts);
     });
   }
+  it(`${channel}: disabled staff cannot recover a draft through plain Start or Menu`, async () => {
+    const a = await actor(channel, "staff");
+    await send(a, { text: "Создать передачу" });
+    await send(a, { text: "Приватный предмет отключённого сотрудника" });
+    await getPool()!.query("UPDATE users SET status='disabled' WHERE id=$1", [a.staffId]);
+    const frozen = await snapshot(a), beforeCounts = await counts();
+    for (const input of [{ start: true }, { text: "Меню" }, { text: "Продолжить оформление" }]) {
+      const r = await send(a, { ...input, optional: true });
+      assert.ok(!r.buttons.some(b => /^Продолжить оформление$/u.test(b.text)));
+      assert.doesNotMatch(r.text, /Приватный предмет отключённого сотрудника/u);
+      assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
+    }
+  });
+  it(`${channel}: group messages cannot expose or mutate private draft through menu commands`, async () => {
+    const a = await actor(channel, "staff");
+    await send(a, { text: "Создать передачу" });
+    await send(a, { text: "Приватный предмет личного диалога" });
+    const frozen = await snapshot(a), beforeCounts = await counts();
+    for (const text of ["/menu", "Меню", "Продолжить оформление"]) {
+      const r = await send(a, { text, group: true, optional: true });
+      assert.ok(!r.buttons.some(b => /^Продолжить оформление$/u.test(b.text)));
+      assert.doesNotMatch(r.text, /Приватный предмет личного диалога/u);
+      assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
+    }
+  });
 }
