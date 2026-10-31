@@ -70,7 +70,7 @@ async function issueExternalMessengerCode(
   return {
     text:
       `${ctx}\n\n` +
-      `Код для передачи: следующим сообщением шесть цифр для копирования.\n` +
+      `Код для передачи ${generated.publicCode}: ${generated.code}\n` +
       `Сообщите его держателю лично. Код одноразовый и действует ограниченное время.`,
     copyOnlyCode: generated.code,
     clearContactKeyboard: true,

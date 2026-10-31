@@ -96,6 +96,8 @@ export async function applyPendingReceiptHandoff(
       handoffVersion: newHandoffVersion,
       event: extEvent,
       singleChannel: true,
+      routeFromPartyId: from,
+      routeToPartyId: to,
     });
     await notifyExternalPartyAfterHandoff(client, {
       externalPartyId: from,
@@ -103,6 +105,8 @@ export async function applyPendingReceiptHandoff(
       handoffVersion: newHandoffVersion,
       event: "after_code",
       singleChannel: false,
+      routeFromPartyId: from,
+      routeToPartyId: to,
     });
   }
 

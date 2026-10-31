@@ -11,9 +11,6 @@ import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
 import { buildTanTrackerStaffOutboxMessage } from "../../src/tan-tracker/tan-tracker-outbox-messages";
 import { parseHandoffCodePaste } from "../../src/tan-tracker/handoff-code-paste-parse";
 import { notifyTransferAssignment } from "../../src/tan-tracker/transfer-lk-notify";
-import { processExternalPersonMessageOutbox } from "../../src/tan-tracker/external-person/outbox-worker";
-import { notifyExternalPartyHandoffCode } from "../../src/tan-tracker/transfer-external-messenger-notify";
-import { externalPersonHandoffCodeCopyIdempotencyKey } from "../../src/tan-tracker/external-person/external-person-notify";
 
 const ORIGIN = "http://127.0.0.1:3000";
 const PASSWORD = "StrongPass123!";
@@ -214,85 +211,4 @@ describe("tan-tracker notification context", { concurrency: false }, () => {
     assert.deepEqual(parseHandoffCodePaste("045678"), { ok: true, code: "045678" });
   });
 
-  it("external handoff_code outbox delivers context then copy-only code", async () => {
-    await resetPoolForTests();
-    const pool = getPool();
-    assert.ok(pool);
-    const staff = await createTestUser({
-      databaseUrl,
-      email: "ctx-ext-staff@test.local",
-      password: PASSWORD,
-      fullName: "Ext Staff",
-      role: "manager",
-    });
-    const client = await pool.connect();
-    const primaryKey = "tt-ext-msg:handoff_code:tt-ext-ctx:hv:1:telegram";
-    let externalPartyId: string;
-    try {
-      await client.query("BEGIN");
-      const staffParty = await ensurePartyForUserOnWrite(client, staff.id, "Ext Staff", "+79994440002");
-      externalPartyId = (
-        await client.query<{ id: string }>(
-          `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Ext Client', '+79994440001') RETURNING id::text`,
-        )
-      ).rows[0]!.id;
-      await client.query(
-        `INSERT INTO tt_transfers (id, public_code, item_title, status, creator_party_id, holder_party_id, pending_party_id, handoff_version, row_version, from_external)
-         VALUES ('tt-ext-ctx','EXTCTX','Ext item','waiting',$1,$1,$2,1,1,TRUE)`,
-        [staffParty.id, externalPartyId],
-      );
-      const personId = (
-        await client.query<{ id: string }>(
-          `INSERT INTO tt_external_persons (party_id, display_name, phone_e164) VALUES ($1::uuid, 'Ext Client', '+79994440001') RETURNING id::text`,
-          [externalPartyId],
-        )
-      ).rows[0]!.id;
-      await client.query(
-        `INSERT INTO tt_external_person_verifications (person_id, channel, messenger_user_id, messenger_chat_id, notifications_enabled)
-         VALUES ($1::uuid, 'telegram', '991001', '991001', TRUE)`,
-        [personId],
-      );
-      await notifyExternalPartyHandoffCode(client, {
-        externalPartyId,
-        transferId: "tt-ext-ctx",
-        handoffVersion: 1,
-        code: "012345",
-        preferredChannel: "telegram",
-      });
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-
-    const outRows = await pool.query<{ event_type: string; body: string }>(
-      `SELECT event_type, body FROM tt_external_person_message_outbox WHERE idempotency_key IN ($1, $2) ORDER BY idempotency_key`,
-      [primaryKey, externalPersonHandoffCodeCopyIdempotencyKey(primaryKey)],
-    );
-    assert.equal(outRows.rowCount, 2);
-    assert.doesNotMatch(outRows.rows.find((r) => r.event_type === "external_person.handoff_code")!.body, /\b012345\b/);
-    assert.equal(outRows.rows.find((r) => r.event_type === "external_person.handoff_code_copy")!.body, "012345");
-
-    const texts: string[] = [];
-    const transport = async (input: { text: string }) => {
-      texts.push(input.text);
-      return { ok: true as const };
-    };
-    const result = await processExternalPersonMessageOutbox(pool, {
-      channel: "telegram",
-      botToken: SYNTH_TOKEN,
-      requestTimeoutMs: 5000,
-      maxResponseBytes: 65536,
-      transport,
-      deliveryEnabled: true,
-      limit: 5,
-    });
-    assert.equal(result.sent, 2);
-    assert.equal(texts.length, 2);
-    assert.match(texts[0]!, /EXTCTX/);
-    assert.doesNotMatch(texts[0]!, /\b012345\b/);
-    assert.equal(texts[1], "012345");
-  });
 });

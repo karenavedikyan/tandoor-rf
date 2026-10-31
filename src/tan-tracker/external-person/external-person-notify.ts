@@ -4,12 +4,6 @@ import type { ExternalPersonMessengerEvent } from "./messenger-copy";
 
 export type ExternalPersonOutboxDelivery = "all_verified" | "single_channel";
 
-export const EXTERNAL_PERSON_HANDOFF_CODE_COPY_EVENT = "external_person.handoff_code_copy";
-
-export function externalPersonHandoffCodeCopyIdempotencyKey(primaryKey: string): string {
-  return `${primaryKey}:copyOnly`;
-}
-
 export async function enqueueExternalPersonMessengerNotice(
   client: PoolClient,
   input: {
@@ -79,7 +73,6 @@ export async function enqueueExternalPersonMessengerEvent(
     idempotencyKey: string;
     preferredChannel?: ExternalMessengerChannel;
     singleChannel?: boolean;
-    copyOnlyCode?: string;
   },
 ): Promise<void> {
   await enqueueExternalPersonMessengerNotice(client, {
@@ -90,59 +83,6 @@ export async function enqueueExternalPersonMessengerEvent(
     delivery: input.singleChannel ? "single_channel" : "all_verified",
     preferredChannel: input.preferredChannel,
   });
-  const copy = input.copyOnlyCode?.trim();
-  if (input.event === "handoff_code" && copy && /^\d{6}$/.test(copy) && input.singleChannel && input.preferredChannel) {
-    const storedPrimaryKey = `${input.idempotencyKey}:${input.preferredChannel}`;
-    await enqueueExternalPersonHandoffCodeCopy(client, {
-      externalPartyId: input.externalPartyId,
-      copyOnlyCode: copy,
-      primaryIdempotencyKey: storedPrimaryKey,
-      preferredChannel: input.preferredChannel,
-    });
-  }
-}
-
-async function enqueueExternalPersonHandoffCodeCopy(
-  client: PoolClient,
-  input: {
-    externalPartyId: string;
-    copyOnlyCode: string;
-    primaryIdempotencyKey: string;
-    preferredChannel: ExternalMessengerChannel;
-  },
-): Promise<void> {
-  const target = await resolveSingleChannelOutboxTarget(client, input.externalPartyId, input.preferredChannel);
-  if (!target) return;
-  await insertOutboxRow(client, {
-    personId: target.personId,
-    channel: target.channel,
-    messengerChatId: target.messengerChatId,
-    body: input.copyOnlyCode,
-    idempotencyKey: externalPersonHandoffCodeCopyIdempotencyKey(input.primaryIdempotencyKey),
-    eventType: EXTERNAL_PERSON_HANDOFF_CODE_COPY_EVENT,
-  });
-}
-
-async function resolveSingleChannelOutboxTarget(
-  client: PoolClient,
-  externalPartyId: string,
-  preferredChannel: ExternalMessengerChannel,
-): Promise<{ personId: string; channel: string; messengerChatId: string } | null> {
-  const person = await client.query<{ id: string }>(
-    `SELECT id::text FROM tt_external_persons WHERE party_id = $1::uuid LIMIT 1`,
-    [externalPartyId],
-  );
-  const personId = person.rows[0]?.id;
-  if (!personId) return null;
-  const prov = await client.query<{ messenger_chat_id: string }>(
-    `SELECT messenger_chat_id FROM tt_external_person_verifications
-     WHERE person_id = $1::uuid AND channel = $2
-     LIMIT 1`,
-    [personId, preferredChannel],
-  );
-  const chatId = prov.rows[0]?.messenger_chat_id;
-  if (!chatId) return null;
-  return { personId, channel: preferredChannel, messengerChatId: chatId };
 }
 
 async function insertOutboxRow(

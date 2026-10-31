@@ -151,6 +151,7 @@ export function formatPendingTransfersMessage(transfers: PendingTransferRow[]): 
 export function formatIssuedCodeMessage(input: {
   publicCode: string;
   itemTitle: string;
+  code: string;
   expiresAt: number;
   replacedPrevious: boolean;
   routeFromDisplayName?: string | null;
@@ -168,7 +169,7 @@ export function formatIssuedCodeMessage(input: {
   });
   return (
     `${ctx}\n\n` +
-    `Код приёма: следующим сообщением шесть цифр для копирования.\n` +
+    `Код приёма: ${input.code}\n` +
     `Действует до: ${until} (МСК).` +
     `${replaced}\n` +
     `Сообщите код передающему для ввода в Тан-трекере. Это не SMS-код входа.`
@@ -247,6 +248,7 @@ export async function issueHandoffCodeViaBot(
     message: formatIssuedCodeMessage({
       publicCode: gen.publicCode,
       itemTitle: gen.itemTitle,
+      code: gen.code,
       expiresAt: gen.expiresAt,
       replacedPrevious: (hadActive.rowCount ?? 0) > 0,
       routeFromDisplayName: route.routeFromDisplayName,

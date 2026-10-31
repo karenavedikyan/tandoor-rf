@@ -3,10 +3,6 @@ import {
   transferInternalIdFromExternalPersonOutboxKey,
   transferStillExists,
 } from "../registry-cleanup/cancel-transfer-notifications";
-import {
-  EXTERNAL_PERSON_HANDOFF_CODE_COPY_EVENT,
-  externalPersonHandoffCodeCopyIdempotencyKey,
-} from "./external-person-notify";
 
 const MAX_ATTEMPTS = 8;
 
@@ -69,97 +65,15 @@ async function loadPending(client: PoolClient, channel: "telegram" | "max", limi
     body: string;
     attempt_count: number;
     idempotency_key: string;
-    event_type: string;
   }>(
-    `SELECT o.id::text, o.person_id::text, o.messenger_chat_id, o.body, o.attempt_count, o.idempotency_key, o.event_type
-     FROM tt_external_person_message_outbox o
-     WHERE o.channel = $1 AND o.status = 'pending' AND o.next_attempt_at <= NOW()
-       AND NOT (
-         o.event_type = $3
-         AND EXISTS (
-           SELECT 1 FROM tt_external_person_message_outbox p
-           WHERE p.idempotency_key = regexp_replace(o.idempotency_key, ':copyOnly$', '')
-             AND p.channel = o.channel
-             AND p.status <> 'sent'
-         )
-       )
-     ORDER BY o.created_at
+    `SELECT id::text, person_id::text, messenger_chat_id, body, attempt_count, idempotency_key
+     FROM tt_external_person_message_outbox
+     WHERE channel = $1 AND status = 'pending' AND next_attempt_at <= NOW()
+     ORDER BY created_at
      LIMIT $2
      FOR UPDATE SKIP LOCKED`,
-    [channel, limit, EXTERNAL_PERSON_HANDOFF_CODE_COPY_EVENT],
+    [channel, limit],
   );
-}
-
-async function deliverHandoffCodeCopyCompanion(
-  client: PoolClient,
-  primary: { idempotency_key: string; messenger_chat_id: string; person_id: string },
-  target: { messengerUserId: string },
-  input: {
-    channel: "telegram" | "max";
-    botToken: string;
-    requestTimeoutMs: number;
-    maxResponseBytes: number;
-    transport: ExternalPersonDeliveryTransport;
-  },
-  result: ExternalPersonOutboxProcessResult,
-): Promise<void> {
-  const copyKey = externalPersonHandoffCodeCopyIdempotencyKey(primary.idempotency_key);
-  const copyRow = await client.query<{
-    id: string;
-    body: string;
-    attempt_count: number;
-    status: string;
-  }>(
-    `SELECT id::text, body, attempt_count, status FROM tt_external_person_message_outbox
-     WHERE idempotency_key = $1 AND channel = $2 AND person_id = $3::uuid
-     LIMIT 1 FOR UPDATE`,
-    [copyKey, input.channel, primary.person_id],
-  );
-  const copy = copyRow.rows[0];
-  if (!copy || copy.status === "sent" || copy.status === "cancelled") return;
-  if (!/^\d{6}$/.test(copy.body)) {
-    await client.query(
-      `UPDATE tt_external_person_message_outbox SET status = 'failed', last_error_code = 'INVALID_COPY_BODY' WHERE id = $1::uuid`,
-      [copy.id],
-    );
-    result.failed += 1;
-    return;
-  }
-  await client.query(`UPDATE tt_external_person_message_outbox SET status = 'processing' WHERE id = $1::uuid`, [copy.id]);
-  const send = await input.transport({
-    channel: input.channel,
-    chatId: primary.messenger_chat_id,
-    messengerUserId: target.messengerUserId,
-    text: copy.body,
-    botToken: input.botToken,
-    timeoutMs: input.requestTimeoutMs,
-    maxResponseBytes: input.maxResponseBytes,
-  });
-  if (send.ok) {
-    await client.query(
-      `UPDATE tt_external_person_message_outbox SET status = 'sent', sent_at = NOW(), attempt_count = attempt_count + 1 WHERE id = $1::uuid`,
-      [copy.id],
-    );
-    result.sent += 1;
-    return;
-  }
-  const attempts = copy.attempt_count + 1;
-  const retryable = send.retryable === true && attempts < MAX_ATTEMPTS;
-  const retryAfter = send.retryAfterSeconds ?? 30;
-  if (!retryable || send.code === "FORBIDDEN") {
-    await client.query(
-      `UPDATE tt_external_person_message_outbox SET status = 'failed', attempt_count = $2, last_error_code = $3 WHERE id = $1::uuid`,
-      [copy.id, attempts, send.code],
-    );
-    result.failed += 1;
-  } else {
-    await client.query(
-      `UPDATE tt_external_person_message_outbox SET status = 'pending', attempt_count = $2, last_error_code = $3,
-       next_attempt_at = NOW() + ($4::int * interval '1 second') WHERE id = $1::uuid`,
-      [copy.id, attempts, send.code, retryAfter],
-    );
-    result.failed += 1;
-  }
 }
 
 export async function processExternalPersonMessageOutbox(
@@ -247,9 +161,6 @@ export async function processExternalPersonMessageOutbox(
           [row.id],
         );
         result.sent += 1;
-        if (row.event_type === "external_person.handoff_code") {
-          await deliverHandoffCodeCopyCompanion(client, row, target, input, result);
-        }
         continue;
       }
 

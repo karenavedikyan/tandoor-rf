@@ -79,7 +79,10 @@ test("independent: Telegram invitation → own contact → sender verifies → o
     const sink = { calls: [] as Array<{ method: string; body: Record<string, unknown> }> };
     const transport = createRecordingTelegramDeliveryTransport(sink);
     await runTanbotOutboxWorkerOnce(pool, config.config, transport);
-    const receipt = sink.calls.filter(c => String(c.body.text).startsWith("Вы получили")).at(-1);
+    const receipt = sink.calls.filter(c => {
+      const t = String(c.body.text);
+      return t.includes("Вы получили") && t.includes("Передача ");
+    }).at(-1);
     assert.ok(receipt);
     assert.equal(String(receipt.body.chat_id), "885504");
     assert.match(String(receipt.body.text), /историю.*передать предмет дальше.*вернуть отправителю/);
