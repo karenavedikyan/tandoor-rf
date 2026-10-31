@@ -4603,9 +4603,10 @@
     const text = String(raw ?? "");
     const parseFn = window.TanTrackerHandoffCodePaste?.parseHandoffCodePaste;
     if (!text) return;
-    if (text.length <= 6 && /^[\d\s-]*$/.test(text)) {
+    const directDigits = text.trim().replace(/\D/g, "");
+    if (directDigits.length === 6 && (text.length <= 8 || /^[\d\s-]+$/.test(text.trim()))) {
       state.codePasteError = "";
-      state.codeInput = text.replace(/\D/g, "").slice(0, 6);
+      state.codeInput = directDigits;
       if (inputEl) inputEl.value = state.codeInput;
       paintCodeCells();
       return;
@@ -6082,7 +6083,8 @@
     }
     if (e.target.matches('[data-tt="code-input"]')) {
       const raw = e.target.value;
-      if (raw.length > 6 || /[^\d\s-]/.test(raw)) {
+      const inputType = e.inputType || "";
+      if (inputType === "insertFromPaste" || raw.length > 6 || /[^\d\s-]/.test(raw)) {
         applyHandoffCodeInputFromRaw(raw, e.target);
         return;
       }
@@ -6097,9 +6099,13 @@
     if (current !== ROUTE) return;
     const t = e.target;
     if (!t?.matches?.('[data-tt="code-input"]')) return;
-    const text = e.clipboardData?.getData("text") || "";
+    const clip = e.clipboardData;
+    const text =
+      clip?.getData("text/plain") ||
+      clip?.getData("Text") ||
+      clip?.getData("text") ||
+      "";
     if (!text.trim()) return;
-    if (text.length <= 6 && /^[\d\s-]*$/.test(text)) return;
     e.preventDefault();
     applyHandoffCodeInputFromRaw(text, t);
   });
