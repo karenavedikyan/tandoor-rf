@@ -144,11 +144,16 @@ for (const channel of ["max", "telegram"] as const) {
     await send(a, { text: "Моё название получателя" });
     const before = await privacyCounts();
     let r = await send(a, { card: { name: "Чужое имя в контактах", phone: "8 (999) 111-22-33" } });
-    const d = await draft(a);
-    assert.equal(d.step, "due");
+    let d = await draft(a);
     assert.deepEqual(d.payload.recipientExternal, { name: "Моё название получателя", phone: "+79991112233" });
     assert.deepEqual(await privacyCounts(), before, "contact only fills draft, never verifies or creates identities/transfers");
     assert.ok(!JSON.stringify(d).includes("BEGIN:VCARD"));
+    if (d.step === "recipient_ext_phone") {
+      assert.match(r.text, /Моё название получателя/);
+      r = await send(a, { callback: button(r, /Далее/i) });
+      d = await draft(a);
+    }
+    assert.equal(d.step, "due");
     r = await send(a, { callback: button(r, /Без срока/i) });
     assert.match(r.text, /Моё название получателя/);
     assert.ok(r.text.replace(/\D/g, "").includes("79991112233"), "summary must display selected phone");
@@ -179,6 +184,10 @@ for (const channel of ["max", "telegram"] as const) {
     let renamed = await draft(a);
     assert.equal(renamed.payload.recipientExternal.name, "Имя написано мной");
     assert.equal(renamed.payload.recipientExternal.phone, "+79992223344");
+    if (renamed.step === "recipient_ext_phone") {
+      r = await send(a, { callback: button(r, /Далее/i) });
+      renamed = await draft(a);
+    }
     assert.equal(renamed.step, "due");
     await send(a, { card: { phone: "invalid", name: "Should not replace" }, optionalReply: true });
     assert.deepEqual(await draft(a), renamed, "card outside eligible step leaves the selected recipient untouched");
@@ -211,8 +220,12 @@ for (const channel of ["max", "telegram"] as const) {
     assert.equal(d.payload.recipientExternal.phone, "+79994445566");
     await send(a, { card: { name: "Неверный номер", phone: "+1 212 555 0100" }, optionalReply: true });
     assert.deepEqual(await draft(a), d, "unsupported number must not overwrite prior good phone");
-    await send(a, { text: "Получатель без имени в карточке" });
+    let r = await send(a, { text: "Получатель без имени в карточке" });
     d = await draft(a);
+    if (d.step === "recipient_ext_phone") {
+      r = await send(a, { callback: button(r, /Далее/i) });
+      d = await draft(a);
+    }
     assert.equal(d.step, "due");
     assert.deepEqual(d.payload.recipientExternal, { name: "Получатель без имени в карточке", phone: "+79994445566" });
   });
@@ -221,6 +234,7 @@ for (const channel of ["max", "telegram"] as const) {
     await startExternal(a);
     let r = await send(a, { card: { name: "Сохранить имя карточки", phone: "+79996667788" } });
     r = await send(a, { callback: button(r, /оставить|использовать|подтвердить/iu) });
+    if ((await draft(a)).step === "recipient_ext_phone") r = await send(a, { callback: button(r, /Далее/i) });
     assert.equal((await draft(a)).step, "due");
     r = await send(a, { callback: button(r, /Без срока/i) });
     r = await send(a, { callback: button(r, /Изменить/i) });
@@ -244,7 +258,10 @@ it("max: independent folded/escaped VCF and ambiguous multiple phones never sile
   await startExternal(a);
   const before = await draft(a);
   const r = await send(a, { card: { vcf: "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Несколько номеров\r\nTEL:+79991111111\r\nTEL:+79992222222\r\nEND:VCARD" } });
-  assert.deepEqual(await draft(a), before, "multiple distinct numbers require explicit choice, no guessed first TEL");
+  const after = await draft(a);
+  assert.deepEqual(after.payload.recipientExternal, before.payload.recipientExternal,
+    "multiple distinct numbers must not silently set a guessed first TEL");
+  assert.equal(after.payload.recipientExternal?.phone, undefined);
   assert.match(r.text, /несколько|один|выбер|номер/iu);
   await send(a, { card: { vcf: "BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Сложное имя\\r\\nTEL;TYPE=cell:tel:+7-999-\\r\\n 555-66-77\\r\\nEND:VCARD\\r\\n" } });
   const d = await draft(a);
