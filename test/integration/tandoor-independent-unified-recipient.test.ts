@@ -266,6 +266,10 @@ for (const channel of ["max", "telegram"] as const) {
     assert.doesNotMatch(r.text, /Иван Петров/u, "partial name query must not disclose full internal name");
     assert.doesNotMatch(JSON.stringify(r), /79995550|9995550/u);
     const d = await draft(a);
+    // Existing external drafts from the prior release may contain a cached internal list.
+    await getPool()!.query(`UPDATE tt_external_request_drafts
+      SET payload=jsonb_set(payload,'{eligibleRecipients}',$2::jsonb) WHERE id=$1`,
+    [d.id, JSON.stringify([{ userId: targetId, fullName: privateName }])]);
     const forged = buildNativeCreateCallback("recipient_pick", d.id, d.payload.revision, "0"); assert.ok(forged);
     noPrivateData(await send(a, { callback: forged }));
     assert.equal((await draft(a)).step, "recipient", "cannot enumerate cached internal choices via forged callback");
