@@ -12,9 +12,9 @@ describe("buildExternalPersonMessengerBody receipt/delivered copy", () => {
       itemTitle: "Коробка документов",
       holderUrl: holder,
     });
-    assert.match(body, /^Вы получили «Коробка документов»\./);
+    assert.match(body, /Передача TT-2026-001/);
+    assert.match(body, /Вы получили «Коробка документов»\./);
     assert.match(body, /передать предмет дальше или вернуть отправителю/);
-    assert.match(body, /Передача TT-2026-001\./);
     assert.match(body, /\nОткрыть: http:\/\/127\.0\.0\.1:3000\/tan-tracker\//);
   });
 
@@ -36,6 +36,7 @@ describe("buildExternalPersonMessengerBody receipt/delivered copy", () => {
       itemTitle: "X",
       holderUrl: holder,
     });
+    assert.match(afterCode, /Передача TT-1/);
     assert.match(afterCode, /код подтверждён/);
     assert.doesNotMatch(afterCode, /Вы получили/);
   });

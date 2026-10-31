@@ -57,7 +57,11 @@ describe("staff MAX outbox presentation", () => {
   });
 
   it("buildStaffExternalCreatedMaxText never embeds OTP pattern", () => {
-    const t = buildStaffExternalCreatedMaxText("Test", "ABC", true);
+    const t = buildStaffExternalCreatedMaxText(
+      { transferId: "tt-x", publicCode: "ABC", itemTitle: "Test", handoffVersion: 1 },
+      true,
+    );
     assert.ok(!/\d{6}/.test(t));
+    assert.match(t, /Передача ABC/);
   });
 });
