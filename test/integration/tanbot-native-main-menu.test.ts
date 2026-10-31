@@ -94,7 +94,7 @@ describe("native bot main menu (MAX + Telegram)", { concurrency: false }, () => 
           890010010,
         ])
       ).rows[0]!.reply_text,
-      /Тандор\./u,
+      /^Тандор\n/u,
     );
     assert.match(
       (
@@ -229,7 +229,7 @@ describe("native bot main menu (MAX + Telegram)", { concurrency: false }, () => 
     const plain = (
       await getPool()!.query(`SELECT reply_text FROM tanbot_max_update_dedup ORDER BY received_at DESC LIMIT 1`)
     ).rows[0]!.reply_text;
-    assert.match(plain, /Тандор\./u);
+    assert.match(plain, /^Тандор\n/u);
     const draftsAfter = (await getPool()!.query(`SELECT count(*)::int c FROM tt_external_request_drafts`)).rows[0]!.c;
     assert.equal(draftsAfter, draftsBefore, "plain bot_started must not create drafts");
 

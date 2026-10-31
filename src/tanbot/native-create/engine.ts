@@ -53,6 +53,7 @@ import { parseReceiptEntryCallback } from "../receipt-entry-callback";
 
 export type NativeCreateReply = {
   text: string;
+  copyOnlyCode?: string;
   forwardInvitationText?: string;
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
@@ -341,7 +342,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
       "Подтвердите номер телефона, чтобы открыть передачи.",
     );
   }
-  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false });
+  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false, showMenu: true });
   if (ctx.isLinkedStaff && ctx.staffUserId) {
     const origin = getAppOrigin() ?? "https://example.invalid";
     return appendReceiptEntryChoices(client, ctx, {
@@ -532,6 +533,10 @@ export async function handleNativeCreateCallback(
   const receipt = parseReceiptEntryCallback(callbackData);
   if (receipt) {
     await lockNativeCreateMessenger(client, ctx);
+    if (receipt.action === "receive") {
+      const { receiveCodeReply } = await import("./menu-actions");
+      return receiveCodeReply(client, ctx, receipt);
+    }
     if (receipt.action === "list") {
       if (!/^\d{1,5}$/.test(receipt.transferId)) return null;
       try { await assertNativeCreateContext(client, ctx); }
@@ -551,6 +556,17 @@ export async function handleNativeCreateCallback(
   // message as a code after the user has switched back to creation/navigation.
   const { clearReceiptEntry } = await import("./receipt-code-entry");
   await clearReceiptEntry(client, ctx);
+
+  if (["menu_receive", "menu_settings", "notify_ask_off", "notify_off", "notify_on"].includes(parsed.action)) {
+    if (!isNativeMenuDraftHex(parsed.draftIdHex) || parsed.revision !== 1) return null;
+    const { receiveCodeReply, settingsReply } = await import("./menu-actions");
+    if (parsed.action === "menu_receive") {
+      if (parsed.arg && !/^\d{1,5}$/.test(parsed.arg)) return null;
+      return receiveCodeReply(client, ctx, undefined, Number(parsed.arg ?? 0));
+    }
+    if (parsed.arg) return null;
+    return settingsReply(client, ctx, parsed.action);
+  }
 
   if (parsed.action === "menu") {
     try {
@@ -913,6 +929,10 @@ export async function handleNativeCreateMessage(
   } = await import("./main-menu");
 
   const slash = parseNativeBotSlashCommand(trimmed);
+  if (lower === "настройки" || lower === "получить код приёма" || lower === "получить код приема") {
+    const { settingsReply, receiveCodeReply } = await import("./menu-actions");
+    return lower === "настройки" ? settingsReply(client, ctx) : receiveCodeReply(client, ctx);
+  }
   if (slash === "start" || slash === "menu") {
     return buildNativeMainMenuReply(client, ctx);
   }

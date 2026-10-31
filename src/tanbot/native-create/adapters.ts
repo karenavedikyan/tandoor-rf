@@ -55,6 +55,7 @@ export async function buildMaxNativeCreateContext(
 
 export function nativeReplyToTelegram(reply: NativeCreateReply): {
   text: string;
+  copyOnlyCode?: string;
   forwardInvitationText?: string;
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
@@ -66,6 +67,7 @@ export function nativeReplyToTelegram(reply: NativeCreateReply): {
       : reply.replyMarkup;
   return {
     text: reply.text,
+    copyOnlyCode: reply.copyOnlyCode,
     forwardInvitationText: reply.forwardInvitationText,
     requestContact: reply.requestContact,
     replyMarkup: markup,
@@ -75,6 +77,7 @@ export function nativeReplyToTelegram(reply: NativeCreateReply): {
 
 export function nativeReplyToMax(reply: NativeCreateReply): {
   text: string;
+  copyOnlyCode?: string;
   forwardInvitationText?: string;
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
@@ -83,6 +86,7 @@ export function nativeReplyToMax(reply: NativeCreateReply): {
 } {
   return {
     text: reply.text,
+    copyOnlyCode: reply.copyOnlyCode,
     forwardInvitationText: reply.forwardInvitationText,
     requestContact: reply.requestContact,
     replyMarkup: reply.replyMarkup,
@@ -97,6 +101,7 @@ export function nativeTelegramReplyExtra(
   answerCallbackQueryId?: string,
 ): Record<string, unknown> {
   return buildNativeWebhookReplyExtra({
+    copyOnlyCode: native.copyOnlyCode,
     replyMarkup: native.replyMarkup,
     forwardInvitationText: native.forwardInvitationText,
     answerCallbackQueryId,
@@ -110,6 +115,7 @@ export function nativeMaxReplyExtra(
   scope: NativeMediaScope,
 ): Record<string, unknown> {
   return buildNativeWebhookReplyExtra({
+    copyOnlyCode: native.copyOnlyCode,
     inlineButtons: native.inlineButtons,
     forwardInvitationText: native.forwardInvitationText,
     nativeMediaQueue: native.nativeMediaQueue,

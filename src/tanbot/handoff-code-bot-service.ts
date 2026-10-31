@@ -180,7 +180,7 @@ export async function issueHandoffCodeViaBot(
   client: PoolClient,
   input: {
     channel: BotChannel;
-    userId: string;
+    userId: string | null;
     partyId: string;
     transferPublicCode: string;
     expectedHandoffVersion?: number | null;

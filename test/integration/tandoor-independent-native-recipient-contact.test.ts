@@ -566,7 +566,7 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
       kind: "max_unsigned_vcf",
       vcfRaw: unsignedMaxVcf("Orphan", "+79036667788"),
     });
-    assert.match(reply.text, /команды|статус|код/i);
+    assert.match(reply.text, /Выберите действие/u);
     assert.equal(
       (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_request_drafts WHERE payload->>'staffUserId'=$1`, [
         actor.staffId,

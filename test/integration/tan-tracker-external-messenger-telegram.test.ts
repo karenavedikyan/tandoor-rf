@@ -132,7 +132,26 @@ describe("external recipient messenger (telegram, isolated PG)", { concurrency: 
     };
     const contactOut = await handleTanbotTelegramUpdate(pool, cfg, contactUpdate);
     assert.match(contactOut.reply?.text ?? "", /\d{6}/);
-    assert.deepEqual(contactOut.reply?.replyMarkup, { remove_keyboard: true });
+    const markup = contactOut.reply?.replyMarkup as { keyboard?: { text: string; request_contact?: boolean }[][]; is_persistent?: boolean };
+    assert.equal(markup.is_persistent, true);
+    assert.ok(markup.keyboard?.flat().some(b => b.text === "Оформить передачу"));
+    assert.ok(markup.keyboard?.flat().some(b => b.text === "Настройки"));
+    assert.ok(!markup.keyboard?.flat().some(b => b.request_contact));
+
+    const profilesBefore = (await pool.query("SELECT count(*) FROM tt_external_persons")).rows[0].count;
+    const codesBefore = (await pool.query("SELECT count(*) FROM tt_handoff_codes")).rows[0].count;
+    for (const [index, text] of ["Получить код приёма", "Настройки"].entries()) {
+      const menuOut = await handleTanbotTelegramUpdate(pool, cfg, {
+        ...startUpdate, update_id: 910021 + index,
+        message: { ...startUpdate.message, message_id: 21 + index, text },
+      });
+      assert.doesNotMatch(menuOut.reply?.text ?? "", /Подтвердите свой номер/u, "verified invitation must not request contact again");
+      assert.match(menuOut.reply?.text ?? "", text === "Настройки" ? /по приглашению/u : /Код уже запрашивался/u);
+    }
+    assert.equal((await pool.query("SELECT count(*) FROM tt_external_persons")).rows[0].count, profilesBefore,
+      "invitation menu never provisions a profile before canonical receipt proof");
+    assert.equal((await pool.query("SELECT count(*) FROM tt_handoff_codes")).rows[0].count, codesBefore,
+      "invitation menu does not bypass one-code issuance or resend old codes");
 
     const contactAgain = await handleTanbotTelegramUpdate(pool, cfg, {
       ...contactUpdate,

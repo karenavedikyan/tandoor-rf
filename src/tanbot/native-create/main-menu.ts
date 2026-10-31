@@ -18,15 +18,15 @@ import {
 export const NATIVE_MAIN_MENU_ACTION_PROMPT = "Выберите действие.";
 
 export function nativeMainMenuGreetingLines(ctx: NativeCreateContext): string[] {
-  const lines = ["Тандор. Бот для оформления передач: документы, посылки и предметы."];
+  const lines = ["Тандор", "Посылки, документы и предметы с подтверждением получения.", ""];
   if (ctx.isLinkedStaff) {
     lines.push("Вы вошли как сотрудник.");
   } else if (ctx.personId) {
-    lines.push("Номер подтверждён — можно оформить передачу или открыть список.");
+    lines.push("Номер телефона подтверждён.");
   } else {
     lines.push("Для оформления передачи подтвердите свой номер телефона.");
   }
-  lines.push(NATIVE_MAIN_MENU_ACTION_PROMPT);
+  lines.push("", NATIVE_MAIN_MENU_ACTION_PROMPT);
   return lines;
 }
 
@@ -103,7 +103,7 @@ export async function peekResumableNativeDraft(
 export async function buildNativeMainMenuReply(
   client: PoolClient,
   ctx: NativeCreateContext,
-  options: { prefix?: string; lock?: boolean } = {},
+  options: { prefix?: string; lock?: boolean; showMenu?: boolean } = {},
 ): Promise<NativeCreateReply> {
   if (options.lock !== false) {
     await lockNativeCreateMessenger(client, ctx);
@@ -114,7 +114,7 @@ export async function buildNativeMainMenuReply(
       ? { draftId: resumeDraft.id, revision: (resumeDraft.payload as { revision?: number }).revision ?? 1 }
       : undefined;
   const text = nativeMainMenuText(ctx, options.prefix);
-  const keyboard = menuReplyKeyboard({ showContinue: !!resume });
+  const keyboard = menuReplyKeyboard({ showContinue: !!resume, showMenu: options.showMenu === true });
   if (ctx.channel === "telegram") {
     return {
       text,
@@ -123,7 +123,7 @@ export async function buildNativeMainMenuReply(
       maxInlineButtons: undefined,
     };
   }
-  const inline = buildMainMenuInline("max", resume);
+  const inline = buildMainMenuInline("max", resume, { showMenu: options.showMenu === true });
   return {
     text,
     replyMarkup: keyboard,
@@ -162,7 +162,7 @@ export async function nativeCompletionMenuReply(
   ctx: NativeCreateContext,
   resultText: string,
 ): Promise<NativeCreateReply> {
-  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false });
+  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false, showMenu: true });
   return {
     text: resultText,
     replyMarkup: menu.replyMarkup,

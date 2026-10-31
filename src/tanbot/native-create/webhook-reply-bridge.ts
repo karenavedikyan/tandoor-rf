@@ -16,6 +16,7 @@ export type NativeMediaScope = {
 };
 
 export function buildNativeWebhookReplyExtra(input: {
+  copyOnlyCode?: string;
   forwardInvitationText?: string;
   replyMarkup?: TelegramReplyExtra["replyMarkup"];
   answerCallbackQueryId?: string;
@@ -25,6 +26,7 @@ export function buildNativeWebhookReplyExtra(input: {
   merge?: Record<string, unknown>;
 }): Record<string, unknown> {
   const patch: Record<string, unknown> = { ...(input.merge ?? {}) };
+  if (input.copyOnlyCode && /^\d{6}$/.test(input.copyOnlyCode)) patch.copyOnlyCode = input.copyOnlyCode;
   if (input.forwardInvitationText) patch.forwardInvitationText = input.forwardInvitationText;
   if (input.replyMarkup) patch.replyMarkup = input.replyMarkup;
   if (input.answerCallbackQueryId) patch.answerCallbackQueryId = input.answerCallbackQueryId;

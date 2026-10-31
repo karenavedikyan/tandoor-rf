@@ -45,7 +45,7 @@ describe("native main menu helpers", () => {
       staffUserId: null,
       personId: null,
     });
-    assert.match(text, /Тандор\./u);
+    assert.match(text, /^Тандор\n/u);
     assert.match(text, new RegExp(NATIVE_MAIN_MENU_ACTION_PROMPT));
   });
 });

@@ -20,7 +20,7 @@ export function buildMessengerLinkSuccessReply(input: {
   const { channelLabel, notificationsEnabled } = input;
   const base = `${channelLabel} подключён к личному кабинету. Коды Тан-трекера доступны в этом чате.`;
   if (notificationsEnabled) {
-    return `${base} Уведомления о передачах включены. Отключить: /stop или профиль.`;
+    return `${base} Уведомления о передачах включены. Управление уведомлениями доступно в разделе «Настройки» меню бота.`;
   }
-  return `${base} Уведомления о передачах выключены — включите в профиле. Отключить привязку: /stop или профиль.`;
+  return `${base} Уведомления о передачах выключены. Включить их можно в разделе «Настройки» меню бота.`;
 }

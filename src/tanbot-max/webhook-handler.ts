@@ -491,19 +491,29 @@ async function processUpdateInTransaction(
         }
       }
       if (!reply) {
+        const adapters = await import("../tanbot/native-create/adapters");
+        const menu = await adapters.tryNativeCreateMaxMessage(client, {
+          chatId: update.chatId, maxUserId: update.maxUserId, text: "Меню", recipientChatType,
+        });
         reply = {
           userId: update.maxUserId,
           chatId: update.chatId,
-          text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",
+          text: menu!.text,
+          inlineButtons: menu!.inlineButtons,
         };
       }
     }
 
     if (!reply) {
+      const adapters = await import("../tanbot/native-create/adapters");
+      const menu = await adapters.tryNativeCreateMaxMessage(client, {
+        chatId: update.chatId, maxUserId: update.maxUserId, text: "Меню", recipientChatType,
+      });
       reply = {
         userId: update.maxUserId,
         chatId: update.chatId,
-        text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",
+        text: menu!.text,
+        inlineButtons: menu!.inlineButtons,
       };
     }
 

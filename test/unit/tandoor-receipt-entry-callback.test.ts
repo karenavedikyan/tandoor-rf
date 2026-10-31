@@ -5,7 +5,7 @@ import { isNativeCreateCallback } from "../../src/tanbot/native-create/engine";
 import { buildTanTrackerStaffMaxOutboxDelivery } from "../../src/tan-tracker/staff-max-outbox-presentation";
 import { buildTanTrackerStaffTelegramOutboxSendBody } from "../../src/tan-tracker/staff-telegram-outbox-presentation";
 
-for (const action of ["code", "cancel", "list"] as const) {
+for (const action of ["code", "cancel", "list", "receive"] as const) {
   it(`receipt ${action}: canonical bounded callback round trip, not a recipient issuing-code callback`, () => {
     const transferId = action === "list" ? "12" : "TT-2026-456";
     const callback = buildReceiptEntryCallback(action, transferId, 3)!;

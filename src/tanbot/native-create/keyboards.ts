@@ -15,7 +15,7 @@ export function telegramContactWithMenuKeyboard(): Record<string, unknown> {
       [{ text: "Меню" }],
     ],
     resize_keyboard: true,
-    is_persistent: true,
+    is_persistent: false,
     one_time_keyboard: true,
   };
 }
@@ -30,15 +30,16 @@ export function maxContactWithMenuInline(): NativeCreateUi {
   };
 }
 
-export function menuReplyKeyboard(options: { showContinue?: boolean } = {}): Record<string, unknown> {
+export function menuReplyKeyboard(options: { showContinue?: boolean; showMenu?: boolean } = {}): Record<string, unknown> {
   const rows: Array<Array<{ text: string }>> = [
     [{ text: "Оформить передачу" }],
     [{ text: "Мои передачи" }],
+    [{ text: "Получить код приёма" }, { text: "Настройки" }],
   ];
   if (options.showContinue) {
     rows.push([{ text: "Продолжить оформление" }]);
   }
-  rows.push([{ text: "Меню" }]);
+  if (options.showMenu !== false) rows.push([{ text: "Меню" }]);
   return {
     keyboard: rows,
     resize_keyboard: true,
@@ -87,6 +88,7 @@ const NAV: BtnDef[] = [
 export function buildMainMenuInline(
   channel: "telegram" | "max",
   resume?: { draftId: string; revision: number },
+  options: { showMenu?: boolean } = {},
 ): NativeCreateUi {
   const draftId = NATIVE_MENU_DRAFT_HEX;
   const primary: BtnDef[] = [
@@ -94,18 +96,27 @@ export function buildMainMenuInline(
     { label: "Мои передачи", action: "menu_my" },
   ];
   if (channel === "telegram") {
-    const rows: BtnDef[][] = [primary, [{ label: "Меню", action: "menu" }]];
+    const rows: BtnDef[][] = [
+      primary,
+      [{ label: "Получить код приёма", action: "menu_receive" }, { label: "Настройки", action: "menu_settings" }],
+      [{ label: "Меню", action: "menu" }],
+    ];
     return { telegramInlineKeyboard: rows.map((row) => tgRow(draftId, MENU_REVISION, row)) };
   }
-  const maxPrimary: MaxInlineButton[] = maxRow(draftId, MENU_REVISION, primary);
+  const rows: MaxInlineButton[][] = primary.map(button => maxRow(draftId, MENU_REVISION, [button]));
   if (resume) {
     const resumePayload = buildNativeCreateCallback("menu_resume", resume.draftId, resume.revision);
     if (resumePayload) {
-      maxPrimary.unshift({ type: "callback", text: "Продолжить оформление", payload: resumePayload });
+      rows.unshift([{ type: "callback", text: "Продолжить оформление", payload: resumePayload }]);
     }
   }
   return {
-    maxInlineButtons: [maxPrimary, maxRow(draftId, MENU_REVISION, [{ label: "Меню", action: "menu" }])],
+    maxInlineButtons: [
+      ...rows,
+      maxRow(draftId, MENU_REVISION, [{ label: "Получить код приёма", action: "menu_receive" }]),
+      maxRow(draftId, MENU_REVISION, [{ label: "Настройки", action: "menu_settings" }]),
+      ...(options.showMenu !== false ? [maxRow(draftId, MENU_REVISION, [{ label: "Меню", action: "menu" }])] : []),
+    ],
   };
 }
 

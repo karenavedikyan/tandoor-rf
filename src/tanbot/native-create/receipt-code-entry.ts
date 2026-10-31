@@ -120,6 +120,7 @@ export async function appendReceiptEntryChoices(
 export async function handleReceiptEntryCallback(
   client: PoolClient, ctx: NativeCreateContext, parsed: ReceiptEntryCallback,
 ): Promise<NativeCreateReply> {
+  if (parsed.action === "receive") return { text: "Для получения кода откройте раздел «Получить код приёма»." };
   const partyId = await currentParty(client, ctx);
   if (!partyId) return { text: "Подтверждение доступно только текущему держателю в личном чате с подключённым профилем." };
   const id = parsed.transferId;
@@ -157,7 +158,8 @@ export async function handleReceiptEntryText(
   await lockNativeCreateMessenger(client, ctx);
   const trimmed = text.trim();
   const navigation = parseNativeBotSlashCommand(trimmed) || isNativeMainMenuText(trimmed)
-    || isNativeCreateMenuText(trimmed) || isNativeContinueDraftText(trimmed) || trimmed.toLowerCase() === "мои передачи";
+    || isNativeCreateMenuText(trimmed) || isNativeContinueDraftText(trimmed)
+    || ["мои передачи", "настройки", "получить код приёма", "получить код приема", "/status", "/stop", "/code"].includes(trimmed.toLowerCase());
   if (navigation) { await clearReceiptEntry(client, ctx); return null; }
   const entry = (await client.query<Entry>(
     `SELECT * FROM tt_bot_receipt_code_entries WHERE channel=$1 AND messenger_chat_id=$2 FOR UPDATE`,

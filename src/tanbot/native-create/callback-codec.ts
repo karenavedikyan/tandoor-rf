@@ -18,6 +18,11 @@ export type NativeCreateCallbackAction =
   | "menu_create"
   | "menu_my"
   | "menu_resume"
+  | "menu_receive"
+  | "menu_settings"
+  | "notify_ask_off"
+  | "notify_off"
+  | "notify_on"
   | "recipient_ext_tel"
   | "recipient_ext_next"
   | "recipient_ext_keep"
@@ -41,6 +46,11 @@ const ACTION_CODE: Record<NativeCreateCallbackAction, string> = {
   menu_create: "e",
   menu_my: "f",
   menu_resume: "k",
+  menu_receive: "l",
+  menu_settings: "m",
+  notify_ask_off: "n",
+  notify_off: "o",
+  notify_on: "p",
   recipient_ext_tel: "h",
   recipient_ext_next: "g",
   recipient_ext_keep: "i",

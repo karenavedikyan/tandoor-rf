@@ -30,6 +30,7 @@ import {
   handleExternalPersonTelegramVideo,
 } from "../tanbot/external-person/telegram-bot-flow";
 import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
+import { menuReplyKeyboard } from "../tanbot/native-create/keyboards";
 
 export type WebhookReply = {
   chatId: bigint;
@@ -99,6 +100,21 @@ async function processParsedUpdate(
           phoneRaw: update.phoneNumber,
           isForwarded: update.isForwarded,
         })) ?? null;
+      if (!ext && (account || person)) {
+        const adapters = await import("../tanbot/native-create/adapters");
+        const menu = await adapters.tryNativeCreateTelegramMessage(client, {
+          chatId: update.chatId, telegramUserId: update.telegramUserId, text: "Меню",
+        });
+        const reply: WebhookReply = {
+          chatId: update.chatId, text: menu!.text, replyMarkup: menu!.replyMarkup,
+          replyExtra: adapters.nativeTelegramReplyExtra(menu!, {
+            messengerChatId: update.chatId.toString(), messengerUserId: update.telegramUserId.toString(),
+            channel: "telegram", actor: account ? "staff" : "external",
+          }),
+        };
+        await commitTelegramUpdateReply(client, update.updateId, reply);
+        return reply;
+      }
       if (!ext && isExternalMessengerFeatureEnabled()) {
         ext = await handleExternalPersonTelegramContact(client, {
           chatId: update.chatId,
@@ -121,12 +137,19 @@ async function processParsedUpdate(
                   resize_keyboard: true,
                 }
               : ext.clearContactKeyboard
-                ? { remove_keyboard: true }
+                ? menuReplyKeyboard()
                 : "replyMarkup" in ext && ext.replyMarkup
                   ? (ext.replyMarkup as Record<string, unknown>)
-                  : undefined,
+                  : account || person ? menuReplyKeyboard() : undefined,
           }
-        : { chatId: update.chatId, text: "Контакт не принят." };
+        : {
+            chatId: update.chatId,
+            text: account || person
+              ? "Вы уже подключены. Чтобы добавить получателя, выберите «Оформить передачу»."
+              : "Контакт не принят. Подтвердите свой номер телефона кнопкой ниже.",
+            replyMarkup: account || person ? menuReplyKeyboard()
+              : (await import("../tanbot/native-create/keyboards")).telegramContactWithMenuKeyboard(),
+          };
       await commitTelegramUpdateReply(client, update.updateId, reply);
       return reply;
     } catch (err) {
@@ -456,9 +479,14 @@ async function processParsedUpdate(
       }
     }
     if (!reply) {
+      const adapters = await import("../tanbot/native-create/adapters");
+      const menu = await adapters.tryNativeCreateTelegramMessage(client, {
+        chatId: update.chatId, telegramUserId: update.telegramUserId, text: "Меню",
+      });
       reply = {
         chatId: update.chatId,
-        text: "Команды: /status — статус, /stop — отключить уведомления, /code — код приёма.",
+        text: menu!.text,
+        replyMarkup: menu!.replyMarkup,
       };
     }
     await commitTelegramUpdateReply(client, update.updateId, reply);

@@ -15,8 +15,9 @@ import { NATIVE_SENDER_HANDOFF_GUIDANCE as SENDER_HANDOFF_GUIDANCE } from "../..
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; id: number; chatId: number; staffId?: string };
 type Button = { text: string; payload?: string; callback_data?: string; request_contact?: boolean };
-type Reply = { text: string; buttons: Button[]; markup?: Record<string, unknown> };
-type Input = { text?: string; callback?: string; start?: boolean; file?: boolean; optional?: boolean; group?: boolean };
+type Reply = { text: string; buttons: Button[]; markup?: Record<string, unknown>; copyCode?: string };
+type Input = { text?: string; callback?: string; start?: boolean; file?: boolean; optional?: boolean; group?: boolean;
+  contact?: { phone_number: string; first_name: string; user_id: number }; expectCode?: boolean };
 const databaseUrl = getIntegrationDatabaseUrl();
 let app: ReturnType<typeof import("../../src/server").createApp>;
 let seq = 6700000;
@@ -28,6 +29,7 @@ before(async () => {
   setIntegrationEnv(databaseUrl, "http://127.0.0.1:3000");
   Object.assign(process.env, {
     TT_ATTACHMENTS_BACKEND: "postgres", TT_EXTERNAL_MESSENGER_ENABLED: "true", TANBOT_HANDOFF_CODE_PILOT_ENABLED: "true",
+    TT_OTP_PEPPER: "synthetic-unified-menu-otp-pepper-min16",
     TANBOT_TELEGRAM_ENABLED: "true", TANBOT_TELEGRAM_WEBHOOK_ENABLED: "true", TANBOT_TELEGRAM_DELIVERY_ENABLED: "false",
     TANBOT_TELEGRAM_BOT_TOKEN: "123456789:SYNTH_MENU_TEST_TOKEN", TANBOT_TELEGRAM_BOT_USERNAME: "synthetic_menu_bot",
     TANBOT_TELEGRAM_LINK_TOKEN_PEPPER: "synthetic-menu-telegram-pepper", TANBOT_TELEGRAM_WEBHOOK_SECRET: "synthetic-menu-telegram-secret",
@@ -126,6 +128,7 @@ async function send(a: Actor, input: Input): Promise<Reply> {
       from: { id: a.id, is_bot: false }, text: input.start ? "/start" : input.text ?? "" };
     if (input.file) message.document = { file_id: "menu-fixture", file_unique_id: "menu-unique", file_size: PDF.length,
       file_name: "menu-fixture.pdf", mime_type: "application/pdf" };
+    if (input.contact) { delete message.text; message.contact = input.contact; }
     const raw = input.callback
       ? { update_id: id, callback_query: { id: `menu-cb-${id}`, from: { id: a.id, is_bot: false }, data: input.callback, message } }
       : { update_id: id, message };
@@ -135,12 +138,13 @@ async function send(a: Actor, input: Input): Promise<Reply> {
   }
   const replies = await drain(a);
   if (input.optional && !replies.length) return { text: "", buttons: [] };
-  assert.equal(replies.length, 1, "one clear menu/wizard response, no unsolicited second message");
+  assert.equal(replies.length, input.expectCode ? 2 : 1, "only explicit code issuance sends a copy-only follow-up");
+  if (input.expectCode) assert.match(replies[1]!.text, /^\d{6}$/u);
   for (const b of replies[0]!.buttons) {
     const callback = b.callback_data ?? b.payload;
     if (callback) assert.ok(Buffer.byteLength(callback, "utf8") <= 64);
   }
-  return replies[0]!;
+  return { ...replies[0]!, ...(input.expectCode ? { copyCode: replies[1]!.text } : {}) };
 }
 function button(r: Reply, pattern: RegExp): Button {
   const found = r.buttons.find(b => pattern.test(b.text));
@@ -153,6 +157,7 @@ async function click(a: Actor, r: Reply, pattern: RegExp): Promise<Reply> {
 }
 function main(a: Actor, r: Reply, resume: boolean) {
   button(r, /^Оформить передачу$/u); button(r, /^Мои передачи$/u);
+  button(r, /^Получить код приёма$/u); button(r, /^Настройки$/u);
   assert.equal(r.buttons.some(b => /^Продолжить оформление$/u.test(b.text)), resume);
   assert.doesNotMatch(JSON.stringify(r), /Private Menu Directory Target|79995550707|external-person\/session|person_session=/u);
   if (a.channel === "telegram") {
@@ -176,6 +181,92 @@ async function counts(includeSessions = true) {
   const result: Record<string, number> = {};
   for (const table of tables) result[table] = Number((await getPool()!.query(`SELECT count(*) FROM ${table}`)).rows[0].count);
   return result;
+}
+async function partyFor(a: Actor): Promise<string> {
+  if (a.staffId) return (await getPool()!.query("SELECT id FROM tt_parties WHERE user_id=$1", [a.staffId])).rows[0].id;
+  return (await getPool()!.query(`SELECT p.party_id FROM tt_external_persons p
+    JOIN tt_external_person_verifications v ON v.person_id=p.id
+    WHERE v.channel=$1 AND v.messenger_user_id=$2`, [a.channel, String(a.id)])).rows[0].party_id;
+}
+async function preference(a: Actor) {
+  if (a.staffId) return (await getPool()!.query(`SELECT notifications_enabled,stopped_at FROM tanbot_${a.channel}_accounts WHERE user_id=$1`,
+    [a.staffId])).rows[0];
+  return (await getPool()!.query(`SELECT notifications_enabled FROM tt_external_person_verifications
+    WHERE channel=$1 AND messenger_user_id=$2`, [a.channel, String(a.id)])).rows[0];
+}
+for (const channel of ["max", "telegram"] as const) {
+  for (const role of ["staff", "external"] as const) {
+    it(`${channel} ${role}: settings confirmation, reversible notifications, profile and draft retained`, async () => {
+      const a = await actor(channel, role), other = await actor(channel, role);
+      await send(a, { text: "Оформить передачу" });
+      await send(a, { text: "Не потерять черновик из настроек" });
+      const frozen = await snapshot(a), beforeCounts = await counts();
+      let r = await send(a, { text: "Настройки" });
+      assert.match(r.text, /Уведомления: включены/u);
+      r = await click(a, r, /^Отключить уведомления$/u);
+      assert.match(r.text, /Отключить уведомления\?/u);
+      assert.equal((await preference(a)).notifications_enabled, true, "asking never disables");
+      r = await click(a, r, /^Оставить как есть$/u);
+      assert.equal((await preference(a)).notifications_enabled, true);
+      r = await click(a, r, /^Отключить уведомления$/u);
+      r = await click(a, r, /^Да, отключить уведомления$/u);
+      assert.match(r.text, /Подключение к боту сохранено/u);
+      assert.equal((await preference(a)).notifications_enabled, false);
+      assert.equal((await preference(other)).notifications_enabled, true);
+      if (a.staffId) assert.equal((await preference(a)).stopped_at, null);
+      r = await click(a, r, /^Включить уведомления$/u);
+      assert.equal((await preference(a)).notifications_enabled, true);
+      assert.deepEqual(await snapshot(a), frozen);
+      assert.deepEqual(await counts(), beforeCounts, "preferences never generate OTPs, sessions or business state");
+      r = await click(a, r, /^Меню$/u); main(a, r, true);
+    });
+    it(`${channel} ${role}: incoming list is private, explicit version-bound code comes in two messages`, async () => {
+      const a = await actor(channel, role), other = await actor(channel, role);
+      const holder = await partyFor(other), pending = await partyFor(a);
+      const id = `TT-2026-${++seq}`;
+      await getPool()!.query(`INSERT INTO tt_transfers(id,public_code,item_title,status,
+        creator_party_id,holder_party_id,pending_party_id,final_recipient_party_id)
+        VALUES($1,$1,'Уникальные документы получателя','waiting',$2,$2,$3,$3)`, [id, holder, pending]);
+      const beforeCodes = (await getPool()!.query("SELECT count(*) FROM tt_handoff_codes WHERE transfer_id=$1", [id])).rows[0].count;
+      let r = await send(a, { text: "Получить код приёма" });
+      assert.match(r.text, new RegExp(id));
+      assert.equal((await getPool()!.query("SELECT count(*) FROM tt_handoff_codes WHERE transfer_id=$1", [id])).rows[0].count, beforeCodes);
+      const b = button(r, new RegExp(`Получить код · ${id}`)), payload = b.payload ?? b.callback_data!;
+      const foreign = await send(other, { callback: payload });
+      assert.doesNotMatch(foreign.text, /Уникальные документы получателя|Код приёма: \d{6}/u);
+      const foreignList = await send(other, { text: "Получить код приёма" });
+      assert.doesNotMatch(foreignList.text, new RegExp(id));
+      const issued = await send(a, { callback: payload, expectCode: true });
+      assert.match(issued.text, new RegExp(`Код приёма: ${issued.copyCode}`));
+      assert.match(issued.text, /От:|От кого:/u);
+      assert.match(issued.text, /Кому:/u);
+      await getPool()!.query("UPDATE tt_transfers SET handoff_version=handoff_version+1 WHERE id=$1", [id]);
+      r = await send(a, { callback: payload });
+      assert.match(r.text, /устарела|недоступна/u);
+      assert.equal((await getPool()!.query("SELECT count(*)::int AS n FROM tt_handoff_codes WHERE transfer_id=$1", [id])).rows[0].n, 1);
+    });
+  }
+  it(`${channel}: unknown and group callers cannot use settings or issue codes`, async () => {
+    const unknown = await actor(channel, "unknown"), known = await actor(channel, "staff");
+    const beforeCounts = await counts();
+    for (const text of ["Настройки", "Получить код приёма"]) {
+      const r = await send(unknown, { text });
+      assert.match(r.text, /Подтвердите свой номер/u);
+      const group = await send(known, { text, group: true, optional: true });
+      assert.doesNotMatch(group.text, /Уведомления:|Код приёма: \d{6}/u);
+    }
+    assert.deepEqual(await counts(), beforeCounts);
+  });
+}
+for (const role of ["staff", "external"] as const) {
+  it(`telegram ${role}: obsolete contact keyboard replaced, no new verification or session`, async () => {
+    const a = await actor("telegram", role), beforeCounts = await counts();
+    const r = await send(a, { contact: { phone_number: "+79995550999", first_name: "Свой контакт", user_id: a.id } });
+    main(a, r, false);
+    assert.ok(!r.buttons.some(b => b.request_contact));
+    assert.doesNotMatch(r.text, /Контакт не принят/u);
+    assert.deepEqual(await counts(), beforeCounts);
+  });
 }
 async function snapshot(a: Actor) {
   const d = await draft(a);
