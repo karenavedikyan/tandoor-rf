@@ -153,7 +153,9 @@ function formatSummary(payload: NativeCreateDraftPayload, photoCount: number): s
     `• Получатель: ${recipientLine}\n` +
     `• Комментарий: ${payload.comment?.trim() ? payload.comment : "—"}\n` +
     `• Срок: ${due}\n` +
-    `• Фото: ${photoCount}`
+    `• Фото: ${photoCount}\n\n` +
+    "Нажмите «Создать передачу» ниже: данные сохранятся в трекере.\n" +
+    "Получение посылки подтверждается отдельно кодом."
   );
 }
 

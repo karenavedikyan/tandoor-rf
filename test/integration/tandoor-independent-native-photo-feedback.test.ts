@@ -230,7 +230,9 @@ for (const channel of ["max", "telegram"] as const) {
       reply = await send(a, { callback: action(reply, /AAA Native Photo Receiver/u) });
       reply = await send(a, { callback: action(reply, /без срока/iu) });
       assert.match(reply.text, /Фото:\s*5/iu);
-      const confirm = action(reply, /^создать$/iu);
+      assert.match(reply.text, /данные сохранятся в трекере/iu);
+      assert.match(reply.text, /получение посылки подтверждается отдельно кодом/iu);
+      const confirm = action(reply, /^создать передачу$/iu);
       await send(a, { callback: confirm });
       const transferId = (await draft(a)).confirmed_transfer_id;
       assert.ok(transferId);

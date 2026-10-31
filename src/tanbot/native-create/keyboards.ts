@@ -112,35 +112,20 @@ export function buildStepUi(
       : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)] };
   }
   if (kind === "summary") {
-    const primary: BtnDef[] = [
-      { label: "Создать", action: "confirm" },
-      { label: "Изменить", action: "edit" },
+    const rows: BtnDef[][] = [
+      [{ label: "Создать передачу", action: "confirm" }],
     ];
-    if (channel === "telegram") {
-      const tgRows: Array<Array<{ text: string; callback_data: string }>> = [
-        tgRow(draftId, revision, primary),
-        tgRow(draftId, revision, NAV),
-      ];
-      if (extra?.photoInspectButtons?.length) {
-        const inspect: BtnDef[] = extra.photoInspectButtons.map((b) => ({
-          label: b.label,
-          action: "photo_view" as const,
-          arg: b.arg,
-        }));
-        tgRows.unshift(tgRow(draftId, revision, inspect));
-      }
-      return { telegramInlineKeyboard: tgRows };
-    }
-    const maxRows: MaxInlineButton[][] = [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)];
     if (extra?.photoInspectButtons?.length) {
-      const inspect: BtnDef[] = extra.photoInspectButtons.map((b) => ({
+      rows.push(extra.photoInspectButtons.map((b) => ({
         label: b.label,
         action: "photo_view" as const,
         arg: b.arg,
-      }));
-      maxRows.unshift(maxRow(draftId, revision, inspect));
+      })));
     }
-    return { maxInlineButtons: maxRows };
+    rows.push([{ label: "Изменить данные", action: "edit" }, NAV[0]!], NAV.slice(1));
+    return channel === "telegram"
+      ? { telegramInlineKeyboard: rows.map((row) => tgRow(draftId, revision, row)) }
+      : { maxInlineButtons: rows.map((row) => maxRow(draftId, revision, row)) };
   }
   if (kind === "edit" && extra?.editFields?.length) {
     const fields: BtnDef[] = extra.editFields.map((f) => ({

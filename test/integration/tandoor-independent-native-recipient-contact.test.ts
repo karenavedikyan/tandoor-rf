@@ -509,7 +509,7 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
         (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_transfers WHERE item_title=$1`, [item])).rows[0].n,
         0,
       );
-      reply = await send(actor, { kind: "callback", data: action(reply, /^Создать$/u) });
+      reply = await send(actor, { kind: "callback", data: action(reply, /^Создать передачу$/u) });
       assert.doesNotMatch(reply.text, /устар|не удалось|недоступ/i, `unexpected create reply: ${reply.text}`);
       const draftAfter = await getPool()!.query<{ confirmed_transfer_id: string | null }>(
         `SELECT confirmed_transfer_id::text FROM tt_external_request_drafts

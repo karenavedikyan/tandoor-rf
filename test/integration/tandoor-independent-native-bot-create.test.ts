@@ -241,7 +241,7 @@ describe("independent native creation entry in both bots and both actor types", 
       reply = await send(sender, phone);
       reply = await send(sender, "", action(reply, /^Без срока$/u));
       assert.match(reply.text, /Synthetic External Recipient/);
-      reply = await send(sender, "", action(reply, /^Создать$/u));
+      reply = await send(sender, "", action(reply, /^Создать передачу$/u));
       const transfer = (await getPool().query(
         `SELECT t.id,t.public_code,t.holder_party_id::text,t.pending_party_id::text,t.handoff_version,
                 p.kind,p.display_name,p.phone_e164

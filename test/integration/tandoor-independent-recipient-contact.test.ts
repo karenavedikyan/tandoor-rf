@@ -168,7 +168,7 @@ for (const channel of ["max", "telegram"] as const) {
     r = await send(a, { callback: button(r, /Без срока/i) });
     assert.match(r.text, /Моё название получателя/);
     assert.ok(r.text.replace(/\D/g, "").includes(expectedPhone.slice(1)), "summary must display selected phone");
-    const created = await send(a, { callback: button(r, /^Создать$/i) });
+    const created = await send(a, { callback: button(r, /^Создать передачу$/i) });
     assert.match(created.text, /Передача создана/, `explicit create failed: ${created.text}`);
     const rows = (await getPool()!.query(`SELECT t.id,p.display_name,p.phone_e164
       FROM tt_transfers t JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.creator_party_id=$1`, [a.partyId])).rows;
@@ -259,7 +259,7 @@ for (const channel of ["max", "telegram"] as const) {
       "selecting a staff recipient clears old external target");
     assert.match(r.text, /Synthetic Contact Staff Target/);
     assert.doesNotMatch(r.text, /Сохранить имя карточки|79996667788/);
-    await send(a, { callback: button(r, /^Создать$/i) });
+    await send(a, { callback: button(r, /^Создать передачу$/i) });
     const rows = (await getPool()!.query(`SELECT p.kind,p.display_name FROM tt_transfers t
       JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.creator_party_id=$1`, [a.partyId])).rows;
     assert.equal(rows.length, 1);
