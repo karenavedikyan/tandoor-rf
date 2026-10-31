@@ -118,3 +118,32 @@ it("independent context: actual newly issued code message identifies current leg
     } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
   }
 });
+
+it("independent context: external recipient's persisted receipt has the completed leg, not new holder twice", async () => {
+  const f = await fixture("903");
+  const ext = (await f.pool.query(`INSERT INTO tt_parties(kind,display_name,phone_e164)
+    VALUES('external','Галина Внешняя','+79994449903') RETURNING id`)).rows[0].id;
+  const person = (await f.pool.query(`INSERT INTO tt_external_persons(party_id,display_name,phone_e164)
+    VALUES($1,'Галина Внешняя','+79994449903') RETURNING id`, [ext])).rows[0].id;
+  for (const channel of ["max", "telegram"]) {
+    await f.pool.query(`INSERT INTO tt_external_person_verifications
+      (person_id,channel,messenger_user_id,messenger_chat_id) VALUES($1,$2,'889903','889903')`, [person, channel]);
+  }
+  await f.pool.query("UPDATE tt_transfers SET pending_party_id=$2,final_recipient_party_id=$2 WHERE id=$1", [f.id, ext]);
+  const client = await f.pool.connect();
+  try {
+    await client.query("BEGIN");
+    await applyPendingReceiptHandoff(client, { id: f.id, holder_party_id: f.parties[1],
+      pending_party_id: ext, final_recipient_party_id: ext, handoff_version: 3, row_version: 1 },
+      f.users[1], f.parties[1], "Synthetic external receipt");
+    await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+  const rows = (await f.pool.query(`SELECT channel,body FROM tt_external_person_message_outbox
+    WHERE person_id=$1 AND event_type='external_person.delivered' ORDER BY channel`, [person])).rows;
+  assert.equal(rows.length, 2, "legacy no-invitation-proof fallback preserves both verified channels");
+  for (const row of rows) {
+    assertRoute(row.body, "Борис Держатель", "Галина Внешняя");
+    assert.ok(row.body.includes(f.publicCode) && row.body.includes("Пакет документов"));
+    assert.match(row.body, /посмотреть историю, передать предмет дальше или вернуть отправителю/);
+  }
+});
