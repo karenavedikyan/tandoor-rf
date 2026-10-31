@@ -126,7 +126,8 @@ async function startExternal(a: Actor) {
   r = await send(a, { text: `Synthetic card item ${a.id}` });
   r = await send(a, { callback: button(r, /Пропустить/i) });
   r = await send(a, { callback: button(r, /Пропустить/i) });
-  return send(a, { callback: button(r, /Внешний получатель/i) });
+  assert.match(r.text, /кому передаёте/i);
+  return r;
 }
 async function draft(a: Actor) {
   const row = (await getPool()!.query(`SELECT id,step,payload FROM tt_external_request_drafts
@@ -251,9 +252,7 @@ for (const channel of ["max", "telegram"] as const) {
     r = await send(a, { callback: button(r, /Без срока/i) });
     r = await send(a, { callback: button(r, /Изменить/i) });
     r = await send(a, { callback: button(r, /Получатель/i) });
-    for (let page = 0; page < 20 && !r.buttons.some(b => /Synthetic Contact Staff Target/.test(b.text)); page++) {
-      r = await send(a, { callback: button(r, /Стр\. ▶/) });
-    }
+    r = await send(a, { text: "Staff Target" });
     r = await send(a, { callback: button(r, /Synthetic Contact Staff Target/) });
     assert.equal((await draft(a)).payload.recipientExternal, undefined,
       "selecting a staff recipient clears old external target");

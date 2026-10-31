@@ -182,11 +182,6 @@ export function buildStepUi(
   if (kind === "recipient") {
     const tgRows: Array<Array<{ text: string; callback_data: string }>> = [];
     const maxRows: MaxInlineButton[][] = [];
-    if (extra?.staffExternalRecipient) {
-      const extBtn: BtnDef[] = [{ label: "Внешний получатель", action: "recipient_ext" }];
-      if (channel === "telegram") tgRows.push(tgRow(draftId, revision, extBtn));
-      else maxRows.push(maxRow(draftId, revision, extBtn));
-    }
     if (extra?.recipientButtons?.length) {
       const pickBtns: BtnDef[] = extra.recipientButtons.map((b) => ({
         label: b.label,

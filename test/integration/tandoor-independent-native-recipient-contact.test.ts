@@ -261,25 +261,29 @@ async function draftStep(staffId: string): Promise<string | undefined> {
   return row.rows[0]?.step;
 }
 
-async function openExternalPhoneStep(actor: Actor, manualName: string): Promise<Reply> {
+async function reachRecipientStep(actor: Actor): Promise<Reply> {
   let reply = await send(actor, { kind: "text", text: "Создать передачу" });
   reply = await send(actor, { kind: "text", text: `Item ${actor.messengerId}` });
   reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
   reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
-  reply = await send(actor, { kind: "callback", data: action(reply, /внешний получатель/iu) });
+  assert.match(reply.text, /кому передаёте/i);
+  return reply;
+}
+
+async function openExternalPhoneStep(actor: Actor, manualName: string, phone = "+79991112233"): Promise<Reply> {
+  await reachRecipientStep(actor);
+  let reply = await send(actor, { kind: "text", text: phone });
   reply = await send(actor, { kind: "text", text: manualName });
   assert.match(reply.text, /телефон/i);
   return reply;
 }
 
 async function openExternalNameStep(actor: Actor): Promise<Reply> {
-  let reply = await send(actor, { kind: "text", text: "Создать передачу" });
-  reply = await send(actor, { kind: "text", text: `Item contact-first ${actor.messengerId}` });
-  reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
-  reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
-  reply = await send(actor, { kind: "callback", data: action(reply, /внешний получатель/iu) });
-  assert.match(reply.text, /имя/i);
-  return reply;
+  const reply = await reachRecipientStep(actor);
+  const phone = `+7900${String(actor.messengerId).slice(-7)}`;
+  const next = await send(actor, { kind: "text", text: phone });
+  assert.match(next.text, /имя/i);
+  return next;
 }
 
 before(async () => {
@@ -494,7 +498,6 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
       reply = await send(actor, { kind: "text", text: item });
       reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
       reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
-      reply = await send(actor, { kind: "callback", data: action(reply, /внешний получатель/iu) });
       const phone = `+7903${String(actor.messengerId).padStart(7, "0").slice(-7)}`;
       if (channel === "telegram") {
         reply = await send(actor, { kind: "tg_contact", phone, firstName: "Карта", lastName: "Получатель" });

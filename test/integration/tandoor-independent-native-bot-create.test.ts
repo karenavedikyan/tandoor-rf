@@ -158,8 +158,8 @@ describe("independent native creation entry in both bots and both actor types", 
       databaseUrl, email: "native-independent-receiver@test.local", password: "StrongPass123!",
       fullName: "Synthetic Native Receiver", role: "manager",
     });
-    const receiverParty = await ensurePartyForUserOnWrite(getPool()!, receiver.id, "Synthetic Native Receiver", null);
-    await getPool()!.query("UPDATE users SET accepts_external_tt_intake=TRUE WHERE id=$1", [receiver.id]);
+    const receiverParty =     await ensurePartyForUserOnWrite(getPool()!, receiver.id, "Synthetic Native Receiver", "+79990001122");
+    await getPool()!.query("UPDATE users SET accepts_external_tt_intake=TRUE, phone='+79990001122' WHERE id=$1", [receiver.id]);
     target = { id: receiver.id, partyId: receiverParty.id, name: "Synthetic Native Receiver" };
   });
   after(async () => {
@@ -181,17 +181,27 @@ describe("independent native creation entry in both bots and both actor types", 
         reply = await send(sender, item);
         reply = await send(sender, "", action(reply, /пропустить/iu));
         reply = await send(sender, "", action(reply, /пропустить/iu));
-        reply = await send(sender, "", action(reply, /Synthetic Native Receiver/u));
+        if (staff) {
+          reply = await send(sender, "Synthetic Native");
+          reply = await send(sender, "", action(reply, /Synthetic Native Receiver/u));
+        } else {
+          reply = await send(sender, "+79990001122");
+        }
         reply = await send(sender, "", action(reply, /завтра/iu));
         assert.match(reply.text, new RegExp(item));
-        assert.match(reply.text, /Synthetic Native Receiver/u, "summary displays recipient name, not UUID");
+        if (staff) {
+          assert.match(reply.text, /Synthetic Native Receiver/u, "summary displays recipient name, not UUID");
+        } else {
+          assert.match(reply.text, /79990001122|Получатель/i, "external summary uses generic label, not staff profile");
+        }
         assert.match(reply.text, /завтра/iu);
         reply = await send(sender, "", action(reply, /изменить/iu));
         reply = await send(sender, "", action(reply, /комментар/iu));
         const comment = "Edited native summary comment";
         reply = await send(sender, comment);
         assert.match(reply.text, /Edited native summary comment/u);
-        assert.match(reply.text, /Synthetic Native Receiver/u);
+        if (staff) assert.match(reply.text, /Synthetic Native Receiver/u);
+        else assert.match(reply.text, /79990001122|Получатель/i);
         assert.match(reply.text, /завтра/iu, "editing a comment preserves the due date");
         const confirm = action(reply, /создать/iu);
         await Promise.all([
@@ -234,11 +244,11 @@ describe("independent native creation entry in both bots and both actor types", 
       reply = await send(sender, item);
       reply = await send(sender, "", action(reply, /^Пропустить$/u));
       reply = await send(sender, "", action(reply, /^Пропустить$/u));
-      reply = await send(sender, "", action(reply, /^Внешний получатель$/u));
+      reply = await send(sender, phone);
       assert.match(reply.text, /имя/i);
       reply = await send(sender, "Synthetic External Recipient");
       assert.match(reply.text, /телефон/i);
-      reply = await send(sender, phone);
+      reply = await send(sender, "", action(reply, /^Далее$/u));
       reply = await send(sender, "", action(reply, /^Без срока$/u));
       assert.match(reply.text, /Synthetic External Recipient/);
       reply = await send(sender, "", action(reply, /^Создать передачу$/u));
