@@ -107,7 +107,7 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       await holderPage.waitForSelector('[data-tt="toast"]', { timeout: 15000 });
       const copiedMessage = await holderPage.evaluate("window.__ttInvitationCopied");
       assert.match(String(copiedMessage), /Messenger holder UI box/);
-      assert.match(String(copiedMessage), /Посмотреть передачу: https?:\/\//);
+      assert.match(String(copiedMessage), /Получить код приёма: https?:\/\//);
       const urlMatches = String(copiedMessage).match(/https?:\/\/[^\s]+/g) || [];
       assert.equal(urlMatches.length, 1);
       assert.match(urlMatches[0]!, /\/tan-tracker\/recipient\?mst=er/);
@@ -226,7 +226,7 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       await expectFullFieldSelection(holderPage, '[data-tt="messenger-invite-message-text"]');
       const messageValue = await holderPage.inputValue('[data-tt="messenger-invite-message-text"]');
       assert.match(messageValue, /Messenger holder UI box/);
-      assert.match(messageValue, /Посмотреть передачу:/);
+      assert.match(messageValue, /Получить код приёма:/);
       const urlMatches = messageValue.match(/https?:\/\/[^\s]+/g) || [];
       assert.equal(urlMatches.length, 1);
       assert.equal(new URL(urlMatches[0]!).searchParams.get("mst"), inviteBody.startToken);

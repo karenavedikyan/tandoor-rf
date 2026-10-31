@@ -774,16 +774,19 @@
 
   function messengerInvitationMessagePlain(o, url) {
     const from = contactById(o.holderId);
+    const to = contactById(o.pendingId);
     const abs = absoluteHandoffUrl(url || o.messengerPortalUrl);
     return [
       "Вам передают предмет",
       "",
       `Отправитель: ${from?.name || "—"}`,
+      `Получатель: ${to?.name || "—"}`,
       `Предмет: ${o.item || "—"}`,
+      `Трек: ${o.id}`,
       "",
-      "Здесь можно посмотреть детали и подтвердить получение. Регистрация не нужна.",
+      "Откройте ссылку и получите код приёма. Сообщите этот код отправителю при получении предмета — он введёт его и подтвердит передачу.",
       "",
-      `Посмотреть передачу: ${abs}`,
+      `Получить код приёма: ${abs}`,
     ].join("\n");
   }
 
@@ -812,6 +815,26 @@
       </div>
       ${manual}
       ${err}
+    </div>`;
+  }
+
+  function recipientCodeInvitationUrl(o) {
+    if (!TT_LK || !o?.pendingId || o.holderId !== actorContactId()) return "";
+    if (!isPublicHolderSession() && !lkMutationAllowed()) return "";
+    // Keep the existing authenticated messenger invitation flow for external recipients.
+    if (!isPublicHolderSession() && externalMessengerUiEnabled() && pendingContactIsExternal(o.pendingId)) return "";
+    const inv = o.activeInvitation;
+    if (!inv?.invitationToken || inv.id !== o.id || inv.pendingId !== o.pendingId ||
+        inv.holderId !== o.holderId || Number(inv.hv) !== Number(o.handoffVer)) return "";
+    return absoluteHandoffUrl(handoffUrl(o, inv));
+  }
+
+  function recipientCodeInvitationHtml(o) {
+    const url = recipientCodeInvitationUrl(o);
+    if (!url) return "";
+    return `<div class="tt-recipient-invite" data-tt="recipient-invite-block">
+      ${btn("Поделиться приглашением", 'data-tt="recipient-invite-share"', "tt-detail-alt-action tt-btn-block")}
+      ${messengerInviteManualFallbackHtml(o, url)}
     </div>`;
   }
 
@@ -850,8 +873,14 @@
     if (!text || !messengerInviteShareSupported()) {
       return copyMessengerInvitationWithFeedback(o, url);
     }
-    return navigator
-      .share({ title: "Получение передачи", text })
+    let shareRequest;
+    try {
+      shareRequest = navigator.share({ title: "Получение передачи", text });
+    } catch (error) {
+      if (error?.name === "AbortError") return Promise.resolve();
+      return copyMessengerInvitationWithFeedback(o, url);
+    }
+    return Promise.resolve(shareRequest)
       .then(() => {
         resetMessengerInviteManualFallback();
         renderTracker({ soft: true });
@@ -1239,7 +1268,7 @@
     return `${base}#tan-tracker?${p}`;
   }
 
-  function qrSvg(text) {
+  function qrImageHtml(text) {
     if (typeof qrcode !== "function") return "";
     const qr = qrcode(0, "M");
     qr.addData(text);
@@ -1248,7 +1277,9 @@
     const maxSide = 280;
     const cell = Math.max(4, Math.min(8, Math.floor(maxSide / (n + 8))));
     const margin = cell * 4;
-    return qr.createSvgTag({ cellSize: cell, margin, scalable: true });
+    // Explicit raster dimensions avoid relying on inline-SVG sizing in mobile webviews.
+    const size = (n + 8) * cell;
+    return `<img class="tt-qr-image" src="${E(qr.createDataURL(cell, margin))}" width="${size}" height="${size}" alt="QR-код для получения кода приёма">`;
   }
 
   function resolveInvitation(o, urlHv) {
@@ -1970,8 +2001,17 @@
   function paintQrHosts() {
     document.querySelectorAll('[data-tt="qr-host"]').forEach((host) => {
       const payload = host.getAttribute("data-payload");
-      if (!payload) return;
-      host.innerHTML = qrSvg(payload);
+      const fail = () => {
+        host.innerHTML = '<p class="tt-qr-error" role="status">Не удалось показать QR-код. Воспользуйтесь кнопкой «Поделиться приглашением».</p>';
+      };
+      try {
+        const markup = payload ? qrImageHtml(payload) : "";
+        if (!markup) { fail(); return; }
+        host.innerHTML = markup;
+        host.querySelector("img")?.addEventListener("error", fail, { once: true });
+      } catch (_error) {
+        fail();
+      }
     });
   }
 
@@ -4328,6 +4368,7 @@
       <div class="tt-handoff" data-tt="handoff-panel">
         <div class="tt-handoff-actions">
           ${btn("Ввести код", `data-tt="enter-code" ${heroAttr}`, "tt-primary tt-btn-block")}
+          ${recipientCodeInvitationHtml(o)}
           ${tab === "qr" ? "" : btn("QR-код", 'data-tt="tab-qr"', "tt-detail-alt-action")}
           ${o.canEditDraft ? btn("Изменить передачу", 'data-tt="edit-draft"', "tt-detail-alt-action") : ""}
         </div>
@@ -4850,12 +4891,12 @@
           ? resolveInvitation(o, state.recipientTicket.hv)
           : { inv: o?.activeInvitation, stale: false };
       const staleInvite = !!(resolvedInv?.stale && resolvedInv?.inv);
-      const rcvOk =
-        staleInvite || !rcv || o.pendingId === rcv || o.activeInvitation?.pendingId === rcv;
-      const scopeOk =
+      const rcvOk = !!o &&
+        (staleInvite || !rcv || o.pendingId === rcv || o.activeInvitation?.pendingId === rcv);
+      const scopeOk = !!o && (
         staleInvite ||
         !Sc() ||
-        Sc().canViewOrder(o, { ...scopeCtx(), externalActing: true, actorContactId: rcv || o.pendingId });
+        Sc().canViewOrder(o, { ...scopeCtx(), externalActing: true, actorContactId: rcv || o.pendingId }));
       const allowed = o && rcvOk && scopeOk;
       const recipDemo = isPublicGuestPage()
         ? ""
@@ -5514,6 +5555,12 @@
     if (action === "messenger-invite-action") {
       const o = orders.find((x) => x.id === state.orderId);
       runMessengerInviteAction(o);
+      return;
+    }
+    if (action === "recipient-invite-share") {
+      const order = orders.find((x) => x.id === state.orderId);
+      const url = recipientCodeInvitationUrl(order);
+      if (url) void shareMessengerInvitation(order, url);
       return;
     }
     if (action === "create-edit-comment") {

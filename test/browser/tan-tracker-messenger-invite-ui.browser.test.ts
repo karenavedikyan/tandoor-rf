@@ -128,7 +128,7 @@ describe("messenger invitation single-action UI (browser mocks)", { concurrency:
       });
       const manual = await page.inputValue('[data-tt="messenger-invite-message-text"]');
       assert.match(manual, /Single invite action box/);
-      assert.match(manual, /Посмотреть передачу:/);
+      assert.match(manual, /Получить код приёма:/);
     } finally {
       await context.close();
     }
