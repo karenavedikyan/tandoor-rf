@@ -261,6 +261,20 @@ for (const channel of ["max", "telegram"] as const) {
       assert.equal((await draft(a)).confirmed_transfer_id, null);
     } finally { await getPool()!.query("UPDATE users SET status='active' WHERE id=$1", [targetId]); }
   });
+  it(`${channel}: staff recipient disabled after selection cannot be created from a stale summary`, async () => {
+    const a = await actor(channel, true);
+    await start(a);
+    let r = await send(a, { text: privatePhone });
+    r = await send(a, { callback: button(r, /Иван Петров/u) });
+    r = await send(a, { callback: button(r, /без срока/iu) });
+    const before = await counts();
+    await getPool()!.query("UPDATE users SET status='disabled' WHERE id=$1", [targetId]);
+    try {
+      r = await send(a, { callback: button(r, /^Создать передачу$/u) });
+      assert.equal((await draft(a)).confirmed_transfer_id, null);
+      assert.deepEqual(await counts(), before, "Create must revalidate recipient eligibility after a prior valid choice");
+    } finally { await getPool()!.query("UPDATE users SET status='active' WHERE id=$1", [targetId]); }
+  });
   it(`${channel}: external sender cannot search/probe internal directory or use forged staff picker`, async () => {
     const a = await actor(channel, false); noPrivateData(await start(a)); const before = await counts();
     let r = await send(a, { text: "Петров" });
