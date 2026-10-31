@@ -8,6 +8,7 @@ import {
   handleNativeCreateMessage,
   handleNativeCreatePhoto,
   isNativeCreateCallback,
+  tryHandleNativeCreateRecipientContact,
 } from "./engine";
 import type { NativeCreateActorKind } from "./draft-scope";
 import { buildNativeWebhookReplyExtra, type NativeMediaScope } from "./webhook-reply-bridge";
@@ -164,6 +165,55 @@ export async function tryNativeCreateMaxCallback(
 ): Promise<ReturnType<typeof nativeReplyToMax> | null> {
   const ctx = await buildMaxNativeCreateContext(client, input);
   const reply = await handleNativeCreateCallback(client, ctx, input.payload);
+  if (!reply) return null;
+  return nativeReplyToMax(reply);
+}
+
+export async function tryNativeCreateTelegramContact(
+  client: PoolClient,
+  input: {
+    chatId: bigint;
+    telegramUserId: bigint;
+    phoneRaw: string;
+    contactFirstName?: string | null;
+    contactLastName?: string | null;
+    vcard?: string | null;
+    isForwarded: boolean;
+  },
+): Promise<ReturnType<typeof nativeReplyToTelegram> | null> {
+  const ctx = await buildTelegramNativeCreateContext(client, {
+    chatId: input.chatId,
+    telegramUserId: input.telegramUserId,
+    privateDialogOk: true,
+  });
+  const reply = await tryHandleNativeCreateRecipientContact(client, ctx, {
+    kind: "telegram",
+    phoneRaw: input.phoneRaw,
+    firstName: input.contactFirstName,
+    lastName: input.contactLastName,
+    vcard: input.vcard,
+    isForwarded: input.isForwarded,
+  });
+  if (!reply) return null;
+  return nativeReplyToTelegram(reply);
+}
+
+export async function tryNativeCreateMaxRecipientContact(
+  client: PoolClient,
+  input: {
+    chatId: bigint;
+    maxUserId: bigint;
+    vcfInfo: string;
+    isForwarded: boolean;
+    recipientChatType?: string | null;
+  },
+): Promise<ReturnType<typeof nativeReplyToMax> | null> {
+  const ctx = await buildMaxNativeCreateContext(client, input);
+  const reply = await tryHandleNativeCreateRecipientContact(client, ctx, {
+    kind: "max",
+    vcfInfo: input.vcfInfo,
+    isForwarded: input.isForwarded,
+  });
   if (!reply) return null;
   return nativeReplyToMax(reply);
 }

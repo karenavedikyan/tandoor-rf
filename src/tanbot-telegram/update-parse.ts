@@ -26,6 +26,9 @@ export type ParsedTelegramContactUpdate = {
   telegramUserId: bigint;
   contactUserId: number | null;
   phoneNumber: string;
+  contactFirstName: string | null;
+  contactLastName: string | null;
+  vcard: string | null;
   isForwarded: boolean;
 };
 
@@ -85,6 +88,9 @@ function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhook
     const c = contact as Record<string, unknown>;
     const phoneNumber = typeof c.phone_number === "string" ? c.phone_number : "";
     const contactUserId = typeof c.user_id === "number" ? c.user_id : null;
+    const contactFirstName = typeof c.first_name === "string" ? c.first_name : null;
+    const contactLastName = typeof c.last_name === "string" ? c.last_name : null;
+    const vcard = typeof c.vcard === "string" ? c.vcard : null;
     if (!phoneNumber.trim()) return { ok: false, reason: "invalid_contact" };
     const isForwarded =
       msg.forward_origin != null ||
@@ -100,6 +106,9 @@ function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhook
         telegramUserId: BigInt(userId),
         contactUserId,
         phoneNumber,
+        contactFirstName,
+        contactLastName,
+        vcard,
         isForwarded: Boolean(isForwarded),
       },
     };
