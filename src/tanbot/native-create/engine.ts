@@ -1,8 +1,4 @@
 import type { PoolClient } from "pg";
-import { listEligibleStaffForExternalParty } from "../../tan-tracker/external-request/intake-handlers";
-import { listTanTrackerRecipientCatalog } from "../../tan-tracker/recipient-catalog";
-import { loadAccessContext } from "../../access/context";
-import { assertPartyEligibleAsRecipient } from "../../tan-tracker/party-eligibility";
 import { createPersonBrowserSession } from "../../tan-tracker/external-person/person-service";
 import { getAppOrigin } from "../../config";
 import {
@@ -36,6 +32,17 @@ import {
   parseRecipientContactFromVcf,
   type ParsedRecipientContact,
 } from "./recipient-contact-parse";
+import {
+  RECIPIENT_PAGE_SIZE,
+  externalSummaryDisplayName,
+  externalUnavailableMessage,
+  handleExternalRecipientPhoneText,
+  handleStaffRecipientSearchText,
+  matchExternalActorStaffByPhone,
+  recipientStepPrompt,
+  revalidateExternalStaffPick,
+  revalidateStaffRecipientPick,
+} from "./recipient-unified";
 
 export type NativeCreateReply = {
   text: string;
@@ -69,8 +76,6 @@ export function isNativeCreateCallback(data: string): boolean {
   return parseNativeCreateCallback(data) != null;
 }
 
-const RECIPIENT_PAGE = 6;
-
 export function navError(message: string, channel: "telegram" | "max"): NativeCreateReply {
   const menu = buildMainMenuInline(channel);
   return {
@@ -92,9 +97,7 @@ function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount:
     case "comment":
       return "Комментарий к передаче или нажмите «Пропустить».";
     case "recipient":
-      return payload.recipientSearchQuery
-        ? `Получатели (поиск «${payload.recipientSearchQuery}»). Выберите кнопкой или уточните текст.`
-        : "Выберите получателя кнопкой ниже.";
+      return recipientStepPrompt(payload, payload.actor === "staff" ? "staff" : "external");
     case "recipient_ext_name": {
       if (payload.recipientExtAwaitNameConfirm && payload.recipientExternal?.phone) {
         const ext = payload.recipientExternal;
@@ -179,10 +182,7 @@ async function listDraftPhotoMeta(
 }
 
 function filteredRecipients(payload: NativeCreateDraftPayload): Array<{ userId: string; fullName: string }> {
-  const all = payload.eligibleRecipients ?? [];
-  const q = payload.recipientSearchQuery?.trim().toLowerCase();
-  if (!q) return all;
-  return all.filter((c) => c.fullName.toLowerCase().includes(q));
+  return payload.eligibleRecipients ?? [];
 }
 
 export async function renderDraftPrompt(
@@ -222,17 +222,16 @@ export async function renderDraftPrompt(
   } else if (step === "recipient") {
     const page = payload.recipientPage ?? 0;
     const choices = filteredRecipients(payload);
-    const slice = choices.slice(page * RECIPIENT_PAGE, (page + 1) * RECIPIENT_PAGE);
+    const slice = choices.slice(page * RECIPIENT_PAGE_SIZE, (page + 1) * RECIPIENT_PAGE_SIZE);
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient", {
       recipientButtons: slice.map((c, i) => ({
         label: c.fullName.slice(0, 40),
-        arg: String(page * RECIPIENT_PAGE + i),
+        arg: String(page * RECIPIENT_PAGE_SIZE + i),
       })),
       pageNav: {
         hasPrev: page > 0,
-        hasNext: (page + 1) * RECIPIENT_PAGE < choices.length,
+        hasNext: (page + 1) * RECIPIENT_PAGE_SIZE < choices.length,
       },
-      staffExternalRecipient: payload.actor === "staff",
     });
   } else if (step === "recipient_ext_name" && payload.recipientExtAwaitNameConfirm) {
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient_ext_name_confirm");
@@ -248,36 +247,6 @@ export async function renderDraftPrompt(
     telegramInlineKeyboard: channel === "telegram" ? ui.telegramInlineKeyboard : undefined,
     maxInlineButtons: channel === "max" ? ui.maxInlineButtons : undefined,
   };
-}
-
-async function loadRecipientChoices(
-  client: PoolClient,
-  ctx: NativeCreateContext,
-  payload: NativeCreateDraftPayload,
-): Promise<Array<{ userId: string; fullName: string }>> {
-  if (payload.actor === "external") {
-    if (!ctx.personId) return [];
-    const party = await client.query<{ party_id: string }>(
-      `SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid`,
-      [ctx.personId],
-    );
-    const partyId = party.rows[0]?.party_id;
-    if (!partyId) return [];
-    return listEligibleStaffForExternalParty(client, partyId);
-  }
-  if (!ctx.staffUserId) return [];
-  const catalog = await listTanTrackerRecipientCatalog(client, ctx.staffUserId);
-  const access = await loadAccessContext(ctx.staffUserId, undefined, client);
-  const out: Array<{ userId: string; fullName: string }> = [];
-  for (const c of catalog) {
-    try {
-      await assertPartyEligibleAsRecipient(client, access, ctx.staffUserId, c.id);
-      out.push({ userId: c.id, fullName: c.name });
-    } catch {
-      /* skip ineligible */
-    }
-  }
-  return out;
 }
 
 async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext): Promise<NativeCreateReply> {
@@ -385,13 +354,15 @@ async function advanceAfterComment(
     const nextPayload = await bumpDraftRevision(client, draftId, "summary", payload);
     return renderDraftPrompt(client, ctx.channel, draftId, "summary", nextPayload);
   }
-  const choices = await loadRecipientChoices(client, ctx, payload);
-  if (!choices.length) {
-    return navError("Нет доступных получателей. Обратитесь к менеджеру.", ctx.channel);
+  if (payload.actor === "external") {
+    payload.eligibleRecipients = [];
+    payload.recipientPage = 0;
+    payload.recipientSearchQuery = undefined;
+  } else {
+    payload.eligibleRecipients = [];
+    payload.recipientPage = 0;
+    payload.recipientSearchQuery = undefined;
   }
-  payload.eligibleRecipients = choices;
-  payload.recipientPage = 0;
-  payload.recipientSearchQuery = undefined;
   const nextPayload = await bumpDraftRevision(client, draftId, "recipient", payload);
   return renderDraftPrompt(client, ctx.channel, draftId, "recipient", nextPayload);
 }
@@ -407,7 +378,44 @@ async function pickRecipientByIndex(
   const choices = filteredRecipients(payload);
   const pick = choices[idx];
   if (!pick) {
-    return navError("Получатель недоступен. Выберите из списка.", ctx.channel);
+    const rendered = await renderDraftPrompt(client, ctx.channel, id, step, payload);
+    return { ...rendered, text: `Получатель недоступен.\n\n${rendered.text}` };
+  }
+  if (payload.actor === "staff" && ctx.staffUserId) {
+    const valid = await revalidateStaffRecipientPick(client, ctx.staffUserId, pick.userId);
+    if (!valid) {
+      const rendered = await renderDraftPrompt(client, ctx.channel, id, step, payload);
+      return { ...rendered, text: `Получатель недоступен.\n\n${rendered.text}` };
+    }
+    const nextStep = payload.editReturnStep === "summary" ? "summary" : "due";
+    clearExternalRecipientTarget(payload);
+    const partyRow = await client.query<{ kind: string }>(`SELECT kind FROM tt_parties WHERE id = $1::uuid`, [
+      pick.userId,
+    ]);
+    const isExternalParty = partyRow.rows[0]?.kind === "external";
+    const nextPayload = await bumpDraftRevision(client, id, nextStep, {
+      ...payload,
+      recipientDisplayName: valid.fullName.replace(/\s*\(\+[^)]+\)\s*$/, "").trim() || valid.fullName,
+      ...(isExternalParty
+        ? {
+            recipientPartyId: pick.userId,
+            recipientUserId: undefined,
+            recipientExternal: undefined,
+          }
+        : { recipientPartyId: pick.userId, recipientUserId: undefined }),
+    });
+    return renderDraftPrompt(client, ctx.channel, id, nextStep, nextPayload);
+  }
+  if (payload.actor === "external" && ctx.personId) {
+    const party = await client.query<{ party_id: string }>(
+      `SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid`,
+      [ctx.personId],
+    );
+    const partyId = party.rows[0]?.party_id;
+    if (!partyId || !(await revalidateExternalStaffPick(client, partyId, pick.userId))) {
+      const rendered = await renderDraftPrompt(client, ctx.channel, id, step, payload);
+      return { ...rendered, text: `${externalUnavailableMessage()}\n\n${rendered.text}` };
+    }
   }
   const displayName = pick.fullName;
   const nextStep = payload.editReturnStep === "summary" ? "summary" : "due";
@@ -604,10 +612,11 @@ export async function handleNativeCreateCallback(
     if (step === "edit" && parsed.arg) {
       const field = parsed.arg;
       if (field === "recipient") {
-        const choices = await loadRecipientChoices(client, ctx, payload);
-        if (!choices.length) return navError("Нет доступных получателей.", ctx.channel);
-        payload.eligibleRecipients = choices;
+        payload.eligibleRecipients = [];
         payload.recipientPage = 0;
+        payload.recipientSearchQuery = undefined;
+        clearStaffRecipientTarget(payload);
+        clearExternalRecipientTarget(payload);
       }
       const nextPayload = await bumpDraftRevision(client, id, field, { ...payload, editReturnStep: "summary" });
       return renderDraftPrompt(client, ctx.channel, id, field, nextPayload);
@@ -755,10 +764,18 @@ export async function handleNativeCreateMessage(
   }
 
   if (step === "recipient") {
-    payload.recipientSearchQuery = trimmed.slice(0, 64);
-    payload.recipientPage = 0;
-    const nextPayload = await bumpDraftRevision(client, draft.id, step, payload);
-    return renderDraftPrompt(client, ctx.channel, draft.id, "recipient", nextPayload);
+    clearStaffRecipientTarget(payload);
+    clearExternalRecipientTarget(payload);
+    const handled =
+      payload.actor === "staff"
+        ? await handleStaffRecipientSearchText(client, ctx, payload, trimmed)
+        : await handleExternalRecipientPhoneText(client, ctx, payload, trimmed);
+    const nextPayload = await bumpDraftRevision(client, draft.id, handled.step, handled.payload);
+    const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, handled.step, nextPayload);
+    if (handled.kind === "hint") {
+      return { ...rendered, text: `${handled.message}\n\n${rendered.text}` };
+    }
+    return rendered;
   }
 
   if (step === "recipient_ext_name") {
@@ -861,10 +878,11 @@ async function applyRecipientContactData(
 ): Promise<NativeCreateReply> {
   const phones = parsed.phonesE164;
   if (phones.length > 1) {
-    return navError(
-      "В контакте несколько номеров. Отправьте контакт с одним номером (+7) или введите телефон вручную.",
-      ctx.channel,
-    );
+    const rendered = await renderDraftPrompt(client, ctx.channel, draftId, step, payload);
+    return {
+      ...rendered,
+      text: `В контакте несколько номеров. Отправьте контакт с одним номером (+7) или введите телефон вручную.\n\n${rendered.text}`,
+    };
   }
   const phone = phones[0]!;
   clearStaffRecipientTarget(payload);
@@ -916,7 +934,7 @@ export async function tryHandleNativeCreateRecipientContact(
       }
     | { kind: "max"; vcfInfo: string; isForwarded: boolean },
 ): Promise<NativeCreateReply | null> {
-  if (!ctx.isLinkedStaff || !ctx.privateDialogOk) return null;
+  if (!ctx.privateDialogOk) return null;
   if (input.isForwarded) return null;
 
   await lockNativeCreateMessenger(client, ctx);
@@ -926,31 +944,73 @@ export async function tryHandleNativeCreateRecipientContact(
     return null;
   }
 
-  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, "staff", { forUpdate: true });
+  const actor = ctx.isLinkedStaff ? "staff" : "external";
+  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor, { forUpdate: true });
   if (!draft) return null;
   assertDraftPersonRow(draft, ctx);
   const payload = { ...(draft.payload as NativeCreateDraftPayload) };
   assertDraftBoundToCaller(payload, ctx);
-  if (payload.actor !== "staff") return null;
+  if (payload.actor !== actor) return null;
 
   const step = draft.step;
-  if (step !== "recipient_ext_name" && step !== "recipient_ext_phone") return null;
+  if (step !== "recipient" && step !== "recipient_ext_name" && step !== "recipient_ext_phone") return null;
 
   const parsed =
     input.kind === "telegram"
       ? parseRecipientContactFromTelegram(input)
       : parseRecipientContactFromVcf(input.vcfInfo);
   if (!parsed.ok) {
-    return navError(parsed.message, ctx.channel);
+    const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, step, payload);
+    return { ...rendered, text: `${parsed.message}\n\n${rendered.text}` };
   }
 
-  return applyRecipientContactData(
-    client,
-    ctx,
-    draft.id,
-    step,
-    payload,
-    parsed.data,
-    step === "recipient_ext_phone" ? "phone_only" : "contact_first",
-  );
+  if (actor === "external") {
+    if (step !== "recipient" || !ctx.personId) return null;
+    const phones = parsed.data.phonesE164;
+    if (phones.length !== 1) {
+      const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "recipient", payload);
+      return {
+        ...rendered,
+        text: `В контакте несколько номеров. Отправьте контакт с одним номером (+7) или введите телефон вручную.\n\n${rendered.text}`,
+      };
+    }
+    const phone = phones[0]!;
+    const party = await client.query<{ party_id: string }>(
+      `SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid`,
+      [ctx.personId],
+    );
+    const partyId = party.rows[0]?.party_id;
+    if (!partyId) return null;
+    const staffUserId = await matchExternalActorStaffByPhone(client, partyId, phone);
+    if (!staffUserId) {
+      const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "recipient", payload);
+      return { ...rendered, text: `${externalUnavailableMessage()}\n\n${rendered.text}` };
+    }
+    clearExternalRecipientTarget(payload);
+    const nextPayload = await bumpDraftRevision(client, draft.id, "due", {
+      ...payload,
+      recipientUserId: staffUserId,
+      recipientDisplayName: externalSummaryDisplayName(phone),
+      eligibleRecipients: [],
+    });
+    return renderDraftPrompt(client, ctx.channel, draft.id, "due", nextPayload);
+  }
+
+  if (step === "recipient") {
+    clearStaffRecipientTarget(payload);
+    clearExternalRecipientTarget(payload);
+    payload.recipientSearchQuery = undefined;
+    payload.eligibleRecipients = [];
+    payload.recipientPage = 0;
+  }
+
+  const contactMode =
+    step === "recipient_ext_phone" ||
+    (step === "recipient_ext_name" &&
+      payload.recipientNameManual &&
+      Boolean(payload.recipientExternal?.name?.trim()))
+      ? "phone_only"
+      : "contact_first";
+
+  return applyRecipientContactData(client, ctx, draft.id, step, payload, parsed.data, contactMode);
 }
