@@ -43,6 +43,39 @@ export function verifyMaxContactVcfHash(
   return crypto.timingSafeEqual(expected, got);
 }
 
+/** Third-party / phonebook contact from paperclip: vcf without platform hash (MAX docs). */
+export function parseMaxUnsignedRecipientVcfFromMessage(
+  message: Record<string, unknown>,
+): { vcfInfo: string } | null {
+  const body = message.body;
+  const attachmentsRaw =
+    (body && typeof body === "object" && !Array.isArray(body)
+      ? (body as Record<string, unknown>).attachments
+      : message.attachments) ?? null;
+  if (!Array.isArray(attachmentsRaw)) return null;
+  for (const att of attachmentsRaw) {
+    if (!att || typeof att !== "object") continue;
+    const row = att as Record<string, unknown>;
+    if (row.type !== "contact") continue;
+    const payload = row.payload;
+    if (!payload || typeof payload !== "object") continue;
+    const p = payload as Record<string, unknown>;
+    const vcfInfo = typeof p.vcf_info === "string" ? p.vcf_info : "";
+    if (!vcfInfo.trim()) continue;
+    const contactHash = typeof p.hash === "string" ? p.hash.trim() : "";
+    const maxInfo = p.max_info;
+    const hasSignedOwn =
+      contactHash &&
+      maxInfo &&
+      typeof maxInfo === "object" &&
+      !Array.isArray(maxInfo) &&
+      typeof (maxInfo as Record<string, unknown>).user_id === "number";
+    if (hasSignedOwn) continue;
+    return { vcfInfo };
+  }
+  return null;
+}
+
 export function parseMaxContactFromMessage(message: Record<string, unknown>): MaxContactAttachmentPayload | null {
   const body = message.body;
   const attachmentsRaw =
