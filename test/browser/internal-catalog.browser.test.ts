@@ -122,6 +122,8 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
       const cover = page.locator(".ic-cover img");
       await cover.evaluate((img: HTMLImageElement) => img.decode());
       assert.equal(await cover.count(), 1);
+      assert.equal(await page.getByText("Только для администратора", { exact: true }).count(), 1);
+      assert.equal(await page.locator(".ic-card .ic-photo-note").first().textContent(), "Файлы фото в 1С");
       const href = await page.locator(".ic-cover a").getAttribute("href");
       assert.equal(href, "/api/internal-catalog/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300) + "?version=" + fixtureGuid(900));
       assert.equal(await page.locator(".ic-cover a").getAttribute("target"), "_blank");

@@ -2,7 +2,7 @@ import path from "node:path";
 import { realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { getMaxImageBytes, processImageToPreview, readBoundedFile, resolveSafeSourcePath } from "../catalog/image-storage";
+import { getMaxImageBytes, processCatalogReferenceToPreview, readBoundedFile, resolveSafeSourcePath } from "../catalog/image-storage";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { createPhotoCache, readExistingCatalogPhoto } from "./shared-images";
 import { readFtpPhoto } from "./ftp-image";
@@ -42,7 +42,7 @@ export async function readInternalCatalogImage(file: SourceFile, pool?: Pool, ve
     const source = await resolveSafeSourcePath(root, relative);
     if (!source) return null;
     const bytes = await readBoundedFile(source, getMaxImageBytes());
-    const preview = await processImageToPreview(bytes);
+    const preview = await processCatalogReferenceToPreview(bytes);
     return preview.ok ? preview.previewBuffer : null;
   } catch {
     // Do not disclose private filesystem paths, decoder errors or file existence.

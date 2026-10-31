@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { getCatalogImageStorageDir, processImageToPreview, readStoredImage } from "../catalog/image-storage";
+import { getCatalogImageStorageDir, processCatalogReferenceToPreview, readStoredImage } from "../catalog/image-storage";
 import { safeImagePath } from "./model";
 
 /** Authorization and snapshot/file binding MUST be checked by the caller first. */
@@ -22,7 +22,7 @@ export async function readExistingCatalogPhoto(pool: Pool, relative: string): Pr
       if (root.startsWith("s3://") !== row.storage_path.startsWith("s3://")) continue;
       const bytes = await readStoredImage(row.storage_path, root);
       if (createHash("sha256").update(bytes).digest("hex") !== row.content_sha256) continue;
-      const preview = await processImageToPreview(bytes);
+      const preview = await processCatalogReferenceToPreview(bytes);
       if (preview.ok) return preview.previewBuffer;
     }
   } catch { /* Missing/unavailable storage is eligible for the read-only FTP fallback. */ }

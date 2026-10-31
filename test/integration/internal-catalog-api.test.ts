@@ -32,7 +32,7 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     imageRoot = await mkdtemp(path.join(os.tmpdir(), "internal-catalog-api-images-"));
     await mkdir(path.join(imageRoot, "20240626"));
     await writeFile(path.join(imageRoot, "20240626/photo.jpg"),
-      await sharp({ create: { width: 20, height: 10, channels: 3, background: "#426428" } }).jpeg().toBuffer());
+      await sharp({ create: { width: 1912, height: 4180, channels: 3, background: "#426428" } }).jpeg().toBuffer());
     const admin = await createTestUser({ databaseUrl, email: "catalog-admin@test.local", fullName: "Catalog Admin", password: "StrongPass123!", role: "admin" });
     const staff = await createTestUser({ databaseUrl, email: "catalog-staff@test.local", fullName: "Catalog Staff", password: "StrongPass123!", role: "rop" });
     staffId = staff.id; adminId = admin.id;
@@ -196,7 +196,10 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
       assert.equal(photo.status, 200); assert.match(photo.headers["content-type"], /image\/webp/);
       assert.match(photo.headers["cache-control"], /no-store/);
       assert.equal(photo.headers["x-content-type-options"], "nosniff");
-      assert.equal((await sharp(photo.body).metadata()).format, "webp");
+      const decoded = await sharp(photo.body).metadata();
+      assert.equal(decoded.format, "webp");
+      assert.equal(decoded.height, 1200);
+      assert.ok(decoded.width! <= 1200);
       assert.equal((await get("/products/" + fixtureGuid(2) + "/images/" + fixtureGuid(300))).status, 404);
       assert.equal((await get(url.replace(fixtureGuid(300), fixtureGuid(301)))).status, 404);
       assert.equal((await get(url).query({ version: fixtureGuid(999) })).status, 404);

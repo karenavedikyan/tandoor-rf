@@ -107,7 +107,7 @@
       (imagesConfigured && item.coverFileGuid ? photo(item.guid, { guid: item.coverFileGuid }, item.name, true) : "") +
       '<div class="ic-card-head"><span class="ic-brand">' +
       esc(item.brand || "Бренд не указан") + '</span><span class="ic-photo-note">' +
-      (item.imagePathCount ? (imagesConfigured ? "Фото из 1С" : "Фото ещё не подключены") : "Без фото в выгрузке") + "</span></div><h2>" +
+      (item.imagePathCount ? (imagesConfigured ? "Файлы фото в 1С" : "Фото ещё не подключены") : "Без фото в выгрузке") + "</span></div><h2>" +
       '<a data-product="' + esc(item.guid) + '" href="' + esc(productUrl(item.guid)) + '">' + esc(item.name) + "</a></h2>" +
       '<div class="ic-card-body"><p class="ic-card-meta">' + (item.article ? "Артикул: " + esc(item.article) : "Артикул не указан") +
       "</p>" + tags(item.sections) + '</div><a class="ic-card-footer" data-product="' + esc(item.guid) +

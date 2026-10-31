@@ -244,12 +244,23 @@ function isAllowedImageMetadata(metadata: Metadata): boolean {
 }
 
 export async function processImageToPreview(sourceBuffer: Buffer): Promise<ImageValidationResult> {
+  return processPreviewWithDimension(sourceBuffer, getMaxImageDimension());
+}
+
+/** Read-only catalogue reference photos may be taller than upload-sized images.
+ * Keep the same byte/pixel/format/deadline guards and bounded WebP output.
+ * General uploads and existing import jobs retain processImageToPreview limits.
+ */
+export async function processCatalogReferenceToPreview(sourceBuffer: Buffer): Promise<ImageValidationResult> {
+  return processPreviewWithDimension(sourceBuffer, 8192);
+}
+
+async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: number): Promise<ImageValidationResult> {
   if (sourceBuffer.length === 0) return { ok: false, message: "Empty file." };
   const maxBytes = getMaxImageBytes();
   if (sourceBuffer.length > maxBytes) return { ok: false, message: "Image exceeds size limit." };
 
   const maxPixels = getMaxImagePixels();
-  const maxDimension = getMaxImageDimension();
   const previewMax = getPreviewMaxDimension();
   const timeoutMs = getImageProcessTimeoutMs();
 

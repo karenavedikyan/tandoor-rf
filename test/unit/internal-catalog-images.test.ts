@@ -47,6 +47,17 @@ describe("internal catalogue opt-in, read-only image previews", { concurrency: f
     await writeFile(path.join(root, "20240626/photo.jpg"), "<html>not an image</html>");
     assert.equal(await readInternalCatalogImage(file), null);
   });
+  it("renders tall catalogue references from the opt-in local source", async () => {
+    process.env.INTERNAL_CATALOG_IMAGE_SOURCE_DIR = root;
+    await writeFile(path.join(root, "20240626/photo.jpg"),
+      await sharp({ create: { width: 1912, height: 4180, channels: 3, background: "#eee8de" } }).jpeg().toBuffer());
+    const bytes = await readInternalCatalogImage(file);
+    assert.ok(bytes);
+    const meta = await sharp(bytes).metadata();
+    assert.equal(meta.format, "webp");
+    assert.equal(meta.height, 1200);
+    assert.ok(meta.width! <= 1200);
+  });
   it("rejects absolute, remote, traversal, control-character and unsupported paths", async () => {
     process.env.INTERNAL_CATALOG_IMAGE_SOURCE_DIR = root;
     for (const unsafe of ["../secret.jpg", "/secret.jpg", "C:\\secret.jpg", "https://example.com/photo.jpg",

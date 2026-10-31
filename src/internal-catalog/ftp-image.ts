@@ -1,6 +1,6 @@
 import { Writable } from "node:stream";
 import { Client } from "basic-ftp";
-import { getMaxImageBytes, processImageToPreview } from "../catalog/image-storage";
+import { getMaxImageBytes, processCatalogReferenceToPreview } from "../catalog/image-storage";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { safeImagePath } from "./model";
 
@@ -35,7 +35,7 @@ export async function readFtpPhoto(
           chunks.push(Buffer.from(chunk)); done();
         } }), remote);
         if (seen !== expected) return null;
-        const result = await processImageToPreview(Buffer.concat(chunks));
+        const result = await processCatalogReferenceToPreview(Buffer.concat(chunks));
         return result.ok ? result.previewBuffer : null;
       })(),
       new Promise<null>(resolve => {

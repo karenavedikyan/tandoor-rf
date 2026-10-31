@@ -9,6 +9,7 @@ import { Client } from "basic-ftp";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { Pool } from "pg";
 import sharp from "sharp";
+import { processImageToPreview, processCatalogReferenceToPreview } from "../../src/catalog/image-storage";
 import { readFtpPhoto } from "../../src/internal-catalog/ftp-image";
 import { createPhotoCache, readExistingCatalogPhoto } from "../../src/internal-catalog/shared-images";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "../../src/internal-catalog/images";
@@ -67,6 +68,35 @@ describe("internal catalogue shared photo source", { concurrency: false }, () =>
     process.env.ONEC_FTP_ENABLED = "false";
     assert.equal(await readFtpPhoto("ok.jpg", () => { clients++; return fake().client; }), null);
     assert.equal(clients, 0);
+  });
+  it("renders a 1912x4180 catalogue door photo without relaxing ordinary image validation", async () => {
+    delete process.env.CATALOG_IMAGE_MAX_DIMENSION;
+    const source = await sharp({ create: { width: 1912, height: 4180, channels: 3,
+      background: "#eee8de" } }).jpeg().toBuffer();
+    const ordinary = await processImageToPreview(source);
+    assert.equal(ordinary.ok, false);
+    const ftp = fake(source);
+    const bytes = await readFtpPhoto("20260907/422_белая.jpg", () => ftp.client);
+    assert.ok(bytes);
+    const meta = await sharp(bytes).metadata();
+    assert.equal(meta.format, "webp");
+    assert.equal(meta.height, 1200);
+    assert.ok(meta.width! <= 1200);
+    assert.equal(meta.exif, undefined);
+    assert.equal(ftp.closed(), true);
+    assert.equal((await processImageToPreview(source)).ok, false);
+  });
+  it("keeps bounded reference edges, pixels, bytes and supported formats", async () => {
+    const tooTall = await sharp({ create: { width: 10, height: 8193, channels: 3,
+      background: "#eee8de" } }).png().toBuffer();
+    const tooManyPixels = await sharp({ create: { width: 4900, height: 5000, channels: 3,
+      background: "#eee8de" } }).png().toBuffer();
+    for (const bytes of [tooTall, tooManyPixels, Buffer.from("broken"),
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>')]) {
+      assert.equal((await processCatalogReferenceToPreview(bytes)).ok, false);
+    }
+    process.env.CATALOG_IMAGE_MAX_BYTES = "32";
+    assert.equal((await processCatalogReferenceToPreview(jpeg)).ok, false);
   });
   it("rejects invalid announced sizes without downloading", async () => {
     for (const size of [0, -1, NaN, Infinity, 1.5, 8 * 1024 * 1024 + 1]) {
