@@ -285,6 +285,7 @@
   }
 
   function bumpExtRequestFlow(st) {
+    st.extRequestPhaseSaveInFlight = false;
     st.extRequestFlowId = (st.extRequestFlowId || 0) + 1;
     return st.extRequestFlowId;
   }
