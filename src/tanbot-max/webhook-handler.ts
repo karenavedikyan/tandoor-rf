@@ -344,9 +344,12 @@ async function processUpdateInTransaction(
       const attachments: MaxAtt[] =
         normalizedAtt.length ?
           normalizedAtt.map((att) => ({
-            kind: att.kind === "file" ? "file" : "image",
+            kind: att.kind === "video" ? "video" : att.kind === "file" ? "file" : "image",
             downloadUrl: String(att.downloadUrl ?? ""),
-            fileName: String(att.fileName ?? (att.kind === "file" ? "document.pdf" : "photo.jpg")),
+            fileName: String(
+              att.fileName ??
+                (att.kind === "video" ? "video.mp4" : att.kind === "file" ? "file.bin" : "photo.jpg"),
+            ),
             mediaToken: att.mediaToken ?? null,
             declaredSize: att.declaredSize ?? null,
             ingestReject: att.ingestReject,

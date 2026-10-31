@@ -27,6 +27,7 @@ import {
   handleExternalPersonTelegramMessage,
   handleExternalPersonTelegramPhoto,
   handleExternalPersonTelegramDocument,
+  handleExternalPersonTelegramVideo,
 } from "../tanbot/external-person/telegram-bot-flow";
 import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
 
@@ -134,7 +135,7 @@ async function processParsedUpdate(
     }
   }
 
-  if (parsed.kind === "photo" || parsed.kind === "document") {
+  if (parsed.kind === "photo" || parsed.kind === "document" || parsed.kind === "video") {
     const update = parsed.update;
     const claim = await claimTelegramUpdate(client, update.updateId);
     if (claim.kind === "ignore") return null;
@@ -148,6 +149,15 @@ async function processParsedUpdate(
             telegramUserId: update.telegramUserId,
             fileId: update.fileId,
             fileName: update.fileName,
+          });
+        } else if (parsed.kind === "video") {
+          const vid = parsed.update;
+          ext = await handleExternalPersonTelegramVideo(client, {
+            chatId: vid.chatId,
+            telegramUserId: vid.telegramUserId,
+            fileId: vid.fileId,
+            fileName: vid.fileName,
+            mimeType: vid.mimeType,
           });
         } else {
           const doc = parsed.update;

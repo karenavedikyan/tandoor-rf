@@ -3,7 +3,7 @@ import { fetchBoundedBinaryRaw } from "../../tanbot-telegram/bounded-binary-fetc
 import { TELEGRAM_API_ORIGIN } from "../../tanbot-telegram/config";
 import { loadTanbotTelegramStage2Config } from "../../tanbot-telegram/stage2-config";
 import { validateMaxMediaDownloadUrl } from "../../tanbot-max/max-media-url";
-import { detectNativeAttachmentMime } from "./native-attachment-magic";
+import { classifyNativeStorageMime, isHlsOrPlaylistManifest } from "./native-attachment-magic";
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const META_TIMEOUT_MS = 15_000;
@@ -13,33 +13,24 @@ function attachmentRejectMessage(code: string): string {
     case "TOO_LARGE":
       return "Файл больше 8 МБ. Отправьте файл меньше.";
     case "EMPTY":
-      return "Пустой файл не принимается.";
-    case "UNSUPPORTED":
-      return "Поддерживаются только фото (JPEG/PNG/WebP/GIF) и PDF.";
-    case "FAKE_PDF":
-      return "Файл не является PDF. Отправьте документ в формате PDF.";
+      return "Не удалось принять пустой файл.";
+    case "VIDEO_MANIFEST":
+      return "Отправьте видео как файл.";
     default:
       return "Не удалось скачать файл.";
   }
 }
 
-function validateFetchedAttachment(
-  buffer: Buffer,
-  declaredMime?: string | null,
-): { ok: true; mimeType: string } | { ok: false; message: string } {
+function validateFetchedAttachment(buffer: Buffer): { ok: true; mimeType: string } | { ok: false; message: string } {
   if (!buffer.length) return { ok: false, message: attachmentRejectMessage("EMPTY") };
-  const detected = detectNativeAttachmentMime(buffer);
-  if (!detected) {
-    const declared = (declaredMime ?? "").toLowerCase();
-    if (declared.includes("pdf")) return { ok: false, message: attachmentRejectMessage("FAKE_PDF") };
-    return { ok: false, message: attachmentRejectMessage("UNSUPPORTED") };
+  if (isHlsOrPlaylistManifest(buffer)) {
+    return { ok: false, message: attachmentRejectMessage("VIDEO_MANIFEST") };
   }
-  return { ok: true, mimeType: detected.mimeType };
+  return { ok: true, mimeType: classifyNativeStorageMime(buffer) };
 }
 
 export async function fetchTelegramNativeAttachmentBytes(
   fileId: string,
-  declaredMime?: string | null,
 ): Promise<{ ok: true; buffer: Buffer; mimeType: string } | { ok: false; message: string }> {
   const loaded = loadTanbotTelegramStage2Config();
   if (!loaded.ok || !loaded.config.botToken) {
@@ -75,7 +66,7 @@ export async function fetchTelegramNativeAttachmentBytes(
   if (!file.ok) {
     return { ok: false, message: attachmentRejectMessage(file.code === "TOO_LARGE" ? "TOO_LARGE" : "default") };
   }
-  const validated = validateFetchedAttachment(file.buffer, declaredMime);
+  const validated = validateFetchedAttachment(file.buffer);
   if (!validated.ok) return validated;
   return { ok: true, buffer: file.buffer, mimeType: validated.mimeType };
 }

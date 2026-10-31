@@ -47,6 +47,8 @@ export type NativeCreateDraftPayload = ExternalDraftPayload & {
   externalRecipientPhone?: string;
   /** External actor: display name for summary (never staff profile). */
   externalRecipientDisplayName?: string;
+  /** Provider-native media kind per attachment sort_order (image/file/video for resend). */
+  nativeAttachmentTransportBySort?: Record<string, "image" | "file" | "video">;
 };
 
 export function clearExternalRecipientTarget(payload: NativeCreateDraftPayload): void {

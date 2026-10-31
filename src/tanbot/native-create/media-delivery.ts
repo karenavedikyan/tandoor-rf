@@ -127,14 +127,19 @@ export async function deliverTelegramNativeMediaFromExtra(
       }
       return { ok: false, retryable: true, progress: { mediaDeliveredCount }, extra: extraRecord };
     }
-    const isFile = item.mediaKind === "file";
+    const method =
+      item.mediaKind === "video" ? "sendVideo"
+      : item.mediaKind === "file" ? "sendDocument"
+      : "sendPhoto";
     const body: Record<string, unknown> = {
       chat_id: input.chatId.toString(),
-      ...(isFile ? { document: item.telegramFileId } : { photo: item.telegramFileId }),
+      ...(method === "sendVideo" ? { video: item.telegramFileId }
+      : method === "sendDocument" ? { document: item.telegramFileId }
+      : { photo: item.telegramFileId }),
     };
     if (item.caption) body.caption = item.caption;
     const result = await transport({
-      method: isFile ? "sendDocument" : "sendPhoto",
+      method,
       token: config.botToken,
       body,
       timeoutMs: config.requestTimeoutMs,
@@ -203,14 +208,17 @@ export async function deliverMaxNativeMediaFromExtra(
       }
       return { ok: false, retryable: true, progress: { mediaDeliveredCount }, extra: extraRecord };
     }
-    const isFile = item.mediaKind === "file";
     const caption =
       item.caption ?
-        isFile ?
-          `PDF: ${item.caption}`
+        item.mediaKind === "video" ?
+          `Видео: ${item.caption}`
+        : item.mediaKind === "file" ?
+          `Файл: ${item.caption}`
         : `Фото: ${item.caption}`
-      : isFile ?
-        "PDF"
+      : item.mediaKind === "video" ?
+        "Видео"
+      : item.mediaKind === "file" ?
+        "Файл"
       : "Фото";
     const result = await transport({
       token: config.botToken,
@@ -218,7 +226,9 @@ export async function deliverMaxNativeMediaFromExtra(
       text: caption,
       timeoutMs: config.requestTimeoutMs,
       maxResponseBytes: config.maxResponseBytes,
-      ...(isFile ? { maxFileToken: item.maxFileToken } : { maxImageToken: item.maxFileToken }),
+      ...(item.mediaKind === "video" ? { maxVideoToken: item.maxFileToken }
+      : item.mediaKind === "file" ? { maxFileToken: item.maxFileToken }
+      : { maxImageToken: item.maxFileToken }),
     });
     if (!result.ok) {
       return {
