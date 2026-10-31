@@ -107,13 +107,33 @@ async function processUpdateInTransaction(
       }
     }
     if (!reply && contact) {
-      let ext =
-        (await handleExternalRecipientMaxContact(client, {
-          maxChatId: update.chatId,
+      const linkedStaff = await findAccountByMaxUserId(client, update.maxUserId);
+      if (linkedStaff && recipientChatType === "dialog" && !isForwarded) {
+        const { tryNativeCreateMaxRecipientContact } = await import("../tanbot/native-create/adapters");
+        const native = await tryNativeCreateMaxRecipientContact(client, {
+          chatId: update.chatId,
           maxUserId: update.maxUserId,
-          contact,
+          vcfInfo: contact.vcfInfo,
           isForwarded,
-        })) ?? null;
+          recipientChatType,
+        });
+        if (native) {
+          reply = {
+            userId: update.maxUserId,
+            chatId: update.chatId,
+            text: native.text,
+            inlineButtons: native.inlineButtons,
+          };
+        }
+      }
+      let ext = reply
+        ? null
+        : ((await handleExternalRecipientMaxContact(client, {
+            maxChatId: update.chatId,
+            maxUserId: update.maxUserId,
+            contact,
+            isForwarded,
+          })) ?? null);
       if (!ext && isExternalMessengerFeatureEnabled()) {
         const maxCfg = loadTanbotMaxStage2Config();
         const token = maxCfg.ok ? maxCfg.config.botToken : "";

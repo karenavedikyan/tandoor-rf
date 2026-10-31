@@ -9,9 +9,12 @@ import { getAppOrigin } from "../../config";
 import crypto from "crypto";
 import {
   bumpDraftRevision,
+  clearExternalRecipientTarget,
+  clearStaffRecipientTarget,
   discardNativeBotDraft,
   ensureNativeBotDraft,
   loadNativeBotDraft,
+  stripTransientRecipientDraftFields,
   type NativeCreateDraftPayload,
 } from "./draft-scope";
 import { buildMainMenuInline, buildStepUi, menuReplyKeyboard } from "./keyboards";
@@ -94,11 +97,24 @@ function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount:
       return payload.recipientSearchQuery
         ? `Получатели (поиск «${payload.recipientSearchQuery}»). Выберите кнопкой или уточните текст.`
         : "Выберите получателя кнопкой ниже.";
-    case "recipient_ext_name":
+    case "recipient_ext_name": {
+      if (payload.recipientExtAwaitNameConfirm && payload.recipientExternal?.phone) {
+        const ext = payload.recipientExternal;
+        return (
+          `Контакт получателя:\n` +
+          `Имя: ${ext.name?.trim() || "—"}\n` +
+          `Телефон: ${ext.phone}\n\n` +
+          `Имя можно изменить — введите другое текстом или подтвердите кнопкой.`
+        );
+      }
+      const hasPhone = Boolean(payload.recipientExternal?.phone);
       return (
         "Имя внешнего получателя.\n" +
-        "Введите текстом или отправьте контакт через скрепку → «Контакт» (не кнопку «Отправить мой номер»)."
+        (hasPhone
+          ? "Телефон уже выбран — введите имя текстом.\n"
+          : "Введите текстом или отправьте контакт через скрепку → «Контакт» (не кнопку «Отправить мой номер»).")
       );
+    }
     case "recipient_ext_phone": {
       const ext = payload.recipientExternal;
       const lines = [
@@ -128,10 +144,15 @@ function formatSummary(payload: NativeCreateDraftPayload, photoCount: number): s
     payload.eligibleRecipients?.find((c) => c.userId === payload.recipientUserId)?.fullName ??
     payload.eligibleRecipients?.find((c) => c.userId === payload.recipientPartyId)?.fullName ??
     "—";
+  const recipientPhone = payload.recipientExternal?.phone?.trim();
+  const recipientLine =
+    recipientPhone && payload.recipientPartyId == null && payload.recipientUserId == null
+      ? `${recipient} (${recipientPhone})`
+      : recipient;
   return (
     "Проверьте данные:\n" +
     `• Предмет: ${payload.item ?? "—"}\n` +
-    `• Получатель: ${recipient}\n` +
+    `• Получатель: ${recipientLine}\n` +
     `• Комментарий: ${payload.comment?.trim() ? payload.comment : "—"}\n` +
     `• Срок: ${due}\n` +
     `• Фото: ${photoCount}`
@@ -213,6 +234,8 @@ async function renderDraftPrompt(
       },
       staffExternalRecipient: payload.actor === "staff",
     });
+  } else if (step === "recipient_ext_name" && payload.recipientExtAwaitNameConfirm) {
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient_ext_name_confirm");
   } else if (step === "recipient_ext_phone") {
     const ext = payload.recipientExternal;
     if (ext?.phone && ext.name?.trim()) {
@@ -311,6 +334,9 @@ function callbackAllowedForStep(action: ParsedNativeCreateCallback["action"], st
       return step === "recipient";
     case "recipient_ext_tel":
       return step === "recipient_ext_name" || step === "recipient_ext_phone";
+    case "recipient_ext_keep":
+    case "recipient_ext_change":
+      return step === "recipient_ext_name";
     case "recipient_ext_next":
       return step === "recipient_ext_phone";
     case "photo_skip":
@@ -385,6 +411,7 @@ async function pickRecipientByIndex(
   }
   const displayName = pick.fullName;
   const nextStep = payload.editReturnStep === "summary" ? "summary" : "due";
+  clearExternalRecipientTarget(payload);
   const nextPayload = await bumpDraftRevision(client, id, nextStep, {
     ...payload,
     recipientDisplayName: displayName,
@@ -507,6 +534,33 @@ export async function handleNativeCreateCallback(
 
   if (parsed.action === "recipient_ext") {
     if (payload.actor !== "staff") return renderDraftPrompt(client, ctx.channel, id, step, payload);
+    clearStaffRecipientTarget(payload);
+    clearExternalRecipientTarget(payload);
+    const nextPayload = await bumpDraftRevision(client, id, "recipient_ext_name", payload);
+    return renderDraftPrompt(client, ctx.channel, id, "recipient_ext_name", nextPayload);
+  }
+
+  if (parsed.action === "recipient_ext_keep") {
+    if (!payload.recipientExtAwaitNameConfirm || !payload.recipientExternal?.phone) {
+      return renderDraftPrompt(client, ctx.channel, id, step, payload);
+    }
+    delete payload.recipientExtAwaitNameConfirm;
+    delete payload.recipientContactSuggestedName;
+    payload.recipientNameManual = false;
+    stripTransientRecipientDraftFields(payload);
+    payload.recipientDisplayName = payload.recipientExternal.name?.trim() || undefined;
+    const nextPayload = await bumpDraftRevision(client, id, "recipient_ext_phone", payload);
+    return renderDraftPrompt(client, ctx.channel, id, "recipient_ext_phone", nextPayload);
+  }
+
+  if (parsed.action === "recipient_ext_change") {
+    if (!payload.recipientExtAwaitNameConfirm) {
+      return renderDraftPrompt(client, ctx.channel, id, step, payload);
+    }
+    const phone = payload.recipientExternal?.phone ?? "";
+    delete payload.recipientExtAwaitNameConfirm;
+    payload.recipientNameManual = true;
+    payload.recipientExternal = { name: "", phone };
     const nextPayload = await bumpDraftRevision(client, id, "recipient_ext_name", payload);
     return renderDraftPrompt(client, ctx.channel, id, "recipient_ext_name", nextPayload);
   }
@@ -529,7 +583,7 @@ export async function handleNativeCreateCallback(
     if (!ext?.phone || !ext.name?.trim()) {
       return navError("Укажите имя и телефон получателя.", ctx.channel);
     }
-    delete payload.recipientPhonePickOptions;
+    stripTransientRecipientDraftFields(payload);
     payload.recipientDisplayName = ext.name.trim();
     const nextPayload = await bumpDraftRevision(client, id, "due", payload);
     return renderDraftPrompt(client, ctx.channel, id, "due", nextPayload);
@@ -708,7 +762,15 @@ export async function handleNativeCreateMessage(
   }
 
   if (step === "recipient_ext_name") {
-    payload.recipientExternal = { name: trimmed.slice(0, 120), phone: payload.recipientExternal?.phone ?? "" };
+    if (!trimmed) {
+      return navError("Введите имя получателя.", ctx.channel);
+    }
+    const phone = payload.recipientExternal?.phone ?? "";
+    payload.recipientExternal = { name: trimmed.slice(0, 120), phone };
+    payload.recipientNameManual = true;
+    delete payload.recipientExtAwaitNameConfirm;
+    delete payload.recipientContactSuggestedName;
+    payload.recipientDisplayName = payload.recipientExternal.name;
     const nextPayload = await bumpDraftRevision(client, draft.id, "recipient_ext_phone", payload);
     return renderDraftPrompt(client, ctx.channel, draft.id, "recipient_ext_phone", nextPayload);
   }
@@ -716,7 +778,7 @@ export async function handleNativeCreateMessage(
   if (step === "recipient_ext_phone") {
     const phone = normalizeRuPhoneE164(trimmed);
     if (!phone) return navError("Введите телефон: 10 цифр после +7.", ctx.channel);
-    delete payload.recipientPhonePickOptions;
+    stripTransientRecipientDraftFields(payload);
     payload.recipientExternal = {
       name: payload.recipientExternal?.name ?? "",
       phone,
@@ -804,49 +866,45 @@ async function applyRecipientContactData(
 ): Promise<NativeCreateReply> {
   const phones = parsed.phonesE164;
   if (phones.length > 1) {
-    payload.recipientPhonePickOptions = phones;
-    const nextPayload = await bumpDraftRevision(client, draftId, step, payload);
-    const pickButtons = phones.map((p, i) => ({
-      label: p.length > 14 ? `${p.slice(0, 8)}…${p.slice(-4)}` : p,
-      arg: String(i),
-    }));
-    const ui = buildStepUi(ctx.channel, draftId, nextPayload.revision ?? 1, "recipient_ext_pick", {
-      recipientButtons: pickButtons,
-    });
-    const rendered = await renderDraftPrompt(client, ctx.channel, draftId, step, nextPayload);
-    return {
-      ...rendered,
-      text:
-        `${rendered.text}\n\n` +
-        `В контакте несколько номеров. Выберите нужный кнопкой или отправьте контакт с одним номером.`,
-      telegramInlineKeyboard: ui.telegramInlineKeyboard ?? rendered.telegramInlineKeyboard,
-      maxInlineButtons: ui.maxInlineButtons ?? rendered.maxInlineButtons,
-    };
+    return navError(
+      "В контакте несколько номеров. Отправьте контакт с одним номером (+7) или введите телефон вручную.",
+      ctx.channel,
+    );
   }
   const phone = phones[0]!;
+  clearStaffRecipientTarget(payload);
   delete payload.recipientPhonePickOptions;
+
   if (mode === "phone_only") {
+    const preservedName = payload.recipientNameManual
+      ? (payload.recipientExternal?.name ?? "")
+      : (payload.recipientExternal?.name ?? "");
     payload.recipientExternal = {
-      name: payload.recipientExternal?.name ?? "",
+      name: preservedName,
       phone,
     };
-  } else {
-    const name =
-      payload.recipientExternal?.name?.trim() ||
-      parsed.suggestedName ||
-      "";
-    payload.recipientExternal = { name, phone };
+    delete payload.recipientExtAwaitNameConfirm;
+    delete payload.recipientContactSuggestedName;
+    payload.recipientDisplayName = payload.recipientExternal.name.trim() || undefined;
+    const nextPayload = await bumpDraftRevision(client, draftId, "recipient_ext_phone", payload);
+    return renderDraftPrompt(client, ctx.channel, draftId, "recipient_ext_phone", nextPayload);
   }
-  payload.recipientPartyId = undefined;
-  payload.recipientUserId = undefined;
-  payload.recipientDisplayName = payload.recipientExternal.name || undefined;
 
-  if (mode === "contact_first" && !payload.recipientExternal.name.trim()) {
+  const suggested = parsed.suggestedName?.trim() ?? "";
+  payload.recipientExternal = { name: suggested, phone };
+  payload.recipientContactSuggestedName = suggested;
+  payload.recipientNameManual = false;
+  payload.recipientDisplayName = suggested || undefined;
+
+  if (suggested) {
+    payload.recipientExtAwaitNameConfirm = true;
     const nextPayload = await bumpDraftRevision(client, draftId, "recipient_ext_name", payload);
     return renderDraftPrompt(client, ctx.channel, draftId, "recipient_ext_name", nextPayload);
   }
-  const nextPayload = await bumpDraftRevision(client, draftId, "recipient_ext_phone", payload);
-  return renderDraftPrompt(client, ctx.channel, draftId, "recipient_ext_phone", nextPayload);
+
+  delete payload.recipientExtAwaitNameConfirm;
+  const nextPayload = await bumpDraftRevision(client, draftId, "recipient_ext_name", payload);
+  return renderDraftPrompt(client, ctx.channel, draftId, "recipient_ext_name", nextPayload);
 }
 
 export async function tryHandleNativeCreateRecipientContact(

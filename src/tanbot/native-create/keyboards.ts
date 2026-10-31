@@ -77,7 +77,8 @@ export function buildStepUi(
     | "edit"
     | "photo_inspect"
     | "recipient_ext_pick"
-    | "recipient_ext_phone",
+    | "recipient_ext_phone"
+    | "recipient_ext_name_confirm",
   extra?: {
     recipientButtons?: Array<{ label: string; arg: string }>;
     pageNav?: { hasPrev: boolean; hasNext: boolean };
@@ -170,6 +171,15 @@ export function buildStepUi(
   }
   if (kind === "recipient_ext_phone") {
     const primary: BtnDef[] = [{ label: "Далее", action: "recipient_ext_next" }];
+    return channel === "telegram"
+      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, NAV)] }
+      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)] };
+  }
+  if (kind === "recipient_ext_name_confirm") {
+    const primary: BtnDef[] = [
+      { label: "Оставить имя", action: "recipient_ext_keep" },
+      { label: "Изменить имя", action: "recipient_ext_change" },
+    ];
     return channel === "telegram"
       ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, NAV)] }
       : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)] };
