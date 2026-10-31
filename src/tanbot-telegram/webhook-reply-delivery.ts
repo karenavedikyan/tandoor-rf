@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 import type { TanbotTelegramStage2Config } from "./stage2-config";
 import type { TelegramDeliveryTransport, TelegramDeliveryResult } from "./delivery-transport";
 import type { WebhookReply } from "./webhook-handler";
-import { markTelegramReplyDelivered } from "./webhook-inbox";
+import { markTelegramReplyDelivered, updateTelegramReplyExtra } from "./webhook-inbox";
 import { applyTelegramWebhookReplyLinkPreviewSafety } from "./send-message-safety";
 import {
   loadTelegramReplyRowLocked,
@@ -12,6 +12,7 @@ import {
   withTelegramReplyDeliveryLock,
 } from "../tanbot/webhook-reply-pair-delivery";
 import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
+import { deliverTelegramNativeMediaFromExtra } from "../tanbot/native-create/media-delivery";
 
 export function buildTelegramSendMessagePayload(input: {
   chatId: bigint;
@@ -44,19 +45,10 @@ async function deliverTelegramWebhookReplyUnderLock(
   let extra = telegramExtraFromStored(row.reply_extra);
   const primaryText = row.reply_text ?? reply.text;
 
-  if (reply.answerCallbackQueryId && nextTelegramDeliveryStep(extra) === "primary") {
-    await transport({
-      method: "answerCallbackQuery",
-      token: config.botToken,
-      body: { callback_query_id: reply.answerCallbackQueryId },
-      timeoutMs: config.requestTimeoutMs,
-      maxResponseBytes: config.maxResponseBytes,
-    });
-  }
-
   let lastResult: TelegramDeliveryResult | null = null;
+  let answeredCallback = false;
 
-  for (let guard = 0; guard < 3; guard++) {
+  for (let guard = 0; guard < 12; guard++) {
     row = await loadTelegramReplyRowLocked(client, updateId);
     if (!row || row.reply_delivered_at) break;
     extra = telegramExtraFromStored(row.reply_extra);
@@ -64,6 +56,16 @@ async function deliverTelegramWebhookReplyUnderLock(
     if (step === "done") break;
 
     if (step === "primary") {
+      if (reply.answerCallbackQueryId && !answeredCallback) {
+        await transport({
+          method: "answerCallbackQuery",
+          token: config.botToken,
+          body: { callback_query_id: reply.answerCallbackQueryId },
+          timeoutMs: config.requestTimeoutMs,
+          maxResponseBytes: config.maxResponseBytes,
+        });
+        answeredCallback = true;
+      }
       const body = buildTelegramSendMessagePayload({
         chatId: reply.chatId,
         text: primaryText,
@@ -95,6 +97,27 @@ async function deliverTelegramWebhookReplyUnderLock(
       });
       if (!lastResult.ok) return lastResult;
       await mergeTelegramReplyDeliveryProgress(client, updateId, "copyOnly");
+      continue;
+    }
+
+    if (step === "nativeMedia") {
+      const scope = extra.nativeMediaScope;
+      if (!scope) break;
+      const media = await deliverTelegramNativeMediaFromExtra(client, config, transport, {
+        chatId: reply.chatId,
+        replyExtra: row.reply_extra,
+        scope,
+      });
+      await updateTelegramReplyExtra(client, updateId, media.extra);
+      if (!media.ok) {
+        return {
+          ok: false,
+          code: "MEDIA_DELIVERY",
+          message: "Native media delivery failed.",
+          retryable: media.retryable !== false,
+        };
+      }
+      continue;
     }
   }
 
@@ -103,7 +126,7 @@ async function deliverTelegramWebhookReplyUnderLock(
   if (row && !row.reply_delivered_at && isHandoffReplyFullyDelivered(extra)) {
     await markTelegramReplyDelivered(client, updateId);
   }
-  return lastResult;
+  return lastResult ?? { ok: true, result: {} };
 }
 
 export async function deliverTelegramWebhookReply(

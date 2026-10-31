@@ -62,6 +62,7 @@ export async function processUndeliveredMaxWebhookReplies(
       chatId,
       text: row.reply_text,
       inlineButtons: extra.inlineButtons,
+      replyExtra: extra,
     });
     if (send?.ok) {
       result.delivered += 1;

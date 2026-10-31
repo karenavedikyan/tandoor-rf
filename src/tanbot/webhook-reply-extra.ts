@@ -1,4 +1,13 @@
 import type { MaxInlineButton } from "../tanbot-max/delivery-transport";
+import {
+  NATIVE_MEDIA_PROGRESS_KEY,
+  NATIVE_MEDIA_QUEUE_KEY,
+  NATIVE_MEDIA_SCOPE_KEY,
+  readNativeMediaProgress,
+  readNativeMediaQueue,
+  type NativeMediaDeliveryProgress,
+} from "./native-create/reply-media";
+import type { NativeMediaScope } from "./native-create/webhook-reply-bridge";
 
 export type ReplyDeliveryProgress = {
   primary?: boolean;
@@ -10,20 +19,40 @@ export type TelegramReplyExtra = {
   answerCallbackQueryId?: string;
   copyOnlyCode?: string;
   delivery?: ReplyDeliveryProgress;
+  nativeMediaQueue?: ReturnType<typeof readNativeMediaQueue>;
+  nativeMediaProgress?: NativeMediaDeliveryProgress;
+  nativeMediaScope?: NativeMediaScope;
 };
 
 export type MaxReplyExtra = {
   inlineButtons?: MaxInlineButton[][];
   copyOnlyCode?: string;
   delivery?: ReplyDeliveryProgress;
+  nativeMediaQueue?: ReturnType<typeof readNativeMediaQueue>;
+  nativeMediaProgress?: NativeMediaDeliveryProgress;
+  nativeMediaScope?: NativeMediaScope;
 };
 
-export function isHandoffReplyFullyDelivered(extra: {
-  copyOnlyCode?: string;
-  delivery?: ReplyDeliveryProgress;
+function readPassthrough(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return { ...(raw as Record<string, unknown>) };
+}
+
+function nativeMediaPending(extra: {
+  nativeMediaQueue?: ReturnType<typeof readNativeMediaQueue>;
+  nativeMediaProgress?: NativeMediaDeliveryProgress;
 }): boolean {
+  const queueLen = extra.nativeMediaQueue?.length ?? 0;
+  if (queueLen === 0) return false;
+  const prog = extra.nativeMediaProgress ?? {};
+  if (prog.disposition === "canceled") return false;
+  return (prog.mediaDeliveredCount ?? 0) < queueLen;
+}
+
+export function isHandoffReplyFullyDelivered(extra: TelegramReplyExtra | MaxReplyExtra): boolean {
   if (!extra.delivery?.primary) return false;
   if (extra.copyOnlyCode && !extra.delivery.copyOnly) return false;
+  if (nativeMediaPending(extra)) return false;
   return true;
 }
 
@@ -31,7 +60,9 @@ export function telegramReplyExtraFromReply(reply: {
   replyMarkup?: TelegramReplyExtra["replyMarkup"];
   answerCallbackQueryId?: string;
   copyOnlyCode?: string;
-}): TelegramReplyExtra | null {
+  replyExtra?: Record<string, unknown>;
+}): Record<string, unknown> | null {
+  if (reply.replyExtra) return reply.replyExtra;
   const hasCopy = typeof reply.copyOnlyCode === "string" && /^\d{6}$/.test(reply.copyOnlyCode);
   if (!reply.replyMarkup && !reply.answerCallbackQueryId && !hasCopy) return null;
   return {
@@ -41,10 +72,26 @@ export function telegramReplyExtraFromReply(reply: {
   };
 }
 
-export function parseTelegramReplyExtra(raw: unknown): TelegramReplyExtra {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const row = raw as Record<string, unknown>;
-  const out: TelegramReplyExtra = {};
+function parseNativeMediaScope(row: Record<string, unknown>): NativeMediaScope | undefined {
+  const scope = row[NATIVE_MEDIA_SCOPE_KEY];
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return undefined;
+  const s = scope as Record<string, unknown>;
+  const messengerChatId = typeof s.messengerChatId === "string" ? s.messengerChatId : "";
+  const messengerUserId = typeof s.messengerUserId === "string" ? s.messengerUserId : messengerChatId;
+  const actor = s.actor === "staff" || s.actor === "external" ? s.actor : null;
+  const channel = s.channel === "max" || s.channel === "telegram" ? s.channel : null;
+  if (!messengerChatId || !actor) return undefined;
+  return {
+    messengerChatId,
+    messengerUserId,
+    actor,
+    ...(channel ? { channel } : {}),
+  };
+}
+
+export function parseTelegramReplyExtra(raw: unknown): TelegramReplyExtra & Record<string, unknown> {
+  const row = readPassthrough(raw);
+  const out: TelegramReplyExtra & Record<string, unknown> = { ...row };
   const markup = row.replyMarkup;
   if (markup && typeof markup === "object" && !Array.isArray(markup)) {
     out.replyMarkup = markup as TelegramReplyExtra["replyMarkup"];
@@ -63,13 +110,19 @@ export function parseTelegramReplyExtra(raw: unknown): TelegramReplyExtra {
       ...(d.copyOnly === true ? { copyOnly: true } : {}),
     };
   }
+  out.nativeMediaQueue = readNativeMediaQueue(row);
+  out.nativeMediaProgress = readNativeMediaProgress(row);
+  const scope = parseNativeMediaScope(row);
+  if (scope) out.nativeMediaScope = scope;
   return out;
 }
 
 export function maxReplyExtraFromReply(reply: {
   inlineButtons?: MaxInlineButton[][];
   copyOnlyCode?: string;
-}): MaxReplyExtra | null {
+  replyExtra?: Record<string, unknown>;
+}): Record<string, unknown> | null {
+  if (reply.replyExtra) return reply.replyExtra;
   const hasCopy = typeof reply.copyOnlyCode === "string" && /^\d{6}$/.test(reply.copyOnlyCode);
   if (!reply.inlineButtons?.length && !hasCopy) return null;
   return {
@@ -78,10 +131,9 @@ export function maxReplyExtraFromReply(reply: {
   };
 }
 
-export function parseMaxReplyExtra(raw: unknown): MaxReplyExtra {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const row = raw as Record<string, unknown>;
-  const out: MaxReplyExtra = {};
+export function parseMaxReplyExtra(raw: unknown): MaxReplyExtra & Record<string, unknown> {
+  const row = readPassthrough(raw);
+  const out: MaxReplyExtra & Record<string, unknown> = { ...row };
   const buttons = row.inlineButtons;
   if (Array.isArray(buttons)) {
     out.inlineButtons = buttons as MaxInlineButton[][];
@@ -97,6 +149,10 @@ export function parseMaxReplyExtra(raw: unknown): MaxReplyExtra {
       ...(d.copyOnly === true ? { copyOnly: true } : {}),
     };
   }
+  out.nativeMediaQueue = readNativeMediaQueue(row);
+  out.nativeMediaProgress = readNativeMediaProgress(row);
+  const scope = parseNativeMediaScope(row);
+  if (scope) out.nativeMediaScope = scope;
   return out;
 }
 
@@ -109,3 +165,5 @@ export function mergeReplyDeliveryProgress(
     copyOnly: !!(existing?.copyOnly || patch.copyOnly),
   };
 }
+
+export { NATIVE_MEDIA_QUEUE_KEY, NATIVE_MEDIA_PROGRESS_KEY, NATIVE_MEDIA_SCOPE_KEY };

@@ -1,4 +1,4 @@
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { ExternalDraftPayload } from "../../tan-tracker/external-request/confirm";
 import {
   insertExternalRequestDraft,
@@ -35,8 +35,10 @@ export type NativeCreateDraftPayload = ExternalDraftPayload & {
   recipientSearchQuery?: string;
 };
 
+type Db = Pool | PoolClient;
+
 export async function loadNativeBotDraft(
-  client: PoolClient,
+  client: Db,
   channel: "telegram" | "max",
   messengerChatId: string,
   actor: NativeCreateActorKind,

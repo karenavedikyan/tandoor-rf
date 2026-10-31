@@ -43,6 +43,25 @@ export async function assertNativeCreateContext(client: PoolClient, ctx: NativeC
     if (!tanTrackerCanWrite(user, access)) {
       throw Object.assign(new Error("Создание передач недоступно для этой роли или режима."), { http: 403 });
     }
+    let boundChat: string | undefined;
+    if (ctx.channel === "telegram") {
+      const bind = await client.query<{ telegram_chat_id: string }>(
+        `SELECT telegram_chat_id FROM tanbot_telegram_accounts
+         WHERE user_id = $1::uuid AND stopped_at IS NULL`,
+        [ctx.staffUserId],
+      );
+      boundChat = bind.rows[0]?.telegram_chat_id;
+    } else {
+      const bind = await client.query<{ max_chat_id: string }>(
+        `SELECT max_chat_id FROM tanbot_max_accounts
+         WHERE user_id = $1::uuid AND stopped_at IS NULL`,
+        [ctx.staffUserId],
+      );
+      boundChat = bind.rows[0]?.max_chat_id;
+    }
+    if (!boundChat || boundChat !== ctx.messengerChatId) {
+      throw Object.assign(new Error("Чат не привязан к этому аккаунту."), { http: 403 });
+    }
     return;
   }
   if (!ctx.personId) {
@@ -57,6 +76,16 @@ export async function assertNativeCreateContext(client: PoolClient, ctx: NativeC
   );
   if (!bind.rows[0]) {
     throw Object.assign(new Error("Сессия не соответствует этому мессенджеру."), { http: 403 });
+  }
+}
+
+export function assertDraftPersonRow(
+  draft: { person_id: string | null },
+  ctx: NativeCreateContext,
+): void {
+  if (ctx.isLinkedStaff) return;
+  if (!ctx.personId || !draft.person_id || draft.person_id !== ctx.personId) {
+    throw Object.assign(new Error("Черновик недоступен."), { http: 403 });
   }
 }
 

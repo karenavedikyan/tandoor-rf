@@ -1,4 +1,6 @@
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
+
+type Db = Pool | PoolClient;
 import type { ExternalDraftPayload } from "./confirm";
 import { deleteAttachmentBytes } from "../attachments";
 
@@ -11,7 +13,7 @@ export type ExternalRequestDraftRow = {
 
 /** Active (unconfirmed) draft for messenger chat, if any. */
 export async function loadActiveExternalRequestDraft(
-  client: PoolClient,
+  client: Db,
   channel: "telegram" | "max",
   messengerChatId: string,
 ): Promise<ExternalRequestDraftRow | null> {

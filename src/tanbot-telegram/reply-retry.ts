@@ -59,6 +59,7 @@ export async function processUndeliveredTelegramWebhookReplies(
       text: row.reply_text,
       replyMarkup: extra.replyMarkup,
       answerCallbackQueryId: extra.answerCallbackQueryId,
+      replyExtra: extra,
     });
     if (send?.ok) {
       result.delivered += 1;

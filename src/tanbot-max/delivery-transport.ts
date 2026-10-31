@@ -28,6 +28,7 @@ export type MaxDeliveryTransport = (input: {
   maxResponseBytes: number;
   inlineButtons?: MaxInlineButton[][];
   shareUrl?: string;
+  maxImageToken?: string;
 }) => Promise<MaxDeliveryResult>;
 
 /** Documented success: HTTP 200 with message object (not necessarily success:true). */
@@ -71,6 +72,10 @@ export function buildMaxShareAttachment(shareUrl: string): { type: "share"; payl
   return { type: "share", payload: { url: shareUrl } };
 }
 
+export function buildMaxImageAttachment(token: string): { type: "image"; payload: { token: string } } {
+  return { type: "image", payload: { token: token.trim() } };
+}
+
 export function buildMaxInlineKeyboardAttachment(buttons: MaxInlineButton[][]) {
   return {
     type: "inline_keyboard",
@@ -84,9 +89,13 @@ export function buildMaxSendMessagePayload(input: {
   text: string;
   inlineButtons?: MaxInlineButton[][];
   shareUrl?: string;
+  maxImageToken?: string;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { text: input.text };
   const attachments: unknown[] = [];
+  if (input.maxImageToken?.trim()) {
+    attachments.push(buildMaxImageAttachment(input.maxImageToken.trim()));
+  }
   if (input.shareUrl?.trim()) {
     attachments.push(buildMaxShareAttachment(input.shareUrl.trim()));
   }
@@ -106,11 +115,11 @@ export function createDefaultMaxDeliveryTransport(
   const ca = readMaxTlsCaBundle(env);
   const fetchWithTls = wrapFetchWithMaxTls(fetchImpl, createMaxDispatcher(ca));
 
-  return async ({ token, userId, text, timeoutMs, maxResponseBytes, inlineButtons, shareUrl }) => {
+  return async ({ token, userId, text, timeoutMs, maxResponseBytes, inlineButtons, shareUrl, maxImageToken }) => {
     const url = `${MAX_API_ORIGIN}/messages?user_id=${encodeURIComponent(userId.toString())}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const body = buildMaxSendMessagePayload({ text, inlineButtons, shareUrl });
+    const body = buildMaxSendMessagePayload({ text, inlineButtons, shareUrl, maxImageToken });
     try {
       const response = await fetchWithTls(url, {
         method: "POST",
@@ -183,11 +192,17 @@ export function createDefaultMaxDeliveryTransport(
 
 export function createRecordingMaxDeliveryTransport(
   sink: {
-    calls: Array<{ userId: string; text: string; inlineButtons?: MaxInlineButton[][]; shareUrl?: string }>;
+    calls: Array<{
+      userId: string;
+      text: string;
+      inlineButtons?: MaxInlineButton[][];
+      shareUrl?: string;
+      maxImageToken?: string;
+    }>;
   },
 ): MaxDeliveryTransport {
-  return async ({ userId, text, inlineButtons, shareUrl }) => {
-    sink.calls.push({ userId: userId.toString(), text, inlineButtons, shareUrl });
+  return async ({ userId, text, inlineButtons, shareUrl, maxImageToken }) => {
+    sink.calls.push({ userId: userId.toString(), text, inlineButtons, shareUrl, maxImageToken });
     return { ok: true, result: { message: { mid: "test-mid" } } };
   };
 }
