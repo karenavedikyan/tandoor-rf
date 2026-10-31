@@ -127,7 +127,37 @@ export async function handleExternalPersonTelegramDocument(
       {
         kind: "file",
         downloadUrl: "",
-        fileName: input.fileName ?? "document.pdf",
+        fileName: input.fileName ?? "file",
+        telegramFileId: input.fileId,
+        declaredMime: input.mimeType,
+      },
+    ],
+  });
+  if (!native) return null;
+  return nativeReplyToTelegram(native);
+}
+
+export async function handleExternalPersonTelegramVideo(
+  client: PoolClient,
+  input: {
+    chatId: bigint;
+    telegramUserId: bigint;
+    fileId: string;
+    fileName: string | null;
+    mimeType: string | null;
+  },
+): Promise<ExternalPersonBotReply | null> {
+  if (!isExternalMessengerFeatureEnabled()) return null;
+  const { ingestNativeCreateTelegramAttachments } = await import("../native-create/photo-ingest");
+  const { nativeReplyToTelegram } = await import("../native-create/adapters");
+  const native = await ingestNativeCreateTelegramAttachments(client, {
+    chatId: input.chatId,
+    telegramUserId: input.telegramUserId,
+    attachments: [
+      {
+        kind: "video",
+        downloadUrl: "",
+        fileName: input.fileName ?? "video.mp4",
         telegramFileId: input.fileId,
         declaredMime: input.mimeType,
       },

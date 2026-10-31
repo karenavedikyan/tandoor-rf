@@ -10,7 +10,7 @@ import {
 import { bumpDraftRevision, loadNativeBotDraft } from "./draft-scope";
 import {
   appendNativeCreateDraftPhoto,
-  draftHasPdfAttachment,
+  draftHasNonImageOnlyAttachments,
   photoCountForDraft,
 } from "./photo-store";
 import {
@@ -21,6 +21,12 @@ import {
 import { renderDraftPrompt } from "./engine";
 import type { MaxImageIngestReject } from "../external-person/max-image-parse";
 import type { MaxAttachmentKind } from "../external-person/max-attachment-parse";
+import {
+  maxProviderKindToTransport,
+  recordNativeAttachmentTransportKind,
+  type NativeAttachmentTransportKind,
+} from "./native-attachment-transport-kind";
+import { safeNativeAttachmentFileName } from "./native-attachment-magic";
 
 export type NormalizedMessengerAttachment = {
   kind: MaxAttachmentKind;
@@ -39,19 +45,23 @@ export type NormalizedMessengerImage = NormalizedMessengerAttachment;
 function rejectMessage(reason: MaxImageIngestReject, kind: MaxAttachmentKind): string {
   switch (reason) {
     case "token_only":
-      return kind === "file"
-        ? "Не удалось загрузить файл по токену. Отправьте PDF ещё раз из MAX."
-        : "Не удалось загрузить изображение по токену. Отправьте фото ещё раз из галереи MAX.";
+      return kind === "video"
+        ? "Не удалось загрузить видео по токену. Отправьте видео как файл."
+        : kind === "file"
+          ? "Не удалось загрузить файл по токену. Отправьте файл ещё раз."
+          : "Не удалось загрузить изображение по токену. Отправьте фото ещё раз из галереи MAX.";
     case "unsafe_url":
-      return kind === "file" ? "Ссылка на файл недоступна." : "Ссылка на изображение недоступна.";
+      return "Ссылка на файл недоступна.";
     case "malformed":
-      return kind === "file"
-        ? "Не удалось принять файл. Отправьте PDF ещё раз."
-        : "Не удалось принять фото. Отправьте изображение ещё раз.";
+      return "Не удалось принять файл. Отправьте вложение ещё раз.";
   }
 }
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+function transportKindFor(item: NormalizedMessengerAttachment): NativeAttachmentTransportKind {
+  return maxProviderKindToTransport(item.kind);
+}
 
 async function ingestNativeCreateAttachments(
   client: PoolClient,
@@ -80,14 +90,17 @@ async function ingestNativeCreateAttachments(
   const payload = { ...(draft.payload as import("./draft-scope").NativeCreateDraftPayload) };
   assertDraftBoundToCaller(payload, ctx);
 
-  const added: NativeAttachmentAddCounts = { addedImages: 0, addedPdfs: 0 };
+  const added: NativeAttachmentAddCounts = { addedImages: 0, addedPdfs: 0, addedOther: 0 };
   const errors: string[] = [];
   let count = await photoCountForDraft(client, draft.id);
-  let hasPdf = await draftHasPdfAttachment(client, draft.id);
+  let useGenericLabels = await draftHasNonImageOnlyAttachments(client, draft.id);
+  for (const v of Object.values(payload.nativeAttachmentTransportBySort ?? {})) {
+    if (v === "file" || v === "video") useGenericLabels = true;
+  }
 
   for (const item of attachments) {
     if (count >= 5) {
-      errors.push(nativeAttachmentLimitMessage(hasPdf));
+      errors.push(nativeAttachmentLimitMessage(useGenericLabels));
       break;
     }
     if (item.ingestReject) {
@@ -116,22 +129,28 @@ async function ingestNativeCreateAttachments(
       errors.push(append.message);
       continue;
     }
-    if (fetched.mimeType === "application/pdf") {
-      added.addedPdfs += 1;
-      hasPdf = true;
-    } else {
+    const transportKind = transportKindFor(item);
+    recordNativeAttachmentTransportKind(payload, count, transportKind);
+    if (item.kind === "image" && transportKind === "image") {
       added.addedImages += 1;
+    } else if (fetched.mimeType === "application/pdf") {
+      added.addedPdfs += 1;
+      useGenericLabels = true;
+    } else {
+      added.addedOther += 1;
+      useGenericLabels = true;
     }
+    if (transportKind !== "image") useGenericLabels = true;
     count += 1;
   }
 
-  const anyAdded = added.addedImages + added.addedPdfs;
+  const anyAdded = added.addedImages + added.addedPdfs + added.addedOther;
   if (anyAdded === 0 && errors.length === 0) return null;
 
   const nextPayload =
     anyAdded > 0 ? await bumpDraftRevision(client, draft.id, "photo", payload) : payload;
   const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
-  const prefix = formatNativeAttachmentStepFeedback(added, count, errors, hasPdf);
+  const prefix = formatNativeAttachmentStepFeedback(added, count, errors, useGenericLabels);
   rendered.text = `${prefix}\n\n${rendered.text}`;
   return rendered;
 }
@@ -153,15 +172,15 @@ export async function ingestNativeCreateTelegramAttachments(
   return ingestNativeCreateAttachments(client, ctx, input.attachments, async (item) => {
     const fileId = item.telegramFileId?.trim();
     if (!fileId) {
-      return { ok: false, message: "Не удалось принять файл. Отправьте фото или PDF ещё раз." };
+      return { ok: false, message: "Не удалось принять файл. Отправьте вложение ещё раз." };
     }
-    const bytes = await fetchTelegramNativeAttachmentBytes(fileId, item.declaredMime);
+    const bytes = await fetchTelegramNativeAttachmentBytes(fileId);
     if (!bytes.ok) return { ok: false, message: bytes.message };
     return {
       ok: true,
       buffer: bytes.buffer,
       mimeType: bytes.mimeType,
-      fileName: item.fileName || (bytes.mimeType === "application/pdf" ? "document.pdf" : "photo.jpg"),
+      fileName: safeNativeAttachmentFileName(item.fileName || "file"),
       telegramFileId: fileId,
     };
   });
@@ -186,10 +205,7 @@ export async function ingestNativeCreateMaxAttachments(
     if (!item.downloadUrl?.trim()) {
       return {
         ok: false,
-        message:
-          item.kind === "file"
-            ? "Файл принимается только с серверов MAX. Отправьте PDF заново из чата."
-            : "Изображение принимается только с серверов MAX. Отправьте фото заново из чата.",
+        message: "Файл принимается только с серверов MAX. Отправьте вложение заново из чата.",
       };
     }
     const bytes = await fetchMaxNativeAttachmentBytes(item.downloadUrl);
@@ -198,9 +214,7 @@ export async function ingestNativeCreateMaxAttachments(
       ok: true,
       buffer: bytes.buffer,
       mimeType: bytes.mimeType,
-      fileName:
-        item.fileName ||
-        (bytes.mimeType === "application/pdf" ? "document.pdf" : "photo.jpg"),
+      fileName: safeNativeAttachmentFileName(item.fileName || "file"),
       maxFileToken: item.mediaToken,
     };
   });

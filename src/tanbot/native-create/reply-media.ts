@@ -1,4 +1,6 @@
-export type NativeReplyMediaKind = "image" | "file";
+import type { NativeAttachmentTransportKind } from "./native-attachment-transport-kind";
+
+export type NativeReplyMediaKind = NativeAttachmentTransportKind;
 
 export type NativeReplyMediaItem = {
   draftId: string;
@@ -25,15 +27,11 @@ export function nativeMediaQueueFromDraftAttachment(input: {
   draftId: string;
   sortOrder: number;
   fileName: string;
-  mimeType: string;
+  transportKind: NativeAttachmentTransportKind;
   telegramFileId: string | null;
   maxFileToken: string | null;
 }): NativeReplyMediaItem | null {
-  const mime = input.mimeType?.toLowerCase() ?? "";
-  const isPdf = mime === "application/pdf";
-  const isImage = mime.startsWith("image/");
-  if (!isPdf && !isImage) return null;
-  const mediaKind: NativeReplyMediaKind = isPdf ? "file" : "image";
+  const mediaKind = input.transportKind;
   if (input.channel === "telegram") {
     const telegramFileId = input.telegramFileId?.trim();
     if (!telegramFileId) return null;
@@ -68,7 +66,10 @@ export function nativeMediaQueueFromDraftPhoto(input: {
   telegramFileId: string | null;
   maxFileToken: string | null;
 }): NativeReplyMediaItem | null {
-  const item = nativeMediaQueueFromDraftAttachment(input);
+  const item = nativeMediaQueueFromDraftAttachment({
+    ...input,
+    transportKind: "image",
+  });
   if (!item || item.mediaKind !== "image") return null;
   return item;
 }
@@ -86,7 +87,9 @@ export function readNativeMediaQueue(raw: unknown): NativeReplyMediaItem[] {
     const sortOrder = typeof r.sortOrder === "number" ? r.sortOrder : Number(r.sortOrder);
     const channel = r.channel === "max" ? "max" : r.channel === "telegram" ? "telegram" : null;
     if (!draftId || !Number.isInteger(sortOrder) || !channel) continue;
-    const mediaKind: NativeReplyMediaKind = r.mediaKind === "file" ? "file" : "image";
+    const rawKind = r.mediaKind;
+    const mediaKind: NativeReplyMediaKind =
+      rawKind === "file" || rawKind === "video" ? rawKind : "image";
     const entry: NativeReplyMediaItem = { draftId, sortOrder, channel, mediaKind };
     if (typeof r.telegramFileId === "string" && r.telegramFileId.trim()) {
       entry.telegramFileId = r.telegramFileId.trim();

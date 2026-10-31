@@ -26,6 +26,7 @@ import {
   lockNativeCreateMessenger,
 } from "./access-guard";
 import type { NativeReplyMediaItem } from "./reply-media";
+import { readNativeAttachmentTransportKind, recordNativeAttachmentTransportKind } from "./native-attachment-transport-kind";
 import { isNativeMenuDraftHex, NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
 import {
   parseRecipientContactFromTelegram,
@@ -94,21 +95,22 @@ export function navError(message: string, channel: "telegram" | "max"): NativeCr
 function stepPrompt(
   step: string,
   payload: NativeCreateDraftPayload,
-  attachmentStats: { total: number; imageCount: number; pdfCount: number },
+  attachmentStats: { total: number; imageCount: number; pdfCount: number; otherCount: number },
 ): string {
   const photoCount = attachmentStats.total;
+  const genericDraft = attachmentStats.pdfCount > 0 || attachmentStats.otherCount > 0;
   switch (step) {
     case "item":
       return "Что передаёте? Кратко опишите предмет (до 500 символов).";
     case "photo":
       if (photoCount > 0) {
-        const countLine =
-          attachmentStats.pdfCount > 0 ?
-            `Файлы: ${photoCount}/5.`
-          : `Фото: ${photoCount}/5.`;
-        return `${countLine} Пришлите ещё фото или PDF или нажмите «Далее». «Пропустить» доступно только без вложений.`;
+        const countLine = genericDraft ? `Файлы: ${photoCount}/5.` : `Фото: ${photoCount}/5.`;
+        return `${countLine} Пришлите ещё вложения или нажмите «Далее». «Пропустить» доступно только без вложений.`;
       }
-      return "Пришлите до 5 фото или PDF (по 8 МБ каждый). После добавления нажмите «Далее» или «Пропустить», если вложения не нужны.";
+      return (
+        "Вложения: пришлите фото или любые файлы — PDF, Word, Excel, архивы, видео (до 5 по 8 МБ каждый). " +
+        "После добавления нажмите «Далее» или «Пропустить», если вложения не нужны."
+      );
     case "comment":
       return "Комментарий к передаче или нажмите «Пропустить».";
     case "recipient":
@@ -156,9 +158,10 @@ function stepPrompt(
 
 function formatSummary(
   payload: NativeCreateDraftPayload,
-  attachmentStats: { total: number; imageCount: number; pdfCount: number },
+  attachmentStats: { total: number; imageCount: number; pdfCount: number; otherCount: number },
 ): string {
   const photoCount = attachmentStats.total;
+  const genericSummary = attachmentStats.pdfCount > 0 || attachmentStats.otherCount > 0;
   const due =
     payload.dueMode === "tomorrow" ? "завтра" : payload.dueMode === "none" ? "без срока" : "сегодня";
   let recipient = "—";
@@ -188,8 +191,10 @@ function formatSummary(
     `• Комментарий: ${payload.comment?.trim() ? payload.comment : "—"}\n` +
     `• Срок: ${due}\n` +
     `${
-      attachmentStats.pdfCount > 0 ?
-        `• Файлы: ${photoCount} (фото: ${attachmentStats.imageCount}, PDF: ${attachmentStats.pdfCount})\n\n`
+      genericSummary ?
+        `• Файлы: ${photoCount} (фото: ${attachmentStats.imageCount}, PDF: ${attachmentStats.pdfCount}${
+          attachmentStats.otherCount > 0 ? `, прочие: ${attachmentStats.otherCount}` : ""
+        })\n\n`
       : `• Фото: ${photoCount}\n\n`
     }` +
     "Нажмите «Создать передачу» ниже: данные сохранятся в трекере.\n" +
@@ -208,18 +213,21 @@ async function photoCount(client: PoolClient, draftId: string): Promise<number> 
 async function draftAttachmentStats(
   client: PoolClient,
   draftId: string,
-): Promise<{ total: number; imageCount: number; pdfCount: number }> {
+): Promise<{ total: number; imageCount: number; pdfCount: number; otherCount: number }> {
   const c = await client.query<{ mime_type: string }>(
     `SELECT mime_type FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`,
     [draftId],
   );
   let imageCount = 0;
   let pdfCount = 0;
+  let otherCount = 0;
   for (const row of c.rows) {
-    if (row.mime_type === "application/pdf") pdfCount += 1;
-    else if (row.mime_type?.toLowerCase().startsWith("image/")) imageCount += 1;
+    const mime = row.mime_type?.toLowerCase() ?? "";
+    if (mime === "application/pdf") pdfCount += 1;
+    else if (mime.startsWith("image/")) imageCount += 1;
+    else otherCount += 1;
   }
-  return { total: c.rows.length, imageCount, pdfCount };
+  return { total: c.rows.length, imageCount, pdfCount, otherCount };
 }
 
 async function listDraftPhotoMeta(
@@ -267,13 +275,15 @@ export async function renderDraftPrompt(
   } else if (step === "summary") {
     const photos = count > 0 ? await listDraftPhotoMeta(client, draftId) : [];
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "summary", {
-      photoInspectButtons: photos.map((p) => ({
-        label:
-          p.mimeType === "application/pdf" ?
-            `PDF ${p.sortOrder + 1}`
-          : `Фото ${p.sortOrder + 1}`,
-        arg: String(p.sortOrder),
-      })),
+      photoInspectButtons: photos.map((p) => {
+        const transport = readNativeAttachmentTransportKind(payload, p.sortOrder, p.mimeType);
+        const label =
+          transport === "video" ? `Видео ${p.sortOrder + 1}`
+          : transport === "file" || p.mimeType === "application/pdf" || p.mimeType === "application/octet-stream" ?
+            `Файл ${p.sortOrder + 1}`
+          : `Фото ${p.sortOrder + 1}`;
+        return { label, arg: String(p.sortOrder) };
+      }),
     });
   } else if (step === "recipient") {
     const page = payload.recipientPage ?? 0;
@@ -543,7 +553,7 @@ export async function handleNativeCreateCallback(
   }
 
   if (parsed.action === "back") {
-    if (parsed.arg === "summary" && step !== "summary") {
+    if (parsed.arg === "summary") {
       const nextPayload = await bumpDraftRevision(client, id, "summary", payload);
       return renderDraftPrompt(client, ctx.channel, id, "summary", nextPayload);
     }
@@ -713,28 +723,29 @@ export async function handleNativeCreateCallback(
     const file = files.rows[0];
     if (!file) return renderDraftPrompt(client, ctx.channel, id, step, payload);
     const { nativeMediaQueueFromDraftAttachment } = await import("./reply-media");
+    const transportKind = readNativeAttachmentTransportKind(payload, sortOrder, file.mime_type);
     const media = nativeMediaQueueFromDraftAttachment({
       channel: ctx.channel,
       draftId: id,
       sortOrder,
       fileName: file.file_name,
-      mimeType: file.mime_type,
+      transportKind,
       telegramFileId: file.telegram_file_id,
       maxFileToken: file.max_file_token,
     });
     if (!media) {
-      const isPdf = file.mime_type === "application/pdf";
       return navError(
-        isPdf ?
-          "PDF недоступен для предпросмотра в чате. Отправьте файл заново из MAX или Telegram."
-        : "Фото недоступно для предпросмотра. Добавьте снимок заново.",
+        "Вложение недоступно для предпросмотра в чате. Отправьте файл заново из MAX или Telegram.",
         ctx.channel,
       );
     }
     const ui = buildStepUi(ctx.channel, id, payload.revision ?? 1, "photo_inspect");
-    const isPdf = file.mime_type === "application/pdf";
+    const kindLabel =
+      transportKind === "video" ? "Видео"
+      : transportKind === "file" ? "Файл"
+      : "Фото";
     return {
-      text: `${isPdf ? "PDF" : "Фото"} ${sortOrder + 1}: ${file.file_name}`,
+      text: `${kindLabel} ${sortOrder + 1}: ${file.file_name}`,
       replyMarkup: menuReplyKeyboard(),
       telegramInlineKeyboard: ui.telegramInlineKeyboard,
       maxInlineButtons: ui.maxInlineButtons,
@@ -946,18 +957,18 @@ export async function handleNativeCreatePhoto(
   assertDraftBoundToCaller(payload, ctx);
 
   const count = await photoCount(client, draft.id);
-  const hasPdf = await (await import("./photo-store")).draftHasPdfAttachment(client, draft.id);
-  const { appendNativeCreateDraftPhoto } = await import("./photo-store");
+  const { appendNativeCreateDraftPhoto, draftHasNonImageOnlyAttachments } = await import("./photo-store");
+  let useGenericLabels = await draftHasNonImageOnlyAttachments(client, draft.id);
   const { formatNativeAttachmentStepFeedback, nativeAttachmentLimitMessage } = await import(
     "./attachment-feedback-text"
   );
   if (count >= 5) {
     const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", payload);
     const prefix = formatNativeAttachmentStepFeedback(
-      { addedImages: 0, addedPdfs: 0 },
+      { addedImages: 0, addedPdfs: 0, addedOther: 0 },
       count,
-      [nativeAttachmentLimitMessage(hasPdf)],
-      hasPdf,
+      [nativeAttachmentLimitMessage(useGenericLabels)],
+      useGenericLabels,
     );
     return { ...rendered, text: `${prefix}\n\n${rendered.text}` };
   }
@@ -973,25 +984,23 @@ export async function handleNativeCreatePhoto(
   if (!append.ok) {
     const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", payload);
     const prefix = formatNativeAttachmentStepFeedback(
-      { addedImages: 0, addedPdfs: 0 },
+      { addedImages: 0, addedPdfs: 0, addedOther: 0 },
       count,
       [append.message],
-      hasPdf,
+      useGenericLabels,
     );
     return { ...rendered, text: `${prefix}\n\n${rendered.text}` };
   }
+  recordNativeAttachmentTransportKind(payload, count, "image");
   const nextPayload = await bumpDraftRevision(client, draft.id, "photo", payload);
   const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
+  const storageMime = input.buffer.length ? (await import("./native-attachment-magic")).classifyNativeStorageMime(input.buffer) : input.mimeType;
   const added =
-    input.mimeType === "application/pdf" ?
-      { addedImages: 0, addedPdfs: 1 }
-    : { addedImages: 1, addedPdfs: 0 };
-  const prefix = formatNativeAttachmentStepFeedback(
-    added,
-    count + 1,
-    [],
-    hasPdf || input.mimeType === "application/pdf",
-  );
+    storageMime === "application/pdf" ?
+      { addedImages: 0, addedPdfs: 1, addedOther: 0 }
+    : { addedImages: 1, addedPdfs: 0, addedOther: 0 };
+  if (storageMime === "application/pdf") useGenericLabels = true;
+  const prefix = formatNativeAttachmentStepFeedback(added, count + 1, [], useGenericLabels);
   return { ...rendered, text: `${prefix}\n\n${rendered.text}` };
 }
 

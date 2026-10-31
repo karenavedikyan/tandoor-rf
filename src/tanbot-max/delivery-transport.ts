@@ -30,6 +30,7 @@ export type MaxDeliveryTransport = (input: {
   shareUrl?: string;
   maxImageToken?: string;
   maxFileToken?: string;
+  maxVideoToken?: string;
 }) => Promise<MaxDeliveryResult>;
 
 /** Documented success: HTTP 200 with message object (not necessarily success:true). */
@@ -81,6 +82,10 @@ export function buildMaxFileAttachment(token: string): { type: "file"; payload: 
   return { type: "file", payload: { token: token.trim() } };
 }
 
+export function buildMaxVideoAttachment(token: string): { type: "video"; payload: { token: string } } {
+  return { type: "video", payload: { token: token.trim() } };
+}
+
 export function buildMaxInlineKeyboardAttachment(buttons: MaxInlineButton[][]) {
   return {
     type: "inline_keyboard",
@@ -96,10 +101,13 @@ export function buildMaxSendMessagePayload(input: {
   shareUrl?: string;
   maxImageToken?: string;
   maxFileToken?: string;
+  maxVideoToken?: string;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { text: input.text };
   const attachments: unknown[] = [];
-  if (input.maxFileToken?.trim()) {
+  if (input.maxVideoToken?.trim()) {
+    attachments.push(buildMaxVideoAttachment(input.maxVideoToken.trim()));
+  } else if (input.maxFileToken?.trim()) {
     attachments.push(buildMaxFileAttachment(input.maxFileToken.trim()));
   } else if (input.maxImageToken?.trim()) {
     attachments.push(buildMaxImageAttachment(input.maxImageToken.trim()));
@@ -133,11 +141,12 @@ export function createDefaultMaxDeliveryTransport(
     shareUrl,
     maxImageToken,
     maxFileToken,
+    maxVideoToken,
   }) => {
     const url = `${MAX_API_ORIGIN}/messages?user_id=${encodeURIComponent(userId.toString())}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const body = buildMaxSendMessagePayload({ text, inlineButtons, shareUrl, maxImageToken, maxFileToken });
+    const body = buildMaxSendMessagePayload({ text, inlineButtons, shareUrl, maxImageToken, maxFileToken, maxVideoToken });
     try {
       const response = await fetchWithTls(url, {
         method: "POST",
@@ -217,11 +226,12 @@ export function createRecordingMaxDeliveryTransport(
       shareUrl?: string;
       maxImageToken?: string;
       maxFileToken?: string;
+      maxVideoToken?: string;
     }>;
   },
 ): MaxDeliveryTransport {
-  return async ({ userId, text, inlineButtons, shareUrl, maxImageToken, maxFileToken }) => {
-    sink.calls.push({ userId: userId.toString(), text, inlineButtons, shareUrl, maxImageToken, maxFileToken });
+  return async ({ userId, text, inlineButtons, shareUrl, maxImageToken, maxFileToken, maxVideoToken }) => {
+    sink.calls.push({ userId: userId.toString(), text, inlineButtons, shareUrl, maxImageToken, maxFileToken, maxVideoToken });
     return { ok: true, result: { message: { mid: "test-mid" } } };
   };
 }

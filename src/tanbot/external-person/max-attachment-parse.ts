@@ -2,7 +2,7 @@ import { validateMaxMediaDownloadUrl } from "../../tanbot-max/max-media-url";
 import type { MaxImageIngestReject } from "./max-image-parse";
 import { parseMaxImagesFromMessage, type ParsedMaxImageAttachment } from "./max-image-parse";
 
-export type MaxAttachmentKind = "image" | "file";
+export type MaxAttachmentKind = "image" | "file" | "video";
 
 export type ParsedMaxMixedAttachment = {
   kind: MaxAttachmentKind;
@@ -34,6 +34,12 @@ function declaredSizeFromAttachment(att: Record<string, unknown>, payload: Recor
   return Math.trunc(raw);
 }
 
+function defaultNameForKind(kind: MaxAttachmentKind): string {
+  if (kind === "video") return "video.mp4";
+  if (kind === "file") return "file.bin";
+  return "photo.jpg";
+}
+
 function parseOnePayloadAttachment(
   kind: MaxAttachmentKind,
   att: Record<string, unknown>,
@@ -41,8 +47,7 @@ function parseOnePayloadAttachment(
 ): ParsedMaxMixedAttachment {
   const token = typeof payload.token === "string" && payload.token.trim() ? payload.token.trim() : null;
   const urlRaw = typeof payload.url === "string" && payload.url.trim() ? payload.url.trim() : "";
-  const fallbackName = kind === "file" ? "document.pdf" : "photo.jpg";
-  const fileName = fileNameFromAttachment(att, payload, fallbackName);
+  const fileName = fileNameFromAttachment(att, payload, defaultNameForKind(kind));
   const declaredSize = declaredSizeFromAttachment(att, payload);
 
   if (token && !urlRaw) {
@@ -58,7 +63,7 @@ function parseOnePayloadAttachment(
   return { kind, downloadUrl: allowed.url.href, fileName, mediaToken: token, declaredSize };
 }
 
-/** Image and file attachments on a MAX message in webhook order (album-safe). */
+/** Image, file and video attachments on a MAX message in webhook order (album-safe). */
 export function parseMaxAttachmentsFromMessage(message: Record<string, unknown>): ParsedMaxMixedAttachment[] {
   const body = message.body;
   const attachmentsRaw =
@@ -71,14 +76,14 @@ export function parseMaxAttachmentsFromMessage(message: Record<string, unknown>)
     if (!att || typeof att !== "object") continue;
     const row = att as Record<string, unknown>;
     const type = typeof row.type === "string" ? row.type.toLowerCase() : "";
-    if (type !== "image" && type !== "file") continue;
+    if (type !== "image" && type !== "file" && type !== "video") continue;
     const payload = row.payload;
-    const kind: MaxAttachmentKind = type === "file" ? "file" : "image";
+    const kind: MaxAttachmentKind = type === "video" ? "video" : type === "file" ? "file" : "image";
     if (!payload || typeof payload !== "object") {
       out.push({
         kind,
         downloadUrl: "",
-        fileName: kind === "file" ? "document.pdf" : "photo.jpg",
+        fileName: defaultNameForKind(kind),
         mediaToken: null,
         declaredSize: declaredSizeFromAttachment(row, {}),
         ingestReject: "malformed",
@@ -112,7 +117,7 @@ export function messageHasNativeFileOrImageAttachments(message: Record<string, u
     if (!att || typeof att !== "object") return false;
     const typeRaw = (att as Record<string, unknown>).type;
     const type = typeof typeRaw === "string" ? typeRaw.toLowerCase() : "";
-    return type === "image" || type === "file";
+    return type === "image" || type === "file" || type === "video";
   });
 }
 

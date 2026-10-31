@@ -49,12 +49,22 @@ export type ParsedTelegramDocumentUpdate = {
   mimeType: string | null;
 };
 
+export type ParsedTelegramVideoUpdate = {
+  updateId: number;
+  chatId: bigint;
+  telegramUserId: bigint;
+  fileId: string;
+  fileName: string | null;
+  mimeType: string | null;
+};
+
 export type ParsedTelegramWebhookUpdate =
   | { kind: "message"; update: ParsedPrivateMessageUpdate }
   | { kind: "contact"; update: ParsedTelegramContactUpdate }
   | { kind: "callback"; update: ParsedCallbackUpdate }
   | { kind: "photo"; update: ParsedTelegramPhotoUpdate }
-  | { kind: "document"; update: ParsedTelegramDocumentUpdate };
+  | { kind: "document"; update: ParsedTelegramDocumentUpdate }
+  | { kind: "video"; update: ParsedTelegramVideoUpdate };
 
 function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhookUpdate | { ok: false; reason: string } {
   const updateId = row.update_id;
@@ -143,6 +153,27 @@ function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhook
     }
   }
 
+  const video = msg.video;
+  if (video && typeof video === "object" && !Array.isArray(video)) {
+    const vid = video as Record<string, unknown>;
+    const fileId = typeof vid.file_id === "string" ? vid.file_id : "";
+    const fileName = typeof vid.file_name === "string" ? vid.file_name : null;
+    const mimeType = typeof vid.mime_type === "string" ? vid.mime_type : "video/mp4";
+    if (fileId) {
+      return {
+        kind: "video",
+        update: {
+          updateId,
+          chatId: BigInt(chatId),
+          telegramUserId: BigInt(userId),
+          fileId,
+          fileName,
+          mimeType,
+        },
+      };
+    }
+  }
+
   const document = msg.document;
   if (document && typeof document === "object" && !Array.isArray(document)) {
     const doc = document as Record<string, unknown>;
@@ -164,11 +195,8 @@ function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhook
     }
   }
 
-  const textRaw = msg.text;
+  const textRaw = typeof msg.text === "string" ? msg.text : typeof msg.caption === "string" ? msg.caption : undefined;
   if (typeof textRaw !== "string") {
-    if (msg.caption != null) {
-      return { ok: false, reason: "no_text" };
-    }
     return { ok: false, reason: "no_text" };
   }
   const text = textRaw.trim().slice(0, MAX_MESSAGE_TEXT_LEN);
