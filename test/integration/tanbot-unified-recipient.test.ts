@@ -215,4 +215,43 @@ describe("tanbot unified recipient (author integration)", { concurrency: false }
       0,
     );
   });
+
+  it("external foreign telegram contact reaches native recipient wizard as DATA", async () => {
+    const tg = ++seq;
+    const phone = `+7999${String(tg).padStart(7, "0")}`;
+    const partyId = (
+      await getPool()!.query(`INSERT INTO tt_parties(kind,display_name,phone_e164) VALUES('external','Ext',$1) RETURNING id`, [
+        phone,
+      ])
+    ).rows[0].id;
+    const personId = randomUUID();
+    await getPool()!.query(`INSERT INTO tt_external_persons(id,party_id,display_name,phone_e164) VALUES($1,$2,'Ext',$3)`, [
+      personId,
+      partyId,
+      phone,
+    ]);
+    await getPool()!.query(
+      `INSERT INTO tt_external_person_verifications(person_id,channel,messenger_user_id,messenger_chat_id) VALUES($1,'telegram',$2,$2)`,
+      [personId, String(tg)],
+    );
+    const priv = { chat: { id: tg, type: "private" }, from: { id: tg, is_bot: false } };
+    let r = await staffSend(tg, { message: { message_id: 1, ...priv, text: "Создать передачу" } });
+    r = await staffSend(tg, { message: { message_id: 2, ...priv, text: "Contact item" } });
+    r = await staffSend(tg, { callback_query: { id: "c1", data: btn(r, /пропустить/i), from: priv.from, message: { message_id: 2, chat: priv.chat } } });
+    r = await staffSend(tg, { callback_query: { id: "c2", data: btn(r, /пропустить/i), from: priv.from, message: { message_id: 2, chat: priv.chat } } });
+    const before = (await getPool()!.query("SELECT count(*)::int AS n FROM tt_external_person_verifications")).rows[0].n;
+    r = await staffSend(tg, {
+      message: {
+        message_id: 3,
+        ...priv,
+        contact: { user_id: 777001, first_name: "Card Name", phone_number: "+79990003344" },
+      },
+    });
+    assert.doesNotMatch(r.text, /Нужен ваш собственный контакт/i);
+    assert.match(r.text, /имя|Card Name|79990003344/i);
+    assert.equal(
+      (await getPool()!.query("SELECT count(*)::int AS n FROM tt_external_person_verifications")).rows[0].n,
+      before,
+    );
+  });
 });

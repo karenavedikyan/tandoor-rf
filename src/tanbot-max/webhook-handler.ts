@@ -22,6 +22,7 @@ import {
   handleExternalPersonMaxMessage,
   handleExternalPersonMaxPhoto,
 } from "../tanbot/external-person/max-bot-flow";
+import { findPersonByMessenger } from "../tan-tracker/external-person/person-service";
 import { extractPhoneFromVcf, verifyMaxContactVcfHash } from "../tanbot/external-recipient/max-contact-verify";
 import { loadTanbotMaxStage2Config } from "./stage2-config";
 import {
@@ -108,7 +109,10 @@ async function processUpdateInTransaction(
     }
     if (!reply && contact) {
       const linkedStaff = await findAccountByMaxUserId(client, update.maxUserId);
-      if (linkedStaff && recipientChatType === "dialog" && !isForwarded) {
+      const person = linkedStaff ? null : await findPersonByMessenger(client, "max", update.maxUserId);
+      const ownContact = contact.contactUserId === Number(update.maxUserId);
+      const canNativeRecipient = (linkedStaff || person) && recipientChatType === "dialog" && !isForwarded;
+      if (canNativeRecipient) {
         const { tryNativeCreateMaxRecipientContact } = await import("../tanbot/native-create/adapters");
         const native = await tryNativeCreateMaxRecipientContact(client, {
           chatId: update.chatId,
@@ -134,7 +138,7 @@ async function processUpdateInTransaction(
             contact,
             isForwarded,
           })) ?? null);
-      if (!reply && !ext && isExternalMessengerFeatureEnabled()) {
+      if (!reply && !ext && isExternalMessengerFeatureEnabled() && ownContact) {
         const maxCfg = loadTanbotMaxStage2Config();
         const token = maxCfg.ok ? maxCfg.config.botToken : "";
         const phoneDigits = extractPhoneFromVcf(contact.vcfInfo);

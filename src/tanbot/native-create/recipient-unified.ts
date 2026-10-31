@@ -4,6 +4,7 @@ import { listEligibleStaffForExternalParty } from "../../tan-tracker/external-re
 import {
   isPendingUserPartyRef,
   listTanTrackerRecipientCatalog,
+  loadEligibleUserRowForRecipient,
   userIdFromPendingUserPartyRef,
 } from "../../tan-tracker/recipient-catalog";
 import { assertRecipientRefEligible } from "../../tan-tracker/party-eligibility";
@@ -210,12 +211,17 @@ export async function revalidateStaffRecipientPick(
     return { ref, fullName: row.full_name, phone };
   }
   if (isPendingUserPartyRef(ref)) return null;
-  const row = await client.query<{ display_name: string; phone_e164: string | null; kind: string }>(
-    `SELECT display_name, phone_e164, kind FROM tt_parties WHERE id = $1::uuid`,
-    [ref],
-  );
+  const row = await client.query<{
+    display_name: string;
+    phone_e164: string | null;
+    kind: string;
+    user_id: string | null;
+  }>(`SELECT display_name, phone_e164, kind, user_id::text FROM tt_parties WHERE id = $1::uuid`, [ref]);
   const p = row.rows[0];
   if (!p) return null;
+  if (p.kind === "user" && p.user_id) {
+    await loadEligibleUserRowForRecipient(client, p.user_id, staffUserId);
+  }
   return { ref, fullName: p.display_name, phone: p.phone_e164 };
 }
 

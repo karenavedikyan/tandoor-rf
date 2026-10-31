@@ -35,6 +35,7 @@ import {
 import {
   RECIPIENT_PAGE_SIZE,
   externalRecipientNamePrompt,
+  externalSummaryDisplayName,
   externalUnavailableMessage,
   findExistingExternalByPhone,
   handleExternalRecipientPhoneText,
@@ -149,10 +150,12 @@ function formatSummary(payload: NativeCreateDraftPayload, photoCount: number): s
   let recipient = "—";
   let recipientPhone: string | undefined;
   if (payload.actor === "external") {
-    recipient =
-      payload.recipientDisplayName?.trim() ||
-      payload.externalRecipientDisplayName?.trim() ||
-      "—";
+    const trustedName = payload.externalRecipientDisplayName?.trim();
+    recipient = trustedName
+      ? trustedName
+      : payload.externalRecipientPhone?.trim()
+        ? externalSummaryDisplayName(payload.externalRecipientPhone.trim())
+        : "—";
     recipientPhone = payload.externalRecipientPhone?.trim();
   } else {
     recipient = payload.recipientDisplayName ?? payload.recipientExternal?.name ?? "—";
@@ -572,7 +575,7 @@ export async function handleNativeCreateCallback(
         payload.externalRecipientDisplayName?.trim() ||
         "";
       payload.externalRecipientDisplayName = name;
-      payload.recipientDisplayName = name;
+      delete payload.recipientDisplayName;
       delete payload.recipientExtAwaitNameConfirm;
       delete payload.recipientContactSuggestedName;
       payload.recipientNameManual = true;
@@ -826,7 +829,7 @@ export async function handleNativeCreateMessage(
     }
     if (payload.actor === "external") {
       payload.externalRecipientDisplayName = trimmed.slice(0, 120);
-      payload.recipientDisplayName = payload.externalRecipientDisplayName;
+      delete payload.recipientDisplayName;
       payload.recipientNameManual = true;
       delete payload.recipientExtAwaitNameConfirm;
       delete payload.recipientContactSuggestedName;

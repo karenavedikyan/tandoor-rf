@@ -38,39 +38,7 @@ export async function assertRecipientRefEligible(
   const pendingUserId = userIdFromPendingUserPartyRef(ref);
   if (pendingUserId) {
     await loadEligibleUserRowForRecipient(client, pendingUserId, userId);
-    if (access.role === "director" || access.role === "admin") {
-      return;
-    }
-    const teamGuids = await loadTanTrackerTeamEmployeeGuids({ ...access, userId, role: access.role });
-    const teamUserIds = await loadTeamUserIds(teamGuids);
-    const employeeId = access.employeeId;
-    const res = await client.query<{ ok: boolean }>(
-      `
-      SELECT TRUE AS ok FROM users u
-      WHERE u.id = $1::uuid
-        AND u.status = 'active'
-        AND (
-          (cardinality($3::uuid[]) > 0 AND u.id = ANY($3::uuid[]))
-          OR (
-            $4::uuid IS NOT NULL
-            AND EXISTS (
-              SELECT 1
-              FROM user_onec_employee_links actor_link
-              JOIN onec_wholesale_employee_team_memberships tm ON tm.guid_manager = actor_link.employee_id
-              JOIN onec_wholesale_employee_team_memberships peer ON peer.guid_team = tm.guid_team
-              JOIN user_onec_employee_links peer_link
-                ON peer_link.employee_id = peer.guid_manager AND peer_link.revoked_at IS NULL
-              WHERE actor_link.user_id = $2::uuid
-                AND actor_link.revoked_at IS NULL
-                AND peer_link.user_id = u.id
-            )
-          )
-        )
-      LIMIT 1
-    `,
-      [pendingUserId, userId, teamUserIds, employeeId],
-    );
-    if (!res.rowCount) {
+    if (access.role !== "admin") {
       throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
     }
     return;

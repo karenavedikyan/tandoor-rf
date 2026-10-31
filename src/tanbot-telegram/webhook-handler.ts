@@ -21,6 +21,7 @@ import {
   handleExternalRecipientTelegramContact,
 } from "../tanbot/external-recipient/bot-flow";
 import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
+import { findPersonByMessenger } from "../tan-tracker/external-person/person-service";
 import {
   handleExternalPersonTelegramContact,
   handleExternalPersonTelegramMessage,
@@ -60,9 +61,12 @@ async function processParsedUpdate(
     if (claim.kind === "resend") return claim.reply;
     try {
       const account = await findAccountByTelegramUserId(client, update.telegramUserId);
-      if (account) {
-        const { tryNativeCreateTelegramContact } = await import("../tanbot/native-create/adapters");
-        const native = await tryNativeCreateTelegramContact(client, {
+      const person = account ? null : await findPersonByMessenger(client, "telegram", update.telegramUserId);
+      const ownContact =
+        update.contactUserId != null && BigInt(update.contactUserId) === update.telegramUserId;
+      if (account || person) {
+        const adapters = await import("../tanbot/native-create/adapters");
+        const native = await adapters.tryNativeCreateTelegramContact(client, {
           chatId: update.chatId,
           telegramUserId: update.telegramUserId,
           phoneRaw: update.phoneNumber,
@@ -72,17 +76,24 @@ async function processParsedUpdate(
           isForwarded: update.isForwarded,
         });
         if (native) {
-          const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
           const reply: WebhookReply = {
             chatId: update.chatId,
             text: native.text,
             replyMarkup: native.replyMarkup,
-            replyExtra: nativeTelegramReplyExtra(native, {
+            replyExtra: adapters.nativeTelegramReplyExtra(native, {
               messengerChatId: update.chatId.toString(),
               messengerUserId: update.telegramUserId.toString(),
-              actor: "staff",
+              actor: account ? "staff" : "external",
               channel: "telegram",
             }),
+          };
+          await commitTelegramUpdateReply(client, update.updateId, reply);
+          return reply;
+        }
+        if (person && !ownContact) {
+          const reply: WebhookReply = {
+            chatId: update.chatId,
+            text: "Контакт не принят.",
           };
           await commitTelegramUpdateReply(client, update.updateId, reply);
           return reply;
@@ -97,14 +108,18 @@ async function processParsedUpdate(
           isForwarded: update.isForwarded,
         })) ?? null;
       if (!ext && isExternalMessengerFeatureEnabled()) {
-        ext = await handleExternalPersonTelegramContact(client, {
-          chatId: update.chatId,
-          telegramUserId: update.telegramUserId,
-          phoneRaw: update.phoneNumber,
-          firstName: update.contactFirstName,
-          contactUserId: update.contactUserId,
-          isForwarded: update.isForwarded,
-        });
+        const ownContact =
+          update.contactUserId != null && BigInt(update.contactUserId) === update.telegramUserId;
+        if (ownContact) {
+          ext = await handleExternalPersonTelegramContact(client, {
+            chatId: update.chatId,
+            telegramUserId: update.telegramUserId,
+            phoneRaw: update.phoneNumber,
+            firstName: update.contactFirstName,
+            contactUserId: update.contactUserId,
+            isForwarded: update.isForwarded,
+          });
+        }
       }
       const reply: WebhookReply = ext
         ? {
