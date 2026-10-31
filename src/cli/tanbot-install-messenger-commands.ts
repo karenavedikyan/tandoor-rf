@@ -8,26 +8,43 @@ import {
   createTelegramCommandInstallTransport,
 } from "../tanbot/native-create/bot-command-install-provider";
 
-function parseArgs(argv: string[]): { target: CommandInstallTarget | null; apply: boolean } {
+export function parseTanbotInstallMessengerCommandsArgs(
+  argv: string[],
+): { ok: true; target: CommandInstallTarget; apply: boolean } | { ok: false } {
   let target: CommandInstallTarget | null = null;
   let apply = false;
   for (const arg of argv) {
-    if (arg === "--apply") apply = true;
-    else if (arg === "--telegram") target = "telegram";
-    else if (arg === "--max") target = "max";
+    if (arg === "--apply") {
+      if (apply) return { ok: false };
+      apply = true;
+      continue;
+    }
+    if (arg === "--telegram") {
+      if (target !== null) return { ok: false };
+      target = "telegram";
+      continue;
+    }
+    if (arg === "--max") {
+      if (target !== null) return { ok: false };
+      target = "max";
+      continue;
+    }
+    return { ok: false };
   }
-  return { target, apply };
+  if (!target) return { ok: false };
+  return { ok: true, target, apply };
 }
 
 async function main(): Promise<void> {
-  const { target, apply } = parseArgs(process.argv.slice(2));
-  if (!target) {
+  const parsed = parseTanbotInstallMessengerCommandsArgs(process.argv.slice(2));
+  if (!parsed.ok) {
     process.stderr.write(
       "Usage: node dist/cli/tanbot-install-messenger-commands.js (--telegram | --max) [--apply]\n" +
         "Default is dry-run: prints plan only, no network.\n",
     );
     process.exit(2);
   }
+  const { target, apply } = parsed;
   const plan = buildNativeBotCommandInstallPlan(target, { dryRun: !apply });
   const transport = apply
     ? target === "telegram"
@@ -50,7 +67,9 @@ async function main(): Promise<void> {
   process.exit(result.ok ? 0 : 1);
 }
 
-main().catch(() => {
-  process.stderr.write("tanbot-install-messenger-commands failed unexpectedly.\n");
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(() => {
+    process.stderr.write("tanbot-install-messenger-commands failed unexpectedly.\n");
+    process.exit(1);
+  });
+}
