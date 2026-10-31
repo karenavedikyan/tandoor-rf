@@ -33,6 +33,7 @@ export type WebhookReply = {
   text: string;
   replyMarkup?: Record<string, unknown>;
   answerCallbackQueryId?: string;
+  replyExtra?: Record<string, unknown>;
 } | null;
 
 async function disconnectTelegramAccountOnClient(client: PoolClient, userId: string): Promise<void> {
@@ -143,11 +144,21 @@ async function processParsedUpdate(
           privateDialogOk: true,
         });
         if (native) {
+          const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
+          const account = await findAccountByTelegramUserId(client, update.telegramUserId);
           reply = {
             chatId: update.chatId,
             text: native.text,
             replyMarkup: native.replyMarkup,
             answerCallbackQueryId: update.callbackQueryId,
+            replyExtra: nativeTelegramReplyExtra(
+              native,
+              {
+                messengerChatId: update.chatId.toString(),
+                actor: account ? "staff" : "external",
+              },
+              update.callbackQueryId,
+            ),
           };
         }
       }
@@ -306,6 +317,7 @@ async function processParsedUpdate(
           privateDialogOk: true,
         });
         if (native) {
+          const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
           reply = {
             chatId: update.chatId,
             text: native.text,
@@ -316,6 +328,10 @@ async function processParsedUpdate(
                   resize_keyboard: true,
                 }
               : native.replyMarkup,
+            replyExtra: nativeTelegramReplyExtra(native, {
+              messengerChatId: update.chatId.toString(),
+              actor: "staff",
+            }),
           };
         }
       }

@@ -36,6 +36,7 @@ export type WebhookReply = {
   chatId: bigint;
   text: string;
   inlineButtons?: MaxInlineButton[][];
+  replyExtra?: Record<string, unknown>;
 } | null;
 
 async function disconnectMaxAccountOnClient(client: PoolClient, userId: string): Promise<void> {
@@ -237,11 +238,17 @@ async function processUpdateInTransaction(
         recipientChatType,
       });
       if (native) {
+        const { nativeMaxReplyExtra } = await import("../tanbot/native-create/adapters");
+        const linkedStaff = await findAccountByMaxUserId(client, update.maxUserId);
         reply = {
           userId: update.maxUserId,
           chatId: update.chatId,
           text: native.text,
           inlineButtons: native.inlineButtons,
+          replyExtra: nativeMaxReplyExtra(native, {
+            messengerChatId: update.chatId.toString(),
+            actor: linkedStaff ? "staff" : "external",
+          }),
         };
       }
     } else if (
@@ -283,6 +290,8 @@ async function processUpdateInTransaction(
               downloadUrl: update.imageDownloadUrl,
               fileName: typeof update.imageFileName === "string" ? update.imageFileName : null,
               recipientChatType,
+              mediaToken:
+                typeof update.imageMediaToken === "string" ? update.imageMediaToken : null,
             })
           : null;
         if (ext) {
@@ -306,11 +315,16 @@ async function processUpdateInTransaction(
             recipientChatType,
           });
           if (native) {
+            const { nativeMaxReplyExtra } = await import("../tanbot/native-create/adapters");
             reply = {
               userId: update.maxUserId,
               chatId: update.chatId,
               text: native.text,
               inlineButtons: native.inlineButtons,
+              replyExtra: nativeMaxReplyExtra(native, {
+                messengerChatId: update.chatId.toString(),
+                actor: "staff",
+              }),
             };
           }
         }

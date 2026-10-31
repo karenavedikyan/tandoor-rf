@@ -9,6 +9,8 @@ import {
   handleNativeCreatePhoto,
   isNativeCreateCallback,
 } from "./engine";
+import type { NativeCreateActorKind } from "./draft-scope";
+import { buildNativeWebhookReplyExtra } from "./webhook-reply-bridge";
 
 export { isNativeCreateCallback };
 
@@ -54,7 +56,7 @@ export function nativeReplyToTelegram(reply: NativeCreateReply): {
   text: string;
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
-  mediaFollowUp?: NativeCreateReply["mediaFollowUp"];
+  nativeMediaQueue?: NativeCreateReply["nativeMediaQueue"];
 } {
   const markup =
     reply.telegramInlineKeyboard != null
@@ -64,7 +66,7 @@ export function nativeReplyToTelegram(reply: NativeCreateReply): {
     text: reply.text,
     requestContact: reply.requestContact,
     replyMarkup: markup,
-    mediaFollowUp: reply.mediaFollowUp,
+    nativeMediaQueue: reply.nativeMediaQueue,
   };
 }
 
@@ -73,15 +75,39 @@ export function nativeReplyToMax(reply: NativeCreateReply): {
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
   inlineButtons?: NativeCreateReply["maxInlineButtons"];
-  mediaFollowUp?: NativeCreateReply["mediaFollowUp"];
+  nativeMediaQueue?: NativeCreateReply["nativeMediaQueue"];
 } {
   return {
     text: reply.text,
     requestContact: reply.requestContact,
     replyMarkup: reply.replyMarkup,
     inlineButtons: reply.maxInlineButtons,
-    mediaFollowUp: reply.mediaFollowUp,
+    nativeMediaQueue: reply.nativeMediaQueue,
   };
+}
+
+export function nativeTelegramReplyExtra(
+  native: ReturnType<typeof nativeReplyToTelegram>,
+  scope: { messengerChatId: string; actor: NativeCreateActorKind },
+  answerCallbackQueryId?: string,
+): Record<string, unknown> {
+  return buildNativeWebhookReplyExtra({
+    replyMarkup: native.replyMarkup,
+    answerCallbackQueryId,
+    nativeMediaQueue: native.nativeMediaQueue,
+    scope,
+  });
+}
+
+export function nativeMaxReplyExtra(
+  native: ReturnType<typeof nativeReplyToMax>,
+  scope: { messengerChatId: string; actor: NativeCreateActorKind },
+): Record<string, unknown> {
+  return buildNativeWebhookReplyExtra({
+    inlineButtons: native.inlineButtons,
+    nativeMediaQueue: native.nativeMediaQueue,
+    scope,
+  });
 }
 
 export async function tryNativeCreateTelegramMessage(
@@ -112,6 +138,7 @@ export async function tryNativeCreateTelegramPhoto(
     buffer: Buffer;
     mimeType: string;
     fileName: string;
+    telegramFileId?: string | null;
     privateDialogOk?: boolean;
   },
 ): Promise<ReturnType<typeof nativeReplyToTelegram> | null> {
@@ -149,6 +176,7 @@ export async function tryNativeCreateMaxPhoto(
     buffer: Buffer;
     mimeType: string;
     fileName: string;
+    maxFileToken?: string | null;
     recipientChatType?: string | null;
   },
 ): Promise<ReturnType<typeof nativeReplyToMax> | null> {

@@ -41,12 +41,20 @@ export async function processUndeliveredMaxWebhookReplies(
       result.attempted += 1;
       const extra = parseMaxReplyExtra(row.reply_extra);
       const chatId = row.reply_chat_id ? BigInt(row.reply_chat_id) : BigInt(row.reply_user_id);
-      const send = await deliverMaxWebhookReply(client, config, transport, row.dedup_key, {
-        userId: BigInt(row.reply_user_id),
-        chatId,
-        text: row.reply_text,
-        inlineButtons: extra.inlineButtons,
-      });
+      const send = await deliverMaxWebhookReply(
+        client,
+        config,
+        transport,
+        row.dedup_key,
+        {
+          userId: BigInt(row.reply_user_id),
+          chatId,
+          text: row.reply_text,
+          inlineButtons: extra.inlineButtons,
+          replyExtra: extra,
+        },
+        { storedExtra: row.reply_extra },
+      );
       if (send?.ok) {
         result.delivered += 1;
       }

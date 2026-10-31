@@ -39,12 +39,20 @@ export async function processUndeliveredTelegramWebhookReplies(
     for (const row of batch.rows) {
       result.attempted += 1;
       const extra = parseTelegramReplyExtra(row.reply_extra);
-      const send = await deliverTelegramWebhookReply(client, config, transport, Number(row.update_id), {
-        chatId: BigInt(row.reply_chat_id),
-        text: row.reply_text,
-        replyMarkup: extra.replyMarkup,
-        answerCallbackQueryId: extra.answerCallbackQueryId,
-      });
+      const send = await deliverTelegramWebhookReply(
+        client,
+        config,
+        transport,
+        Number(row.update_id),
+        {
+          chatId: BigInt(row.reply_chat_id),
+          text: row.reply_text,
+          replyMarkup: extra.replyMarkup,
+          answerCallbackQueryId: extra.answerCallbackQueryId,
+          replyExtra: extra,
+        },
+        { storedExtra: row.reply_extra },
+      );
       if (send?.ok) {
         result.delivered += 1;
       }

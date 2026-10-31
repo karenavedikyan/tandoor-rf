@@ -3,7 +3,7 @@ import { listEligibleStaffForExternalParty } from "../../tan-tracker/external-re
 import { listTanTrackerRecipientCatalog } from "../../tan-tracker/recipient-catalog";
 import { loadAccessContext } from "../../access/context";
 import { assertPartyEligibleAsRecipient } from "../../tan-tracker/party-eligibility";
-import { readAttachmentBytes, writeAttachmentBytes } from "../../tan-tracker/attachments";
+import { writeAttachmentBytes } from "../../tan-tracker/attachments";
 import { createPersonBrowserSession } from "../../tan-tracker/external-person/person-service";
 import { getAppOrigin } from "../../config";
 import crypto from "crypto";
@@ -24,16 +24,12 @@ import { confirmNativeExternalDraft, confirmNativeStaffDraft } from "./confirm-n
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
 import {
   assertDraftBoundToCaller,
+  assertDraftPersonRow,
   assertNativeCreateContext,
   lockNativeCreateMessenger,
 } from "./access-guard";
+import { type NativeReplyMediaItem, nativeMediaQueueFromDraftPhoto } from "./reply-media";
 import { isNativeMenuDraftHex, NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
-
-export type NativeCreateMediaFollowUp = {
-  buffer: Buffer;
-  mimeType: string;
-  caption?: string;
-};
 
 export type NativeCreateReply = {
   text: string;
@@ -41,8 +37,8 @@ export type NativeCreateReply = {
   replyMarkup?: Record<string, unknown>;
   telegramInlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>;
   maxInlineButtons?: import("../../tanbot-max/delivery-transport").MaxInlineButton[][];
-  /** Additive: optional follow-up media send (preserves other reply fields for merge). */
-  mediaFollowUp?: NativeCreateMediaFollowUp[];
+  /** Provider-backed photos to deliver after the text reply (additive for reply_extra merge). */
+  nativeMediaQueue?: NativeReplyMediaItem[];
 };
 
 export type NativeCreateContext = {
@@ -457,8 +453,9 @@ export async function handleNativeCreateCallback(
   if (parsed.action === "photo_skip") {
     const count = await photoCount(client, id);
     if (count > 0) return renderDraftPrompt(client, ctx.channel, id, step, payload);
-    const nextPayload = await bumpDraftRevision(client, id, "comment", payload);
-    return renderDraftPrompt(client, ctx.channel, id, "comment", nextPayload);
+    const nextStep = payload.editReturnStep === "summary" ? "summary" : "comment";
+    const nextPayload = await bumpDraftRevision(client, id, nextStep, payload);
+    return renderDraftPrompt(client, ctx.channel, id, nextStep, nextPayload);
   }
 
   if (parsed.action === "photo_next") {
@@ -518,21 +515,38 @@ export async function handleNativeCreateCallback(
 
   if (parsed.action === "photo_view" && parsed.arg != null) {
     const sortOrder = Number(parsed.arg);
-    const files = await client.query<{ storage_key: string; mime_type: string; file_name: string }>(
-      `SELECT storage_key, mime_type, file_name FROM tt_external_request_draft_files
+    const files = await client.query<{
+      storage_key: string;
+      mime_type: string;
+      file_name: string;
+      telegram_file_id: string | null;
+      max_file_token: string | null;
+    }>(
+      `SELECT storage_key, mime_type, file_name, telegram_file_id, max_file_token FROM tt_external_request_draft_files
        WHERE draft_id = $1::uuid AND sort_order = $2`,
       [id, sortOrder],
     );
     const file = files.rows[0];
     if (!file) return renderDraftPrompt(client, ctx.channel, id, step, payload);
-    const buffer = await readAttachmentBytes(file.storage_key, client);
+    const media = nativeMediaQueueFromDraftPhoto({
+      channel: ctx.channel,
+      draftId: id,
+      sortOrder,
+      fileName: file.file_name,
+      mimeType: file.mime_type,
+      telegramFileId: file.telegram_file_id,
+      maxFileToken: file.max_file_token,
+    });
+    if (!media) {
+      return navError("Фото недоступно для предпросмотра. Добавьте снимок заново.", ctx.channel);
+    }
     const ui = buildStepUi(ctx.channel, id, payload.revision ?? 1, "photo_inspect");
     return {
       text: `Фото ${sortOrder + 1}: ${file.file_name}`,
       replyMarkup: menuReplyKeyboard(),
       telegramInlineKeyboard: ui.telegramInlineKeyboard,
       maxInlineButtons: ui.maxInlineButtons,
-      mediaFollowUp: [{ buffer, mimeType: file.mime_type, caption: file.file_name }],
+      nativeMediaQueue: [media],
     };
   }
 
@@ -613,6 +627,7 @@ export async function handleNativeCreateMessage(
   const actor = ctx.isLinkedStaff ? "staff" : "external";
   const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor, { forUpdate: true });
   if (!draft) return null;
+  assertDraftPersonRow(draft, ctx);
 
   const payload = { ...(draft.payload as NativeCreateDraftPayload) };
   assertDraftBoundToCaller(payload, ctx);
@@ -674,7 +689,13 @@ export async function handleNativeCreateMessage(
 export async function handleNativeCreatePhoto(
   client: PoolClient,
   ctx: NativeCreateContext,
-  input: { buffer: Buffer; mimeType: string; fileName: string },
+  input: {
+    buffer: Buffer;
+    mimeType: string;
+    fileName: string;
+    telegramFileId?: string | null;
+    maxFileToken?: string | null;
+  },
 ): Promise<NativeCreateReply | null> {
   await lockNativeCreateMessenger(client, ctx);
   try {
@@ -686,6 +707,7 @@ export async function handleNativeCreatePhoto(
   const actor = ctx.isLinkedStaff ? "staff" : "external";
   const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor, { forUpdate: true });
   if (!draft || draft.step !== "photo") return null;
+  assertDraftPersonRow(draft, ctx);
   const payload = draft.payload as NativeCreateDraftPayload;
   assertDraftBoundToCaller(payload, ctx);
 
@@ -704,9 +726,19 @@ export async function handleNativeCreatePhoto(
   const key = `native-draft/${draft.id}/${crypto.randomUUID()}-${input.fileName}`;
   await writeAttachmentBytes(client, key, input.buffer);
   await client.query(
-    `INSERT INTO tt_external_request_draft_files (draft_id, storage_key, file_name, mime_type, byte_size, sort_order)
-     VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
-    [draft.id, key, input.fileName, input.mimeType, input.buffer.length, count],
+    `INSERT INTO tt_external_request_draft_files (
+       draft_id, storage_key, file_name, mime_type, byte_size, sort_order, telegram_file_id, max_file_token)
+     VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      draft.id,
+      key,
+      input.fileName,
+      input.mimeType,
+      input.buffer.length,
+      count,
+      input.telegramFileId?.trim() || null,
+      input.maxFileToken?.trim() || null,
+    ],
   );
   const nextPayload = await bumpDraftRevision(client, draft.id, "photo", payload);
   return renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
