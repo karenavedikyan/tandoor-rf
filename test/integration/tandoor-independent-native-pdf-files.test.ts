@@ -304,13 +304,30 @@ for (const channel of ["max", "telegram"] as const) {
     r = await send(a, { callback: button(r, /к сводке/iu) });
     await send(a, { callback: button(r, /^Создать передачу$/u) });
     const id = (await draft(a)).confirmed_transfer_id; assert.ok(id);
-    const attached = (await getPool()!.query("SELECT storage_key,original_name,mime_type FROM tt_transfer_attachments WHERE transfer_id=$1", [id])).rows;
+    const attached = (await getPool()!.query("SELECT id,storage_key,original_name,mime_type FROM tt_transfer_attachments WHERE transfer_id=$1", [id])).rows;
     assert.equal(attached.length, 5);
+    const login = await request(app).post("/api/auth/login").set("Origin", "http://127.0.0.1:3000")
+      .send({ email: `pdf-${a.id}@test.local`, password: "StrongPass123!" });
+    assert.equal(login.status, 200);
+    const cookie = login.headers["set-cookie"]?.[0]?.split(";")[0]; assert.ok(cookie);
     for (const sample of samples) {
       const row = attached.find(x => x.original_name === sample.name); assert.ok(row);
       assert.deepEqual(await readAttachmentBytes(row.storage_key), bytes(sample.key));
       const { resolveAttachmentContentDisposition } = await import("../../src/tan-tracker/attachments");
       assert.equal(resolveAttachmentContentDisposition(row.mime_type, { preview: "1" }), "attachment");
+      const path = `/api/tt/attachments/${row.id}/file?preview=1`;
+      const anonymous = await request(app).get(path);
+      assert.ok([401, 403, 404].includes(anonymous.status), "canonical attachments are not public");
+      const download = await request(app).get(path).set("Cookie", cookie).buffer(true)
+        .parse((res, done) => {
+          const chunks: Buffer[] = [];
+          res.on("data", chunk => chunks.push(Buffer.from(chunk)));
+          res.on("end", () => done(null, Buffer.concat(chunks)));
+          res.on("error", done);
+        });
+      assert.equal(download.status, 200);
+      assert.match(download.headers["content-disposition"], /^attachment;/iu);
+      assert.deepEqual(download.body, bytes(sample.key), "protected canonical download preserves exact original bytes");
     }
   });
   it(`${channel}: CSV, HEIC, unknown format and video sent as a file are not silently filtered`, async () => {
