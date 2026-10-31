@@ -226,6 +226,47 @@ describe("independent native creation entry in both bots and both actor types", 
         await send(sender, "", action(reply, /отмена|отменить/iu));
       });
     }
+    it(`${channel}: staff creates for an external recipient with a usable canonical invitation`, async () => {
+      const sender = await actor(channel, true);
+      const item = `Synthetic staff-to-external ${channel} ${++sequence}`;
+      const phone = `+7903${String(++sequence).padStart(7, "0")}`;
+      let reply = await send(sender, "Создать передачу");
+      reply = await send(sender, item);
+      reply = await send(sender, "", action(reply, /^Пропустить$/u));
+      reply = await send(sender, "", action(reply, /^Пропустить$/u));
+      reply = await send(sender, "", action(reply, /^Внешний получатель$/u));
+      assert.match(reply.text, /имя/i);
+      reply = await send(sender, "Synthetic External Recipient");
+      assert.match(reply.text, /телефон/i);
+      reply = await send(sender, phone);
+      reply = await send(sender, "", action(reply, /^Без срока$/u));
+      assert.match(reply.text, /Synthetic External Recipient/);
+      reply = await send(sender, "", action(reply, /^Создать$/u));
+      const transfer = (await getPool().query(
+        `SELECT t.id,t.public_code,t.holder_party_id::text,t.pending_party_id::text,t.handoff_version,
+                p.kind,p.display_name,p.phone_e164
+         FROM tt_transfers t JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.item_title=$1`, [item])).rows[0];
+      assert.ok(transfer, "one canonical pending transfer was created");
+      assert.equal(transfer.kind, "external");
+      assert.equal(transfer.display_name, "Synthetic External Recipient");
+      assert.equal(transfer.phone_e164, phone);
+      assert.equal(transfer.holder_party_id, sender.partyId);
+      assert.equal(transfer.handoff_version, 1);
+      const links = (reply.text.match(/https?:\/\/[^\s)]+/g) ?? []).map(text => new URL(text));
+      const portal = links.find(url => url.pathname === "/tan-tracker/recipient" && url.searchParams.has("mst"));
+      assert.ok(portal, "a shareable recipient portal invitation is returned inside the bot");
+      const response = await request(app).get("/api/tan-tracker/public/recipient/messenger")
+        .query({ mst: portal.searchParams.get("mst") });
+      assert.equal(response.status, 200, "the synthetic invitation token resolves through the canonical HTTP endpoint");
+      assert.equal(response.body.transferPublicCode, transfer.public_code);
+      assert.equal(response.body.itemTitle, item);
+      assert.equal(response.body.featureEnabled, true);
+      const messenger = links.find(url => url.hostname === (channel === "telegram" ? "t.me" : "max.ru"));
+      assert.ok(messenger, "invitation offers the current messenger in addition to the recipient portal");
+      assert.equal(messenger.searchParams.get("start"), portal.searchParams.get("mst"));
+      assert.equal((await getPool().query("SELECT count(*) FROM tt_transfers WHERE item_title=$1", [item])).rows[0].count, "1");
+    });
+
     it(`${channel}: group, missing context and mismatched private binding cannot mutate a native draft`, async () => {
       const sender = await actor(channel, true);
       await send(sender, "Создать передачу");
