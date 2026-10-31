@@ -6,7 +6,7 @@ import { buildNativeBotCommandInstallPlan } from "../../src/tanbot/native-create
 type Provider = "max" | "telegram";
 type Call = { path: string; init: RequestInit & { dispatcher?: { close(): Promise<void> } } };
 type Options = { readFailure?: boolean; malformed?: boolean; menuFailure?: boolean; webApp?: boolean;
-  badWrite?: string; throwWrite?: boolean; size?: number };
+  badWrite?: string; missingAck?: string; throwWrite?: boolean; size?: number };
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const dispatchers = new Set<{ close(): Promise<void> }>();
@@ -55,7 +55,7 @@ function mock(provider: Provider, options: Options = {}) {
           web_app: { url: "https://example.org/existing-app" } } } : { ok: true, result: { type: "commands" } };
         if (options.menuFailure) { status = 503; data = { ok: false }; }
       } else if (path === "setMyCommands" || path === "setChatMenuButton") {
-        data = { ok: options.badWrite !== path, result: options.badWrite !== path };
+        data = options.missingAck === path ? { ok: true } : { ok: options.badWrite !== path, result: options.badWrite !== path };
       } else assert.fail("unexpected Telegram command-install endpoint");
     } else {
       if (path === "/me") {
@@ -125,6 +125,13 @@ it("Telegram failed menu acknowledgement is reported as partial failure, not suc
   const r = await factory("telegram", impl)(buildNativeBotCommandInstallPlan("telegram", { dryRun: false }));
   assert.equal(r.ok, false);
 });
+for (const path of ["setMyCommands", "setChatMenuButton"]) {
+  it(`Telegram ${path} missing positive result is malformed and must not be treated as registration success`, async () => {
+    const { impl } = mock("telegram", { missingAck: path });
+    const r = await factory("telegram", impl)(buildNativeBotCommandInstallPlan("telegram", { dryRun: false }));
+    assert.equal(r.ok, false);
+  });
+}
 it("Telegram all reads use the injected recording transport instead of bypassing it via global fetch", async () => {
   const { impl } = mock("telegram");
   let bypass = 0;

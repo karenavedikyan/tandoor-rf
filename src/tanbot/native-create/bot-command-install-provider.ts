@@ -122,9 +122,7 @@ function parseTelegramMenuButtonResponse(
 function parseTelegramMutationAck(json: unknown): boolean {
   if (!json || typeof json !== "object") return false;
   const envelope = json as { ok?: unknown; result?: unknown };
-  if (envelope.ok !== true) return false;
-  if (envelope.result === false) return false;
-  return true;
+  return envelope.ok === true && envelope.result === true;
 }
 
 function parseMaxCommandsFromMe(
