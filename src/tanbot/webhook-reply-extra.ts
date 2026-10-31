@@ -79,8 +79,8 @@ function parseNativeMediaScope(row: Record<string, unknown>): NativeMediaScope |
   const messengerChatId = typeof s.messengerChatId === "string" ? s.messengerChatId : "";
   const messengerUserId = typeof s.messengerUserId === "string" ? s.messengerUserId : messengerChatId;
   const actor = s.actor === "staff" || s.actor === "external" ? s.actor : null;
-  const channel = s.channel === "max" || s.channel === "telegram" ? s.channel : null;
   if (!messengerChatId || !actor) return undefined;
+  const channel = s.channel === "max" || s.channel === "telegram" ? s.channel : undefined;
   return {
     messengerChatId,
     messengerUserId,

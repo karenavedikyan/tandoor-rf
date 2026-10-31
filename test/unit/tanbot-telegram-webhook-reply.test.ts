@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { maybeSendWebhookReply } from "../../src/tanbot-telegram/webhook-handler";
 import type { TanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2-config";
+import { mockTelegramReplyDeliveryPool } from "../helpers/mock-telegram-reply-pool";
 
 const config = {
   deliveryEnabled: true,
@@ -13,9 +14,7 @@ const config = {
 describe("tanbot webhook reply delivery", () => {
   it("retries send on duplicate update when first transport attempt failed", async () => {
     let calls = 0;
-    const pool = {
-      query: async () => ({ rowCount: 1 }),
-    };
+    const pool = mockTelegramReplyDeliveryPool({ updateId: 42, replyText: "hello" });
     const transport = async () => {
       calls += 1;
       if (calls === 1) return { ok: false, code: "NETWORK_ERROR", retryable: true };

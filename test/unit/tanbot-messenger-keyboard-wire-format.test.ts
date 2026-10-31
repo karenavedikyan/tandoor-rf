@@ -10,6 +10,7 @@ import {
   telegramReplyExtraFromReply,
 } from "../../src/tanbot/webhook-reply-extra";
 import { buildHandoffGenCallback } from "../../src/tanbot/handoff-code-bot-service";
+import { mockTelegramReplyDeliveryPool } from "../helpers/mock-telegram-reply-pool";
 
 describe("messenger keyboard wire format (delivery + retry)", () => {
   it("telegram request_contact keyboard survives persist, resend, and sendMessage JSON", async () => {
@@ -39,7 +40,11 @@ describe("messenger keyboard wire format (delivery + retry)", () => {
     };
 
     await deliverTelegramWebhookReply(
-      { query: async () => ({}) } as never,
+      mockTelegramReplyDeliveryPool({
+        updateId: 99,
+        replyText: "Подтвердите номер",
+        replyExtra: extra as Record<string, unknown>,
+      }),
       {
         botToken: "t",
         requestTimeoutMs: 1000,

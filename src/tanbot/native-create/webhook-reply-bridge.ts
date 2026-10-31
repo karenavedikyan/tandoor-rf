@@ -12,7 +12,7 @@ export type NativeMediaScope = {
   messengerChatId: string;
   messengerUserId: string;
   actor: NativeCreateActorKind;
-  channel: "telegram" | "max";
+  channel?: "telegram" | "max";
 };
 
 export function buildNativeWebhookReplyExtra(input: {
