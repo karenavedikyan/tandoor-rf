@@ -41,6 +41,12 @@ export type NativeCreateDraftPayload = ExternalDraftPayload & {
   recipientExtAwaitNameConfirm?: boolean;
   /** User typed or explicitly replaced name (never overwrite from phone-step cards). */
   recipientNameManual?: boolean;
+  /** Staff: name typed on unified recipient step before phone/contact (not an external draft step yet). */
+  recipientPendingExternalName?: string;
+  /** External actor: phone entered for intake; staff match deferred until Create. */
+  externalRecipientPhone?: string;
+  /** External actor: display name for summary (never staff profile). */
+  externalRecipientDisplayName?: string;
 };
 
 export function clearExternalRecipientTarget(payload: NativeCreateDraftPayload): void {
@@ -49,6 +55,9 @@ export function clearExternalRecipientTarget(payload: NativeCreateDraftPayload):
   delete payload.recipientContactSuggestedName;
   delete payload.recipientExtAwaitNameConfirm;
   delete payload.recipientNameManual;
+  delete payload.recipientPendingExternalName;
+  delete payload.externalRecipientPhone;
+  delete payload.externalRecipientDisplayName;
 }
 
 export function clearStaffRecipientTarget(payload: NativeCreateDraftPayload): void {

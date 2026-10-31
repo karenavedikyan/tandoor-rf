@@ -7,6 +7,7 @@ import { closePool, getPool, resetPoolForTests } from "../../src/db/pool";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
 import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2-config";
 import { processUndeliveredTelegramWebhookReplies } from "../../src/tanbot-telegram/reply-retry";
+import { buildNativeCreateCallback } from "../../src/tanbot/native-create/callback-codec";
 
 const db = getIntegrationDatabaseUrl();
 let app: ReturnType<typeof import("../../src/server").createApp>;
@@ -143,5 +144,75 @@ describe("tanbot unified recipient (author integration)", { concurrency: false }
     assert.doesNotMatch(r.text, /Unified Target Manager/i);
     assert.match(r.text, /телефон|контакт/i);
     assert.equal(r.buttons.filter((b) => /Unified Target/i.test(b.text)).length, 0);
+  });
+
+  it("staff name with zero hits shows not-found guidance without external name step", async () => {
+    const tg = await staffActor();
+    const priv = { chat: { id: tg, type: "private" }, from: { id: tg, is_bot: false } };
+    let r = await staffSend(tg, { message: { message_id: 1, ...priv, text: "Создать передачу" } });
+    r = await staffSend(tg, { message: { message_id: 2, ...priv, text: "Item" } });
+    r = await staffSend(tg, { callback_query: { id: "c1", data: btn(r, /пропустить/i), from: priv.from, message: { message_id: 2, chat: priv.chat } } });
+    r = await staffSend(tg, { callback_query: { id: "c2", data: btn(r, /пропустить/i), from: priv.from, message: { message_id: 2, chat: priv.chat } } });
+    r = await staffSend(tg, { message: { message_id: 3, ...priv, text: "ZZZ No Such Person" } });
+    assert.match(r.text, /Ничего не найдено/i);
+    assert.doesNotMatch(r.text, /Имя внешнего получателя/i);
+    const row = (
+      await getPool()!.query(`SELECT step FROM tt_external_request_drafts
+        WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [`native:staff:telegram:${tg}`])
+    ).rows[0];
+    assert.equal(row?.step, "recipient");
+  });
+
+  it("external legacy cached eligibleRecipients cannot be picked and Create rejects unknown intake phone", async () => {
+    const tg = ++seq;
+    const phone = `+7999${String(tg).padStart(7, "0")}`;
+    const partyId = (
+      await getPool()!.query(`INSERT INTO tt_parties(kind,display_name,phone_e164) VALUES('external','Ext',$1) RETURNING id`, [
+        phone,
+      ])
+    ).rows[0].id;
+    const personId = randomUUID();
+    await getPool()!.query(`INSERT INTO tt_external_persons(id,party_id,display_name,phone_e164) VALUES($1,$2,'Ext',$3)`, [
+      personId,
+      partyId,
+      phone,
+    ]);
+    await getPool()!.query(
+      `INSERT INTO tt_external_person_verifications(person_id,channel,messenger_user_id,messenger_chat_id) VALUES($1,'telegram',$2,$2)`,
+      [personId, String(tg)],
+    );
+    const priv = { chat: { id: tg, type: "private" }, from: { id: tg, is_bot: false } };
+    let r = await staffSend(tg, { message: { message_id: 1, ...priv, text: "Создать передачу" } });
+    r = await staffSend(tg, { message: { message_id: 2, ...priv, text: "Ext item" } });
+    r = await staffSend(tg, { callback_query: { id: "c1", data: btn(r, /пропустить/i), from: priv.from, message: { message_id: 2, chat: priv.chat } } });
+    r = await staffSend(tg, { callback_query: { id: "c2", data: btn(r, /пропустить/i), from: priv.from, message: { message_id: 2, chat: priv.chat } } });
+    const d = (
+      await getPool()!.query(`SELECT id,payload FROM tt_external_request_drafts
+        WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [`native:ext:telegram:${tg}`])
+    ).rows[0];
+    await getPool()!.query(
+      `UPDATE tt_external_request_drafts SET payload=jsonb_set(payload,'{eligibleRecipients}',$2::jsonb) WHERE id=$1`,
+      [d.id, JSON.stringify([{ userId: (await getPool()!.query("SELECT id FROM users WHERE email='unified-target@test.local'")).rows[0].id, fullName: "Secret Internal" }])],
+    );
+    const revision = Number((d.payload as { revision?: number }).revision ?? 1);
+    const forged = buildNativeCreateCallback("recipient", d.id, revision, "0");
+    assert.ok(forged);
+    r = await staffSend(tg, { callback_query: { id: "cf", data: forged!, from: priv.from, message: { message_id: 2, chat: priv.chat } } });
+    assert.doesNotMatch(JSON.stringify(r), /Secret Internal/u);
+    assert.equal(
+      (await getPool()!.query("SELECT step FROM tt_external_request_drafts WHERE id=$1", [d.id])).rows[0].step,
+      "recipient",
+    );
+    const absent = "+79990001122";
+    r = await staffSend(tg, { message: { message_id: 4, ...priv, text: absent } });
+    assert.match(r.text, /имя/i);
+    r = await staffSend(tg, { message: { message_id: 5, ...priv, text: "Generic External Name" } });
+    r = await staffSend(tg, { callback_query: { id: "c3", data: btn(r, /без срока/i), from: priv.from, message: { message_id: 5, chat: priv.chat } } });
+    r = await staffSend(tg, { callback_query: { id: "c4", data: btn(r, /^Создать передачу$/i), from: priv.from, message: { message_id: 5, chat: priv.chat } } });
+    assert.match(r.text, /недоступен|не удалось/i);
+    assert.equal(
+      (await getPool()!.query("SELECT count(*)::int AS n FROM tt_transfers")).rows[0].n,
+      0,
+    );
   });
 });

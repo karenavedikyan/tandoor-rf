@@ -34,15 +34,19 @@ import {
 } from "./recipient-contact-parse";
 import {
   RECIPIENT_PAGE_SIZE,
-  externalSummaryDisplayName,
+  externalRecipientNamePrompt,
   externalUnavailableMessage,
+  findExistingExternalByPhone,
   handleExternalRecipientPhoneText,
   handleStaffRecipientSearchText,
-  matchExternalActorStaffByPhone,
+  hitsToEligibleRecipients,
+  resolveExternalIntakeStaffUserId,
   recipientStepPrompt,
-  revalidateExternalStaffPick,
   revalidateStaffRecipientPick,
+  searchStaffRecipientHits,
 } from "./recipient-unified";
+import { userIdFromPendingUserPartyRef } from "../../tan-tracker/recipient-catalog";
+import { isUuid } from "../../tan-tracker/phone-normalize";
 
 export type NativeCreateReply = {
   text: string;
@@ -99,6 +103,9 @@ function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount:
     case "recipient":
       return recipientStepPrompt(payload, payload.actor === "staff" ? "staff" : "external");
     case "recipient_ext_name": {
+      if (payload.actor === "external") {
+        return externalRecipientNamePrompt(payload);
+      }
       if (payload.recipientExtAwaitNameConfirm && payload.recipientExternal?.phone) {
         const ext = payload.recipientExternal;
         return (
@@ -139,17 +146,24 @@ function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount:
 function formatSummary(payload: NativeCreateDraftPayload, photoCount: number): string {
   const due =
     payload.dueMode === "tomorrow" ? "завтра" : payload.dueMode === "none" ? "без срока" : "сегодня";
-  const recipient =
-    payload.recipientDisplayName ??
-    payload.recipientExternal?.name ??
-    payload.eligibleRecipients?.find((c) => c.userId === payload.recipientUserId)?.fullName ??
-    payload.eligibleRecipients?.find((c) => c.userId === payload.recipientPartyId)?.fullName ??
-    "—";
-  const recipientPhone = payload.recipientExternal?.phone?.trim();
+  let recipient = "—";
+  let recipientPhone: string | undefined;
+  if (payload.actor === "external") {
+    recipient =
+      payload.recipientDisplayName?.trim() ||
+      payload.externalRecipientDisplayName?.trim() ||
+      "—";
+    recipientPhone = payload.externalRecipientPhone?.trim();
+  } else {
+    recipient = payload.recipientDisplayName ?? payload.recipientExternal?.name ?? "—";
+    recipientPhone = payload.recipientExternal?.phone?.trim();
+  }
   const recipientLine =
-    recipientPhone && payload.recipientPartyId == null && payload.recipientUserId == null
+    recipientPhone && payload.actor === "external"
       ? `${recipient} (${recipientPhone})`
-      : recipient;
+      : recipientPhone && payload.recipientPartyId == null && payload.recipientUserId == null
+        ? `${recipient} (${recipientPhone})`
+        : recipient;
   return (
     "Проверьте данные:\n" +
     `• Предмет: ${payload.item ?? "—"}\n` +
@@ -221,7 +235,7 @@ export async function renderDraftPrompt(
     });
   } else if (step === "recipient") {
     const page = payload.recipientPage ?? 0;
-    const choices = filteredRecipients(payload);
+    const choices = payload.actor === "external" ? [] : filteredRecipients(payload);
     const slice = choices.slice(page * RECIPIENT_PAGE_SIZE, (page + 1) * RECIPIENT_PAGE_SIZE);
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient", {
       recipientButtons: slice.map((c, i) => ({
@@ -233,7 +247,11 @@ export async function renderDraftPrompt(
         hasNext: (page + 1) * RECIPIENT_PAGE_SIZE < choices.length,
       },
     });
-  } else if (step === "recipient_ext_name" && payload.recipientExtAwaitNameConfirm) {
+  } else if (
+    step === "recipient_ext_name" &&
+    payload.recipientExtAwaitNameConfirm &&
+    (payload.recipientExternal?.phone || payload.externalRecipientPhone)
+  ) {
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient_ext_name_confirm");
   } else if (step === "recipient_ext_phone") {
     const ext = payload.recipientExternal;
@@ -375,6 +393,9 @@ async function pickRecipientByIndex(
   payload: NativeCreateDraftPayload,
   idx: number,
 ): Promise<NativeCreateReply> {
+  if (payload.actor === "external") {
+    return renderDraftPrompt(client, ctx.channel, id, step, payload);
+  }
   const choices = filteredRecipients(payload);
   const pick = choices[idx];
   if (!pick) {
@@ -389,13 +410,19 @@ async function pickRecipientByIndex(
     }
     const nextStep = payload.editReturnStep === "summary" ? "summary" : "due";
     clearExternalRecipientTarget(payload);
-    const partyRow = await client.query<{ kind: string }>(`SELECT kind FROM tt_parties WHERE id = $1::uuid`, [
-      pick.userId,
-    ]);
-    const isExternalParty = partyRow.rows[0]?.kind === "external";
+    const pendingUserId = userIdFromPendingUserPartyRef(pick.userId);
+    let isExternalParty = false;
+    if (!pendingUserId && isUuid(pick.userId)) {
+      const partyRow = await client.query<{ kind: string }>(`SELECT kind FROM tt_parties WHERE id = $1::uuid`, [
+        pick.userId,
+      ]);
+      isExternalParty = partyRow.rows[0]?.kind === "external";
+    }
+    const display =
+      valid.fullName.replace(/\s*\(\+[^)]+\)\s*$/, "").trim() || valid.fullName;
     const nextPayload = await bumpDraftRevision(client, id, nextStep, {
       ...payload,
-      recipientDisplayName: valid.fullName.replace(/\s*\(\+[^)]+\)\s*$/, "").trim() || valid.fullName,
+      recipientDisplayName: display,
       ...(isExternalParty
         ? {
             recipientPartyId: pick.userId,
@@ -406,26 +433,13 @@ async function pickRecipientByIndex(
     });
     return renderDraftPrompt(client, ctx.channel, id, nextStep, nextPayload);
   }
-  if (payload.actor === "external" && ctx.personId) {
-    const party = await client.query<{ party_id: string }>(
-      `SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid`,
-      [ctx.personId],
-    );
-    const partyId = party.rows[0]?.party_id;
-    if (!partyId || !(await revalidateExternalStaffPick(client, partyId, pick.userId))) {
-      const rendered = await renderDraftPrompt(client, ctx.channel, id, step, payload);
-      return { ...rendered, text: `${externalUnavailableMessage()}\n\n${rendered.text}` };
-    }
-  }
-  const displayName = pick.fullName;
   const nextStep = payload.editReturnStep === "summary" ? "summary" : "due";
   clearExternalRecipientTarget(payload);
   const nextPayload = await bumpDraftRevision(client, id, nextStep, {
     ...payload,
-    recipientDisplayName: displayName,
-    ...(payload.actor === "external"
-      ? { recipientUserId: pick.userId }
-      : { recipientPartyId: pick.userId, recipientUserId: undefined }),
+    recipientDisplayName: pick.fullName,
+    recipientPartyId: pick.userId,
+    recipientUserId: undefined,
   });
   return renderDraftPrompt(client, ctx.channel, id, nextStep, nextPayload);
 }
@@ -549,6 +563,23 @@ export async function handleNativeCreateCallback(
   }
 
   if (parsed.action === "recipient_ext_keep") {
+    if (payload.actor === "external") {
+      if (!payload.recipientExtAwaitNameConfirm || !payload.externalRecipientPhone) {
+        return renderDraftPrompt(client, ctx.channel, id, step, payload);
+      }
+      const name =
+        payload.recipientContactSuggestedName?.trim() ||
+        payload.externalRecipientDisplayName?.trim() ||
+        "";
+      payload.externalRecipientDisplayName = name;
+      payload.recipientDisplayName = name;
+      delete payload.recipientExtAwaitNameConfirm;
+      delete payload.recipientContactSuggestedName;
+      payload.recipientNameManual = true;
+      delete payload.recipientUserId;
+      const nextPayload = await bumpDraftRevision(client, id, "due", payload);
+      return renderDraftPrompt(client, ctx.channel, id, "due", nextPayload);
+    }
     if (!payload.recipientExtAwaitNameConfirm || !payload.recipientExternal?.phone) {
       return renderDraftPrompt(client, ctx.channel, id, step, payload);
     }
@@ -680,6 +711,18 @@ export async function handleNativeCreateCallback(
         );
         const partyId = party.rows[0]?.party_id;
         if (!partyId) return { text: "Профиль недоступен.", requestContact: true };
+        const phone = payload.externalRecipientPhone?.trim();
+        if (!phone) {
+          return navError("Укажите телефон получателя.", ctx.channel);
+        }
+        const staffUserId = await resolveExternalIntakeStaffUserId(client, partyId, phone);
+        if (!staffUserId) {
+          return navError(externalUnavailableMessage(), ctx.channel);
+        }
+        await bumpDraftRevision(client, id, "summary", {
+          ...payload,
+          recipientUserId: staffUserId,
+        });
         const created = await confirmNativeExternalDraft(client, {
           personId: ctx.personId,
           externalPartyId: partyId,
@@ -765,7 +808,6 @@ export async function handleNativeCreateMessage(
 
   if (step === "recipient") {
     clearStaffRecipientTarget(payload);
-    clearExternalRecipientTarget(payload);
     const handled =
       payload.actor === "staff"
         ? await handleStaffRecipientSearchText(client, ctx, payload, trimmed)
@@ -781,6 +823,16 @@ export async function handleNativeCreateMessage(
   if (step === "recipient_ext_name") {
     if (!trimmed) {
       return navError("Введите имя получателя.", ctx.channel);
+    }
+    if (payload.actor === "external") {
+      payload.externalRecipientDisplayName = trimmed.slice(0, 120);
+      payload.recipientDisplayName = payload.externalRecipientDisplayName;
+      payload.recipientNameManual = true;
+      delete payload.recipientExtAwaitNameConfirm;
+      delete payload.recipientContactSuggestedName;
+      delete payload.recipientUserId;
+      const nextPayload = await bumpDraftRevision(client, draft.id, "due", payload);
+      return renderDraftPrompt(client, ctx.channel, draft.id, "due", nextPayload);
     }
     const phone = payload.recipientExternal?.phone ?? "";
     payload.recipientExternal = { name: trimmed.slice(0, 120), phone };
@@ -975,40 +1027,75 @@ export async function tryHandleNativeCreateRecipientContact(
       };
     }
     const phone = phones[0]!;
-    const party = await client.query<{ party_id: string }>(
-      `SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid`,
-      [ctx.personId],
-    );
-    const partyId = party.rows[0]?.party_id;
-    if (!partyId) return null;
-    const staffUserId = await matchExternalActorStaffByPhone(client, partyId, phone);
-    if (!staffUserId) {
-      const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "recipient", payload);
-      return { ...rendered, text: `${externalUnavailableMessage()}\n\n${rendered.text}` };
+    const suggested = parsed.data.suggestedName?.trim() ?? "";
+    payload.externalRecipientPhone = phone;
+    delete payload.recipientUserId;
+    payload.eligibleRecipients = [];
+    payload.recipientContactSuggestedName = suggested || undefined;
+    if (suggested) {
+      payload.recipientExtAwaitNameConfirm = true;
+      payload.externalRecipientDisplayName = suggested;
+    } else {
+      delete payload.recipientExtAwaitNameConfirm;
     }
-    clearExternalRecipientTarget(payload);
-    const nextPayload = await bumpDraftRevision(client, draft.id, "due", {
-      ...payload,
-      recipientUserId: staffUserId,
-      recipientDisplayName: externalSummaryDisplayName(phone),
-      eligibleRecipients: [],
-    });
-    return renderDraftPrompt(client, ctx.channel, draft.id, "due", nextPayload);
+    const nextPayload = await bumpDraftRevision(client, draft.id, "recipient_ext_name", payload);
+    return renderDraftPrompt(client, ctx.channel, draft.id, "recipient_ext_name", nextPayload);
   }
 
-  if (step === "recipient") {
+  if (step === "recipient" && actor === "staff" && ctx.staffUserId) {
     clearStaffRecipientTarget(payload);
-    clearExternalRecipientTarget(payload);
+    const pendingName = payload.recipientPendingExternalName?.trim();
+    const phones = parsed.data.phonesE164;
+    if (phones.length === 1) {
+      const phone = phones[0]!;
+      const hits = await searchStaffRecipientHits(client, ctx.staffUserId, phone);
+      if (hits.length) {
+        delete payload.recipientPendingExternalName;
+        delete payload.recipientExternal;
+        payload.recipientSearchQuery = phone;
+        payload.eligibleRecipients = hitsToEligibleRecipients(hits);
+        payload.recipientPage = 0;
+        const nextPayload = await bumpDraftRevision(client, draft.id, "recipient", payload);
+        return renderDraftPrompt(client, ctx.channel, draft.id, "recipient", nextPayload);
+      }
+      const existing = await findExistingExternalByPhone(client, ctx.staffUserId, phone);
+      if (existing) {
+        delete payload.recipientPendingExternalName;
+        payload.recipientSearchQuery = phone;
+        payload.eligibleRecipients = hitsToEligibleRecipients([
+          { ref: existing.partyId, fullName: `${existing.name} (${existing.phone})`, phone: existing.phone },
+        ]);
+        payload.recipientPage = 0;
+        const nextPayload = await bumpDraftRevision(client, draft.id, "recipient", payload);
+        return renderDraftPrompt(client, ctx.channel, draft.id, "recipient", nextPayload);
+      }
+      if (pendingName) {
+        payload.recipientExternal = { name: pendingName, phone: "" };
+        payload.recipientNameManual = true;
+        delete payload.recipientPendingExternalName;
+      }
+    }
     payload.recipientSearchQuery = undefined;
     payload.eligibleRecipients = [];
     payload.recipientPage = 0;
   }
 
+  const pendingManual =
+    Boolean(payload.recipientPendingExternalName?.trim()) ||
+    (payload.recipientNameManual && Boolean(payload.recipientExternal?.name?.trim()));
+  if (payload.recipientPendingExternalName?.trim() && !payload.recipientExternal?.name?.trim()) {
+    payload.recipientExternal = {
+      name: payload.recipientPendingExternalName.trim(),
+      phone: payload.recipientExternal?.phone ?? "",
+    };
+    payload.recipientNameManual = true;
+    delete payload.recipientPendingExternalName;
+  }
+
   const contactMode =
     step === "recipient_ext_phone" ||
-    (step === "recipient_ext_name" &&
-      payload.recipientNameManual &&
-      Boolean(payload.recipientExternal?.name?.trim()))
+    (step === "recipient_ext_name" && pendingManual) ||
+    (step === "recipient" && pendingManual)
       ? "phone_only"
       : "contact_first";
 
