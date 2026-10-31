@@ -93,10 +93,10 @@ export async function confirmNativeStaffDraft(
 
   let finalRecipientPartyId: string | undefined;
   let finalRecipientExternal: { name: string; phone: string } | undefined;
-  if (input.payload.recipientExternal?.name && input.payload.recipientExternal.phone) {
-    finalRecipientExternal = input.payload.recipientExternal;
-  } else if (input.payload.recipientPartyId) {
+  if (input.payload.recipientPartyId) {
     finalRecipientPartyId = input.payload.recipientPartyId;
+  } else if (input.payload.recipientExternal?.name && input.payload.recipientExternal.phone) {
+    finalRecipientExternal = input.payload.recipientExternal;
   } else {
     throw Object.assign(new Error("Выберите получателя."), { http: 400 });
   }

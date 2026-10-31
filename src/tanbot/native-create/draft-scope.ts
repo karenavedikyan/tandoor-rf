@@ -33,9 +33,35 @@ export type NativeCreateDraftPayload = ExternalDraftPayload & {
   editReturnStep?: string;
   recipientDisplayName?: string;
   recipientSearchQuery?: string;
-  /** Distinct +7 options when a shared contact had multiple numbers (not persisted to confirm). */
+  /** Distinct +7 options when a shared contact had multiple numbers (transient UI only). */
   recipientPhonePickOptions?: string[];
+  /** Suggested name from last contact card (transient, not raw VCF). */
+  recipientContactSuggestedName?: string;
+  /** After contact-first: staff must confirm or replace name before phone step. */
+  recipientExtAwaitNameConfirm?: boolean;
+  /** User typed or explicitly replaced name (never overwrite from phone-step cards). */
+  recipientNameManual?: boolean;
 };
+
+export function clearExternalRecipientTarget(payload: NativeCreateDraftPayload): void {
+  delete payload.recipientExternal;
+  delete payload.recipientPhonePickOptions;
+  delete payload.recipientContactSuggestedName;
+  delete payload.recipientExtAwaitNameConfirm;
+  delete payload.recipientNameManual;
+}
+
+export function clearStaffRecipientTarget(payload: NativeCreateDraftPayload): void {
+  delete payload.recipientPartyId;
+  delete payload.recipientUserId;
+  delete payload.recipientDisplayName;
+}
+
+export function stripTransientRecipientDraftFields(payload: NativeCreateDraftPayload): void {
+  delete payload.recipientPhonePickOptions;
+  delete payload.recipientContactSuggestedName;
+  delete payload.recipientExtAwaitNameConfirm;
+}
 
 type Db = Pool | PoolClient;
 
