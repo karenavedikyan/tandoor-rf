@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -126,6 +127,49 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
       assert.equal(unavailable.status, 404);
       assert.equal(JSON.stringify(unavailable.body).includes(imageRoot), false);
     } finally { delete process.env.INTERNAL_CATALOG_IMAGE_SOURCE_DIR; }
+  });
+  it("reuses shared previews without writes and still checks access and file ownership before cache hits", async () => {
+    const keys = ["INTERNAL_CATALOG_IMAGE_BACKEND", "CATALOG_IMAGE_STORAGE_DIR",
+      "CATALOG_IMAGE_STORAGE_BACKEND", "ONEC_FTP_ENABLED"];
+    const saved = keys.map(key => process.env[key]);
+    const bytes = await sharp({ create: { width: 20, height: 10, channels: 3, background: "#426428" } }).webp().toBuffer();
+    const storagePath = path.join(imageRoot, "shared.webp");
+    await writeFile(storagePath, bytes);
+    const sourcePath = "20240626\\photo.jpg";
+    await pool.query(`INSERT INTO onec_catalog_image_assets
+      (source_path,status,storage_path,content_sha256,mime_type) VALUES($1,'ready',$2,$3,'image/webp')`,
+      [sourcePath, storagePath, createHash("sha256").update(bytes).digest("hex")]);
+    const state = async () => (await pool.query(`SELECT
+      (SELECT COUNT(*) FROM onec_catalog_image_assets) AS assets,
+      (SELECT COUNT(*) FROM onec_catalog_image_sync_runs) AS runs,
+      (SELECT COUNT(*) FROM internal_catalog_snapshots) AS snapshots`)).rows;
+    const before = await state();
+    Object.assign(process.env, { INTERNAL_CATALOG_IMAGE_BACKEND: "shared",
+      CATALOG_IMAGE_STORAGE_DIR: imageRoot, ONEC_FTP_ENABLED: "false" });
+    delete process.env.CATALOG_IMAGE_STORAGE_BACKEND;
+    try {
+      assert.equal((await get("/meta")).body.imagesConfigured, true);
+      const url = "/api/internal-catalog/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300);
+      const first = await request(app).get(url).set("Cookie", staffCookie).query({ version: snapshotId });
+      assert.equal(first.status, 200);
+      assert.equal((await sharp(first.body).metadata()).format, "webp");
+      assert.match(first.headers["cache-control"], /no-store/);
+      assert.equal(first.headers["x-content-type-options"], "nosniff");
+      // Repeated request uses the preview cache but never bypasses middleware/file binding.
+      assert.equal((await request(app).get(url).set("Cookie", cookie).query({ version: snapshotId })).status, 200);
+      assert.equal((await request(app).get(url)).status, 401);
+      assert.equal((await request(app).get(url).set("Cookie", deniedCookie)).status, 403);
+      assert.equal((await get("/products/" + fixtureGuid(2) + "/images/" + fixtureGuid(300))).status, 404);
+      assert.equal((await get("/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(301))).status, 404);
+      assert.equal((await request(app).get(url).set("Cookie", cookie).query({ version: fixtureGuid(999) })).status, 404);
+      assert.equal((await request(app).get(url).set("Cookie", cookie).query({ version: "bad" })).status, 400);
+      assert.deepEqual(await state(), before);
+    } finally {
+      keys.forEach((key, index) => {
+        if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index];
+      });
+      await pool.query("DELETE FROM onec_catalog_image_assets WHERE source_path=$1", [sourcePath]);
+    }
   });
   it("pins reads to immutable snapshots and rejects mismatched hashes without partial changes", async () => {
     const products = catalogueFixture(); products[0].name = "Новая версия"; products[0].files = [];

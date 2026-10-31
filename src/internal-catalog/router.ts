@@ -64,7 +64,7 @@ export function createInternalCatalogRouter(): express.Router {
     if (current === undefined) return;
     const product = current ? await loadProduct(requirePool(), current.id, guid) : null;
     const file = product?.files.find(item => item.guid === fileGuid.toLowerCase());
-    const bytes = file ? await readInternalCatalogImage(file) : null;
+    const bytes = file ? await readInternalCatalogImage(file, requirePool(), current!.id) : null;
     if (!bytes) {
       res.status(404).json({ error: { code: "IMAGE_UNAVAILABLE", message: "Фотография пока недоступна." } });
       return;
