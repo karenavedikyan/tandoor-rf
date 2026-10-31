@@ -6,6 +6,7 @@ import { canDeliverTanTrackerOutboxNotification } from "../tanbot-telegram/tan-t
 import { transferStillExists } from "../tan-tracker/registry-cleanup/cancel-transfer-notifications";
 import { isTanTrackerStaffOutboxEvent } from "../tan-tracker/tan-tracker-outbox-messages";
 import { buildTanTrackerStaffMaxOutboxDelivery } from "../tan-tracker/staff-max-outbox-presentation";
+import { isStaffExternalIntakeOutboxStillPending } from "../tan-tracker/staff-outbox-shared";
 
 const MAX_ATTEMPTS = 8;
 
@@ -108,14 +109,15 @@ export async function processTanbotMaxNotificationOutbox(
       }
 
       if (row.event_type === "tan_tracker.external_created") {
-        const intended = await client.query(
-          `SELECT 1 FROM tt_transfers t
-           JOIN tt_parties p ON p.id=t.pending_party_id AND p.kind='user'
-           WHERE t.id=$1 AND t.handoff_version=$2 AND p.user_id=$3::uuid
-             AND t.status IN ('waiting','active')`,
-          [String(row.payload.transferId ?? ""), Number(row.payload.handoffVersion ?? 0), row.user_id],
+        const transferId = String(row.payload.transferId ?? "");
+        const hv = Number(row.payload.handoffVersion ?? 0);
+        const stillPending = await isStaffExternalIntakeOutboxStillPending(
+          client,
+          transferId,
+          hv,
+          row.user_id,
         );
-        if (!intended.rows.length) {
+        if (!stillPending) {
           await client.query(
             `UPDATE tanbot_notification_outbox SET status='cancelled',last_error_code='STALE_EXTERNAL_INTAKE' WHERE id=$1::uuid`,
             [row.id],

@@ -506,6 +506,64 @@ describe("tanbot handoff code pilot", { concurrency: false }, () => {
     assert.equal(codesBefore.rows[0]!.c, codesAfterResend.rows[0]!.c);
   });
 
+  it("telegram external_created outbox sends one receipt-code inline callback", async () => {
+    await resetPoolForTests();
+    const holder = await createTestUser({
+      databaseUrl,
+      email: "hc-ext-tg-holder@test.local",
+      password: PASSWORD,
+      fullName: "Ext TG Holder",
+      role: "manager",
+    });
+    const pending = await createTestUser({
+      databaseUrl,
+      email: "hc-ext-tg-pending@test.local",
+      password: PASSWORD,
+      fullName: "Ext TG Pending",
+      role: "manager",
+    });
+    const seeded = await seedTransfer(holder.id, pending.id, "P-EXT-TG", { max: false });
+    const pool = getPool();
+    assert.ok(pool);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await fanoutStaffTransferNotification(client, {
+        eventType: "tan_tracker.external_created",
+        recipientUserIds: [pending.id],
+        payload: transferPayload({
+          transferId: seeded.transferId,
+          publicCode: "P-EXT-TG",
+          itemTitle: "External TG box",
+          handoffVersion: 1,
+        }),
+      });
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    const sink = { calls: [] as Array<{ method: string; body: Record<string, unknown> }> };
+    const transport = createRecordingTelegramDeliveryTransport(sink);
+    const tgLoaded = loadTanbotTelegramStage2Config();
+    assert.equal(tgLoaded.ok, true);
+    if (!tgLoaded.ok) return;
+    await runTanbotOutboxWorkerOnce(pool, tgLoaded.config, transport);
+    const send = sink.calls.find((c) => c.method === "sendMessage" && String(c.body.text).includes("P-EXT-TG"));
+    assert.ok(send, "expected Telegram delivery for P-EXT-TG");
+    assert.match(String(send!.body.text), /код приёма/i);
+    const markup = send!.body.reply_markup as {
+      inline_keyboard?: Array<Array<{ callback_data?: string; text?: string }>>;
+    };
+    assert.equal(markup.inline_keyboard?.[0]?.[0]?.text, "Получить код приёма");
+    assert.equal(markup.inline_keyboard?.[0]?.[0]?.callback_data, buildHandoffGenCallback("P-EXT-TG", 1));
+    assert.equal(send!.body.disable_web_page_preview, true);
+    assert.ok(!/\d{6}/.test(String(send!.body.text)));
+  });
+
   it("max external_created outbox sends one receipt-code button (structured payload)", async () => {
     await resetPoolForTests();
     const holder = await createTestUser({
