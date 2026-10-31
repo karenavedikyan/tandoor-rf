@@ -6,6 +6,7 @@ import { processTanbotNotificationOutbox } from "./outbox-worker";
 import { isTanbotTelegramDeliveryEnabled } from "./stage2-config";
 import { processUndeliveredTelegramWebhookReplies } from "./reply-retry";
 import { processExternalPersonMessageOutbox } from "../tan-tracker/external-person/outbox-worker";
+import { buildTelegramExternalPersonOutboxPresentation } from "../tan-tracker/external-person/telegram-outbox-presentation";
 
 const DEFAULT_INTERVAL_MS = 15_000;
 
@@ -32,10 +33,25 @@ export async function runTanbotOutboxWorkerOnce(
     maxResponseBytes: config.maxResponseBytes,
     deliveryEnabled,
     transport: async ({ chatId, messengerUserId: _messengerUserId, text, botToken, timeoutMs, maxResponseBytes }) => {
+      const appOrigin = config.appOrigin || process.env.APP_ORIGIN || "";
+      const presentation = buildTelegramExternalPersonOutboxPresentation(text, appOrigin);
+      const body: Record<string, unknown> =
+        presentation.mode === "rich"
+          ? {
+              chat_id: chatId,
+              text: presentation.text,
+              reply_markup: presentation.replyMarkup,
+              link_preview_options: presentation.linkPreviewOptions,
+            }
+          : {
+              chat_id: chatId,
+              text: presentation.text,
+              disable_web_page_preview: presentation.disableWebPagePreview,
+            };
       const send = await deliveryTransport({
         method: "sendMessage",
         token: botToken,
-        body: { chat_id: chatId, text, disable_web_page_preview: true },
+        body,
         timeoutMs,
         maxResponseBytes,
       });

@@ -1,7 +1,11 @@
 import type { MaxInlineButton } from "../tanbot-max/delivery-transport";
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
 import { buildHandoffGenCallback } from "../tanbot/handoff-code-bot-service";
-import type { StaffTransferEventType } from "./staff-notification-copy";
+import {
+  buildStaffExternalCreatedNoticeText,
+  normalizeStaffOutboxPayload,
+  staffTransferLkDetailUrl,
+} from "./staff-outbox-shared";
 import {
   buildTanTrackerStaffOutboxMessage,
   isTanTrackerStaffOutboxEvent,
@@ -13,41 +17,7 @@ export type StaffMaxOutboxDelivery = {
   shareUrl?: string;
 };
 
-function normalizePayload(payload: Record<string, unknown>) {
-  return {
-    transferId: String(payload.transferId ?? ""),
-    publicCode: String(payload.publicCode ?? ""),
-    itemTitle: String(payload.itemTitle ?? "Передача"),
-    handoffVersion: Number(payload.handoffVersion ?? 0),
-  };
-}
-
-/** Deep link to LK transfer card (fallback when handoff-code pilot is off). */
-export function staffTransferLkDetailUrl(appOrigin: string, publicCode: string): string {
-  const base = appOrigin.replace(/\/$/, "");
-  const params = new URLSearchParams();
-  params.set("tt_screen", "detail");
-  params.set("tt_id", publicCode);
-  return `${base}/tan-tracker#?${params.toString()}`;
-}
-
-export function buildStaffExternalCreatedMaxText(
-  itemTitle: string,
-  publicCode: string,
-  pilotEnabled: boolean,
-): string {
-  const item = itemTitle.trim() || "Передача";
-  if (pilotEnabled) {
-    return (
-      `Тан-трекер: вам передают «${item}» (${publicCode}).\n` +
-      `Кнопка ниже выдаст одноразовый код приёма. Когда получите предмет в руки, сообщите код отправителю: он введёт его и подтвердит передачу.`
-    );
-  }
-  return (
-    `Тан-трекер: вам передают «${item}» (${publicCode}).\n` +
-    `Получите код приёма в личном кабинете и сообщите его отправителю, когда предмет будет у вас.`
-  );
-}
+export { staffTransferLkDetailUrl, buildStaffExternalCreatedNoticeText as buildStaffExternalCreatedMaxText };
 
 export function buildTanTrackerStaffMaxOutboxDelivery(
   eventType: string,
@@ -59,9 +29,9 @@ export function buildTanTrackerStaffMaxOutboxDelivery(
   }
 
   if (eventType === "tan_tracker.external_created") {
-    const p = normalizePayload(payload);
+    const p = normalizeStaffOutboxPayload(payload);
     const pilot = isTanbotHandoffCodePilotEnabled();
-    const text = buildStaffExternalCreatedMaxText(p.itemTitle, p.publicCode, pilot);
+    const text = buildStaffExternalCreatedNoticeText(p.itemTitle, p.publicCode, pilot);
     if (pilot && p.publicCode && p.handoffVersion > 0) {
       return {
         text,

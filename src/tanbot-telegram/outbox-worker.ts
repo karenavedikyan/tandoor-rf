@@ -4,10 +4,9 @@ import type { TelegramDeliveryTransport } from "./delivery-transport";
 import { findAccountByUserId } from "./link-repository";
 import { canDeliverTanTrackerOutboxNotification } from "./tan-tracker-access";
 import { transferStillExists } from "../tan-tracker/registry-cleanup/cancel-transfer-notifications";
-import {
-  buildTanTrackerStaffOutboxMessage,
-  isTanTrackerStaffOutboxEvent,
-} from "../tan-tracker/tan-tracker-outbox-messages";
+import { isTanTrackerStaffOutboxEvent } from "../tan-tracker/tan-tracker-outbox-messages";
+import { isStaffExternalIntakeOutboxStillPending } from "../tan-tracker/staff-outbox-shared";
+import { buildTanTrackerStaffTelegramOutboxSendBody } from "../tan-tracker/staff-telegram-outbox-presentation";
 
 const MAX_ATTEMPTS = 8;
 
@@ -111,18 +110,44 @@ export async function processTanbotNotificationOutbox(
         }
       }
 
-      const text = isTanTrackerStaffOutboxEvent(row.event_type)
-        ? buildTanTrackerStaffOutboxMessage(row.event_type, row.payload, config.appOrigin)
-        : "Уведомление Тандор.";
+      if (row.event_type === "tan_tracker.external_created") {
+        const transferId = String(row.payload.transferId ?? "");
+        const hv = Number(row.payload.handoffVersion ?? 0);
+        const stillPending = await isStaffExternalIntakeOutboxStillPending(
+          client,
+          transferId,
+          hv,
+          row.user_id,
+        );
+        if (!stillPending) {
+          await client.query(
+            `UPDATE tanbot_notification_outbox SET status='cancelled',last_error_code='STALE_EXTERNAL_INTAKE' WHERE id=$1::uuid`,
+            [row.id],
+          );
+          result.cancelled += 1;
+          continue;
+        }
+      }
+
+      const presentation = isTanTrackerStaffOutboxEvent(row.event_type)
+        ? buildTanTrackerStaffTelegramOutboxSendBody(row.event_type, row.payload, config.appOrigin)
+        : { text: "Уведомление Тандор.", disable_web_page_preview: true as const };
+
+      const body: Record<string, unknown> = {
+        chat_id: account.telegram_user_id,
+        text: presentation.text,
+      };
+      if (presentation.disable_web_page_preview) {
+        body.disable_web_page_preview = true;
+      }
+      if (presentation.reply_markup) {
+        body.reply_markup = presentation.reply_markup;
+      }
 
       const send = await transport({
         method: "sendMessage",
         token: config.botToken,
-        body: {
-          chat_id: account.telegram_user_id,
-          text,
-          disable_web_page_preview: true,
-        },
+        body,
         timeoutMs: config.requestTimeoutMs,
         maxResponseBytes: config.maxResponseBytes,
       });

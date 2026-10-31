@@ -3,6 +3,7 @@ import type { TanbotTelegramStage2Config } from "./stage2-config";
 import type { TelegramDeliveryTransport, TelegramDeliveryResult } from "./delivery-transport";
 import type { WebhookReply } from "./webhook-handler";
 import { markTelegramReplyDelivered } from "./webhook-inbox";
+import { applyTelegramWebhookReplyLinkPreviewSafety } from "./send-message-safety";
 
 export function buildTelegramSendMessagePayload(input: {
   chatId: bigint;
@@ -16,6 +17,7 @@ export function buildTelegramSendMessagePayload(input: {
   if (input.replyMarkup) {
     body.reply_markup = input.replyMarkup;
   }
+  applyTelegramWebhookReplyLinkPreviewSafety(body, input.text, Boolean(input.replyMarkup));
   return body;
 }
 

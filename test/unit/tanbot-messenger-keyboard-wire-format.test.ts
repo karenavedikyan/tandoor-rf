@@ -52,6 +52,7 @@ describe("messenger keyboard wire format (delivery + retry)", () => {
     );
     assert.equal(captured[0]?.method, "sendMessage");
     assert.deepEqual(captured[0]?.body.reply_markup, markup);
+    assert.equal(captured[0]?.body.disable_web_page_preview, true);
   });
 
   it("telegram remove_keyboard after contact is preserved through retry extra", async () => {
