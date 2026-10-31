@@ -271,6 +271,23 @@ for (const channel of ["max", "telegram"] as const) {
     assert.equal((await files(a)).length, 0);
     assert.deepEqual(await counts(), before);
   });
+  it(`${channel}: cancelled/no-photo-step/unverified messages never fetch or recreate drafts`, async () => {
+    const a = await actor(channel, true);
+    const prompt = await start(a);
+    const oldId = (await draft(a)).id;
+    await send(a, { callback: action(prompt, /отмена/iu) });
+    const before = await counts(), n = fetches.length;
+    await send(a, { photos: ["late-cancelled"], optionalReply: true });
+    await send(a, { text: "Создать передачу" });
+    assert.equal((await draft(a)).step, "item");
+    await send(a, { photos: ["late-new-item"], optionalReply: true });
+    const stranger = { ...a, id: ++seq, chatId: seq, staffId: undefined };
+    await send(stranger, { photos: ["unverified"], optionalReply: true });
+    assert.equal(fetches.length, n, "no downloads outside eligible owned photo step");
+    assert.equal((await getPool()!.query("SELECT id FROM tt_external_request_draft_files WHERE draft_id=$1", [oldId])).rowCount, 0);
+    assert.equal((await files(a)).length, 0);
+    assert.deepEqual(await counts(), before);
+  });
 }
 it("MAX: partial album, unsafe URL and token-only image always give accurate current guidance", async () => {
   const a = await actor("max", false); await start(a);
@@ -288,4 +305,15 @@ it("MAX: partial album, unsafe URL and token-only image always give accurate cur
     assert.equal((await files(a)).length, 1);
   }
   assert.deepEqual(await counts(), before);
+});
+it("MAX: album exceeding remaining slots keeps exactly five with explicit limit feedback", async () => {
+  const a = await actor("max", true); await start(a);
+  let reply = await send(a, { photos: ["slot1", "slot2", "slot3", "slot4"] });
+  photoGuidance(reply, 4);
+  reply = await send(a, { photos: ["slot5", "slot6", "slot7"], caption: "" });
+  photoGuidance(reply, 5);
+  assert.match(reply.text, /не добав|пропущ|не более|лимит|максим/iu);
+  const saved = await files(a);
+  assert.equal(saved.length, 5);
+  assert.deepEqual(await readAttachmentBytes(saved[4].storage_key), bytesFor("slot5"));
 });
