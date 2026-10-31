@@ -10,11 +10,28 @@ import { requireTanTrackerMutationAccess } from "./guards";
 import { notifyClosed } from "./transfer-lk-notify";
 import { notifyExternalPartyAfterHandoff } from "./transfer-external-messenger-notify";
 
-export function isExternalCreatorDeliveredCloseDenied(input: {
-  creatorPartyKind: string | null | undefined;
-  isCreatorClosingDelivered: boolean;
-}): boolean {
-  return input.isCreatorClosingDelivered && input.creatorPartyKind === "external";
+export function checkTransferCompletionAccess(input: {
+  status: string;
+  actingPartyId: string;
+  holderPartyId: string;
+  pendingPartyId: string | null;
+  finalRecipientPartyId: string | null;
+  allowLegacyComplete: boolean;
+}): { ok: true } | { ok: false; http: number; message: string } {
+  if (input.status === "completed") return { ok: false, http: 409, message: "Передача уже завершена." };
+  if (!["active", "waiting", "delivered"].includes(input.status)) {
+    return { ok: false, http: 409, message: "Передача недоступна для завершения." };
+  }
+  if (input.pendingPartyId) return {
+    ok: false, http: 409, message: "Сначала отмените ожидание или подтвердите передачу.",
+  };
+  if (!input.actingPartyId || input.actingPartyId !== input.holderPartyId) return {
+    ok: false, http: 403, message: "Завершить может только текущий держатель. После передачи предмета ваше участие в этом этапе завершено.",
+  };
+  if (input.finalRecipientPartyId && input.holderPartyId !== input.finalRecipientPartyId && !input.allowLegacyComplete) {
+    return { ok: false, http: 403, message: "Промежуточный держатель не может завершить передачу. Передайте конечному получателю." };
+  }
+  return { ok: true };
 }
 
 export async function legacyCompleteHandler(req: AccessRequest, res: Response): Promise<void> {
@@ -55,73 +72,12 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
       if (!row) {
         return { ok: false, http: 404, message: "Передача не найдена." };
       }
-      if (row.status === "completed") {
-        return { ok: false, http: 409, message: "Передача уже завершена." };
-      }
-      if (row.status !== "active" && row.status !== "waiting" && row.status !== "delivered") {
-        return { ok: false, http: 409, message: "Передача недоступна для завершения." };
-      }
-      if (row.pending_party_id) {
-        return {
-          ok: false,
-          http: 409,
-          message: "Сначала отмените ожидание или подтвердите передачу.",
-        };
-      }
-      const isHolder = row.holder_party_id === party.id;
-      const isCreatorClosingDelivered =
-        row.creator_party_id === party.id &&
-        row.status === "delivered" &&
-        !row.pending_party_id &&
-        row.holder_party_id !== party.id;
-      if (!isHolder && !isCreatorClosingDelivered) {
-        return {
-          ok: false,
-          http: 403,
-          message: "Завершить может текущий держатель или создатель после доставки.",
-        };
-      }
-      const creatorPartyKind = (
-        await client.query<{ kind: string }>(
-          `SELECT kind FROM tt_parties WHERE id = $1::uuid LIMIT 1`,
-          [row.creator_party_id],
-        )
-      ).rows[0]?.kind;
-      if (
-        isExternalCreatorDeliveredCloseDenied({
-          creatorPartyKind,
-          isCreatorClosingDelivered,
-        })
-      ) {
-        return {
-          ok: false,
-          http: 403,
-          message: "Внешний создатель не может закрыть передачу после доставки.",
-        };
-      }
-      if (
-        isHolder &&
-        row.final_recipient_party_id &&
-        row.holder_party_id !== row.final_recipient_party_id &&
-        !row.allow_legacy_complete
-      ) {
-        return {
-          ok: false,
-          http: 403,
-          message: "Промежуточный держатель не может завершить передачу — передайте конечному получателю.",
-        };
-      }
-      if (
-        isCreatorClosingDelivered &&
-        row.final_recipient_party_id &&
-        row.holder_party_id !== row.final_recipient_party_id
-      ) {
-        return {
-          ok: false,
-          http: 403,
-          message: "Закрыть можно только после доставки конечному получателю.",
-        };
-      }
+      const permission = checkTransferCompletionAccess({
+        status: row.status, actingPartyId: party.id, holderPartyId: row.holder_party_id,
+        pendingPartyId: row.pending_party_id, finalRecipientPartyId: row.final_recipient_party_id,
+        allowLegacyComplete: row.allow_legacy_complete,
+      });
+      if (!permission.ok) return permission;
       await client.query(
         `UPDATE tt_transfers SET status = 'completed', completed_at = NOW(),
                 handoff_version = handoff_version + 1, row_version = row_version + 1

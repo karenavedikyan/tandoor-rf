@@ -3180,22 +3180,8 @@
     state.toast = "Ожидание отменено.";
   }
 
-  function canActorCloseDeliveredTransfer(o, actor) {
-    const actorContact = actor && contactById(actor);
-    if (actorContact?.kind === "external" && o.createdById === actor) return false;
-    return (
-      !!actor &&
-      o.status === "delivered" &&
-      !o.pendingId &&
-      o.createdById === actor &&
-      o.holderId !== actor &&
-      (!o.finalRecipientId || o.holderId === o.finalRecipientId)
-    );
-  }
-
   function canActorCompleteTransfer(o, actor) {
     if (!actor || o.pendingId || o.status === "completed") return false;
-    if (canActorCloseDeliveredTransfer(o, actor)) return true;
     if (o.holderId !== actor) return false;
     if (o.finalRecipientId && o.holderId !== o.finalRecipientId && !o.allowLegacyComplete) return false;
     return true;
@@ -3209,7 +3195,7 @@
     }
     const actor = actorContactId();
     if (!canActorCompleteTransfer(o, actor)) {
-      state.error = "Завершить может текущий держатель или создатель после доставки.";
+      state.error = "Завершить может только текущий держатель.";
       return;
     }
     if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.legacyCompleteTransfer) {
@@ -4111,9 +4097,6 @@
     const isHolder = o.holderId === actor;
     const heroAttr = 'data-tt-detail-hero-primary=""';
     if (o.status === "completed") return "";
-    if (!isHolder && canActorCloseDeliveredTransfer(o, actor)) {
-      return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Завершить передачу", `data-tt="complete" ${heroAttr}`, "tt-primary")}</div>`;
-    }
     if (o.pendingId && isHolder) {
       return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Ввести код", `data-tt="enter-code-dock" ${heroAttr}`, "tt-primary")}</div>`;
     }
@@ -4394,6 +4377,13 @@
     const canContinueDelivered =
       isHolder && o.status === "delivered" && !o.pendingId && mustRelay === false && o.holderId === o.finalRecipientId;
 
+    if (confirmingComplete) {
+      return `<section class="tt-detail-task-card tt-complete-confirm" data-tt="complete-confirm" role="group" aria-labelledby="tt-complete-title">
+        <h3 id="tt-complete-title" class="tt-detail-task-heading">Завершить передачу?</h3>
+        <p class="tt-detail-task-instructions">«${E(o.item)}» (${E(o.id)}). После завершения передавать предмет дальше по этому треку будет нельзя. История сохранится.</p>
+        <div class="tt-actions">${btn("Подтвердить завершение", 'data-tt="confirm-complete"', "tt-primary")}${btn("Отмена", 'data-tt="cancel-complete"')}</div>
+      </section>`;
+    }
     if (isExternalShell() && isHolder && !o.pendingId && window.TtExternalUi?.externalHolderDetailBlocks) {
       const extBlocks = window.TtExternalUi.externalHolderDetailBlocks(o, actor);
       if (extBlocks) return extBlocks;
@@ -4401,17 +4391,8 @@
 
     if (o.status === "completed") return completedTaskCard(o, actor);
     if (o.pendingId === actor && o.status !== "completed") return pendingRecipientDetailCard(o, h);
-    if (!isHolder && canActorCloseDeliveredTransfer(o, actor)) {
-      return `<section class="tt-detail-task-card" data-tt="detail-task-card">
-        <h3 class="tt-detail-task-heading">Доставлено</h3>
-        <p class="tt-detail-task-instructions">Предмет у <strong>${E(fin?.name || contactById(o.holderId)?.name || "получателя")}</strong>. Создатель может явно завершить передачу.</p>
-        <div class="tt-detail-primary" data-tt="detail-primary-actions">
-          ${btn("Завершить передачу", `data-tt="complete" ${heroAttr}`, "tt-primary tt-btn-block")}
-        </div>
-      </section>`;
-    }
     if (!isHolder) {
-      if (isFormerHolderAfterHandoff(o, actor)) return formerHolderTaskCard(o);
+      if (isFormerHolderAfterHandoff(o, actor) || (o.status === "delivered" && o.createdById === actor)) return formerHolderTaskCard(o);
       const wait = p
         ? `Ожидается подтверждение от ${p.name}.`
         : fin && o.holderId !== o.finalRecipientId
@@ -4465,7 +4446,6 @@
     const actor = actorContactId();
     const isHolder = o.holderId === actor;
     const canComplete = canActorCompleteTransfer(o, actor);
-    const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const showActHolder = o.holderId && o.holderId !== actor;
     const dueHuman = humanDueLabel(o);
     const dueLabel = detailDuePhrase(o);
@@ -4547,14 +4527,6 @@
       <aside class="tt-detail-aside">
       ${desktopDetail || isExternalShell() ? detailFactsCard(o, actor) : ""}
       ${detailHistoryHtml(o, tl, desktopDetail)}
-      ${
-        confirmingComplete
-          ? `<div class="tt-complete-confirm" data-tt="complete-confirm">
-        <p class="tt-warning">Завершить передачу «${E(o.item)}» (${E(o.id)})? Это необратимо: дальнейшие передачи по этому треку будут недоступны.</p>
-        <div class="tt-actions">${btn("Подтвердить завершение", 'data-tt="confirm-complete"', "tt-primary")}${btn("Отмена", 'data-tt="cancel-complete"')}</div>
-      </div>`
-          : ""
-      }
       ${state.toast ? `<p class="tt-success" data-tt="toast">${E(state.toast)}</p>` : ""}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
       </aside>
@@ -5753,9 +5725,15 @@
       if (o.status === "completed") state.error = "Передача уже завершена.";
       else if (o.pendingId) state.error = "Сначала отмените ожидание или подтвердите передачу.";
       else if (!actor || o.holderId !== actor) state.error = "Завершить может только текущий держатель.";
+      else if (!canActorCompleteTransfer(o, actor)) state.error = "Сначала передайте предмет конечному получателю.";
       else state.completeConfirmOrderId = o.id;
       writeUrl();
       renderTracker();
+      if (state.completeConfirmOrderId === o.id) {
+        const panel = document.querySelector('[data-tt="complete-confirm"]');
+        panel?.scrollIntoView({ behavior: "auto", block: "center" });
+        panel?.querySelector('[data-tt="cancel-complete"]')?.focus({ preventScroll: true });
+      }
       return;
     }
     if (action === "cancel-complete") {

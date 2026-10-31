@@ -142,7 +142,7 @@ describe("tan-tracker delivered status", { concurrency: false }, () => {
     assert.equal(row.rows[0]?.status, "completed");
   });
 
-  it("creator closes delivered transfer while external party holds item", async () => {
+  it("former creator cannot close a delivered transfer held by another party", async () => {
     const creator = await createTestUser({
       databaseUrl,
       email: "delivered-creator-close@test.local",
@@ -184,17 +184,23 @@ describe("tan-tracker delivered status", { concurrency: false }, () => {
       .set({ Origin: ORIGIN, "Content-Type": "application/json" })
       .send({ email: "delivered-creator-close@test.local", password: PASSWORD });
     const cookie = login.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+    const beforeTimeline = await db.query(`SELECT COUNT(*)::int AS n FROM tt_transfer_timeline WHERE transfer_id = $1`, [transferId]);
+    const beforeAudit = await db.query(`SELECT COUNT(*)::int AS n FROM tt_audit_log WHERE transfer_id = $1`, [transferId]);
     const res = await request(app)
       .post(`/api/tan-tracker/transfers/${transferId}/legacy-complete`)
       .set({ Origin: ORIGIN, Cookie: cookie, "Content-Type": "application/json" })
       .send({});
-    assert.equal(res.status, 200, res.text);
+    assert.equal(res.status, 403, res.text);
     const row = await db.query<{ status: string; handoff_version: number }>(
       `SELECT status, handoff_version FROM tt_transfers WHERE id = $1`,
       [transferId],
     );
-    assert.equal(row.rows[0]?.status, "completed");
-    assert.equal(row.rows[0]?.handoff_version, 5);
+    assert.equal(row.rows[0]?.status, "delivered");
+    assert.equal(row.rows[0]?.handoff_version, 4);
+    const afterTimeline = await db.query(`SELECT COUNT(*)::int AS n FROM tt_transfer_timeline WHERE transfer_id = $1`, [transferId]);
+    assert.equal(afterTimeline.rows[0]?.n, beforeTimeline.rows[0]?.n);
+    const afterAudit = await db.query(`SELECT COUNT(*)::int AS n FROM tt_audit_log WHERE transfer_id = $1`, [transferId]);
+    assert.equal(afterAudit.rows[0]?.n, beforeAudit.rows[0]?.n);
   });
 
   it("holder access token cannot refresh after explicit close", async () => {
