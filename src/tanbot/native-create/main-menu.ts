@@ -3,11 +3,17 @@ import type { NativeCreateContext, NativeCreateReply } from "./engine";
 import {
   assertDraftBoundToCaller,
   assertDraftPersonRow,
+  assertNativeCreateContext,
   lockNativeCreateMessenger,
 } from "./access-guard";
 import { loadNativeBotDraft, type NativeCreateActorKind } from "./draft-scope";
 import type { ExternalRequestDraftRow } from "../../tan-tracker/external-request/draft-store";
-import { buildMainMenuInline, menuReplyKeyboard } from "./keyboards";
+import {
+  buildMainMenuInline,
+  maxContactWithMenuInline,
+  menuReplyKeyboard,
+  telegramContactWithMenuKeyboard,
+} from "./keyboards";
 
 export const NATIVE_MAIN_MENU_ACTION_PROMPT = "Выберите действие.";
 
@@ -52,18 +58,33 @@ export function isNativeContinueDraftText(text: string): boolean {
   return text.trim().toLowerCase() === NATIVE_CONTINUE_DRAFT_TEXT;
 }
 
+const CREATE_TRIGGERS = new Set([
+  "оформить передачу",
+  "создать передачу",
+  "/send",
+  "/create",
+  "/create@",
+  "отправить предмет",
+]);
+
+export function isNativeCreateMenuText(text: string): boolean {
+  const t = text.trim();
+  const lower = t.toLowerCase();
+  if (CREATE_TRIGGERS.has(lower)) return true;
+  if (parseNativeBotSlashCommand(t) === "new") return true;
+  if (lower === "/send" || /^\/send@[A-Za-z0-9_]+$/i.test(t)) return true;
+  if (lower === "/create" || /^\/create@[A-Za-z0-9_]+$/i.test(t)) return true;
+  return false;
+}
+
 export async function peekResumableNativeDraft(
   client: PoolClient,
   ctx: NativeCreateContext,
 ): Promise<ExternalRequestDraftRow | null> {
   if (!ctx.privateDialogOk) return null;
-  if (ctx.isLinkedStaff) {
-    if (!ctx.staffUserId) return null;
-    const row = await client.query<{ status: string }>(`SELECT status FROM users WHERE id = $1::uuid`, [
-      ctx.staffUserId,
-    ]);
-    if (row.rows[0]?.status !== "active") return null;
-  } else if (!ctx.personId) {
+  try {
+    await assertNativeCreateContext(client, ctx);
+  } catch {
     return null;
   }
   const actor: NativeCreateActorKind = ctx.isLinkedStaff ? "staff" : "external";
@@ -108,5 +129,44 @@ export async function buildNativeMainMenuReply(
     replyMarkup: keyboard,
     maxInlineButtons: inline.maxInlineButtons,
     telegramInlineKeyboard: undefined,
+  };
+}
+
+/** Verified own-contact gate for protected menu actions (no draft/session writes). */
+export function nativeVerifiedContactRequiredReply(
+  ctx: NativeCreateContext,
+  message: string,
+): NativeCreateReply {
+  if (ctx.channel === "telegram") {
+    return {
+      text: message,
+      requestContact: true,
+      replyMarkup: telegramContactWithMenuKeyboard(),
+      telegramInlineKeyboard: undefined,
+      maxInlineButtons: undefined,
+    };
+  }
+  const inline = maxContactWithMenuInline();
+  return {
+    text: message,
+    requestContact: true,
+    maxInlineButtons: inline.maxInlineButtons,
+    replyMarkup: menuReplyKeyboard(),
+    telegramInlineKeyboard: undefined,
+  };
+}
+
+/** Post-success reply: preserve business text and attach fresh main menu (no Continue). */
+export async function nativeCompletionMenuReply(
+  client: PoolClient,
+  ctx: NativeCreateContext,
+  resultText: string,
+): Promise<NativeCreateReply> {
+  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false });
+  return {
+    text: resultText,
+    replyMarkup: menu.replyMarkup,
+    telegramInlineKeyboard: undefined,
+    maxInlineButtons: menu.maxInlineButtons,
   };
 }

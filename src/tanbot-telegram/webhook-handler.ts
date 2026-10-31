@@ -297,7 +297,7 @@ async function processParsedUpdate(
             chatId: update.chatId,
             text: "Telegram не подключён к личному кабинету. Подключение выполняется в разделе «Мой профиль».",
           };
-    } else if (command.startsWith("/start") && isExternalMessengerStartToken(update.startPayload)) {
+    } else if (update.startPayload && isExternalMessengerStartToken(update.startPayload)) {
       const ext = await handleExternalRecipientStart(client, {
         channel: "telegram",
         startPayload: update.startPayload,
@@ -317,48 +317,52 @@ async function processParsedUpdate(
               : undefined,
           }
         : { chatId: update.chatId, text: "Приглашение недоступно." };
-    } else if (command.startsWith("/start")) {
+    } else if (
+      (await import("../tanbot/native-create/main-menu")).parseNativeBotSlashCommand(update.text) === "start" &&
+      !update.startPayload
+    ) {
       const lkUrl = `${config.appOrigin}/profile`;
-      if (!update.startPayload) {
-        if (isExternalMessengerFeatureEnabled()) {
-          const { tryNativeCreateTelegramMessage } = await import("../tanbot/native-create/adapters");
-          const native = await tryNativeCreateTelegramMessage(client, {
-            chatId: update.chatId,
-            telegramUserId: update.telegramUserId,
-            text: "/start",
-            privateDialogOk: true,
-          });
-          if (native) {
-            const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
-            const linkedStaff = await findAccountByTelegramUserId(client, update.telegramUserId);
-            reply = {
-              chatId: update.chatId,
-              text: native.text,
-              replyMarkup: native.replyMarkup,
-              replyExtra: nativeTelegramReplyExtra(native, {
-                messengerChatId: update.chatId.toString(),
-                messengerUserId: update.telegramUserId.toString(),
-                actor: linkedStaff ? "staff" : "external",
-                channel: "telegram",
-              }),
-            };
-          }
-        }
-        if (!reply) {
-          const account = await findAccountByTelegramUserId(client, update.telegramUserId);
-          const { menuReplyKeyboard } = await import("../tanbot/native-create/keyboards");
+      if (isExternalMessengerFeatureEnabled()) {
+        const { tryNativeCreateTelegramMessage } = await import("../tanbot/native-create/adapters");
+        const native = await tryNativeCreateTelegramMessage(client, {
+          chatId: update.chatId,
+          telegramUserId: update.telegramUserId,
+          text: "/start",
+          privateDialogOk: true,
+        });
+        if (native) {
+          const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
+          const linkedStaff = await findAccountByTelegramUserId(client, update.telegramUserId);
           reply = {
             chatId: update.chatId,
-            text: buildMessengerPlainStartReply({
-              channelLabel: "Telegram",
-              linked: !!account,
-              notificationsEnabled: account?.notifications_enabled ?? false,
-              profileUrl: lkUrl,
+            text: native.text,
+            replyMarkup: native.requestContact
+              ? (await import("../tanbot/native-create/keyboards")).telegramContactWithMenuKeyboard()
+              : native.replyMarkup,
+            replyExtra: nativeTelegramReplyExtra(native, {
+              messengerChatId: update.chatId.toString(),
+              messengerUserId: update.telegramUserId.toString(),
+              actor: linkedStaff ? "staff" : "external",
+              channel: "telegram",
             }),
-            ...(account ? { replyMarkup: menuReplyKeyboard() } : {}),
           };
         }
-      } else {
+      }
+      if (!reply) {
+        const account = await findAccountByTelegramUserId(client, update.telegramUserId);
+        const { menuReplyKeyboard } = await import("../tanbot/native-create/keyboards");
+        reply = {
+          chatId: update.chatId,
+          text: buildMessengerPlainStartReply({
+            channelLabel: "Telegram",
+            linked: !!account,
+            notificationsEnabled: account?.notifications_enabled ?? false,
+            profileUrl: lkUrl,
+          }),
+          ...(account ? { replyMarkup: menuReplyKeyboard() } : {}),
+        };
+      }
+    } else if (update.startPayload) {
         const outcome = await consumeStartTokenForTelegramUser(
           pool,
           config,
@@ -391,7 +395,6 @@ async function processParsedUpdate(
             }),
           };
         }
-      }
     } else if (isTanbotHandoffCodePilotEnabled() && (command === "/code" || command.startsWith("/code@"))) {
       const handoff = await buildHandoffCodeBotReply(client, "telegram", {
         externalUserId: update.telegramUserId,
@@ -423,11 +426,7 @@ async function processParsedUpdate(
             chatId: update.chatId,
             text: native.text,
             replyMarkup: native.requestContact
-              ? {
-                  keyboard: [[{ text: "Отправить мой номер", request_contact: true }]],
-                  one_time_keyboard: true,
-                  resize_keyboard: true,
-                }
+              ? (await import("../tanbot/native-create/keyboards")).telegramContactWithMenuKeyboard()
               : native.replyMarkup,
             replyExtra: nativeTelegramReplyExtra(native, {
               messengerChatId: update.chatId.toString(),
@@ -451,11 +450,7 @@ async function processParsedUpdate(
           chatId: update.chatId,
           text: ext.text,
           replyMarkup: ext.requestContact
-            ? {
-                keyboard: [[{ text: "Отправить мой номер", request_contact: true }]],
-                one_time_keyboard: true,
-                resize_keyboard: true,
-              }
+            ? (await import("../tanbot/native-create/keyboards")).telegramContactWithMenuKeyboard()
             : ext.replyMarkup,
         };
       }

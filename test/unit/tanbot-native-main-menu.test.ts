@@ -10,6 +10,7 @@ import {
   parseNativeBotSlashCommand,
   NATIVE_MAIN_MENU_ACTION_PROMPT,
   nativeMainMenuText,
+  isNativeCreateMenuText,
 } from "../../src/tanbot/native-create/main-menu";
 
 describe("native main menu helpers", () => {
@@ -22,6 +23,16 @@ describe("native main menu helpers", () => {
     assert.equal(parseNativeBotSlashCommand("/mystery"), null);
     assert.equal(parseNativeBotSlashCommand("/start token"), null);
     assert.equal(parseNativeBotSlashCommand("/my transfers"), null);
+  });
+
+  it("isNativeCreateMenuText accepts exact create aliases without prefix swallowing", () => {
+    assert.equal(isNativeCreateMenuText("/send"), true);
+    assert.equal(isNativeCreateMenuText("/create@Tandoor_bot"), true);
+    assert.equal(isNativeCreateMenuText("Оформить передачу"), true);
+    assert.equal(isNativeCreateMenuText("/new"), true);
+    assert.equal(isNativeCreateMenuText("/new@bot"), true);
+    assert.equal(isNativeCreateMenuText("/newer"), false);
+    assert.equal(isNativeCreateMenuText("/startled"), false);
   });
 
   it("nativeMainMenuText includes Tandoor greeting and action prompt", () => {
@@ -55,5 +66,25 @@ describe("native bot command install registry", () => {
     assert.ok(merged.some((c) => c.command === "status"));
     assert.ok(merged.some((c) => c.command === "start"));
     assert.equal(merged.filter((c) => c.command === "start").length, 1);
+  });
+
+  it("apply without explicit transport fails closed", async () => {
+    const plan = buildNativeBotCommandInstallPlan("telegram", { dryRun: false });
+    const result = await runNativeBotCommandInstall(plan);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.message, /explicit transport/i);
+    }
+  });
+
+  it("apply uses injected mock transport without network", async () => {
+    let calls = 0;
+    const plan = buildNativeBotCommandInstallPlan("max", { dryRun: false });
+    const result = await runNativeBotCommandInstall(plan, async () => {
+      calls += 1;
+      return { ok: true, dryRun: false, mergedCount: plan.commands.length };
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.ok, true);
   });
 });

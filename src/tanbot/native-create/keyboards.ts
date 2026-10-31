@@ -8,6 +8,28 @@ export type NativeCreateUi = {
   maxInlineButtons?: MaxInlineButton[][];
 };
 
+export function telegramContactWithMenuKeyboard(): Record<string, unknown> {
+  return {
+    keyboard: [
+      [{ text: "Отправить мой номер", request_contact: true }],
+      [{ text: "Меню" }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+    one_time_keyboard: true,
+  };
+}
+
+export function maxContactWithMenuInline(): NativeCreateUi {
+  const draftId = NATIVE_MENU_DRAFT_HEX;
+  return {
+    maxInlineButtons: [
+      [{ type: "request_contact", text: "Отправить мой номер" }],
+      maxRow(draftId, MENU_REVISION, [{ label: "Меню", action: "menu" }]),
+    ],
+  };
+}
+
 export function menuReplyKeyboard(options: { showContinue?: boolean } = {}): Record<string, unknown> {
   const rows: Array<Array<{ text: string }>> = [
     [{ text: "Оформить передачу" }],
@@ -175,8 +197,18 @@ export function buildStepUi(
   }
   if (kind === "photo_inspect") {
     return channel === "telegram"
-      ? { telegramInlineKeyboard: [tgRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }])] }
-      : { maxInlineButtons: [maxRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }])] };
+      ? {
+          telegramInlineKeyboard: [
+            tgRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }]),
+            tgRow(draftId, revision, NAV),
+          ],
+        }
+      : {
+          maxInlineButtons: [
+            maxRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }]),
+            maxRow(draftId, revision, NAV),
+          ],
+        };
   }
   if (kind === "recipient_ext_phone") {
     const primary: BtnDef[] = [{ label: "Далее", action: "recipient_ext_next" }];
