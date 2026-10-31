@@ -9,23 +9,27 @@ import {
 } from "./access-guard";
 import { bumpDraftRevision, loadNativeBotDraft } from "./draft-scope";
 import { appendNativeCreateDraftPhoto, photoCountForDraft } from "./photo-store";
-import { navError, renderDraftPrompt } from "./engine";
+import { formatPhotoStepFeedback } from "./photo-feedback-text";
+import { renderDraftPrompt } from "./engine";
+import type { MaxImageIngestReject } from "../external-person/max-image-parse";
 
 export type NormalizedMessengerImage = {
   downloadUrl: string;
   fileName: string;
   mediaToken?: string | null;
   telegramFileId?: string | null;
+  ingestReject?: MaxImageIngestReject;
 };
 
-function photoStepFeedback(added: number, countAfter: number, errors: string[]): string {
-  const parts: string[] = [];
-  if (added > 0) {
-    parts.push(added === 1 ? "Добавлено 1 фото." : `Добавлено ${added} фото.`);
-    parts.push(`Фото: ${countAfter}/5.`);
+function rejectMessage(reason: MaxImageIngestReject): string {
+  switch (reason) {
+    case "token_only":
+      return "Не удалось загрузить изображение по токену. Отправьте фото ещё раз из галереи MAX.";
+    case "unsafe_url":
+      return "Ссылка на изображение недоступна.";
+    case "malformed":
+      return "Не удалось принять фото. Отправьте изображение ещё раз.";
   }
-  for (const e of errors) parts.push(e);
-  return parts.join("\n");
 }
 
 async function ingestNativeCreatePhotos(
@@ -44,6 +48,7 @@ async function ingestNativeCreatePhotos(
     await assertNativeCreateContext(client, ctx);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Действие недоступно.";
+    const { navError } = await import("./engine");
     return navError(message, ctx.channel);
   }
 
@@ -62,6 +67,10 @@ async function ingestNativeCreatePhotos(
     if (count >= 5) {
       errors.push("Достигнут лимит 5 фото. Нажмите «Далее».");
       break;
+    }
+    if (img.ingestReject) {
+      errors.push(rejectMessage(img.ingestReject));
+      continue;
     }
     const fetched = await fetchOne(img);
     if (!fetched.ok) {
@@ -90,10 +99,8 @@ async function ingestNativeCreatePhotos(
   const nextPayload =
     added > 0 ? await bumpDraftRevision(client, draft.id, "photo", payload) : payload;
   const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
-  const prefix = photoStepFeedback(added, count, errors);
-  if (prefix) {
-    rendered.text = `${prefix}\n\n${rendered.text}`;
-  }
+  const prefix = formatPhotoStepFeedback(added, count, errors);
+  rendered.text = `${prefix}\n\n${rendered.text}`;
   return rendered;
 }
 

@@ -821,10 +821,13 @@ export async function handleNativeCreatePhoto(
   assertDraftBoundToCaller(payload, ctx);
 
   const count = await photoCount(client, draft.id);
-  if (count >= 5) {
-    return navError("Не более 5 фото. Нажмите «Далее».", ctx.channel);
-  }
   const { appendNativeCreateDraftPhoto } = await import("./photo-store");
+  const { formatPhotoStepFeedback } = await import("./photo-feedback-text");
+  if (count >= 5) {
+    const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", payload);
+    const prefix = formatPhotoStepFeedback(0, count, ["Достигнут лимит 5 фото. Нажмите «Далее»."]);
+    return { ...rendered, text: `${prefix}\n\n${rendered.text}` };
+  }
   const append = await appendNativeCreateDraftPhoto(client, {
     draftId: draft.id,
     sortOrder: count,
@@ -835,14 +838,14 @@ export async function handleNativeCreatePhoto(
     maxFileToken: input.maxFileToken,
   });
   if (!append.ok) {
-    return navError(append.message, ctx.channel);
+    const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", payload);
+    const prefix = formatPhotoStepFeedback(0, count, [append.message]);
+    return { ...rendered, text: `${prefix}\n\n${rendered.text}` };
   }
   const nextPayload = await bumpDraftRevision(client, draft.id, "photo", payload);
   const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
-  return {
-    ...rendered,
-    text: `Добавлено 1 фото.\nФото: ${count + 1}/5.\n\n${rendered.text}`,
-  };
+  const prefix = formatPhotoStepFeedback(1, count + 1, []);
+  return { ...rendered, text: `${prefix}\n\n${rendered.text}` };
 }
 
 async function applyRecipientContactData(
