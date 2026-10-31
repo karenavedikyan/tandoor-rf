@@ -18,6 +18,28 @@ describe("tanbot max update parse", () => {
     }
   });
 
+  it("accepts message_created with image attachments before caption text", () => {
+    const parsed = parseMaxWebhookUpdate({
+      update_type: "message_created",
+      timestamp: 99,
+      chat_id: 10,
+      message: {
+        sender: { user_id: 5, is_bot: false },
+        recipient: { chat_id: 11, chat_type: "dialog" },
+        body: {
+          mid: "mid-with-caption",
+          text: "caption here",
+          attachments: [{ type: "image", payload: { url: "https://iu.oneme.ru/getImage?token=abc" } }],
+        },
+      },
+    });
+    assert.equal(parsed.ok, true);
+    if (parsed.ok && "normalizedImages" in parsed.update) {
+      assert.equal(parsed.update.normalizedImages?.length, 1);
+      assert.equal(parsed.update.imageDownloadUrl, parsed.update.normalizedImages?.[0]?.downloadUrl);
+    }
+  });
+
   it("accepts message_created /status", () => {
     const parsed = parseMaxWebhookUpdate({
       update_type: "message_created",

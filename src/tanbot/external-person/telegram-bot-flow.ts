@@ -89,16 +89,19 @@ export async function handleExternalPersonTelegramPhoto(
   input: { chatId: bigint; telegramUserId: bigint; fileId: string; fileName: string | null },
 ): Promise<ExternalPersonBotReply | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
-  if (await findAccountByTelegramUserId(client, input.telegramUserId)) return null;
-  const { fetchTelegramFileBytes } = await import("../../tanbot-telegram/file-fetch");
-  const bytes = await fetchTelegramFileBytes(input.fileId);
-  if (!bytes.ok) return { text: bytes.message };
-  return tryNativeCreateTelegramPhoto(client, {
+  const { ingestNativeCreateTelegramPhotos } = await import("../native-create/photo-ingest");
+  const { nativeReplyToTelegram } = await import("../native-create/adapters");
+  const native = await ingestNativeCreateTelegramPhotos(client, {
     chatId: input.chatId,
     telegramUserId: input.telegramUserId,
-    buffer: bytes.buffer,
-    mimeType: bytes.mimeType,
-    fileName: input.fileName ?? "photo.jpg",
-    telegramFileId: input.fileId,
+    images: [
+      {
+        downloadUrl: "",
+        fileName: input.fileName ?? "photo.jpg",
+        telegramFileId: input.fileId,
+      },
+    ],
   });
+  if (!native) return null;
+  return nativeReplyToTelegram(native);
 }

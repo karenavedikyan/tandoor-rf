@@ -3,10 +3,8 @@ import { listEligibleStaffForExternalParty } from "../../tan-tracker/external-re
 import { listTanTrackerRecipientCatalog } from "../../tan-tracker/recipient-catalog";
 import { loadAccessContext } from "../../access/context";
 import { assertPartyEligibleAsRecipient } from "../../tan-tracker/party-eligibility";
-import { writeAttachmentBytes } from "../../tan-tracker/attachments";
 import { createPersonBrowserSession } from "../../tan-tracker/external-person/person-service";
 import { getAppOrigin } from "../../config";
-import crypto from "crypto";
 import {
   bumpDraftRevision,
   clearExternalRecipientTarget,
@@ -73,7 +71,7 @@ export function isNativeCreateCallback(data: string): boolean {
 
 const RECIPIENT_PAGE = 6;
 
-function navError(message: string, channel: "telegram" | "max"): NativeCreateReply {
+export function navError(message: string, channel: "telegram" | "max"): NativeCreateReply {
   const menu = buildMainMenuInline(channel);
   return {
     text: message,
@@ -90,7 +88,7 @@ function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount:
     case "photo":
       return photoCount > 0
         ? `Фото: ${photoCount}/5. Пришлите ещё или нажмите «Далее». «Пропустить» доступно только без фото.`
-        : "Пришлите до 5 фото (по 8 МБ) или нажмите «Пропустить».";
+        : "Пришлите до 5 фото (по 8 МБ). После добавления нажмите «Далее» или «Пропустить», если фото не нужны.";
     case "comment":
       return "Комментарий к передаче или нажмите «Пропустить».";
     case "recipient":
@@ -185,7 +183,7 @@ function filteredRecipients(payload: NativeCreateDraftPayload): Array<{ userId: 
   return all.filter((c) => c.fullName.toLowerCase().includes(q));
 }
 
-async function renderDraftPrompt(
+export async function renderDraftPrompt(
   client: PoolClient,
   channel: "telegram" | "max",
   draftId: string,
@@ -826,33 +824,25 @@ export async function handleNativeCreatePhoto(
   if (count >= 5) {
     return navError("Не более 5 фото. Нажмите «Далее».", ctx.channel);
   }
-  if (input.buffer.length > 8 * 1024 * 1024) {
-    return navError("Фото больше 8 МБ. Отправьте файл меньше.", ctx.channel);
+  const { appendNativeCreateDraftPhoto } = await import("./photo-store");
+  const append = await appendNativeCreateDraftPhoto(client, {
+    draftId: draft.id,
+    sortOrder: count,
+    buffer: input.buffer,
+    mimeType: input.mimeType,
+    fileName: input.fileName,
+    telegramFileId: input.telegramFileId,
+    maxFileToken: input.maxFileToken,
+  });
+  if (!append.ok) {
+    return navError(append.message, ctx.channel);
   }
-  const mime = input.mimeType?.toLowerCase() ?? "";
-  if (!mime.startsWith("image/")) {
-    return navError("Нужен файл изображения.", ctx.channel);
-  }
-
-  const key = `native-draft/${draft.id}/${crypto.randomUUID()}-${input.fileName}`;
-  await writeAttachmentBytes(client, key, input.buffer);
-  await client.query(
-    `INSERT INTO tt_external_request_draft_files (
-       draft_id, storage_key, file_name, mime_type, byte_size, sort_order, telegram_file_id, max_file_token)
-     VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)`,
-    [
-      draft.id,
-      key,
-      input.fileName,
-      input.mimeType,
-      input.buffer.length,
-      count,
-      input.telegramFileId?.trim() || null,
-      input.maxFileToken?.trim() || null,
-    ],
-  );
   const nextPayload = await bumpDraftRevision(client, draft.id, "photo", payload);
-  return renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
+  const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
+  return {
+    ...rendered,
+    text: `Добавлено 1 фото.\nФото: ${count + 1}/5.\n\n${rendered.text}`,
+  };
 }
 
 async function applyRecipientContactData(
