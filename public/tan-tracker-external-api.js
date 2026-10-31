@@ -52,8 +52,11 @@
         });
       });
     },
-    saveDraft: function (step, payload) {
-      return json("/api/tan-tracker/public/external/request/draft", { method: "POST", body: { step: step, payload: payload } });
+    saveDraft: function (step, payload, opts) {
+      opts = opts || {};
+      var body = { step: step, payload: payload || {} };
+      if (opts.startFresh === true) body.startFresh = true;
+      return json("/api/tan-tracker/public/external/request/draft", { method: "POST", body: body });
     },
     confirmDraft: function (draftId) {
       return json("/api/tan-tracker/public/external/request/confirm", { method: "POST", body: { draftId: draftId } });

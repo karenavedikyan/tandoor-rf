@@ -20,26 +20,6 @@ const STAFF_EMAIL = "ext-wizard-staff@test.local";
 
 type ExtFixture = BrowserHttpFixture & { estToken?: string; personId?: string };
 
-async function clearActiveDraftsForPerson(databaseUrl: string, personId: string): Promise<void> {
-  const pool = new Pool({ connectionString: databaseUrl, max: 2 });
-  try {
-    await pool.query(
-      `DELETE FROM tt_external_request_draft_files
-       WHERE draft_id IN (
-         SELECT id FROM tt_external_request_drafts
-         WHERE person_id = $1::uuid AND confirmed_transfer_id IS NULL
-       )`,
-      [personId],
-    );
-    await pool.query(
-      `DELETE FROM tt_external_request_drafts WHERE person_id = $1::uuid AND confirmed_transfer_id IS NULL`,
-      [personId],
-    );
-  } finally {
-    await pool.end();
-  }
-}
-
 async function openExternalHome(page: Page, baseUrl: string, est: string): Promise<void> {
   await page.goto(`${baseUrl}/tan-tracker?est=${encodeURIComponent(est)}`);
   await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 30000 });
@@ -70,14 +50,7 @@ async function launchRequired(engine: BrowserType<Browser>, t: { skip: (message?
   }
 }
 
-async function runWizardPhotoCommentScenario(
-  page: Page,
-  baseUrl: string,
-  est: string,
-  databaseUrl: string,
-  personId: string,
-): Promise<void> {
-  await clearActiveDraftsForPerson(databaseUrl, personId);
+async function runWizardPhotoCommentScenario(page: Page, baseUrl: string, est: string): Promise<void> {
   await openExternalHome(page, baseUrl, est);
   await startWizardItemStep(page);
 
@@ -157,6 +130,7 @@ describe("external request wizard photo + comment UX (browser)", { concurrency: 
       role: "manager",
     });
     await pool.query(`UPDATE users SET accepts_external_tt_intake = TRUE WHERE id = $1::uuid`, [staff.id]);
+    await ensurePartyForUserOnWrite(pool, staff.id, "Wizard Staff", "+79991234098");
     const extParty = (
       await pool.query<{ id: string }>(
         `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Wizard Ext', '+79991234099') RETURNING id::text`,
@@ -197,13 +171,12 @@ describe("external request wizard photo + comment UX (browser)", { concurrency: 
         assert.ok(browser);
         const est = fixture.estToken;
         assert.ok(est);
-        assert.ok(fixture.personId);
         const context = mobile
           ? await browser.newContext({ ...devices["iPhone 13"], baseURL: fixture.baseUrl })
           : await browser.newContext({ baseURL: fixture.baseUrl, viewport: { width: 1280, height: 900 } });
         const page = await context.newPage();
         try {
-          await runWizardPhotoCommentScenario(page, fixture.baseUrl, est, fixture.databaseUrl, fixture.personId!);
+          await runWizardPhotoCommentScenario(page, fixture.baseUrl, est);
         } finally {
           await context.close();
           await browser.close();
@@ -231,7 +204,6 @@ describe("external request wizard photo + comment UX (browser)", { concurrency: 
       await route.continue();
     });
     try {
-      await clearActiveDraftsForPerson(fixture.databaseUrl, fixture.personId!);
       await openExternalHome(page, fixture.baseUrl, est);
       await startWizardItemStep(page);
       const nextBtn = page.locator('[data-tt="ext-request-next"]');
@@ -262,22 +234,166 @@ describe("external request wizard photo + comment UX (browser)", { concurrency: 
     assert.ok(browser);
     const est = fixture.estToken!;
     const page = await browser.newPage();
+    let releaseDelay: (() => void) | null = null;
+    const delayGate = new Promise<void>((resolve) => {
+      releaseDelay = resolve;
+    });
+    let holdPhoto = true;
     await page.route("**/api/tan-tracker/public/external/request/photo?*", async (route) => {
-      await new Promise((r) => setTimeout(r, 800));
+      if (holdPhoto && route.request().method() === "POST") {
+        holdPhoto = false;
+        await delayGate;
+      }
       await route.continue();
     });
     try {
-      await clearActiveDraftsForPerson(fixture.databaseUrl, fixture.personId!);
       await openExternalHome(page, fixture.baseUrl, est);
       await startWizardItemStep(page);
       void page.locator('[data-tt="ext-photo-input"]').setInputFiles(FIXTURE_A);
       await page.waitForSelector(".tt-ext-photo--pending", { timeout: 5000 });
       await page.click('[data-tt="ext-request-close"]');
       await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 10000 });
-      await page.waitForTimeout(1200);
+      releaseDelay!();
+      await page
+        .waitForResponse(
+          (r) => r.url().includes("/api/tan-tracker/public/external/request/photo") && r.request().method() === "POST",
+          { timeout: 30000 },
+        )
+        .catch(() => null);
       const staleOk = await page.locator(".tt-ext-photo--ok").count();
       assert.equal(staleOk, 0);
     } finally {
+      releaseDelay?.();
+      await page.close();
+      await browser.close();
+    }
+  });
+
+  it("cancel then new request confirms only new photo bytes (Chromium)", async (t) => {
+    const browser = await launchRequired(chromium, t);
+    assert.ok(browser);
+    const est = fixture.estToken!;
+    const bytesB = await readFile(FIXTURE_B);
+    const page = await browser.newPage();
+    let releaseStaleUpload: (() => void) | null = null;
+    const staleUploadGate = new Promise<void>((resolve) => {
+      releaseStaleUpload = resolve;
+    });
+    let holdFirstPhotoPost = true;
+    await page.route("**/api/tan-tracker/public/external/request/photo?*", async (route) => {
+      if (holdFirstPhotoPost && route.request().method() === "POST") {
+        holdFirstPhotoPost = false;
+        await staleUploadGate;
+      }
+      await route.continue();
+    });
+    try {
+      await openExternalHome(page, fixture.baseUrl, est);
+      await startWizardItemStep(page);
+      void page.locator('[data-tt="ext-photo-input"]').setInputFiles(FIXTURE_A);
+      await page.waitForSelector(".tt-ext-photo--pending", { timeout: 5000 });
+      await page.click('[data-tt="ext-request-close"]');
+      await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 10000 });
+
+      await page.click('[data-tt="ext-request-open"]');
+      await page.waitForSelector('[data-tt-field="extItem"]', { timeout: 10000 });
+      await page.fill('[data-tt-field="extItem"]', "Fresh after cancel");
+      const freshDraft = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/draft") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-request-next"]');
+      assert.equal((await freshDraft).status(), 200);
+
+      const stalePhoto = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/photo") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      releaseStaleUpload!();
+      const staleStatus = (await stalePhoto).status();
+      assert.ok(staleStatus === 404 || staleStatus === 409);
+
+      const photoUp = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/photo") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.locator('[data-tt="ext-photo-input"]').setInputFiles(FIXTURE_B);
+      assert.equal((await photoUp).status(), 201);
+      await page.waitForSelector(".tt-ext-photo--ok", { timeout: 20000 });
+
+      await page.click('[data-tt="ext-request-next"]');
+      await page.waitForSelector('[data-tt-field="extComment"]', { timeout: 10000 });
+      const draftAfterComment = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/draft") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-request-next"]');
+      assert.equal((await draftAfterComment).status(), 200);
+      await page.waitForSelector('[data-tt="ext-pick-recipient"]', { timeout: 15000 });
+      await page.locator('[data-tt="ext-pick-recipient"]').filter({ hasText: "Wizard Staff" }).first().waitFor({ timeout: 15000 });
+      await page.locator('[data-tt="ext-pick-recipient"]').filter({ hasText: "Wizard Staff" }).first().click();
+      const draftAfterRecipient = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/draft") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-request-next"]');
+      assert.equal((await draftAfterRecipient).status(), 200);
+      await page.waitForSelector('[data-tt="ext-due-today"]', { timeout: 10000 });
+      const draftAfterDue = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/draft") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-request-next"]');
+      assert.equal((await draftAfterDue).status(), 200);
+      await page.waitForSelector(".tt-ext-chat-summary", { timeout: 15000 });
+      const formState = await page.evaluate(() => {
+        const f = (window as unknown as { TanTrackerPrototype?: { state?: { extRequestForm?: { draftId?: string; recipientUserId?: string; item?: string } } } })
+          .TanTrackerPrototype?.state?.extRequestForm;
+        return { draftId: f?.draftId || "", recipientUserId: f?.recipientUserId || "", item: f?.item || "" };
+      });
+      assert.ok(formState.recipientUserId, "recipientUserId must be set before confirm");
+      assert.ok(formState.draftId);
+      const poolPre = new Pool({ connectionString: fixture.databaseUrl, max: 2 });
+      try {
+        const fileCount = await poolPre.query<{ c: number }>(
+          `SELECT COUNT(*)::int AS c FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`,
+          [formState.draftId],
+        );
+        assert.equal(fileCount.rows[0]?.c, 1, "draft must contain exactly one photo after fresh start");
+      } finally {
+        await poolPre.end();
+      }
+      const confirmReq = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/confirm") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-request-next"]');
+      const confirmResp = await confirmReq;
+      if (confirmResp.status() !== 200) {
+        const errBody = await confirmResp.text();
+        assert.fail(`confirm failed ${confirmResp.status()}: ${errBody}`);
+      }
+      const confirmJson = (await confirmResp.json()) as { publicCode?: string };
+      assert.ok(confirmJson.publicCode);
+
+      const pool = new Pool({ connectionString: fixture.databaseUrl, max: 2 });
+      try {
+        const att = await pool.query<{ byte_size: string; storage_key: string }>(
+          `SELECT byte_size::text, storage_key FROM tt_transfer_attachments WHERE transfer_id = $1 ORDER BY created_at`,
+          [confirmJson.publicCode],
+        );
+        assert.equal(att.rowCount, 1);
+        assert.equal(Number(att.rows[0]!.byte_size), bytesB.length);
+        const blob = await pool.query<{ content: Buffer }>(
+          `SELECT content FROM tt_attachment_blobs WHERE storage_key = $1`,
+          [att.rows[0]!.storage_key],
+        );
+        assert.ok(blob.rows[0]?.content.equals(bytesB));
+      } finally {
+        await pool.end();
+      }
+    } finally {
+      releaseStaleUpload?.();
       await page.close();
       await browser.close();
     }

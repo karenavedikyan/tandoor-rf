@@ -299,10 +299,13 @@
       recipientId: "",
       duePreset: "today",
       draftId: "",
+      draftStartFresh: true,
       photoCount: 0,
       photos: [],
     };
     st.extRequestViewerUrl = "";
+    st.extRequestViewerOpenLocalId = "";
+    st.extRequestViewerReturnLocalId = "";
   }
 
   function extPhotoGridHtml(f, phase) {
@@ -625,6 +628,33 @@
         });
       }
     }
+    if (st.extRequestViewerReturnLocalId && !st.extRequestViewerUrl) {
+      var returnId = st.extRequestViewerReturnLocalId;
+      st.extRequestViewerReturnLocalId = "";
+      var thumbBtn = document.querySelector('[data-tt="ext-photo-open"][data-local-id="' + returnId + '"]');
+      if (thumbBtn && typeof thumbBtn.focus === "function") thumbBtn.focus();
+    }
+    if (st.extRequestViewerUrl) {
+      var viewerEl = document.querySelector('[data-tt="ext-photo-viewer"]');
+      var closeCtl = viewerEl && viewerEl.querySelector('[data-tt="ext-photo-viewer-close"]');
+      if (closeCtl && typeof closeCtl.focus === "function") closeCtl.focus();
+      if (viewerEl && !viewerEl.dataset.ttExtTrap) {
+        viewerEl.dataset.ttExtTrap = "1";
+        viewerEl.addEventListener("keydown", function (ev) {
+          if (ev.key !== "Tab") return;
+          ev.preventDefault();
+          if (closeCtl && typeof closeCtl.focus === "function") closeCtl.focus();
+        });
+      }
+    }
+  }
+
+  function closeExtPhotoViewer(st) {
+    if (!st) return;
+    st.extRequestViewerReturnLocalId = st.extRequestViewerOpenLocalId || st.extRequestViewerReturnLocalId || "";
+    st.extRequestViewerOpenLocalId = "";
+    st.extRequestViewerUrl = "";
+    if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
   }
 
   function photoPickDedupeKey(file) {
@@ -702,12 +732,14 @@
     syncPhotoCount(f);
     if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
 
-    void ensureDraft(f)
+    var boundDraftId = f.draftId || "";
+    void ensureDraft(st, f)
       .then(function (draftId) {
         if ((st.extRequestFlowId || 0) !== flowId) return null;
         if (st.view !== "ext-request") return null;
+        if (boundDraftId && boundDraftId !== draftId) return null;
         return window.TanTrackerExternal.uploadPhoto(draftId, file).then(function () {
-          return { ok: true };
+          return { ok: true, draftId: draftId };
         });
       })
       .then(function (result) {
@@ -795,13 +827,28 @@
     return statusCard + nextStep;
   }
 
-  function ensureDraft(f) {
+  function ensureDraft(st, f) {
+    if (!st || !f) return Promise.reject(new Error("Черновик недоступен."));
     if (f.draftId) return Promise.resolve(f.draftId);
-    return window.TanTrackerExternal.saveDraft("item", {}).then(function (res) {
-      if (res.response.status !== 200) throw new Error("Черновик недоступен.");
-      f.draftId = res.data.draftId;
-      return f.draftId;
-    });
+    if (f.draftEnsurePromise) return f.draftEnsurePromise;
+    var flowId = st.extRequestFlowId || 0;
+    var startFresh = f.draftStartFresh === true;
+    f.draftEnsurePromise = window.TanTrackerExternal.saveDraft("item", {}, { startFresh: startFresh })
+      .then(function (res) {
+        if ((st.extRequestFlowId || 0) !== flowId) {
+          throw new Error("Заявка отменена.");
+        }
+        if (res.response.status !== 200) {
+          throw new Error((res.data && res.data.error && res.data.error.message) || "Черновик недоступен.");
+        }
+        f.draftId = res.data.draftId;
+        f.draftStartFresh = false;
+        return f.draftId;
+      })
+      .finally(function () {
+        delete f.draftEnsurePromise;
+      });
+    return f.draftEnsurePromise;
   }
 
   function advancePhase() {
@@ -858,14 +905,14 @@
         f = st.extRequestForm;
         var shot = openId && f && findExtPhotoByLocalId(f, openId);
         if (shot && shot.previewUrl && shot.status === "success") {
+          st.extRequestViewerOpenLocalId = openId;
           st.extRequestViewerUrl = shot.previewUrl;
           if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
         }
         return;
       }
       if (action === "ext-photo-viewer-close") {
-        st.extRequestViewerUrl = "";
-        if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+        closeExtPhotoViewer(st);
         return;
       }
       if (action === "ext-request-open") {
@@ -950,14 +997,18 @@
           var input = document.querySelector('[data-tt-field="extItem"]');
           f.item = (input && input.value) || "";
           if (!f.item.trim()) return;
-          void ensureDraft(f)
+          void ensureDraft(st, f)
             .then(function () {
               return window.TanTrackerExternal.saveDraft("photo", {
                 item: f.item,
                 dueMode: f.duePreset === "tomorrow" ? "tomorrow" : "today",
               });
             })
-            .then(advancePhase);
+            .then(advancePhase)
+            .catch(function (err) {
+              st.error = (err && err.message) || "Черновик недоступен.";
+              if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+            });
           return;
         }
         if (phase === "photo") {
@@ -1045,8 +1096,7 @@
     if (e.key !== "Escape") return;
     var st = state();
     if (!st || !st.extRequestViewerUrl) return;
-    st.extRequestViewerUrl = "";
-    if (window.__ttLkRenderTracker) window.__ttLkRenderTracker();
+    closeExtPhotoViewer(st);
   });
 
   (function wrapExtRenderHook() {

@@ -7,7 +7,13 @@ import { apiError, ERROR_CODES } from "../../shared/errors";
 import { resolveExternalPersonAuth } from "./resolve-auth";
 import { requirePersonMessengerProvenance } from "./messenger-provenance";
 import { confirmExternalRequestDraft } from "../external-request/confirm";
-import { ensureActiveExternalRequestDraft, loadActiveExternalRequestDraft } from "../external-request/draft-store";
+import {
+  discardActiveUnconfirmedDraftForWebFreshStart,
+  ensureActiveExternalRequestDraft,
+  insertExternalRequestDraft,
+  loadActiveExternalRequestDraft,
+} from "../external-request/draft-store";
+import { lockExternalWebDraftForMutation } from "./web-draft-active";
 import { buildExternalPersonBootstrapPayload } from "./bootstrap-build";
 import { writeAttachmentBytes } from "../attachments";
 import { detectImageMimeFromMagic } from "../../tanbot-telegram/bounded-binary-fetch";
@@ -49,32 +55,65 @@ export async function upsertExternalWebDraftHandler(req: Request, res: Response)
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Сессия недоступна."));
     return;
   }
-  const step = String((req.body as { step?: string })?.step ?? "item").slice(0, 32);
-  const payload = (req.body as { payload?: Record<string, unknown> })?.payload ?? {};
+  const body = req.body as { step?: string; payload?: Record<string, unknown>; startFresh?: boolean };
+  const step = String(body?.step ?? "item").slice(0, 32);
+  const payload = body?.payload ?? {};
+  const startFresh = body?.startFresh === true;
   const pool = getPool()!;
   const provenance = await requirePersonMessengerProvenance(pool, person.personId);
-  const row = await withTransaction(async (client) => {
-    const active = await loadActiveExternalRequestDraft(client, provenance.channel, provenance.messengerChatId);
-    if (active) {
-      await client.query(
-        `UPDATE tt_external_request_drafts
-         SET person_id = $2::uuid, step = $3, payload = $4::jsonb, updated_at = NOW()
-         WHERE id = $1::uuid`,
-        [active.id, person.personId, step, JSON.stringify(payload)],
-      );
-      return { id: active.id };
-    }
-    const created = await ensureActiveExternalRequestDraft(client, {
-      channel: provenance.channel,
-      messengerChatId: provenance.messengerChatId,
-      personId: person.personId,
-      step,
-      payload: payload as Record<string, unknown>,
+  try {
+    const row = await withTransaction(async (client) => {
+      if (startFresh) {
+        await discardActiveUnconfirmedDraftForWebFreshStart(client, {
+          channel: provenance.channel,
+          messengerChatId: provenance.messengerChatId,
+          personId: person.personId,
+        });
+        const created = await insertExternalRequestDraft(client, {
+          channel: provenance.channel,
+          messengerChatId: provenance.messengerChatId,
+          personId: person.personId,
+          step,
+          payload: payload as Record<string, unknown>,
+        });
+        return { id: created.id };
+      }
+      const active = await loadActiveExternalRequestDraft(client, provenance.channel, provenance.messengerChatId);
+      if (active) {
+        if (active.person_id && active.person_id !== person.personId) {
+          const err = new Error("Черновик недоступен.") as Error & { http?: number };
+          err.http = 403;
+          throw err;
+        }
+        await client.query(
+          `UPDATE tt_external_request_drafts
+           SET person_id = $2::uuid, step = $3, payload = $4::jsonb, updated_at = NOW()
+           WHERE id = $1::uuid`,
+          [active.id, person.personId, step, JSON.stringify(payload)],
+        );
+        return { id: active.id };
+      }
+      const created = await ensureActiveExternalRequestDraft(client, {
+        channel: provenance.channel,
+        messengerChatId: provenance.messengerChatId,
+        personId: person.personId,
+        step,
+        payload: payload as Record<string, unknown>,
+      });
+      return { id: created.id };
     });
-    return { id: created.id };
-  });
-  setNoStore(res);
-  res.status(200).json({ draftId: row.id, step });
+    setNoStore(res);
+    res.status(200).json({ draftId: row.id, step });
+  } catch (err) {
+    const http = (err as Error & { http?: number }).http;
+    const message = err instanceof Error ? err.message : "Черновик недоступен.";
+    setNoStore(res);
+    if (http === 403) {
+      res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, message));
+      return;
+    }
+    throw err;
+  }
 }
 
 export async function uploadExternalWebDraftPhotoHandler(req: Request, res: Response): Promise<void> {
@@ -98,34 +137,56 @@ export async function uploadExternalWebDraftPhotoHandler(req: Request, res: Resp
   }
   const fileName = String(req.headers["x-tt-filename"] ?? "photo.jpg").slice(0, 200);
   const pool = getPool()!;
+  const provenance = await requirePersonMessengerProvenance(pool, person.personId);
   const draftId = String((req.query.draftId as string) ?? "").trim();
-  const draft = await pool.query<{ id: string }>(
-    `SELECT id::text FROM tt_external_request_drafts WHERE id = $1::uuid AND person_id = $2::uuid LIMIT 1`,
-    [draftId, person.personId],
-  );
-  if (!draft.rows[0]) {
+  if (!draftId) {
     setNoStore(res);
-    res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Черновик не найден."));
-    return;
-  }
-  const count = await pool.query<{ c: number }>(
-    `SELECT COUNT(*)::int AS c FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`,
-    [draftId],
-  );
-  if ((count.rows[0]?.c ?? 0) >= 5) {
-    setNoStore(res);
-    res.status(409).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Не более 5 фото."));
+    res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Черновик не указан."));
     return;
   }
   const key = `external-draft/${draftId}/${randomUUID()}-${fileName}`;
-  await withTransaction(async (client) => {
-    await writeAttachmentBytes(client, key, raw);
-    await client.query(
-      `INSERT INTO tt_external_request_draft_files (draft_id, storage_key, file_name, mime_type, byte_size, sort_order)
-       VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
-      [draftId, key, fileName, mime, raw.length, count.rows[0]?.c ?? 0],
-    );
-  });
+  try {
+    await withTransaction(async (client) => {
+      await lockExternalWebDraftForMutation(client, {
+        draftId,
+        personId: person.personId,
+        channel: provenance.channel,
+        messengerChatId: provenance.messengerChatId,
+      });
+      const count = await client.query<{ c: number }>(
+        `SELECT COUNT(*)::int AS c FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`,
+        [draftId],
+      );
+      if ((count.rows[0]?.c ?? 0) >= 5) {
+        const err = new Error("Не более 5 фото.") as Error & { http?: number };
+        err.http = 409;
+        throw err;
+      }
+      await writeAttachmentBytes(client, key, raw);
+      await client.query(
+        `INSERT INTO tt_external_request_draft_files (draft_id, storage_key, file_name, mime_type, byte_size, sort_order)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
+        [draftId, key, fileName, mime, raw.length, count.rows[0]?.c ?? 0],
+      );
+    });
+  } catch (err) {
+    const http = (err as Error & { http?: number }).http;
+    const message = err instanceof Error ? err.message : "Не удалось загрузить фото.";
+    setNoStore(res);
+    if (http === 404) {
+      res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, message));
+      return;
+    }
+    if (http === 403) {
+      res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, message));
+      return;
+    }
+    if (http === 409) {
+      res.status(409).json(apiError(ERROR_CODES.VALIDATION_ERROR, message));
+      return;
+    }
+    throw err;
+  }
   setNoStore(res);
   res.status(201).json({ ok: true });
 }
