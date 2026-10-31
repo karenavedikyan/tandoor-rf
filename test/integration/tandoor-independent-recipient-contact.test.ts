@@ -65,7 +65,7 @@ async function actor(channel: Channel): Promise<Actor> {
 }
 
 async function send(a: Actor, input: { text?: string; callback?: string; card?: Card; updateId?: number;
-  chatType?: string | null; optionalReply?: boolean }): Promise<Reply> {
+  chatType?: string | null; optionalReply?: boolean; expectedHttp?: 200 | 413 }): Promise<Reply> {
   const id = input.updateId ?? ++seq;
   const replies: Reply[] = [];
   if (a.channel === "telegram") {
@@ -77,7 +77,8 @@ async function send(a: Actor, input: { text?: string; callback?: string; card?: 
       from: message.from, message } } : { update_id: id, message };
     const response = await request(app).post("/api/tanbot-telegram/webhook")
       .set("X-Telegram-Bot-Api-Secret-Token", process.env.TANBOT_TELEGRAM_WEBHOOK_SECRET!).send(raw);
-    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.status, input.expectedHttp ?? 200, JSON.stringify(response.body));
+    if (response.status === 413) return { text: "", buttons: [] };
     const config = loadTanbotTelegramStage2Config(); assert.ok(config.ok);
     await processUndeliveredTelegramWebhookReplies(getPool()!, config.config, async p => {
       if (p.method === "sendMessage") {
@@ -103,7 +104,8 @@ async function send(a: Actor, input: { text?: string; callback?: string; card?: 
       : { update_type: "message_created", timestamp: id, message };
     const response = await request(app).post("/api/tanbot-max/webhook")
       .set("X-Max-Bot-Api-Secret", process.env.TANBOT_MAX_WEBHOOK_SECRET!).send(raw);
-    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.status, input.expectedHttp ?? 200, JSON.stringify(response.body));
+    if (response.status === 413) return { text: "", buttons: [] };
     const config = loadTanbotMaxStage2Config(); assert.ok(config.ok);
     await processUndeliveredMaxWebhookReplies(getPool()!, config.config, async p => {
       assert.equal(p.userId, BigInt(a.id), "MAX reply goes to real sender, not contact user");
@@ -274,7 +276,12 @@ for (const channel of ["max", "telegram"] as const) {
       { name: "Не подменять", phone: "+79990001122", vcf: "X".repeat(16385) },
       { name: "Не подменять", phone: "+79990001122" + " ".repeat(20000) },
     ]) {
-      const r = await send(a, { card });
+      await send(a, { card, expectedHttp: 413 });
+      assert.deepEqual(await draft(a), before);
+      assert.deepEqual(await privacyCounts(), identities);
+    }
+    if (channel === "telegram") {
+      const r = await send(a, { card: { name: "Не подменять", phone: "+79990001122" + " ".repeat(100) } });
       assert.match(r.text, /слишком больш|другой|вручную/i);
       assert.deepEqual(await draft(a), before);
       assert.deepEqual(await privacyCounts(), identities);
