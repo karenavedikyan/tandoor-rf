@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
+import { SENDER_HANDOFF_GUIDANCE } from "../../tan-tracker/sender-handoff-guidance";
 import { loadAccessContext } from "../../access/context";
 import { createTransferInTransaction } from "../../tan-tracker/create-transfer-service";
 import { confirmExternalRequestDraft } from "../../tan-tracker/external-request/confirm";
@@ -158,7 +159,7 @@ export async function confirmNativeStaffDraft(
   }
   return {
     publicCode,
-    resultText: `Передача создана: ${publicCode}. Получатель увидит её в личном кабинете.`,
+    resultText: `Передача создана: ${publicCode}. Получатель увидит её в личном кабинете.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`,
   };
 }
 

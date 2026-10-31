@@ -2,6 +2,15 @@ import type { PoolClient } from "pg";
 
 const MAX_DISPLAY_NAME_LEN = 80;
 
+/** Authenticated LK card, not a public recipient capability or a receipt-code issuing link. */
+export function staffTransferLkDetailUrl(appOrigin: string, publicCode: string): string {
+  const base = appOrigin.replace(/\/$/, "");
+  const params = new URLSearchParams();
+  params.set("tt_screen", "detail");
+  params.set("tt_id", publicCode);
+  return `${base}/tan-tracker#?${params.toString()}`;
+}
+
 /** Strip control chars and collapse whitespace; never return phone/email-like raw identifiers. */
 export function sanitizeNotificationDisplayName(raw: string | null | undefined): string | null {
   if (raw == null) return null;

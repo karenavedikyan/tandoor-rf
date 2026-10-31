@@ -52,6 +52,15 @@ export function buildTanTrackerStaffMaxOutboxDelivery(
     };
   }
 
+  if (eventType === "tan_tracker.code_obtained") {
+    const p = normalizeStaffOutboxPayload(payload);
+    return {
+      text: buildTanTrackerStaffOutboxMessage(eventType, payload, appOrigin),
+      inlineButtons: [[{ type: "link", text: "Открыть передачу",
+        url: staffTransferLkDetailUrl(appOrigin, p.publicCode) }]],
+    };
+  }
+
   return {
     text: buildTanTrackerStaffOutboxMessage(eventType, payload, appOrigin),
   };

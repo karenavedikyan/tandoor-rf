@@ -1,6 +1,7 @@
 /** LK + messenger copy for staff tan_tracker.* events (never include OTP / handoff codes). */
 
-import { formatTransferContextHeader } from "./staff-notification-route";
+import { formatTransferContextHeader, staffTransferLkDetailUrl } from "./staff-notification-route";
+import { SENDER_HANDOFF_GUIDANCE } from "./sender-handoff-guidance";
 
 export type StaffTransferEventType =
   | "tan_tracker.assignment"
@@ -33,7 +34,7 @@ function eventActionLine(eventType: StaffTransferEventType, payload: StaffNotifi
     case "tan_tracker.external_declined":
       return payload.reason ? `Заявка отклонена: ${payload.reason}` : "Заявка отклонена.";
     case "tan_tracker.code_obtained":
-      return "Получатель запросил код приёма.";
+      return `Получатель запросил код приёма.\n\n${SENDER_HANDOFF_GUIDANCE}`;
     case "tan_tracker.handoff_confirmed":
       return "Передача подтверждена по коду.";
     case "tan_tracker.delivered":
@@ -100,6 +101,8 @@ export function staffNotificationMessengerText(
   appOrigin: string,
 ): string {
   const lk = staffNotificationLkCopy(eventType, payload);
-  const url = `${appOrigin.replace(/\/$/, "")}/tan-tracker`;
+  const url = eventType === "tan_tracker.code_obtained"
+    ? staffTransferLkDetailUrl(appOrigin, payload.publicCode)
+    : `${appOrigin.replace(/\/$/, "")}/tan-tracker`;
   return `${lk.body}\n\nОткрыть: ${url}`;
 }

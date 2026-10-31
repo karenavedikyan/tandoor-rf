@@ -14,7 +14,7 @@ export type StaffTelegramOutboxSendBody = {
   text: string;
   disable_web_page_preview?: boolean;
   reply_markup?: {
-    inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+    inline_keyboard: Array<Array<{ text: string; callback_data?: string; url?: string }>>;
   };
 };
 
@@ -53,6 +53,15 @@ export function buildTanTrackerStaffTelegramOutboxSendBody(
   }
 
   const text = buildTanTrackerStaffOutboxMessage(eventType, payload, appOrigin);
+  if (eventType === "tan_tracker.code_obtained") {
+    const p = normalizeStaffOutboxPayload(payload);
+    return {
+      text,
+      disable_web_page_preview: true,
+      reply_markup: { inline_keyboard: [[{ text: "Открыть передачу",
+        url: staffTransferLkDetailUrl(appOrigin, p.publicCode) }]] },
+    };
+  }
   return {
     text,
     disable_web_page_preview: true,

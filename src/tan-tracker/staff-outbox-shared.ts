@@ -1,6 +1,8 @@
 import type { PoolClient } from "pg";
 import { staffNotificationContextBlock, type StaffNotificationPayload } from "./staff-notification-copy";
 
+export { staffTransferLkDetailUrl } from "./staff-notification-route";
+
 export type StaffOutboxPayload = StaffNotificationPayload;
 
 export function normalizeStaffOutboxPayload(payload: Record<string, unknown>): StaffOutboxPayload {
@@ -15,15 +17,6 @@ export function normalizeStaffOutboxPayload(payload: Record<string, unknown>): S
     routeToDisplayName:
       typeof payload.routeToDisplayName === "string" ? payload.routeToDisplayName : undefined,
   };
-}
-
-/** Deep link to LK transfer card (fallback when handoff-code pilot is off). */
-export function staffTransferLkDetailUrl(appOrigin: string, publicCode: string): string {
-  const base = appOrigin.replace(/\/$/, "");
-  const params = new URLSearchParams();
-  params.set("tt_screen", "detail");
-  params.set("tt_id", publicCode);
-  return `${base}/tan-tracker#?${params.toString()}`;
 }
 
 export function buildStaffExternalCreatedNoticeText(

@@ -10,6 +10,7 @@ import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2
 import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-retry";
 import { processUndeliveredTelegramWebhookReplies } from "../../src/tanbot-telegram/reply-retry";
 import { buildMaxSendMessagePayload } from "../../src/tanbot-max/delivery-transport";
+import { SENDER_HANDOFF_GUIDANCE } from "../../src/tan-tracker/sender-handoff-guidance";
 
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; id: number; chatId: number; staffId?: string };
@@ -287,6 +288,7 @@ for (const channel of ["max", "telegram"] as const) {
       assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
       r = await click(a, r, /^Продолжить оформление$/u);
       r = await click(a, r, /^Создать передачу$/u);
+      if (a.staffId) assert.ok(r.text.includes(SENDER_HANDOFF_GUIDANCE), "creator is told to ask recipient for code and enter it before physical handoff");
       assert.equal(await draft(a), undefined);
       r = await click(a, r, /^Меню$/u); main(a, r, false);
       const confirmedCounts = await counts();
