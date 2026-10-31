@@ -1,31 +1,33 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  detectNativeAttachmentMime,
+  classifyNativeStorageMime,
   isPdfMagic,
-  canonicalNativeAttachmentFileName,
+  isHlsOrPlaylistManifest,
+  safeNativeAttachmentFileName,
 } from "../../src/tanbot/native-create/native-attachment-magic";
 
 const MIN_PDF = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n", "utf8");
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+const HTML = Buffer.from("<html>not PDF</html>", "utf8");
 
 describe("native attachment magic", () => {
-  it("detects PDF by header bytes", () => {
+  it("detects PDF and image storage mime", () => {
     assert.equal(isPdfMagic(MIN_PDF), true);
-    assert.deepEqual(detectNativeAttachmentMime(MIN_PDF), { kind: "pdf", mimeType: "application/pdf" });
+    assert.equal(classifyNativeStorageMime(MIN_PDF), "application/pdf");
+    assert.equal(classifyNativeStorageMime(JPEG), "image/jpeg");
   });
 
-  it("rejects fake PDF and HTML", () => {
-    assert.equal(detectNativeAttachmentMime(Buffer.from("NOT%PDF-header", "utf8")), null);
-    assert.equal(detectNativeAttachmentMime(Buffer.from("<html>", "utf8")), null);
+  it("stores unknown and fake-pdf bytes as octet-stream", () => {
+    assert.equal(classifyNativeStorageMime(HTML), "application/octet-stream");
+    assert.equal(classifyNativeStorageMime(Buffer.from("MZ-exe", "utf8")), "application/octet-stream");
   });
 
-  it("canonicalizes pdf filename", () => {
-    const name = canonicalNativeAttachmentFileName("scan", { kind: "pdf", mimeType: "application/pdf" });
-    assert.match(name, /\.pdf$/i);
+  it("detects HLS manifest", () => {
+    assert.equal(isHlsOrPlaylistManifest(Buffer.from("#EXTM3U\n", "utf8")), true);
   });
 
-  it("still detects jpeg magic", () => {
-    assert.deepEqual(detectNativeAttachmentMime(JPEG), { kind: "image", mimeType: "image/jpeg" });
+  it("preserves supplied filename", () => {
+    assert.equal(safeNativeAttachmentFileName("table.xlsx"), "table.xlsx");
   });
 });
