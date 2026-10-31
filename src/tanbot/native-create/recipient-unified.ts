@@ -2,12 +2,13 @@ import type { PoolClient } from "pg";
 import { loadAccessContext } from "../../access/context";
 import { listEligibleStaffForExternalParty } from "../../tan-tracker/external-request/intake-handlers";
 import {
-  assertAdminSelectablePartyId,
+  isPendingUserPartyRef,
   listTanTrackerRecipientCatalog,
   userIdFromPendingUserPartyRef,
 } from "../../tan-tracker/recipient-catalog";
-import { assertPartyEligibleAsRecipient } from "../../tan-tracker/party-eligibility";
-import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
+import { assertRecipientRefEligible } from "../../tan-tracker/party-eligibility";
+import type { AccessContext } from "../../access/types";
+import { isUuid, normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
 import type { NativeCreateContext } from "./engine";
 import type { NativeCreateDraftPayload } from "./draft-scope";
 
@@ -65,17 +66,54 @@ async function staffAccessibleExternalParties(
   return res.rows;
 }
 
+async function phoneE164ForCatalogUser(client: PoolClient, userId: string): Promise<string | null> {
+  const row = await client.query<{ phone: string | null; phone_e164: string | null }>(
+    `SELECT u.phone, p.phone_e164
+     FROM users u
+     LEFT JOIN tt_parties p ON p.user_id = u.id AND p.kind = 'user'
+     WHERE u.id = $1::uuid
+     LIMIT 1`,
+    [userId],
+  );
+  const raw = row.rows[0]?.phone?.trim() || row.rows[0]?.phone_e164?.trim() || "";
+  return raw ? normalizeRuPhoneE164(raw) : null;
+}
+
+async function phoneForCatalogEntry(
+  client: PoolClient,
+  entry: { id: string; phone: string },
+): Promise<string | null> {
+  const fromDto = entry.phone?.trim() ? normalizeRuPhoneE164(entry.phone) : null;
+  if (fromDto) return fromDto;
+  const pending = userIdFromPendingUserPartyRef(entry.id);
+  if (pending) return phoneE164ForCatalogUser(client, pending);
+  if (isUuid(entry.id)) {
+    const row = await client.query<{ phone: string | null; phone_e164: string | null }>(
+      `SELECT u.phone, p.phone_e164
+       FROM tt_parties p
+       JOIN users u ON u.id = p.user_id
+       WHERE p.id = $1::uuid AND p.kind = 'user'
+       LIMIT 1`,
+      [entry.id],
+    );
+    const raw = row.rows[0]?.phone?.trim() || row.rows[0]?.phone_e164?.trim() || "";
+    return raw ? normalizeRuPhoneE164(raw) : null;
+  }
+  return null;
+}
+
 async function staffInternalCatalog(
   client: PoolClient,
   staffUserId: string,
+  access: AccessContext,
 ): Promise<RecipientSearchHit[]> {
   const catalog = await listTanTrackerRecipientCatalog(client, staffUserId);
-  const access = await loadAccessContext(staffUserId, undefined, client);
   const out: RecipientSearchHit[] = [];
   for (const c of catalog) {
     try {
-      await assertPartyEligibleAsRecipient(client, access, staffUserId, c.id);
-      out.push({ ref: c.id, fullName: c.name, phone: c.phone || null });
+      await assertRecipientRefEligible(client, access, staffUserId, c.id);
+      const phone = await phoneForCatalogEntry(client, c);
+      out.push({ ref: c.id, fullName: c.name, phone });
     } catch {
       /* skip */
     }
@@ -92,7 +130,8 @@ export async function searchStaffRecipientHits(
   if (query.length < RECIPIENT_MIN_NAME_QUERY_LEN) return [];
 
   const phone = normalizeRuPhoneE164(query);
-  const internal = await staffInternalCatalog(client, staffUserId);
+  const access = await loadAccessContext(staffUserId, undefined, client);
+  const internal = await staffInternalCatalog(client, staffUserId, access);
   const external = await staffAccessibleExternalParties(client, staffUserId);
   const hits: RecipientSearchHit[] = [];
 
@@ -152,23 +191,32 @@ export async function revalidateStaffRecipientPick(
   staffUserId: string,
   ref: string,
 ): Promise<RecipientSearchHit | null> {
-  const pendingUser = userIdFromPendingUserPartyRef(ref);
-  if (pendingUser) {
-    const catalog = await staffInternalCatalog(client, staffUserId);
-    return catalog.find((c) => c.ref === ref) ?? null;
-  }
+  const roleRow = await client.query<{ role: string }>(`SELECT role FROM users WHERE id = $1::uuid`, [staffUserId]);
+  const access = await loadAccessContext(staffUserId, roleRow.rows[0]?.role as import("../../shared/user").UserRole, client);
   try {
-    await assertAdminSelectablePartyId(client, staffUserId, ref);
-    const row = await client.query<{ display_name: string; phone_e164: string | null }>(
-      `SELECT display_name, phone_e164 FROM tt_parties WHERE id = $1::uuid`,
-      [ref],
-    );
-    const p = row.rows[0];
-    if (!p) return null;
-    return { ref, fullName: p.display_name, phone: p.phone_e164 };
+    await assertRecipientRefEligible(client, access, staffUserId, ref);
   } catch {
     return null;
   }
+  const pendingUser = userIdFromPendingUserPartyRef(ref);
+  if (pendingUser) {
+    const u = await client.query<{ full_name: string; phone: string | null }>(
+      `SELECT full_name, phone FROM users WHERE id = $1::uuid`,
+      [pendingUser],
+    );
+    const row = u.rows[0];
+    if (!row) return null;
+    const phone = await phoneE164ForCatalogUser(client, pendingUser);
+    return { ref, fullName: row.full_name, phone };
+  }
+  if (isPendingUserPartyRef(ref)) return null;
+  const row = await client.query<{ display_name: string; phone_e164: string | null; kind: string }>(
+    `SELECT display_name, phone_e164, kind FROM tt_parties WHERE id = $1::uuid`,
+    [ref],
+  );
+  const p = row.rows[0];
+  if (!p) return null;
+  return { ref, fullName: p.display_name, phone: p.phone_e164 };
 }
 
 export async function revalidateExternalStaffPick(
@@ -200,13 +248,27 @@ export async function matchExternalActorStaffByPhone(
 ): Promise<string | null> {
   const eligible = await listEligibleStaffForExternalParty(client, externalPartyId);
   for (const row of eligible) {
-    const u = await client.query<{ phone: string | null }>(`SELECT phone FROM users WHERE id = $1::uuid`, [
-      row.userId,
-    ]);
-    const p = u.rows[0]?.phone ? normalizeRuPhoneE164(u.rows[0].phone) : null;
+    const p = await phoneE164ForCatalogUser(client, row.userId);
     if (p === phoneE164) return row.userId;
   }
   return null;
+}
+
+export function externalRecipientNamePrompt(payload: NativeCreateDraftPayload): string {
+  const phone = payload.externalRecipientPhone?.trim();
+  if (payload.recipientExtAwaitNameConfirm && payload.recipientContactSuggestedName?.trim()) {
+    return (
+      `Имя получателя для заявки.\n` +
+      (phone ? `Телефон: ${phone}\n` : "") +
+      `Предложено из контакта: ${payload.recipientContactSuggestedName.trim()}\n\n` +
+      `Подтвердите или введите другое имя текстом.`
+    );
+  }
+  return (
+    "Укажите имя получателя для заявки.\n" +
+    (phone ? `Телефон: ${phone}\n` : "") +
+    "Введите имя текстом или подтвердите предложенное из контакта."
+  );
 }
 
 export function externalSummaryDisplayName(phoneE164: string): string {
@@ -282,12 +344,15 @@ export async function handleStaffRecipientSearchText(
         step: "recipient",
       };
     }
+    const pendingName = payload.recipientPendingExternalName?.trim() ?? "";
+    delete payload.recipientPendingExternalName;
     return {
       kind: "render",
       payload: {
         ...payload,
         recipientSearchQuery: trimmed,
-        recipientExternal: { name: "", phone },
+        recipientExternal: { name: pendingName, phone },
+        recipientNameManual: Boolean(pendingName),
         recipientPage: 0,
         eligibleRecipients: [],
       },
@@ -304,13 +369,12 @@ export async function handleStaffRecipientSearchText(
       kind: "render",
       payload: {
         ...payload,
-        recipientSearchQuery: undefined,
+        recipientSearchQuery: trimmed,
         recipientPage: 0,
         eligibleRecipients: [],
-        recipientExternal: { name: trimmed, phone: "" },
-        recipientNameManual: true,
+        recipientPendingExternalName: trimmed,
       },
-      step: "recipient_ext_name",
+      step: "recipient",
     };
   }
   return {
@@ -320,6 +384,7 @@ export async function handleStaffRecipientSearchText(
       recipientSearchQuery: trimmed,
       recipientPage: 0,
       eligibleRecipients: hitsToEligibleRecipients(hits),
+      recipientPendingExternalName: undefined,
     },
     step: "recipient",
   };
@@ -355,33 +420,26 @@ export async function handleExternalRecipientPhoneText(
   if (!ctx.personId) {
     return { kind: "render", payload, step: "recipient" };
   }
-  const party = await client.query<{ party_id: string }>(
-    `SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid`,
-    [ctx.personId],
-  );
-  const partyId = party.rows[0]?.party_id;
-  if (!partyId) {
-    return { kind: "render", payload, step: "recipient" };
-  }
-  const staffUserId = await matchExternalActorStaffByPhone(client, partyId, phone);
-  if (!staffUserId) {
-    return {
-      kind: "hint",
-      message: externalUnavailableMessage(),
-      payload: { ...payload, recipientSearchQuery: trimmed, eligibleRecipients: [], recipientPage: 0 },
-      step: "recipient",
-    };
-  }
   return {
     kind: "render",
     payload: {
       ...payload,
-      recipientUserId: staffUserId,
+      externalRecipientPhone: phone,
+      recipientUserId: undefined,
       recipientPartyId: undefined,
-      recipientDisplayName: externalSummaryDisplayName(phone),
+      recipientDisplayName: undefined,
       recipientSearchQuery: undefined,
       eligibleRecipients: [],
+      recipientPage: 0,
     },
-    step: "due",
+    step: "recipient_ext_name",
   };
+}
+
+export async function resolveExternalIntakeStaffUserId(
+  client: PoolClient,
+  externalPartyId: string,
+  phoneE164: string,
+): Promise<string | null> {
+  return matchExternalActorStaffByPhone(client, externalPartyId, phoneE164);
 }

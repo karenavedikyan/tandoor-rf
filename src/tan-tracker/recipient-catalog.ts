@@ -75,7 +75,7 @@ export function mergeTanTrackerContactLists(
   return [...mergedUsers, ...externals];
 }
 
-async function loadEligibleUserRow(client: Db, userId: string, actorUserId: string) {
+export async function loadEligibleUserRowForRecipient(client: Db, userId: string, actorUserId: string) {
   const res = await client.query<{ id: string; full_name: string; phone: string | null; role: string; status: string }>(
     `SELECT id::text, full_name, phone, role, status FROM users WHERE id = $1::uuid LIMIT 1`,
     [userId],
@@ -102,7 +102,7 @@ export async function resolveEligibleUserRecipientPartyId(
   actorUserId: string,
   targetUserId: string,
 ): Promise<string> {
-  const user = await loadEligibleUserRow(client, targetUserId, actorUserId);
+  const user = await loadEligibleUserRowForRecipient(client, targetUserId, actorUserId);
   const party = await ensurePartyForUserOnWrite(client, user.id, user.full_name, user.phone);
   return party.id;
 }
@@ -127,7 +127,7 @@ export async function assertAdminSelectablePartyId(
     return;
   }
   if (row.kind === "user" && row.user_id) {
-    await loadEligibleUserRow(client, row.user_id, actorUserId);
+    await loadEligibleUserRowForRecipient(client, row.user_id, actorUserId);
     return;
   }
   throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });

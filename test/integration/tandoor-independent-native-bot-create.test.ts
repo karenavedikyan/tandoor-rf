@@ -186,13 +186,17 @@ describe("independent native creation entry in both bots and both actor types", 
           reply = await send(sender, "", action(reply, /Synthetic Native Receiver/u));
         } else {
           reply = await send(sender, "+79990001122");
+          assert.match(reply.text, /имя/i, "external intake asks for user-provided name before due date");
+          reply = await send(sender, "Independent External Recipient Label");
         }
         reply = await send(sender, "", action(reply, /завтра/iu));
         assert.match(reply.text, new RegExp(item));
         if (staff) {
           assert.match(reply.text, /Synthetic Native Receiver/u, "summary displays recipient name, not UUID");
         } else {
-          assert.match(reply.text, /79990001122|Получатель/i, "external summary uses generic label, not staff profile");
+          assert.match(reply.text, /Independent External Recipient Label|79990001122/i,
+            "external summary uses user-provided name, not staff profile");
+          assert.doesNotMatch(reply.text, /Synthetic Native Receiver/u);
         }
         assert.match(reply.text, /завтра/iu);
         reply = await send(sender, "", action(reply, /изменить/iu));
@@ -201,7 +205,7 @@ describe("independent native creation entry in both bots and both actor types", 
         reply = await send(sender, comment);
         assert.match(reply.text, /Edited native summary comment/u);
         if (staff) assert.match(reply.text, /Synthetic Native Receiver/u);
-        else assert.match(reply.text, /79990001122|Получатель/i);
+        else assert.match(reply.text, /Independent External Recipient Label|79990001122/i);
         assert.match(reply.text, /завтра/iu, "editing a comment preserves the due date");
         const confirm = action(reply, /создать/iu);
         await Promise.all([
