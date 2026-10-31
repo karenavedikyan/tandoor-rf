@@ -23,6 +23,7 @@ import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
 
 export type ExternalRecipientBotReply = {
   text: string;
+  copyOnlyCode?: string;
   requestContact?: boolean;
   clearContactKeyboard?: boolean;
 };
@@ -49,6 +50,7 @@ async function issueExternalMessengerCode(
   if (!generated.ok) return { error: generated.message };
   return {
     text: `Код для передачи ${generated.publicCode}: ${generated.code}\nСообщите его держателю лично. Код одноразовый и действует ограниченное время.`,
+    copyOnlyCode: generated.code,
     clearContactKeyboard: true,
   };
 }
