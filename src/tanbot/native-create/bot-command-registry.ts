@@ -6,18 +6,20 @@ export type ManagedMessengerBotCommand = {
 };
 
 export const MANAGED_NATIVE_BOT_COMMANDS: ManagedMessengerBotCommand[] = [
-  { command: "start", description: "Главное меню Тандор" },
-  { command: "menu", description: "Открыть главное меню" },
+  { command: "menu", description: "Меню" },
   { command: "new", description: "Оформить передачу" },
   { command: "my", description: "Мои передачи" },
 ];
 
+/** Hide the redundant suggestion only. /start handler and invitation deep links remain active. */
+export const HIDDEN_NATIVE_BOT_COMMANDS = ["start"] as const;
 export type CommandInstallTarget = "telegram" | "max";
 
 export type CommandInstallPlan = {
   target: CommandInstallTarget;
   commands: ManagedMessengerBotCommand[];
   dryRun: boolean;
+  hiddenCommands?: readonly string[];
 };
 
 export function buildNativeBotCommandInstallPlan(
@@ -27,6 +29,7 @@ export function buildNativeBotCommandInstallPlan(
   return {
     target,
     commands: [...MANAGED_NATIVE_BOT_COMMANDS],
+    hiddenCommands: [...HIDDEN_NATIVE_BOT_COMMANDS],
     dryRun: options.dryRun !== false,
   };
 }
@@ -35,17 +38,21 @@ export function buildNativeBotCommandInstallPlan(
 export function mergeManagedBotCommands(
   existing: ManagedMessengerBotCommand[],
   managed: ManagedMessengerBotCommand[],
+  hiddenCommands: readonly string[] = [],
 ): ManagedMessengerBotCommand[] {
+  const hidden = new Set(hiddenCommands.map(name => name.toLowerCase()));
   const seen = new Set<string>();
   const out: ManagedMessengerBotCommand[] = [];
   for (const cmd of managed) {
     const key = cmd.command.toLowerCase();
+    if (hidden.has(key)) continue;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(cmd);
   }
   for (const cmd of existing) {
     const key = cmd.command.toLowerCase();
+    if (hidden.has(key)) continue;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(cmd);

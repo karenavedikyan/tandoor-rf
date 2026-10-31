@@ -58,6 +58,7 @@ async function main(): Promise<void> {
         target: plan.target,
         dryRun: plan.dryRun,
         commands: plan.commands,
+        hiddenCommands: plan.hiddenCommands,
         result,
       },
       null,

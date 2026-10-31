@@ -205,7 +205,7 @@ export function createTelegramCommandInstallTransport(
       return { ok: false, code: menuParsed.code, message: menuParsed.message };
     }
 
-    const merged = mergeManagedBotCommands(existingParsed.commands, plan.commands);
+    const merged = mergeManagedBotCommands(existingParsed.commands, plan.commands, plan.hiddenCommands);
     if (merged.length > TELEGRAM_COMMAND_LIMIT) {
       return { ok: false, code: "provider_error", message: "Command list exceeds Telegram limit." };
     }
@@ -271,7 +271,7 @@ export function createMaxCommandInstallTransport(
       return { ok: false, code: existingParsed.code, message: existingParsed.message };
     }
 
-    const merged = mergeManagedBotCommands(existingParsed.commands, plan.commands);
+    const merged = mergeManagedBotCommands(existingParsed.commands, plan.commands, plan.hiddenCommands);
     if (merged.length > MAX_COMMAND_LIMIT) {
       return { ok: false, code: "provider_error", message: "Command list exceeds MAX limit." };
     }

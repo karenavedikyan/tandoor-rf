@@ -25,7 +25,8 @@ for (const provider of ["max", "telegram"]) {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /"dryRun"\s*:\s*true|"mode"\s*:\s*"dry-run"/u);
     const commands = [...r.stdout.matchAll(/"(?:name|command)"\s*:\s*"([^"]+)"/gu)].map(x => x[1]);
-    for (const name of ["start", "menu", "new", "my"]) assert.ok(commands.includes(name), `missing managed command ${name}`);
+    assert.deepEqual(commands, ["menu", "new", "my"]);
+    assert.deepEqual(JSON.parse(r.stdout).hiddenCommands, ["start"]);
   });
   it(`${provider} explicit apply without credentials fails closed before any provider fetch`, () => {
     const r = run([`--${provider}`, "--apply"]);

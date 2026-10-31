@@ -6,7 +6,7 @@ import { buildNativeBotCommandInstallPlan } from "../../src/tanbot/native-create
 type Provider = "max" | "telegram";
 type Call = { path: string; init: RequestInit & { dispatcher?: { close(): Promise<void> } } };
 type Options = { readFailure?: boolean; malformed?: boolean; menuFailure?: boolean; webApp?: boolean;
-  badWrite?: string; missingAck?: string; throwWrite?: boolean; size?: number; nullable?: boolean; mismatch?: boolean };
+  badWrite?: string; missingAck?: string; throwWrite?: boolean; size?: number; nullable?: boolean; mismatch?: boolean; legacyStart?: boolean };
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const dispatchers = new Set<{ close(): Promise<void> }>();
@@ -44,6 +44,7 @@ function mock(provider: Provider, options: Options = {}) {
     const existing = Array.from({ length: options.size ?? 1 }, (_, i) => ({
       command: `custom_${i}`, description: `Неуправляемая команда ${i}`,
     }));
+    if (options.legacyStart) existing.push({ command: "start", description: "Главное меню Тандор" });
     let data: unknown;
     let status = 200;
     if (provider === "telegram") {
@@ -88,7 +89,7 @@ for (const provider of ["max", "telegram"] as const) {
     assert.equal(r.ok, true);
     const set = writes(calls).find(c => provider === "max" ? c.path === "/me/commands" : c.path === "setMyCommands"); assert.ok(set);
     const payload = JSON.parse(String(set.init.body));
-    assert.equal(payload.commands.length, 5);
+    assert.equal(payload.commands.length, 4);
     assert.ok(payload.commands.some((c: { name?: string; command?: string }) => (c.name ?? c.command) === "custom_0"));
     if (provider === "telegram") assert.deepEqual(payload.scope, { type: "default" });
   });
@@ -101,9 +102,24 @@ for (const provider of ["max", "telegram"] as const) {
     });
   }
   it(`${provider} command limit overflow fails before any provider mutation`, async () => {
-    const { calls, impl } = mock(provider, { size: provider === "max" ? 29 : 97 });
+    const { calls, impl } = mock(provider, { size: provider === "max" ? 30 : 98 });
     const r = await factory(provider, impl)(buildNativeBotCommandInstallPlan(provider, { dryRun: false }));
     assert.equal(r.ok, false); assert.equal(writes(calls).length, 0);
+  });
+  it(`${provider} actual provider update removes legacy /start suggestion but preserves custom entries`, async () => {
+    const { calls, impl } = mock(provider, { legacyStart: true });
+    const r = await factory(provider, impl)(buildNativeBotCommandInstallPlan(provider, { dryRun: false }));
+    assert.equal(r.ok, true);
+    const set = writes(calls).find(c => provider === "max" ? c.path === "/me/commands" : c.path === "setMyCommands")!;
+    const commands = JSON.parse(String(set.init.body)).commands;
+    assert.deepEqual(commands.map((c: { name?: string; command?: string }) => c.name ?? c.command),
+      ["menu", "new", "my", "custom_0"]);
+  });
+  it(`${provider} exact command limit remains valid after reducing visible actions`, async () => {
+    const { impl } = mock(provider, { size: provider === "max" ? 29 : 97, legacyStart: true });
+    const r = await factory(provider, impl)(buildNativeBotCommandInstallPlan(provider, { dryRun: false }));
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.mergedCount, provider === "max" ? 32 : 100);
   });
   it(`${provider} HTTP 200 with a negative write acknowledgement is a failure, not successful registration`, async () => {
     const { calls, impl } = mock(provider, { badWrite: provider === "max" ? "/me/commands" : "setMyCommands" });

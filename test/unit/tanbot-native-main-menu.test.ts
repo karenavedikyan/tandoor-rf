@@ -64,8 +64,19 @@ describe("native bot command install registry", () => {
   it("mergeManagedBotCommands keeps custom commands", () => {
     const merged = mergeManagedBotCommands([{ command: "status", description: "Status" }], MANAGED_NATIVE_BOT_COMMANDS);
     assert.ok(merged.some((c) => c.command === "status"));
-    assert.ok(merged.some((c) => c.command === "start"));
-    assert.equal(merged.filter((c) => c.command === "start").length, 1);
+    assert.ok(merged.some((c) => c.command === "menu"));
+    assert.equal(merged.filter((c) => c.command === "menu").length, 1);
+  });
+
+  it("hides only the redundant command suggestion and preserves /start routing", () => {
+    const plan = buildNativeBotCommandInstallPlan("max");
+    const merged = mergeManagedBotCommands(
+      [{ command: "start", description: "Главное меню Тандор" },
+        { command: "support", description: "Поддержка" }], plan.commands, plan.hiddenCommands);
+    assert.deepEqual(merged.map(c => c.command), ["menu", "new", "my", "support"]);
+    assert.equal(parseNativeBotSlashCommand("/start"), "start");
+    assert.equal(parseNativeBotSlashCommand("/start@Tandoor_bot"), "start");
+    assert.equal(parseNativeBotSlashCommand("/start recipient-token"), null, "deep links retain their separate handler");
   });
 
   it("apply without explicit transport fails closed", async () => {
