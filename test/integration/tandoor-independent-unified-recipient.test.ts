@@ -253,7 +253,7 @@ for (const channel of ["max", "telegram"] as const) {
     r = await send(a, { text: "Петров" });
     await send(a, { callback: first }); assert.equal((await draft(a)).step, "recipient");
     const pick = button(r, /Иван Петров/u);
-    await getPool()!.query("UPDATE users SET status='inactive' WHERE id=$1", [targetId]);
+    await getPool()!.query("UPDATE users SET status='disabled' WHERE id=$1", [targetId]);
     try {
       await send(a, { callback: pick }); assert.notEqual((await draft(a)).step, "due");
       assert.equal((await draft(a)).confirmed_transfer_id, null);

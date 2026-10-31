@@ -49,8 +49,8 @@ before(async () => {
   await resetPoolForTests();
   const receiver = await createTestUser({ databaseUrl: db, email: "photo-target@test.local",
     password: "StrongPass123!", fullName: "AAA Native Photo Receiver", role: "manager" });
-  await ensurePartyForUserOnWrite(getPool()!, receiver.id, "AAA Native Photo Receiver", null);
-  await getPool()!.query("UPDATE users SET accepts_external_tt_intake=TRUE WHERE id=$1", [receiver.id]);
+  await ensurePartyForUserOnWrite(getPool()!, receiver.id, "AAA Native Photo Receiver", "+79995550404");
+  await getPool()!.query("UPDATE users SET accepts_external_tt_intake=TRUE, phone='+79995550404' WHERE id=$1", [receiver.id]);
   realFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -227,8 +227,16 @@ for (const channel of ["max", "telegram"] as const) {
       reply = await send(a, { callback: action(reply, /^далее$/iu) });
       assert.equal((await draft(a)).step, "comment", "fresh Next advances to comment");
       reply = await send(a, { callback: action(reply, /пропустить/iu) });
-      reply = await send(a, { text: "AAA Native Photo Receiver" });
-      reply = await send(a, { callback: action(reply, /AAA Native Photo Receiver/u) });
+      if (staff) {
+        reply = await send(a, { text: "AAA Native Photo Receiver" });
+        reply = await send(a, { callback: action(reply, /AAA Native Photo Receiver/u) });
+      } else {
+        reply = await send(a, { text: "+79995550404" });
+        reply = await send(a, { text: "Указанный получатель фото" });
+        for (let attempt = 0; attempt < 3 && (await draft(a)).step !== "due"; attempt++)
+          reply = await send(a, { callback: action(reply, /оставить имя|^далее$/iu) });
+        assert.equal((await draft(a)).step, "due");
+      }
       reply = await send(a, { callback: action(reply, /без срока/iu) });
       assert.match(reply.text, /Фото:\s*5/iu);
       assert.match(reply.text, /данные сохранятся в трекере/iu);
