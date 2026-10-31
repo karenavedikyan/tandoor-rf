@@ -33,6 +33,7 @@ export type WebhookReply = {
   text: string;
   replyMarkup?: Record<string, unknown>;
   answerCallbackQueryId?: string;
+  copyOnlyCode?: string;
 } | null;
 
 async function disconnectTelegramAccountOnClient(client: PoolClient, userId: string): Promise<void> {
@@ -79,6 +80,7 @@ async function processParsedUpdate(
         ? {
             chatId: update.chatId,
             text: ext.text,
+            copyOnlyCode: ext.copyOnlyCode,
             replyMarkup: ext.requestContact
               ? {
                   keyboard: [[{ text: "Отправить мой номер", request_contact: true }]],
@@ -141,6 +143,7 @@ async function processParsedUpdate(
           reply = {
             chatId: update.chatId,
             text: handoff.text,
+            copyOnlyCode: handoff.copyOnlyCode,
             replyMarkup: handoff.telegramInlineKeyboard
               ? { inline_keyboard: handoff.telegramInlineKeyboard }
               : undefined,
@@ -267,6 +270,7 @@ async function processParsedUpdate(
         reply = {
           chatId: update.chatId,
           text: handoff.text,
+          copyOnlyCode: handoff.copyOnlyCode,
           replyMarkup: handoff.telegramInlineKeyboard
             ? { inline_keyboard: handoff.telegramInlineKeyboard }
             : undefined,

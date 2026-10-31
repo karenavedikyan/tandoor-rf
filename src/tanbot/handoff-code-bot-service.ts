@@ -174,7 +174,7 @@ export async function issueHandoffCodeViaBot(
     expectedHandoffVersion?: number | null;
   },
 ): Promise<
-  | { ok: true; message: string }
+  | { ok: true; message: string; code: string }
   | { ok: false; message: string }
 > {
   const transferRow = await client.query<{
@@ -226,6 +226,7 @@ export async function issueHandoffCodeViaBot(
   }
   return {
     ok: true,
+    code: gen.code,
     message: formatIssuedCodeMessage({
       publicCode: gen.publicCode,
       itemTitle: gen.itemTitle,

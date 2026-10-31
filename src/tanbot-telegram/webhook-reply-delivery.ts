@@ -4,6 +4,14 @@ import type { TelegramDeliveryTransport, TelegramDeliveryResult } from "./delive
 import type { WebhookReply } from "./webhook-handler";
 import { markTelegramReplyDelivered } from "./webhook-inbox";
 import { applyTelegramWebhookReplyLinkPreviewSafety } from "./send-message-safety";
+import {
+  loadTelegramReplyRow,
+  markTelegramExtraProgress,
+  nextTelegramDeliveryStep,
+  persistTelegramReplyExtra,
+  telegramExtraFromStored,
+} from "../tanbot/webhook-reply-pair-delivery";
+import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
 
 export function buildTelegramSendMessagePayload(input: {
   chatId: bigint;
@@ -29,7 +37,12 @@ export async function deliverTelegramWebhookReply(
   reply: WebhookReply,
 ): Promise<TelegramDeliveryResult | null> {
   if (!reply) return null;
-  if (reply.answerCallbackQueryId) {
+
+  const stored = await loadTelegramReplyRow(db, updateId);
+  let extra = telegramExtraFromStored(stored?.reply_extra);
+  const primaryText = stored?.reply_text ?? reply.text;
+
+  if (reply.answerCallbackQueryId && nextTelegramDeliveryStep(extra) === "primary") {
     await transport({
       method: "answerCallbackQuery",
       token: config.botToken,
@@ -38,20 +51,52 @@ export async function deliverTelegramWebhookReply(
       maxResponseBytes: config.maxResponseBytes,
     });
   }
-  const body = buildTelegramSendMessagePayload({
-    chatId: reply.chatId,
-    text: reply.text,
-    replyMarkup: reply.replyMarkup,
-  });
-  const result = await transport({
-    method: "sendMessage",
-    token: config.botToken,
-    body,
-    timeoutMs: config.requestTimeoutMs,
-    maxResponseBytes: config.maxResponseBytes,
-  });
-  if (result.ok) {
+
+  let lastResult: TelegramDeliveryResult | null = null;
+
+  for (let guard = 0; guard < 3; guard++) {
+    const step = nextTelegramDeliveryStep(extra);
+    if (step === "done") break;
+
+    if (step === "primary") {
+      const body = buildTelegramSendMessagePayload({
+        chatId: reply.chatId,
+        text: primaryText,
+        replyMarkup: extra.replyMarkup ?? reply.replyMarkup,
+      });
+      lastResult = await transport({
+        method: "sendMessage",
+        token: config.botToken,
+        body,
+        timeoutMs: config.requestTimeoutMs,
+        maxResponseBytes: config.maxResponseBytes,
+      });
+      if (!lastResult.ok) return lastResult;
+      extra = markTelegramExtraProgress(extra, "primary");
+      await persistTelegramReplyExtra(db, updateId, extra);
+      continue;
+    }
+
+    if (step === "copyOnly" && extra.copyOnlyCode) {
+      const body = buildTelegramSendMessagePayload({
+        chatId: reply.chatId,
+        text: extra.copyOnlyCode,
+      });
+      lastResult = await transport({
+        method: "sendMessage",
+        token: config.botToken,
+        body,
+        timeoutMs: config.requestTimeoutMs,
+        maxResponseBytes: config.maxResponseBytes,
+      });
+      if (!lastResult.ok) return lastResult;
+      extra = markTelegramExtraProgress(extra, "copyOnly");
+      await persistTelegramReplyExtra(db, updateId, extra);
+    }
+  }
+
+  if (isHandoffReplyFullyDelivered(extra)) {
     await markTelegramReplyDelivered(db, updateId);
   }
-  return result;
+  return lastResult;
 }

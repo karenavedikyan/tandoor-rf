@@ -14,6 +14,8 @@ import {
 
 export type HandoffBotReply = {
   text: string;
+  /** Second messenger message: digits only, after successful issuance. */
+  copyOnlyCode?: string;
   telegramInlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>;
   maxInlineButtons?: MaxInlineButton[][];
 };
@@ -82,7 +84,8 @@ export async function buildHandoffCodeBotReply(
       transferPublicCode: genCode.publicCode,
       expectedHandoffVersion: genCode.handoffVersion,
     });
-    return { text: issued.ok ? issued.message : issued.message };
+    if (!issued.ok) return { text: issued.message };
+    return { text: issued.message, copyOnlyCode: issued.code };
   }
 
   if (input.callbackPayload === HANDOFF_CALLBACK_MENU || isCodeMenuCommand(input.commandText ?? null)) {

@@ -36,6 +36,7 @@ export type WebhookReply = {
   chatId: bigint;
   text: string;
   inlineButtons?: MaxInlineButton[][];
+  copyOnlyCode?: string;
 } | null;
 
 async function disconnectMaxAccountOnClient(client: PoolClient, userId: string): Promise<void> {
@@ -112,6 +113,7 @@ async function processUpdateInTransaction(
             userId: update.maxUserId,
             chatId: update.chatId,
             text: ext.text,
+            copyOnlyCode: ext.copyOnlyCode,
             inlineButtons: ext.requestContact
               ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
               : undefined,
@@ -232,6 +234,7 @@ async function processUpdateInTransaction(
           userId: update.maxUserId,
           chatId: update.chatId,
           text: handoff.text,
+          copyOnlyCode: handoff.copyOnlyCode,
           inlineButtons: handoff.maxInlineButtons,
         };
       }

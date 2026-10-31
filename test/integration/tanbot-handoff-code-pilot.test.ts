@@ -168,11 +168,13 @@ describe("tanbot handoff code pilot", { concurrency: false }, () => {
     await runTanbotOutboxWorkerOnce(pool, tgLoaded.config, recording);
 
     const sendMessages = sink.calls.filter((c) => c.method === "sendMessage");
-    assert.equal(sendMessages.length, 1);
+    assert.equal(sendMessages.length, 2);
     const text = String(sendMessages[0]!.body.text);
     const match = text.match(/\b(\d{6})\b/);
     assert.ok(match, text);
     const code = match![1]!;
+    assert.equal(String(sendMessages[1]!.body.text), code);
+    assert.equal(sendMessages[1]!.body.reply_markup, undefined);
 
     const outsiderWh = await request(app)
       .post("/api/tanbot-telegram/webhook")
@@ -276,7 +278,7 @@ describe("tanbot handoff code pilot", { concurrency: false }, () => {
       `SELECT COUNT(*)::int AS c FROM tanbot_max_update_dedup WHERE reply_delivered_at IS NULL AND reply_text IS NOT NULL`,
     );
     assert.equal(undelivered2.rows[0]!.c, 0);
-    assert.equal(sink.calls.length, 2);
+    assert.equal(sink.calls.length, 3);
   });
 
   it("master-off blocks enabling MAX notifications", async () => {

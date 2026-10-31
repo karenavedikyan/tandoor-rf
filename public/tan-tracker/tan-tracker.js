@@ -479,6 +479,7 @@
     handoffTab: "code",
     form: null,
     codeInput: "",
+    codePasteError: "",
     toast: "",
     error: "",
     phoneVerified: false,
@@ -4597,6 +4598,41 @@
       <div class="tt-actions">${newActions || btn("Назначить получателя", 'data-tt="confirm-transfer"', "tt-primary")}${btn("Назад", 'data-tt="detail"')}</div></div>`;
   }
 
+  function applyHandoffCodeInputFromRaw(raw, inputEl) {
+    const prev = state.codeInput || "";
+    const text = String(raw ?? "");
+    const parseFn = window.TanTrackerHandoffCodePaste?.parseHandoffCodePaste;
+    if (!text) return;
+    if (text.length <= 6 && /^[\d\s-]*$/.test(text)) {
+      state.codePasteError = "";
+      state.codeInput = text.replace(/\D/g, "").slice(0, 6);
+      if (inputEl) inputEl.value = state.codeInput;
+      paintCodeCells();
+      return;
+    }
+    if (!parseFn) {
+      state.codeInput = text.replace(/\D/g, "").slice(0, 6);
+      state.codePasteError = "";
+      if (inputEl) inputEl.value = state.codeInput;
+      paintCodeCells();
+      return;
+    }
+    const parsed = parseFn(text);
+    if (parsed.ok) {
+      state.codePasteError = "";
+      state.codeInput = parsed.code;
+      if (inputEl) inputEl.value = state.codeInput;
+      paintCodeCells();
+      return;
+    }
+    if (parsed.ambiguous && parsed.reason) {
+      state.codePasteError = parsed.reason;
+      state.codeInput = prev;
+      if (inputEl) inputEl.value = prev;
+      paintCodeCells();
+    }
+  }
+
   function paintCodeCells() {
     const val = state.codeInput || "";
     const active = Math.min(val.length, 5);
@@ -4640,7 +4676,7 @@
               return `<span class="tt-code-cell${cls}">${E(ch)}</span>`;
             })
             .join("")}</div>
-          <input id="${E(codeInputId)}" class="tt-code-input-overlay" inputmode="numeric" maxlength="6" data-tt="code-input" value="${E(val)}" autocomplete="one-time-code" aria-describedby="${E(codeHelpId)}">
+          <input id="${E(codeInputId)}" class="tt-code-input-overlay" inputmode="numeric" maxlength="512" data-tt="code-input" value="${E(val)}" autocomplete="one-time-code" aria-describedby="${E(codeHelpId)}">
         </div>
         ${demoActions}
       </div>
@@ -4650,6 +4686,7 @@
           : ""
       }
       <p id="${E(codeHelpId)}" class="tt-muted tt-code-help">${E(codeHelpText)}</p>
+      ${state.codePasteError ? `<p class="tt-error" data-tt="code-paste-error">${E(state.codePasteError)}</p>` : ""}
       ${state.error ? `<p class="tt-error" data-tt="code-error">${E(state.error)}</p>` : ""}
       <div class="tt-code-dock${isExternalShell() ? " tt-code-dock--inline" : ""}">${btn("Подтвердить", 'data-tt="confirm-code"', "tt-primary tt-btn-block")}${btn("Назад", 'data-tt="detail"', "tt-btn-ghost tt-btn-block")}</div>
     </div>`;
@@ -5574,6 +5611,7 @@
     if ((action === "enter-code" || action === "enter-code-dock") && o) {
       state.view = "code";
       state.codeInput = "";
+      state.codePasteError = "";
       state.error = "";
       state.toast = "";
       state.codeDemoRevealed = false;
@@ -6043,10 +6081,27 @@
       return;
     }
     if (e.target.matches('[data-tt="code-input"]')) {
-      state.codeInput = e.target.value.replace(/\D/g, "").slice(0, 6);
+      const raw = e.target.value;
+      if (raw.length > 6 || /[^\d\s-]/.test(raw)) {
+        applyHandoffCodeInputFromRaw(raw, e.target);
+        return;
+      }
+      state.codePasteError = "";
+      state.codeInput = raw.replace(/\D/g, "").slice(0, 6);
       e.target.value = state.codeInput;
       paintCodeCells();
     }
+  });
+
+  document.addEventListener("paste", (e) => {
+    if (current !== ROUTE) return;
+    const t = e.target;
+    if (!t?.matches?.('[data-tt="code-input"]')) return;
+    const text = e.clipboardData?.getData("text") || "";
+    if (!text.trim()) return;
+    if (text.length <= 6 && /^[\d\s-]*$/.test(text)) return;
+    e.preventDefault();
+    applyHandoffCodeInputFromRaw(text, t);
   });
 
   function syncDetailAttDisclosureFromToggle(det) {
