@@ -149,7 +149,8 @@ body.tt-recipient-shell .main { align-self:start; margin-top:0; margin-bottom:au
 .tt-ext-chat-attach .tt-att-block { margin:0; padding-top:0; border-top:0; }
 .tt-ext-photo-wrap { margin-top:4px; }
 .tt-ext-photo-input-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; opacity:0; pointer-events:none; }
-.tt-ext-photo-add { min-height:48px; font-size:16px; font-weight:700; margin-top:12px; }
+.tt-ext-photo-add { min-height:48px; font-size:16px; font-weight:700; margin-top:12px; padding:12px 16px; border:1px solid var(--green,#507f22); border-radius:8px; background:var(--tt-panel); color:var(--green,#507f22); cursor:pointer; }
+.tt-ext-photo-add:focus-visible { outline:3px solid var(--green,#507f22); outline-offset:2px; }
 .tt-ext-photo-grid { list-style:none; margin:12px 0 0; padding:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:10px; }
 .tt-ext-photo-grid--summary { margin-top:8px; }
 .tt-ext-photo { display:flex; flex-direction:column; gap:4px; min-width:0; }
