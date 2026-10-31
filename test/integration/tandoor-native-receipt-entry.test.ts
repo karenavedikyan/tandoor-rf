@@ -14,6 +14,7 @@ import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-
 import { processUndeliveredTelegramWebhookReplies } from "../../src/tanbot-telegram/reply-retry";
 import { buildReceiptEntryCallback, parseReceiptEntryCallback } from "../../src/tanbot/receipt-entry-callback";
 import { tryNativeCreateMaxCallback, tryNativeCreateTelegramCallback } from "../../src/tanbot/native-create/adapters";
+import { mintExternalMessengerSession, bindSessionMessengerChat, type ExternalMessengerSessionRow } from "../../src/tan-tracker/external-messenger/session-service";
 
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; id: number; chat: number; party: string; user?: string };
@@ -277,6 +278,33 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.deepEqual(await snapshot(), before, control);
       }
       assert.equal((await state(t.id)).successes, 0);
+    });
+    it(`${channel}: sender can enter the issued OTP after the invite is opened in another bot`, async () => {
+      const a = await actor(channel), t = await seed(a);
+      await send(a, "", t.callback);
+      const previous = process.env.TT_EXTERNAL_MESSENGER_ENABLED;
+      process.env.TT_EXTERNAL_MESSENGER_ENABLED = "true";
+      const client = await p().connect();
+      try {
+        await client.query("BEGIN");
+        const minted = await mintExternalMessengerSession(client, {
+          transferId: t.id, pendingPartyId: t.recipient, handoffVersion: 1,
+        });
+        assert.ok(minted);
+        const session = (await client.query<ExternalMessengerSessionRow>(
+          "SELECT * FROM tt_external_messenger_sessions WHERE id=$1::uuid", [minted.sessionId],
+        )).rows[0];
+        await bindSessionMessengerChat(client, session, channel === "max" ? "telegram" : "max", BigInt(++seq), BigInt(seq));
+        await client.query("COMMIT");
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally {
+        client.release();
+        if (previous === undefined) delete process.env.TT_EXTERNAL_MESSENGER_ENABLED;
+        else process.env.TT_EXTERNAL_MESSENGER_ENABLED = previous;
+      }
+      const done = await send(a, code);
+      assert.match(done.text, /Передача подтверждена/);
+      assert.equal((await state(t.id)).successes, 1);
     });
     it(`${channel}: paged holder-only code choices keep older transfers accessible without a website`, async () => {
       const a = await actor(channel), other = await actor(channel);

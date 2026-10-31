@@ -141,7 +141,9 @@ async function resetSessionProofForChannelSwitch(
   client: PoolClient,
   session: ExternalMessengerSessionRow,
 ): Promise<void> {
-  await consumeOpenHandoffCodesForTransfer(client, session.transfer_id);
+  // Opening a link is not proof of the recipient's phone or a request to replace their OTP.
+  // Keep an already delivered code valid; generateHandoffCodeForPendingParty consumes it only
+  // when the phone-verified recipient actually issues a replacement (in either messenger).
   await client.query(
     `UPDATE tt_external_messenger_sessions
      SET phone_verified_at = NULL,

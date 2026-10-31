@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { after, before, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import request from "supertest";
 import { Pool } from "pg";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
@@ -66,7 +66,7 @@ describe("external messenger channel switch (PG)", { concurrency: false }, () =>
   let transferCode = "";
   const databaseUrl = getIntegrationDatabaseUrl();
 
-  before(async () => {
+  beforeEach(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
     process.env.TT_EXTERNAL_MESSENGER_ENABLED = "true";
     process.env.TANBOT_TELEGRAM_ENABLED = "true";
@@ -115,14 +115,14 @@ describe("external messenger channel switch (PG)", { concurrency: false }, () =>
     startToken = invite.body.startToken as string;
   });
 
-  after(async () => {
+  afterEach(async () => {
     await pool.end();
     await closePool();
     delete process.env.TT_EXTERNAL_MESSENGER_ENABLED;
     delete process.env.TANBOT_MAX_ENABLED;
   });
 
-  it("telegram code invalidated after MAX switch; fresh MAX code confirms once", async () => {
+  it("opening MAX preserves Telegram OTP; only a new phone-proven MAX code replaces it", async () => {
     const tgCfg = loadTanbotTelegramStage2Config();
     const maxCfg = loadTanbotMaxStage2Config();
     assert.equal(tgCfg.ok, true);
@@ -167,11 +167,11 @@ describe("external messenger channel switch (PG)", { concurrency: false }, () =>
       payload: startToken,
     });
 
-    const staleAfterSwitch = await request(app)
-      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferCode)}/code/verify`)
-      .set({ Origin: ORIGIN, Cookie: holderCookie, "Content-Type": "application/json" })
-      .send({ code: telegramCode });
-    assert.notEqual(staleAfterSwitch.status, 200, "telegram-era code must not verify after channel switch");
+    const openCodes = await pool.query(
+      "SELECT consumed_at,verify_attempt_count FROM tt_handoff_codes WHERE consumed_at IS NULL",
+    );
+    assert.equal(openCodes.rows.length, 1, "merely opening the other bot must preserve the existing OTP");
+    assert.equal(openCodes.rows[0].verify_attempt_count, 0);
 
     const maxContactOut = await handleTanbotMaxUpdate(
       pool,
@@ -187,6 +187,12 @@ describe("external messenger channel switch (PG)", { concurrency: false }, () =>
     assert.match(maxContactOut.reply?.text ?? "", /\d{6}/);
     const maxCode = extractSixDigitCode(maxContactOut.reply?.text ?? "");
 
+    const staleAfterReplacement = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferCode)}/code/verify`)
+      .set({ Origin: ORIGIN, Cookie: holderCookie, "Content-Type": "application/json" })
+      .send({ code: telegramCode });
+    assert.notEqual(staleAfterReplacement.status, 200, "replacement after phone proof must revoke the previous OTP");
+
     const confirm = await request(app)
       .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferCode)}/code/verify`)
       .set({ Origin: ORIGIN, Cookie: holderCookie, "Content-Type": "application/json" })
@@ -198,5 +204,45 @@ describe("external messenger channel switch (PG)", { concurrency: false }, () =>
       .set({ Origin: ORIGIN, Cookie: holderCookie, "Content-Type": "application/json" })
       .send({ code: maxCode });
     assert.notEqual(replay.status, 200, "code must be single-use");
+  });
+  it("MAX-issued code remains usable after Telegram starts and repeated MAX starts", async () => {
+    const maxCfg = loadTanbotMaxStage2Config(), tgCfg = loadTanbotTelegramStage2Config();
+    assert.ok(maxCfg.ok && tgCfg.ok); if (!maxCfg.ok || !tgCfg.ok) return;
+    await handleTanbotMaxUpdate(pool, maxCfg.config, {
+      update_type: "bot_started", timestamp: Date.now(), chat_id: 910011,
+      user: { user_id: 910011, is_bot: false, first_name: "Recipient" }, payload: startToken,
+    });
+    const issued = await handleTanbotMaxUpdate(pool, maxCfg.config, buildSignedMaxContactUpdate({
+      timestamp: Date.now() + 1, userId: 910011, chatId: 910011, mid: "max-oasis-synthetic",
+      vcfRaw: "BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Ext\\r\\nTEL;TYPE=CELL:+79991112233\\r\\nEND:VCARD",
+    }));
+    const code = extractSixDigitCode(issued.reply?.text ?? "");
+    await handleTanbotTelegramUpdate(pool, tgCfg.config, {
+      update_id: 930001, message: {
+        message_id: 1, date: Math.floor(Date.now() / 1000), chat: { id: 810011, type: "private" },
+        from: { id: 810011, is_bot: false, first_name: "Other" }, text: `/start ${startToken}`,
+      },
+    });
+    const wrongPhone = await handleTanbotTelegramUpdate(pool, tgCfg.config, {
+      update_id: 930002, message: {
+        message_id: 2, date: Math.floor(Date.now() / 1000), chat: { id: 810011, type: "private" },
+        from: { id: 810011, is_bot: false, first_name: "Other" },
+        contact: { phone_number: "+79990000000", user_id: 810011, first_name: "Other" },
+      },
+    });
+    assert.match(wrongPhone.reply?.text ?? "", /не совпадает/);
+    for (let i = 0; i < 2; i++) await handleTanbotMaxUpdate(pool, maxCfg.config, {
+      update_type: "bot_started", timestamp: Date.now() + 100 + i, chat_id: 910011,
+      user: { user_id: 910011, is_bot: false, first_name: "Recipient" }, payload: startToken,
+    });
+    assert.equal(Number((await pool.query("SELECT COUNT(*) FROM tt_handoff_codes WHERE consumed_at IS NULL")).rows[0].count), 1);
+    const confirm = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferCode)}/code/verify`)
+      .set({ Origin: ORIGIN, Cookie: holderCookie, "Content-Type": "application/json" }).send({ code });
+    assert.equal(confirm.status, 200, confirm.text);
+    const replay = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferCode)}/code/verify`)
+      .set({ Origin: ORIGIN, Cookie: holderCookie, "Content-Type": "application/json" }).send({ code });
+    assert.notEqual(replay.status, 200);
   });
 });

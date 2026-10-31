@@ -5,6 +5,7 @@ import { assertNativeCreateContext, lockNativeCreateMessenger } from "./access-g
 import { buildReceiptEntryCallback, type ReceiptEntryCallback } from "../receipt-entry-callback";
 import { parseHandoffCodePaste } from "../../tan-tracker/handoff-code-paste-parse";
 import { verifyPendingReceiptCode, type LockedReceiptTransfer } from "../../tan-tracker/verify-pending-receipt-code";
+import { HANDOFF_CODE_TTL_MS } from "../../tan-tracker/otp-config";
 import { buildNativeMainMenuReply, parseNativeBotSlashCommand, isNativeMainMenuText,
   isNativeCreateMenuText, isNativeContinueDraftText, peekResumableNativeDraft } from "./main-menu";
 import { buildMainMenuInline } from "./keyboards";
@@ -151,7 +152,7 @@ export async function handleReceiptEntryCallback(
     [ctx.channel, ctx.messengerChatId, ctx.messengerUserId.toString(), ctx.isLinkedStaff ? ctx.staffUserId : null,
       ctx.isLinkedStaff ? null : ctx.personId, partyId, row.id, row.handoff_version, row.pending_party_id],
   );
-  return withCancel(ctx, row, `${contextText(row)}\n\nПопросите у получателя код приёма и отправьте его сюда: 6 цифр или сообщение с кодом целиком. Введите код в течение 10 минут.\nПередача будет подтверждена только после успешной проверки.`);
+  return withCancel(ctx, row, `${contextText(row)}\n\nПопросите у получателя код приёма и отправьте его сюда: 6 цифр или сообщение с кодом целиком. Код действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи. Если он истёк, попросите получателя получить новый.\nПередача будет подтверждена только после успешной проверки.`);
 }
 export async function handleReceiptEntryText(
   client: PoolClient, ctx: NativeCreateContext, text: string,

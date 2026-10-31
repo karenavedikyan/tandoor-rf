@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { formatNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
 import { generateHandoffCodeForPendingParty } from "../../tan-tracker/handoff-code-generate";
+import { HANDOFF_CODE_TTL_MS } from "../../tan-tracker/otp-config";
 import {
   assertSessionTransferStillOpen,
   bindSessionMessengerChat,
@@ -75,7 +76,7 @@ async function issueExternalMessengerCode(
     text:
       `${ctx}\n\n` +
       `Код для передачи ${generated.publicCode}: ${generated.code}\n` +
-      `Сообщите его держателю лично. Код одноразовый и действует ограниченное время.`,
+      `Сообщите его держателю лично. Код одноразовый и действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи.`,
     copyOnlyCode: generated.code,
     clearContactKeyboard: true,
   };
