@@ -8,40 +8,61 @@ import {
   lockNativeCreateMessenger,
 } from "./access-guard";
 import { bumpDraftRevision, loadNativeBotDraft } from "./draft-scope";
-import { appendNativeCreateDraftPhoto, photoCountForDraft } from "./photo-store";
-import { formatPhotoStepFeedback } from "./photo-feedback-text";
+import {
+  appendNativeCreateDraftPhoto,
+  draftHasPdfAttachment,
+  photoCountForDraft,
+} from "./photo-store";
+import {
+  formatNativeAttachmentStepFeedback,
+  nativeAttachmentLimitMessage,
+  type NativeAttachmentAddCounts,
+} from "./attachment-feedback-text";
 import { renderDraftPrompt } from "./engine";
 import type { MaxImageIngestReject } from "../external-person/max-image-parse";
+import type { MaxAttachmentKind } from "../external-person/max-attachment-parse";
 
-export type NormalizedMessengerImage = {
+export type NormalizedMessengerAttachment = {
+  kind: MaxAttachmentKind;
   downloadUrl: string;
   fileName: string;
   mediaToken?: string | null;
   telegramFileId?: string | null;
+  declaredSize?: number | null;
+  declaredMime?: string | null;
   ingestReject?: MaxImageIngestReject;
 };
 
-function rejectMessage(reason: MaxImageIngestReject): string {
+/** @deprecated alias for images-only callers */
+export type NormalizedMessengerImage = NormalizedMessengerAttachment;
+
+function rejectMessage(reason: MaxImageIngestReject, kind: MaxAttachmentKind): string {
   switch (reason) {
     case "token_only":
-      return "Не удалось загрузить изображение по токену. Отправьте фото ещё раз из галереи MAX.";
+      return kind === "file"
+        ? "Не удалось загрузить файл по токену. Отправьте PDF ещё раз из MAX."
+        : "Не удалось загрузить изображение по токену. Отправьте фото ещё раз из галереи MAX.";
     case "unsafe_url":
-      return "Ссылка на изображение недоступна.";
+      return kind === "file" ? "Ссылка на файл недоступна." : "Ссылка на изображение недоступна.";
     case "malformed":
-      return "Не удалось принять фото. Отправьте изображение ещё раз.";
+      return kind === "file"
+        ? "Не удалось принять файл. Отправьте PDF ещё раз."
+        : "Не удалось принять фото. Отправьте изображение ещё раз.";
   }
 }
 
-async function ingestNativeCreatePhotos(
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+async function ingestNativeCreateAttachments(
   client: PoolClient,
   ctx: Awaited<ReturnType<typeof buildTelegramNativeCreateContext>>,
-  images: NormalizedMessengerImage[],
-  fetchOne: (img: NormalizedMessengerImage) => Promise<
+  attachments: NormalizedMessengerAttachment[],
+  fetchOne: (item: NormalizedMessengerAttachment) => Promise<
     | { ok: true; buffer: Buffer; mimeType: string; fileName: string; telegramFileId?: string | null; maxFileToken?: string | null }
     | { ok: false; message: string }
   >,
 ): Promise<NativeCreateReply | null> {
-  if (!images.length) return null;
+  if (!attachments.length) return null;
 
   await lockNativeCreateMessenger(client, ctx);
   try {
@@ -59,20 +80,25 @@ async function ingestNativeCreatePhotos(
   const payload = { ...(draft.payload as import("./draft-scope").NativeCreateDraftPayload) };
   assertDraftBoundToCaller(payload, ctx);
 
-  let added = 0;
+  const added: NativeAttachmentAddCounts = { addedImages: 0, addedPdfs: 0 };
   const errors: string[] = [];
   let count = await photoCountForDraft(client, draft.id);
+  let hasPdf = await draftHasPdfAttachment(client, draft.id);
 
-  for (const img of images) {
+  for (const item of attachments) {
     if (count >= 5) {
-      errors.push("Достигнут лимит 5 фото. Нажмите «Далее».");
+      errors.push(nativeAttachmentLimitMessage(hasPdf));
       break;
     }
-    if (img.ingestReject) {
-      errors.push(rejectMessage(img.ingestReject));
+    if (item.ingestReject) {
+      errors.push(rejectMessage(item.ingestReject, item.kind));
       continue;
     }
-    const fetched = await fetchOne(img);
+    if (item.declaredSize != null && item.declaredSize > MAX_ATTACHMENT_BYTES) {
+      errors.push("Файл больше 8 МБ. Отправьте файл меньше.");
+      continue;
+    }
+    const fetched = await fetchOne(item);
     if (!fetched.ok) {
       errors.push(fetched.message);
       continue;
@@ -90,26 +116,32 @@ async function ingestNativeCreatePhotos(
       errors.push(append.message);
       continue;
     }
-    added += 1;
+    if (fetched.mimeType === "application/pdf") {
+      added.addedPdfs += 1;
+      hasPdf = true;
+    } else {
+      added.addedImages += 1;
+    }
     count += 1;
   }
 
-  if (added === 0 && errors.length === 0) return null;
+  const anyAdded = added.addedImages + added.addedPdfs;
+  if (anyAdded === 0 && errors.length === 0) return null;
 
   const nextPayload =
-    added > 0 ? await bumpDraftRevision(client, draft.id, "photo", payload) : payload;
+    anyAdded > 0 ? await bumpDraftRevision(client, draft.id, "photo", payload) : payload;
   const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
-  const prefix = formatPhotoStepFeedback(added, count, errors);
+  const prefix = formatNativeAttachmentStepFeedback(added, count, errors, hasPdf);
   rendered.text = `${prefix}\n\n${rendered.text}`;
   return rendered;
 }
 
-export async function ingestNativeCreateTelegramPhotos(
+export async function ingestNativeCreateTelegramAttachments(
   client: PoolClient,
   input: {
     chatId: bigint;
     telegramUserId: bigint;
-    images: NormalizedMessengerImage[];
+    attachments: NormalizedMessengerAttachment[];
   },
 ): Promise<NativeCreateReply | null> {
   const ctx = await buildTelegramNativeCreateContext(client, {
@@ -117,21 +149,74 @@ export async function ingestNativeCreateTelegramPhotos(
     telegramUserId: input.telegramUserId,
     privateDialogOk: true,
   });
-  const { fetchTelegramFileBytes } = await import("../../tanbot-telegram/file-fetch");
-  return ingestNativeCreatePhotos(client, ctx, input.images, async (img) => {
-    const fileId = img.telegramFileId?.trim();
+  const { fetchTelegramNativeAttachmentBytes } = await import("./native-attachment-fetch");
+  return ingestNativeCreateAttachments(client, ctx, input.attachments, async (item) => {
+    const fileId = item.telegramFileId?.trim();
     if (!fileId) {
-      return { ok: false, message: "Не удалось принять фото. Отправьте изображение ещё раз." };
+      return { ok: false, message: "Не удалось принять файл. Отправьте фото или PDF ещё раз." };
     }
-    const bytes = await fetchTelegramFileBytes(fileId);
+    const bytes = await fetchTelegramNativeAttachmentBytes(fileId, item.declaredMime);
     if (!bytes.ok) return { ok: false, message: bytes.message };
     return {
       ok: true,
       buffer: bytes.buffer,
       mimeType: bytes.mimeType,
-      fileName: img.fileName || "photo.jpg",
+      fileName: item.fileName || (bytes.mimeType === "application/pdf" ? "document.pdf" : "photo.jpg"),
       telegramFileId: fileId,
     };
+  });
+}
+
+export async function ingestNativeCreateMaxAttachments(
+  client: PoolClient,
+  input: {
+    chatId: bigint;
+    maxUserId: bigint;
+    recipientChatType?: string | null;
+    attachments: NormalizedMessengerAttachment[];
+  },
+): Promise<NativeCreateReply | null> {
+  const ctx = await buildMaxNativeCreateContext(client, {
+    chatId: input.chatId,
+    maxUserId: input.maxUserId,
+    recipientChatType: input.recipientChatType,
+  });
+  const { fetchMaxNativeAttachmentBytes } = await import("./native-attachment-fetch");
+  return ingestNativeCreateAttachments(client, ctx, input.attachments, async (item) => {
+    if (!item.downloadUrl?.trim()) {
+      return {
+        ok: false,
+        message:
+          item.kind === "file"
+            ? "Файл принимается только с серверов MAX. Отправьте PDF заново из чата."
+            : "Изображение принимается только с серверов MAX. Отправьте фото заново из чата.",
+      };
+    }
+    const bytes = await fetchMaxNativeAttachmentBytes(item.downloadUrl);
+    if (!bytes.ok) return { ok: false, message: bytes.message };
+    return {
+      ok: true,
+      buffer: bytes.buffer,
+      mimeType: bytes.mimeType,
+      fileName:
+        item.fileName ||
+        (bytes.mimeType === "application/pdf" ? "document.pdf" : "photo.jpg"),
+      maxFileToken: item.mediaToken,
+    };
+  });
+}
+
+export async function ingestNativeCreateTelegramPhotos(
+  client: PoolClient,
+  input: {
+    chatId: bigint;
+    telegramUserId: bigint;
+    images: NormalizedMessengerAttachment[];
+  },
+): Promise<NativeCreateReply | null> {
+  return ingestNativeCreateTelegramAttachments(client, {
+    ...input,
+    attachments: input.images.map((img) => ({ ...img, kind: img.kind ?? "image" })),
   });
 }
 
@@ -141,30 +226,11 @@ export async function ingestNativeCreateMaxPhotos(
     chatId: bigint;
     maxUserId: bigint;
     recipientChatType?: string | null;
-    images: NormalizedMessengerImage[];
+    images: NormalizedMessengerAttachment[];
   },
 ): Promise<NativeCreateReply | null> {
-  const ctx = await buildMaxNativeCreateContext(client, {
-    chatId: input.chatId,
-    maxUserId: input.maxUserId,
-    recipientChatType: input.recipientChatType,
-  });
-  const { fetchMaxImageBytes } = await import("../../tanbot-max/file-fetch");
-  return ingestNativeCreatePhotos(client, ctx, input.images, async (img) => {
-    if (!img.downloadUrl?.trim()) {
-      return {
-        ok: false,
-        message: "Изображение принимается только с серверов MAX. Отправьте фото заново из чата.",
-      };
-    }
-    const bytes = await fetchMaxImageBytes(img.downloadUrl);
-    if (!bytes.ok) return { ok: false, message: bytes.message };
-    return {
-      ok: true,
-      buffer: bytes.buffer,
-      mimeType: bytes.mimeType,
-      fileName: img.fileName || "photo.jpg",
-      maxFileToken: img.mediaToken,
-    };
+  return ingestNativeCreateMaxAttachments(client, {
+    ...input,
+    attachments: input.images.map((img) => ({ ...img, kind: img.kind ?? "image" })),
   });
 }

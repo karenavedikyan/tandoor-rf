@@ -26,6 +26,7 @@ import {
   handleExternalPersonTelegramContact,
   handleExternalPersonTelegramMessage,
   handleExternalPersonTelegramPhoto,
+  handleExternalPersonTelegramDocument,
 } from "../tanbot/external-person/telegram-bot-flow";
 import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
 
@@ -133,20 +134,32 @@ async function processParsedUpdate(
     }
   }
 
-  if (parsed.kind === "photo") {
+  if (parsed.kind === "photo" || parsed.kind === "document") {
     const update = parsed.update;
     const claim = await claimTelegramUpdate(client, update.updateId);
     if (claim.kind === "ignore") return null;
     if (claim.kind === "resend") return claim.reply;
     try {
-      const ext = isExternalMessengerFeatureEnabled()
-        ? await handleExternalPersonTelegramPhoto(client, {
+      let ext: Awaited<ReturnType<typeof handleExternalPersonTelegramPhoto>> = null;
+      if (isExternalMessengerFeatureEnabled()) {
+        if (parsed.kind === "photo") {
+          ext = await handleExternalPersonTelegramPhoto(client, {
             chatId: update.chatId,
             telegramUserId: update.telegramUserId,
             fileId: update.fileId,
             fileName: update.fileName,
-          })
-        : null;
+          });
+        } else {
+          const doc = parsed.update;
+          ext = await handleExternalPersonTelegramDocument(client, {
+            chatId: doc.chatId,
+            telegramUserId: doc.telegramUserId,
+            fileId: doc.fileId,
+            fileName: doc.fileName,
+            mimeType: doc.mimeType,
+          });
+        }
+      }
       let reply: WebhookReply = null;
       if (ext) {
         const account = await findAccountByTelegramUserId(client, update.telegramUserId);

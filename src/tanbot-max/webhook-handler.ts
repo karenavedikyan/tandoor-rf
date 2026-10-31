@@ -323,48 +323,100 @@ async function processUpdateInTransaction(
         };
       }
     } else if (
+      (Array.isArray(update.normalizedAttachments) && update.normalizedAttachments.length > 0) ||
       (Array.isArray(update.normalizedImages) && update.normalizedImages.length > 0) ||
       (typeof update.imageDownloadUrl === "string" && update.imageDownloadUrl) ||
-      (typeof update.imageMediaToken === "string" && update.imageMediaToken)
+      (typeof update.imageMediaToken === "string" && update.imageMediaToken) ||
+      update.attachmentRejected === true ||
+      update.imageRejected === true
     ) {
-      type MaxImg = {
+      type MaxAtt = {
+        kind: import("../tanbot/external-person/max-attachment-parse").MaxAttachmentKind;
         downloadUrl: string;
         fileName: string;
         mediaToken: string | null;
+        declaredSize?: number | null;
         ingestReject?: import("../tanbot/external-person/max-image-parse").MaxImageIngestReject;
       };
-      const normalized = Array.isArray(update.normalizedImages) ? (update.normalizedImages as MaxImg[]) : [];
-      const images: MaxImg[] =
-        normalized.length ?
-          normalized.map((img) => ({
-            downloadUrl: String(img.downloadUrl ?? ""),
-            fileName: String(img.fileName ?? "photo.jpg"),
-            mediaToken: img.mediaToken ?? null,
-            ingestReject: img.ingestReject,
+      const normalizedAtt = Array.isArray(update.normalizedAttachments) ?
+        (update.normalizedAttachments as MaxAtt[])
+      : [];
+      const attachments: MaxAtt[] =
+        normalizedAtt.length ?
+          normalizedAtt.map((att) => ({
+            kind: att.kind === "file" ? "file" : "image",
+            downloadUrl: String(att.downloadUrl ?? ""),
+            fileName: String(att.fileName ?? (att.kind === "file" ? "document.pdf" : "photo.jpg")),
+            mediaToken: att.mediaToken ?? null,
+            declaredSize: att.declaredSize ?? null,
+            ingestReject: att.ingestReject,
           }))
-        : [
+        : update.attachmentRejected || update.imageRejected ?
+          [
             {
-              downloadUrl: typeof update.imageDownloadUrl === "string" ? update.imageDownloadUrl : "",
-              fileName: typeof update.imageFileName === "string" ? update.imageFileName : "photo.jpg",
-              mediaToken: typeof update.imageMediaToken === "string" ? update.imageMediaToken : null,
+              kind: "file" as const,
+              downloadUrl: "",
+              fileName: "document.pdf",
+              mediaToken: null,
+              ingestReject: "malformed" as const,
             },
-          ];
+          ]
+        : (() => {
+            type MaxImg = {
+              downloadUrl: string;
+              fileName: string;
+              mediaToken: string | null;
+              ingestReject?: import("../tanbot/external-person/max-image-parse").MaxImageIngestReject;
+            };
+            const normalized = Array.isArray(update.normalizedImages) ? (update.normalizedImages as MaxImg[]) : [];
+            const images: MaxImg[] =
+              normalized.length ?
+                normalized.map((img) => ({
+                  downloadUrl: String(img.downloadUrl ?? ""),
+                  fileName: String(img.fileName ?? "photo.jpg"),
+                  mediaToken: img.mediaToken ?? null,
+                  ingestReject: img.ingestReject,
+                }))
+              : [
+                  {
+                    downloadUrl: typeof update.imageDownloadUrl === "string" ? update.imageDownloadUrl : "",
+                    fileName: typeof update.imageFileName === "string" ? update.imageFileName : "photo.jpg",
+                    mediaToken: typeof update.imageMediaToken === "string" ? update.imageMediaToken : null,
+                  },
+                ];
+            return images.map((img) => ({ ...img, kind: "image" as const, declaredSize: null }));
+          })();
       if (isExternalMessengerFeatureEnabled()) {
         const ext = await handleExternalPersonMaxPhoto(client, {
           chatId: update.chatId,
           maxUserId: update.maxUserId,
-          downloadUrl: images[0]?.downloadUrl ?? "",
-          fileName: images[0]?.fileName ?? null,
+          downloadUrl: attachments[0]?.downloadUrl ?? "",
+          fileName: attachments[0]?.fileName ?? null,
           recipientChatType,
-          mediaToken: images[0]?.mediaToken ?? null,
-          images,
+          mediaToken: attachments[0]?.mediaToken ?? null,
+          attachments,
         });
         if (ext) {
+          const { nativeMaxReplyExtra } = await import("../tanbot/native-create/adapters");
+          const linkedStaff = await findAccountByMaxUserId(client, update.maxUserId);
           reply = {
             userId: update.maxUserId,
             chatId: update.chatId,
             text: ext.text,
             inlineButtons: ext.inlineButtons,
+            replyExtra: nativeMaxReplyExtra(
+              {
+                text: ext.text,
+                inlineButtons: ext.inlineButtons,
+                nativeMediaQueue: ext.nativeMediaQueue,
+              },
+              {
+                messengerChatId: update.chatId.toString(),
+                messengerUserId: update.maxUserId.toString(),
+                actor: linkedStaff ? "staff" : "external",
+                channel: "max",
+              },
+            ),
           };
         }
       }

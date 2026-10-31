@@ -15,6 +15,7 @@ export type ExternalPersonBotReply = {
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
   inlineButtons?: import("../../tanbot-max/delivery-transport").MaxInlineButton[][];
+  nativeMediaQueue?: import("../native-create/reply-media").NativeReplyMediaItem[];
 };
 
 export async function handleExternalPersonMaxContact(
@@ -107,29 +108,57 @@ export async function handleExternalPersonMaxPhoto(
       fileName: string;
       mediaToken?: string | null;
       ingestReject?: import("./max-image-parse").MaxImageIngestReject;
+      kind?: import("./max-attachment-parse").MaxAttachmentKind;
+      declaredSize?: number | null;
+    }>;
+    attachments?: Array<{
+      kind: import("./max-attachment-parse").MaxAttachmentKind;
+      downloadUrl: string;
+      fileName: string;
+      mediaToken?: string | null;
+      declaredSize?: number | null;
+      ingestReject?: import("./max-image-parse").MaxImageIngestReject;
     }>;
   },
 ): Promise<ExternalPersonBotReply | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
-  const images =
-    input.images?.length ?
-      input.images
-    : [
-        {
-          downloadUrl: input.downloadUrl,
-          fileName: input.fileName ?? "photo.jpg",
-          mediaToken: input.mediaToken,
-        },
-      ];
-  const { ingestNativeCreateMaxPhotos } = await import("../native-create/photo-ingest");
+  const attachments =
+    input.attachments?.length ?
+      input.attachments
+    : (
+        input.images?.length ?
+          input.images.map((img) => ({
+            kind: img.kind ?? ("image" as const),
+            downloadUrl: img.downloadUrl,
+            fileName: img.fileName,
+            mediaToken: img.mediaToken ?? null,
+            declaredSize: img.declaredSize ?? null,
+            ingestReject: img.ingestReject,
+          }))
+        : [
+            {
+              kind: "image" as const,
+              downloadUrl: input.downloadUrl,
+              fileName: input.fileName ?? "photo.jpg",
+              mediaToken: input.mediaToken ?? null,
+              declaredSize: null,
+            },
+          ]
+      );
+  const { ingestNativeCreateMaxAttachments } = await import("../native-create/photo-ingest");
   const { nativeReplyToMax } = await import("../native-create/adapters");
-  const native = await ingestNativeCreateMaxPhotos(client, {
+  const native = await ingestNativeCreateMaxAttachments(client, {
     chatId: input.chatId,
     maxUserId: input.maxUserId,
     recipientChatType: input.recipientChatType,
-    images,
+    attachments,
   });
   if (!native) return null;
   const out = nativeReplyToMax(native);
-  return { text: out.text, replyMarkup: out.replyMarkup, inlineButtons: out.inlineButtons };
+  return {
+    text: out.text,
+    replyMarkup: out.replyMarkup,
+    inlineButtons: out.inlineButtons,
+    nativeMediaQueue: out.nativeMediaQueue,
+  };
 }

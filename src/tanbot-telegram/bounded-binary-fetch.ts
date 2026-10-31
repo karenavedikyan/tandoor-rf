@@ -6,11 +6,16 @@ export type BoundedBinaryFetchResult =
   | { ok: true; buffer: Buffer }
   | { ok: false; code: "TIMEOUT" | "REDIRECT" | "HTTP_ERROR" | "TOO_LARGE" | "READ_FAILED" | "NOT_IMAGE" };
 
-export async function fetchBoundedBinary(
+export type BoundedBinaryRawResult =
+  | { ok: true; buffer: Buffer }
+  | { ok: false; code: "TIMEOUT" | "REDIRECT" | "HTTP_ERROR" | "TOO_LARGE" | "READ_FAILED" };
+
+/** Download bytes with size cap only (no magic validation). Used by native attachment ingest. */
+export async function fetchBoundedBinaryRaw(
   url: string,
   maxBytes: number,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
-): Promise<BoundedBinaryFetchResult> {
+): Promise<BoundedBinaryRawResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -29,12 +34,7 @@ export async function fetchBoundedBinary(
     if (!body.ok) {
       return { ok: false, code: body.code === "RESPONSE_TOO_LARGE" ? "TOO_LARGE" : "READ_FAILED" };
     }
-    const buffer = body.buffer;
-    const mime = detectImageMimeFromMagic(buffer);
-    if (!mime) {
-      return { ok: false, code: "NOT_IMAGE" };
-    }
-    return { ok: true, buffer };
+    return { ok: true, buffer: body.buffer };
   } catch (err: unknown) {
     if (err instanceof Error && err.name === "AbortError") {
       return { ok: false, code: "TIMEOUT" };
@@ -47,6 +47,22 @@ export async function fetchBoundedBinary(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function fetchBoundedBinary(
+  url: string,
+  maxBytes: number,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<BoundedBinaryFetchResult> {
+  const file = await fetchBoundedBinaryRaw(url, maxBytes, timeoutMs);
+  if (!file.ok) {
+    return { ok: false, code: file.code };
+  }
+  const mime = detectImageMimeFromMagic(file.buffer);
+  if (!mime) {
+    return { ok: false, code: "NOT_IMAGE" };
+  }
+  return { ok: true, buffer: file.buffer };
 }
 
 export function detectImageMimeFromMagic(buffer: Buffer): string | null {

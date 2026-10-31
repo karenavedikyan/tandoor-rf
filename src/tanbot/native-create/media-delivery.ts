@@ -127,13 +127,14 @@ export async function deliverTelegramNativeMediaFromExtra(
       }
       return { ok: false, retryable: true, progress: { mediaDeliveredCount }, extra: extraRecord };
     }
+    const isFile = item.mediaKind === "file";
     const body: Record<string, unknown> = {
       chat_id: input.chatId.toString(),
-      photo: item.telegramFileId,
+      ...(isFile ? { document: item.telegramFileId } : { photo: item.telegramFileId }),
     };
     if (item.caption) body.caption = item.caption;
     const result = await transport({
-      method: "sendPhoto",
+      method: isFile ? "sendDocument" : "sendPhoto",
       token: config.botToken,
       body,
       timeoutMs: config.requestTimeoutMs,
@@ -202,14 +203,22 @@ export async function deliverMaxNativeMediaFromExtra(
       }
       return { ok: false, retryable: true, progress: { mediaDeliveredCount }, extra: extraRecord };
     }
-    const caption = item.caption ? `Фото: ${item.caption}` : "Фото";
+    const isFile = item.mediaKind === "file";
+    const caption =
+      item.caption ?
+        isFile ?
+          `PDF: ${item.caption}`
+        : `Фото: ${item.caption}`
+      : isFile ?
+        "PDF"
+      : "Фото";
     const result = await transport({
       token: config.botToken,
       userId: input.userId,
       text: caption,
       timeoutMs: config.requestTimeoutMs,
       maxResponseBytes: config.maxResponseBytes,
-      maxImageToken: item.maxFileToken,
+      ...(isFile ? { maxFileToken: item.maxFileToken } : { maxImageToken: item.maxFileToken }),
     });
     if (!result.ok) {
       return {

@@ -89,16 +89,47 @@ export async function handleExternalPersonTelegramPhoto(
   input: { chatId: bigint; telegramUserId: bigint; fileId: string; fileName: string | null },
 ): Promise<ExternalPersonBotReply | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
-  const { ingestNativeCreateTelegramPhotos } = await import("../native-create/photo-ingest");
+  const { ingestNativeCreateTelegramAttachments } = await import("../native-create/photo-ingest");
   const { nativeReplyToTelegram } = await import("../native-create/adapters");
-  const native = await ingestNativeCreateTelegramPhotos(client, {
+  const native = await ingestNativeCreateTelegramAttachments(client, {
     chatId: input.chatId,
     telegramUserId: input.telegramUserId,
-    images: [
+    attachments: [
       {
+        kind: "image",
         downloadUrl: "",
         fileName: input.fileName ?? "photo.jpg",
         telegramFileId: input.fileId,
+      },
+    ],
+  });
+  if (!native) return null;
+  return nativeReplyToTelegram(native);
+}
+
+export async function handleExternalPersonTelegramDocument(
+  client: PoolClient,
+  input: {
+    chatId: bigint;
+    telegramUserId: bigint;
+    fileId: string;
+    fileName: string | null;
+    mimeType: string | null;
+  },
+): Promise<ExternalPersonBotReply | null> {
+  if (!isExternalMessengerFeatureEnabled()) return null;
+  const { ingestNativeCreateTelegramAttachments } = await import("../native-create/photo-ingest");
+  const { nativeReplyToTelegram } = await import("../native-create/adapters");
+  const native = await ingestNativeCreateTelegramAttachments(client, {
+    chatId: input.chatId,
+    telegramUserId: input.telegramUserId,
+    attachments: [
+      {
+        kind: "file",
+        downloadUrl: "",
+        fileName: input.fileName ?? "document.pdf",
+        telegramFileId: input.fileId,
+        declaredMime: input.mimeType,
       },
     ],
   });
