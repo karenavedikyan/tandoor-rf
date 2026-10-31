@@ -137,7 +137,8 @@ describe("native bot photo preview delivery (Telegram, recording transport)", { 
     rev = Number((await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!.payload.revision);
     await wh(++seq, cb(buildNativeCreateCallback("comment_skip", draftId, rev)!));
     rev = Number((await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!.payload.revision);
-    await wh(++seq, cb(buildNativeCreateCallback("recipient", draftId, rev, "0")!));
+    assert.equal((await wh(++seq, { message: { message_id: 4, date: 4, ...priv, text: "+79995556601" } })).status, 200);
+    assert.equal((await wh(++seq, { message: { message_id: 5, date: 5, ...priv, text: "Получатель фото" } })).status, 200);
     rev = Number((await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!.payload.revision);
     await wh(++seq, cb(buildNativeCreateCallback("due", draftId, rev, "n")!));
     rev = Number((await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!.payload.revision);

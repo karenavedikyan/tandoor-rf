@@ -174,7 +174,8 @@ describe("native bot create matrix (PostgreSQL HTTP)", { concurrency: false }, (
     );
     assert.equal(afterComment.rows[0]!.step, "recipient");
     rev = Number(afterComment.rows[0]!.payload.revision);
-    assert.equal((await maxWh(1005, cb(buildNativeCreateCallback("recipient", draftId, rev, "0")!))).status, 200);
+    assert.equal((await maxWh(1005, msg(1005, "+79992223301", "m3"))).status, 200);
+    assert.equal((await maxWh(1006, msg(1006, "Получатель Matrix MAX", "m4"))).status, 200);
 
     const afterRec = await poolAfter.query<{ step: string; payload: { revision: number } }>(
       `SELECT step, payload FROM tt_external_request_drafts WHERE id=$1::uuid`,
@@ -301,7 +302,8 @@ describe("native bot create matrix (PostgreSQL HTTP)", { concurrency: false }, (
       (await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!
         .payload.revision,
     );
-    await wh(++seq, cb(buildNativeCreateCallback("recipient", draftId, rev, "0")!));
+    assert.equal((await wh(++seq, { message: { message_id: 3, date: 3, ...priv, text: "+79993323301" } })).status, 200);
+    assert.equal((await wh(++seq, { message: { message_id: 4, date: 4, ...priv, text: "Получатель Matrix Telegram" } })).status, 200);
     rev = Number(
       (await poolAfter.query(`SELECT payload FROM tt_external_request_drafts WHERE id=$1::uuid`, [draftId])).rows[0]!
         .payload.revision,

@@ -153,22 +153,16 @@ describe("native bot create (Telegram external, PostgreSQL)", { concurrency: fal
       [draftId],
     );
     assert.equal(draftAfterComment.rows[0]!.step, "recipient");
-    assert.ok((draftAfterComment.rows[0]!.payload.eligibleRecipients?.length ?? 0) >= 1);
-    const rev2 = Number(draftAfterComment.rows[0]!.payload.revision);
-
-    assert.equal(
-      (
-        await wh(++seq, {
-          callback_query: {
-            id: "cb-pick-recipient",
-            from: { id: tgUserId, is_bot: false },
-            message: { chat: { id: tgChatId, type: "private" } },
-            data: buildNativeCreateCallback("recipient", draftId, rev2, "0"),
-          },
-        })
-      ).status,
-      200,
-    );
+    assert.equal(draftAfterComment.rows[0]!.payload.eligibleRecipients?.length ?? 0, 0, "external sender cannot read staff directory");
+    for (const text of ["+79991112201", "Указанный получатель"]) {
+      assert.equal((await wh(++seq, {
+        message: {
+          message_id: seq, date: 3, text,
+          from: { id: tgUserId, is_bot: false },
+          chat: { id: tgChatId, type: "private" },
+        },
+      })).status, 200);
+    }
 
     const draftDue = await poolAfter.query<{ step: string; payload: { revision: number } }>(
       `SELECT step, payload FROM tt_external_request_drafts WHERE id=$1::uuid`,
