@@ -18,6 +18,12 @@ export async function processUndeliveredTelegramWebhookReplies(
   if (!deliveryEnabled) return result;
 
   const client = await pool.connect();
+  let rows: Array<{
+    update_id: string;
+    reply_chat_id: string;
+    reply_text: string;
+    reply_extra: unknown;
+  }> = [];
   try {
     await client.query("BEGIN");
     const batch = await client.query<{
@@ -36,25 +42,27 @@ export async function processUndeliveredTelegramWebhookReplies(
        FOR UPDATE SKIP LOCKED`,
       [limit],
     );
-    for (const row of batch.rows) {
-      result.attempted += 1;
-      const extra = parseTelegramReplyExtra(row.reply_extra);
-      const send = await deliverTelegramWebhookReply(client, config, transport, Number(row.update_id), {
-        chatId: BigInt(row.reply_chat_id),
-        text: row.reply_text,
-        replyMarkup: extra.replyMarkup,
-        answerCallbackQueryId: extra.answerCallbackQueryId,
-      });
-      if (send?.ok) {
-        result.delivered += 1;
-      }
-    }
+    rows = batch.rows;
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
+  }
+
+  for (const row of rows) {
+    result.attempted += 1;
+    const extra = parseTelegramReplyExtra(row.reply_extra);
+    const send = await deliverTelegramWebhookReply(pool, config, transport, Number(row.update_id), {
+      chatId: BigInt(row.reply_chat_id),
+      text: row.reply_text,
+      replyMarkup: extra.replyMarkup,
+      answerCallbackQueryId: extra.answerCallbackQueryId,
+    });
+    if (send?.ok) {
+      result.delivered += 1;
+    }
   }
   return result;
 }
