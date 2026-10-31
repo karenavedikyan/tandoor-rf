@@ -169,8 +169,10 @@ async function advanceToDue(a: Actor, r: Reply) {
   }
   assert.equal((await draft(a)).step, "due"); return r;
 }
-async function create(a: Actor, r: Reply) {
+async function create(a: Actor, r: Reply, expectedName?: string) {
   r = await send(a, { callback: button(r, /без срока/iu) });
+  if (expectedName) assert.ok(r.text.includes(expectedName), "summary preserves user-provided recipient name");
+  if (!a.staffId) assert.doesNotMatch(JSON.stringify(r), /Иван Петров|Поиск Тестовый|Без Карточки/u);
   const callback = button(r, /^Создать передачу$/u);
   assert.equal(r.buttons[0].text, "Создать передачу", "existing full-width primary action stays first");
   await send(a, { callback });
@@ -229,6 +231,17 @@ for (const channel of ["max", "telegram"] as const) {
     const target = (await getPool()!.query(`SELECT p.user_id FROM tt_parties p JOIN tt_transfers t
       ON t.pending_party_id=p.id WHERE t.id=$1`, [id])).rows[0];
     assert.equal(target.user_id, u.id);
+    const phone = `+7996${String(++seq).padStart(7, "0")}`;
+    await getPool()!.query("UPDATE users SET phone=NULL WHERE id=$1", [u.id]);
+    await getPool()!.query("UPDATE tt_parties SET phone_e164=$2 WHERE user_id=$1", [u.id, phone]);
+    staffPrompt(await start(a));
+    const prior = await counts();
+    r = await send(a, { text: phone });
+    r = await send(a, { callback: button(r, new RegExp(name, "u")) });
+    assert.deepEqual(await counts(), prior, "party-phone fallback is lookup, not a new external identity");
+    const second = await create(a, r);
+    assert.equal((await getPool()!.query(`SELECT p.user_id FROM tt_parties p JOIN tt_transfers t
+      ON t.pending_party_id=p.id WHERE t.id=$1`, [second])).rows[0].user_id, u.id);
   });
   it(`${channel}: staff pagination is query-bound and target eligibility is rechecked on selection`, async () => {
     const a = await actor(channel); staffPrompt(await start(a));
@@ -272,7 +285,7 @@ for (const channel of ["max", "telegram"] as const) {
     let r = await send(known, { text: "Указанное мной имя" });
     r = await advanceToDue(known, r);
     assert.deepEqual(await counts(), before);
-    const id = await create(known, r);
+    const id = await create(known, r, "Указанное мной имя");
     assert.equal((await getPool()!.query("SELECT pending_party_id FROM tt_transfers WHERE id=$1", [id])).rows[0].pending_party_id, targetPartyId);
   });
   it(`${channel}: group, foreign chat and revoked staff binding cannot read internal search results`, async () => {
