@@ -3,6 +3,8 @@ import { after, before, describe, it } from "node:test";
 import { MockAgent, setGlobalDispatcher } from "undici";
 import { getPool, closePool } from "../../src/db/pool";
 import { handleExternalPersonMaxPhoto } from "../../src/tanbot/external-person/max-bot-flow";
+import { nativeBotDraftChatKey } from "../../src/tanbot/native-create/draft-scope";
+import { readAttachmentBytes } from "../../src/tan-tracker/attachment-storage";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
 const databaseUrl = getIntegrationDatabaseUrl();
@@ -35,11 +37,15 @@ describe("external MAX bot durable photo", { concurrency: false }, () => {
           [partyId],
         )
       ).rows[0]!.id;
+      await client.query(
+        `INSERT INTO tt_external_person_verifications(person_id,channel,messenger_user_id,messenger_chat_id)
+         VALUES($1,'max','90001','90001')`, [personId]);
       const draftId = (
         await client.query<{ id: string }>(
           `INSERT INTO tt_external_request_drafts (channel, messenger_chat_id, person_id, step, payload)
-           VALUES ('max', '90001', $1::uuid, 'photo', '{}'::jsonb) RETURNING id::text`,
-          [personId],
+           VALUES ('max', $2, $1::uuid, 'photo', $3::jsonb) RETURNING id::text`,
+          [personId, nativeBotDraftChatKey({ channel: "max", messengerChatId: "90001", actor: "external" }),
+            JSON.stringify({ draftOrigin: "native_bot", actor: "external", revision: 1, item: "Synthetic photo" })],
         )
       ).rows[0]!.id;
       const bad = await handleExternalPersonMaxPhoto(client, {
@@ -47,6 +53,7 @@ describe("external MAX bot durable photo", { concurrency: false }, () => {
         maxUserId: 90001n,
         downloadUrl: "https://attacker.example/steal.jpg",
         fileName: "x.jpg",
+        recipientChatType: "dialog",
       });
       assert.ok(bad?.text?.includes("недоступна") || bad?.text?.includes("изображение"));
       const files = await client.query(`SELECT 1 FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`, [
@@ -82,11 +89,15 @@ describe("external MAX bot durable photo", { concurrency: false }, () => {
           [partyId],
         )
       ).rows[0]!.id;
+      await client.query(
+        `INSERT INTO tt_external_person_verifications(person_id,channel,messenger_user_id,messenger_chat_id)
+         VALUES($1,'max','90002','90002')`, [personId]);
       const draftId = (
         await client.query<{ id: string }>(
           `INSERT INTO tt_external_request_drafts (channel, messenger_chat_id, person_id, step, payload)
-           VALUES ('max', '90002', $1::uuid, 'photo', '{}'::jsonb) RETURNING id::text`,
-          [personId],
+           VALUES ('max', $2, $1::uuid, 'photo', $3::jsonb) RETURNING id::text`,
+          [personId, nativeBotDraftChatKey({ channel: "max", messengerChatId: "90002", actor: "external" }),
+            JSON.stringify({ draftOrigin: "native_bot", actor: "external", revision: 1, item: "Synthetic photo" })],
         )
       ).rows[0]!.id;
       const ok = await handleExternalPersonMaxPhoto(client, {
@@ -94,14 +105,18 @@ describe("external MAX bot durable photo", { concurrency: false }, () => {
         maxUserId: 90002n,
         downloadUrl: "https://iu.oneme.ru/photo/test.jpg",
         fileName: "test.jpg",
+        recipientChatType: "dialog",
       });
-      assert.ok(ok?.text?.includes("Фото сохранено"));
+      assert.match(ok?.text ?? "", /фото/i);
+      assert.ok(ok?.inlineButtons?.flat().some(button => button.text === "Далее"),
+        "successful upload returns the native next-step button");
       const files = await client.query<{ storage_key: string }>(
         `SELECT storage_key FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`,
         [draftId],
       );
       assert.equal(files.rowCount, 1);
-      assert.match(files.rows[0]!.storage_key, /^external-draft\//);
+      assert.match(files.rows[0]!.storage_key, /^native-draft\//);
+      assert.deepEqual(await readAttachmentBytes(files.rows[0]!.storage_key, client), JPEG);
       await client.query("ROLLBACK");
     } finally {
       client.release();
