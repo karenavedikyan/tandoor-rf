@@ -64,6 +64,19 @@ async function deliverMaxWebhookReplyUnderLock(
       continue;
     }
 
+    if (step === "invitation" && extra.forwardInvitationText) {
+      lastResult = await transport({
+        token: config.botToken,
+        userId: reply.userId,
+        text: extra.forwardInvitationText,
+        timeoutMs: config.requestTimeoutMs,
+        maxResponseBytes: config.maxResponseBytes,
+      });
+      if (!lastResult.ok) return lastResult;
+      await mergeMaxReplyDeliveryProgress(client, dedupKey, "invitation");
+      continue;
+    }
+
     if (step === "nativeMedia") {
       const scope = extra.nativeMediaScope;
       if (!scope) break;

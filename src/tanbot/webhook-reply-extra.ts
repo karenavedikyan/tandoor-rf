@@ -12,9 +12,11 @@ import type { NativeMediaScope } from "./native-create/webhook-reply-bridge";
 export type ReplyDeliveryProgress = {
   primary?: boolean;
   copyOnly?: boolean;
+  invitation?: boolean;
 };
 
 export type TelegramReplyExtra = {
+  forwardInvitationText?: string;
   replyMarkup?: Record<string, unknown>;
   answerCallbackQueryId?: string;
   copyOnlyCode?: string;
@@ -25,6 +27,7 @@ export type TelegramReplyExtra = {
 };
 
 export type MaxReplyExtra = {
+  forwardInvitationText?: string;
   inlineButtons?: MaxInlineButton[][];
   copyOnlyCode?: string;
   delivery?: ReplyDeliveryProgress;
@@ -52,6 +55,7 @@ function nativeMediaPending(extra: {
 export function isHandoffReplyFullyDelivered(extra: TelegramReplyExtra | MaxReplyExtra): boolean {
   if (!extra.delivery?.primary) return false;
   if (extra.copyOnlyCode && !extra.delivery.copyOnly) return false;
+  if (extra.forwardInvitationText && !extra.delivery.invitation) return false;
   if (nativeMediaPending(extra)) return false;
   return true;
 }
@@ -92,6 +96,11 @@ function parseNativeMediaScope(row: Record<string, unknown>): NativeMediaScope |
 export function parseTelegramReplyExtra(raw: unknown): TelegramReplyExtra & Record<string, unknown> {
   const row = readPassthrough(raw);
   const out: TelegramReplyExtra & Record<string, unknown> = { ...row };
+  delete out.forwardInvitationText;
+  if (typeof row.forwardInvitationText === "string" && row.forwardInvitationText.trim()
+      && row.forwardInvitationText.length <= 4000) {
+    out.forwardInvitationText = row.forwardInvitationText;
+  }
   const markup = row.replyMarkup;
   if (markup && typeof markup === "object" && !Array.isArray(markup)) {
     out.replyMarkup = markup as TelegramReplyExtra["replyMarkup"];
@@ -108,6 +117,7 @@ export function parseTelegramReplyExtra(raw: unknown): TelegramReplyExtra & Reco
     out.delivery = {
       ...(d.primary === true ? { primary: true } : {}),
       ...(d.copyOnly === true ? { copyOnly: true } : {}),
+      ...(d.invitation === true ? { invitation: true } : {}),
     };
   }
   out.nativeMediaQueue = readNativeMediaQueue(row);
@@ -134,6 +144,11 @@ export function maxReplyExtraFromReply(reply: {
 export function parseMaxReplyExtra(raw: unknown): MaxReplyExtra & Record<string, unknown> {
   const row = readPassthrough(raw);
   const out: MaxReplyExtra & Record<string, unknown> = { ...row };
+  delete out.forwardInvitationText;
+  if (typeof row.forwardInvitationText === "string" && row.forwardInvitationText.trim()
+      && row.forwardInvitationText.length <= 4000) {
+    out.forwardInvitationText = row.forwardInvitationText;
+  }
   const buttons = row.inlineButtons;
   if (Array.isArray(buttons)) {
     out.inlineButtons = buttons as MaxInlineButton[][];
@@ -147,6 +162,7 @@ export function parseMaxReplyExtra(raw: unknown): MaxReplyExtra & Record<string,
     out.delivery = {
       ...(d.primary === true ? { primary: true } : {}),
       ...(d.copyOnly === true ? { copyOnly: true } : {}),
+      ...(d.invitation === true ? { invitation: true } : {}),
     };
   }
   out.nativeMediaQueue = readNativeMediaQueue(row);
@@ -163,6 +179,7 @@ export function mergeReplyDeliveryProgress(
   return {
     primary: !!(existing?.primary || patch.primary),
     copyOnly: !!(existing?.copyOnly || patch.copyOnly),
+    ...(existing?.invitation || patch.invitation ? { invitation: true } : {}),
   };
 }
 

@@ -55,6 +55,7 @@ export async function buildMaxNativeCreateContext(
 
 export function nativeReplyToTelegram(reply: NativeCreateReply): {
   text: string;
+  forwardInvitationText?: string;
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
   nativeMediaQueue?: NativeCreateReply["nativeMediaQueue"];
@@ -65,6 +66,7 @@ export function nativeReplyToTelegram(reply: NativeCreateReply): {
       : reply.replyMarkup;
   return {
     text: reply.text,
+    forwardInvitationText: reply.forwardInvitationText,
     requestContact: reply.requestContact,
     replyMarkup: markup,
     nativeMediaQueue: reply.nativeMediaQueue,
@@ -73,6 +75,7 @@ export function nativeReplyToTelegram(reply: NativeCreateReply): {
 
 export function nativeReplyToMax(reply: NativeCreateReply): {
   text: string;
+  forwardInvitationText?: string;
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
   inlineButtons?: NativeCreateReply["maxInlineButtons"];
@@ -80,6 +83,7 @@ export function nativeReplyToMax(reply: NativeCreateReply): {
 } {
   return {
     text: reply.text,
+    forwardInvitationText: reply.forwardInvitationText,
     requestContact: reply.requestContact,
     replyMarkup: reply.replyMarkup,
     inlineButtons: reply.maxInlineButtons,
@@ -94,6 +98,7 @@ export function nativeTelegramReplyExtra(
 ): Record<string, unknown> {
   return buildNativeWebhookReplyExtra({
     replyMarkup: native.replyMarkup,
+    forwardInvitationText: native.forwardInvitationText,
     answerCallbackQueryId,
     nativeMediaQueue: native.nativeMediaQueue,
     scope,
@@ -106,6 +111,7 @@ export function nativeMaxReplyExtra(
 ): Record<string, unknown> {
   return buildNativeWebhookReplyExtra({
     inlineButtons: native.inlineButtons,
+    forwardInvitationText: native.forwardInvitationText,
     nativeMediaQueue: native.nativeMediaQueue,
     scope,
   });

@@ -100,6 +100,22 @@ async function deliverTelegramWebhookReplyUnderLock(
       continue;
     }
 
+    if (step === "invitation" && extra.forwardInvitationText) {
+      lastResult = await transport({
+        method: "sendMessage",
+        token: config.botToken,
+        body: buildTelegramSendMessagePayload({
+          chatId: reply.chatId,
+          text: extra.forwardInvitationText,
+        }),
+        timeoutMs: config.requestTimeoutMs,
+        maxResponseBytes: config.maxResponseBytes,
+      });
+      if (!lastResult.ok) return lastResult;
+      await mergeTelegramReplyDeliveryProgress(client, updateId, "invitation");
+      continue;
+    }
+
     if (step === "nativeMedia") {
       const scope = extra.nativeMediaScope;
       if (!scope) break;

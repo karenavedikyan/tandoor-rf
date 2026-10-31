@@ -52,6 +52,7 @@ import { isUuid } from "../../tan-tracker/phone-normalize";
 
 export type NativeCreateReply = {
   text: string;
+  forwardInvitationText?: string;
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
   telegramInlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>;
@@ -828,7 +829,10 @@ export async function handleNativeCreateCallback(
           channel: ctx.channel,
         });
         const { nativeCompletionMenuReply } = await import("./main-menu");
-        return nativeCompletionMenuReply(client, ctx, created.resultText);
+        return {
+          ...await nativeCompletionMenuReply(client, ctx, created.resultText),
+          ...(created.forwardInvitationText ? { forwardInvitationText: created.forwardInvitationText } : {}),
+        };
       }
       if (payload.actor === "external" && ctx.personId) {
         const party = await client.query<{ party_id: string }>(

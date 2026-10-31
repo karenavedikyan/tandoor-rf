@@ -45,7 +45,7 @@ export async function confirmNativeStaffDraft(
     payload: NativeCreateDraftPayload;
     channel: "telegram" | "max";
   },
-): Promise<{ publicCode: string; resultText: string }> {
+): Promise<{ publicCode: string; resultText: string; forwardInvitationText?: string }> {
   const locked = await client.query<{
     confirmed_transfer_id: string | null;
     payload: NativeCreateDraftPayload;
@@ -154,7 +154,11 @@ export async function confirmNativeStaffDraft(
       channel: input.channel,
     });
     if (invite) {
-      return { publicCode, resultText: invite };
+      return {
+        publicCode,
+        resultText: `Передача создана: ${publicCode}.\nСледом придёт готовое приглашение. Перешлите его получателю целиком.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`,
+        forwardInvitationText: invite,
+      };
     }
   }
   return {

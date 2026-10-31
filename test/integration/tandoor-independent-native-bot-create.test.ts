@@ -16,7 +16,7 @@ import type { MaxDeliveryTransport } from "../../src/tanbot-max/delivery-transpo
 
 type Channel = "telegram" | "max";
 type Button = { text: string; callback_data?: string; payload?: string; url?: string };
-type Reply = { text: string; buttons: Button[] };
+type Reply = { text: string; buttons: Button[]; messages?: Array<{ text: string; buttons: Button[] }> };
 type Actor = { channel: Channel; messengerId: number; chatId: number; partyId: string; staffId?: string };
 const databaseUrl = getIntegrationDatabaseUrl();
 const origin = "http://127.0.0.1:3000";
@@ -89,7 +89,7 @@ async function send(actor: Actor, text: string, callback?: string,
     const value = button.callback_data ?? button.payload;
     if (value) assert.ok(Buffer.byteLength(value, "utf8") <= 64, "callback fits the real Telegram byte limit");
   }
-  return sends.at(-1)!;
+  return { ...sends.at(-1)!, messages: sends };
 }
 
 function action(reply: Reply, label: RegExp): string {
@@ -266,7 +266,21 @@ describe("independent native creation entry in both bots and both actor types", 
       assert.equal(transfer.phone_e164, phone);
       assert.equal(transfer.holder_party_id, sender.partyId);
       assert.equal(transfer.handoff_version, 1);
+      assert.equal(reply.messages?.length, 2, "sender guidance and forwardable invitation are separate messages");
+      assert.match(reply.messages![0].text, /Перешлите его получателю целиком/u);
+      assert.match(reply.messages![0].text, /попросите у получателя код приёма/u);
+      assert.equal((reply.messages![0].text.match(/https?:\/\//g) ?? []).length, 0);
+      assert.ok(reply.messages![0].buttons.some(b => /Мои передачи/u.test(b.text)), "sender keeps completion navigation");
+      assert.match(reply.text, /Отправитель: Synthetic native/u);
+      assert.match(reply.text, /Получатель: Synthetic External Recipient/u);
+      assert.ok(reply.text.includes(item));
+      assert.ok(reply.text.includes(transfer.public_code));
+      assert.match(reply.text, /получите код приёма/u);
+      assert.match(reply.text, /Сообщите код отправителю/u);
+      assert.doesNotMatch(reply.text, /Ваш следующий шаг|Ввести код|Или веб|max\.ru|t\.me/u);
+      assert.equal(reply.buttons.length, 0, "forwardable message has no sender-only controls");
       const links = (reply.text.match(/https?:\/\/[^\s)]+/g) ?? []).map(text => new URL(text));
+      assert.equal(links.length, 1, "one universal recipient link, not competing bot and LK links");
       const portal = links.find(url => url.pathname === "/tan-tracker/recipient" && url.searchParams.has("mst"));
       assert.ok(portal, "a shareable recipient portal invitation is returned inside the bot");
       const response = await request(app).get("/api/tan-tracker/public/recipient/messenger")
@@ -275,9 +289,6 @@ describe("independent native creation entry in both bots and both actor types", 
       assert.equal(response.body.transferPublicCode, transfer.public_code);
       assert.equal(response.body.itemTitle, item);
       assert.equal(response.body.featureEnabled, true);
-      const messenger = links.find(url => url.hostname === (channel === "telegram" ? "t.me" : "max.ru"));
-      assert.ok(messenger, "invitation offers the current messenger in addition to the recipient portal");
-      assert.equal(messenger.searchParams.get("start"), portal.searchParams.get("mst"));
       assert.equal((await getPool().query("SELECT count(*) FROM tt_transfers WHERE item_title=$1", [item])).rows[0].count, "1");
     });
 

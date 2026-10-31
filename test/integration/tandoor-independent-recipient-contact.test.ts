@@ -13,7 +13,7 @@ import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; userId: string; partyId: string; id: number; chatId: number };
 type Button = { text: string; callback_data?: string; payload?: string };
-type Reply = { text: string; buttons: Button[] };
+type Reply = { text: string; buttons: Button[]; messages?: Array<{ text: string; buttons: Button[] }> };
 type Card = { name?: string; phone?: string; vcf?: string; signedOwn?: boolean };
 const db = getIntegrationDatabaseUrl();
 let app: ReturnType<typeof import("../../src/server").createApp>;
@@ -114,7 +114,7 @@ async function send(a: Actor, input: { text?: string; callback?: string; card?: 
     }, { deliveryEnabled: true });
   }
   if (!input.optionalReply) assert.ok(replies.length, "webhook must persist a useful reply");
-  return replies.at(-1) ?? { text: "", buttons: [] };
+  return { ...(replies.at(-1) ?? { text: "", buttons: [] }), messages: replies };
 }
 function button(r: Reply, regex: RegExp) {
   const b = r.buttons.find(b => regex.test(b.text));
@@ -170,7 +170,10 @@ for (const channel of ["max", "telegram"] as const) {
     assert.match(r.text, /Моё название получателя/);
     assert.ok(r.text.replace(/\D/g, "").includes(expectedPhone.slice(1)), "summary must display selected phone");
     const created = await send(a, { callback: button(r, /^Создать передачу$/i) });
-    assert.match(created.text, /Передача создана/, `explicit create failed: ${created.text}`);
+    assert.equal(created.messages?.length, 2, "creation acknowledgement is separate from recipient invitation");
+    assert.match(created.messages![0].text, /Передача создана/, "explicit creation is acknowledged to sender");
+    assert.match(created.text, /Тандор · Вам передают предмет/u, "last message is a recipient-facing invitation");
+    assert.match(created.text, /Получатель: Моё название получателя/u);
     const rows = (await getPool()!.query(`SELECT t.id,p.display_name,p.phone_e164
       FROM tt_transfers t JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.creator_party_id=$1`, [a.partyId])).rows;
     assert.equal(rows.length, 1);
