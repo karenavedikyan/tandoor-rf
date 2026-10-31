@@ -282,4 +282,16 @@ for (const channel of ["max", "telegram"] as const) {
     noPrivateData(await send(a, { text: "Петров", optional: true }));
     assert.deepEqual(await counts(), before);
   });
+  it(`${channel}: staff phone lookup does not reveal another creator's inaccessible external contact`, async () => {
+    const owner = await actor(channel), a = await actor(channel);
+    const phone = `+7997${String(++seq).padStart(7, "0")}`;
+    await getPool()!.query(`INSERT INTO tt_parties(kind,display_name,phone_e164,created_by_user_id)
+      VALUES('external','Чужой Тайный Контакт',$1,$2)`, [phone, owner.staffId]);
+    staffPrompt(await start(a)); const before = await counts();
+    for (const input of [{ text: phone }, { phone, cardName: "Своё имя из контактов" }]) {
+      const r = await send(a, input);
+      assert.doesNotMatch(JSON.stringify(r), /Чужой Тайный Контакт/u);
+    }
+    assert.deepEqual(await counts(), before);
+  });
 }
