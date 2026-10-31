@@ -151,12 +151,16 @@ export async function confirmExternalRequestDraft(
     itemTitle: item,
     publicCode,
     handoffVersion: 1,
+    externalPartyId: input.externalPartyId,
+    staffPartyId: staffParty.id,
   });
   await notifyTransferAssignment(client, {
     transferId: publicCode,
     publicCode,
     itemTitle: item,
     holderUserId: recipientUserId,
+    holderPartyId: staffParty.id,
+    fromPartyId: input.externalPartyId,
     handoffVersion: 1,
   });
   return { transferId: publicCode, publicCode };

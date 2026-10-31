@@ -20,6 +20,10 @@ import { loadTanbotMaxStage2Config } from "../../tanbot-max/stage2-config";
 import { isExternalMessengerStartToken } from "../../tan-tracker/external-messenger/start-token";
 import { isExternalMessengerFeatureEnabled } from "../../tan-tracker/external-messenger/config";
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
+import {
+  buildNotificationRouteSnapshot,
+  formatTransferContextHeader,
+} from "../../tan-tracker/staff-notification-route";
 
 export type ExternalRecipientBotReply = {
   text: string;
@@ -48,8 +52,26 @@ async function issueExternalMessengerCode(
     auditAction,
   });
   if (!generated.ok) return { error: generated.message };
+  const transferRow = await client.query<{ holder_party_id: string | null }>(
+    `SELECT holder_party_id::text FROM tt_transfers WHERE id = $1 LIMIT 1`,
+    [session.transfer_id],
+  );
+  const route = await buildNotificationRouteSnapshot(
+    client,
+    transferRow.rows[0]?.holder_party_id,
+    session.pending_party_id,
+  );
+  const ctx = formatTransferContextHeader({
+    publicCode: generated.publicCode,
+    itemTitle: generated.itemTitle,
+    routeFromDisplayName: route.routeFromDisplayName,
+    routeToDisplayName: route.routeToDisplayName,
+  });
   return {
-    text: `Код для передачи ${generated.publicCode}: ${generated.code}\nСообщите его держателю лично. Код одноразовый и действует ограниченное время.`,
+    text:
+      `${ctx}\n\n` +
+      `Код для передачи: следующим сообщением шесть цифр для копирования.\n` +
+      `Сообщите его держателю лично. Код одноразовый и действует ограниченное время.`,
     copyOnlyCode: generated.code,
     clearContactKeyboard: true,
   };

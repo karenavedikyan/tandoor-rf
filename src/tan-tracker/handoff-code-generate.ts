@@ -95,13 +95,17 @@ export async function generateHandoffCodeForPendingParty(
   ).rows[0]?.holder_party_id;
   if (holderParty) {
     const { notifyCodeGenerated } = await import("./transfer-lk-notify");
-    await notifyCodeGenerated(client, {
-      transferId: row.id,
-      publicCode: row.public_code,
-      itemTitle: row.item_title,
-      holderPartyId: holderParty,
-      handoffVersion: row.handoff_version,
-    });
+    const pendingPartyId = row.pending_party_id;
+    if (pendingPartyId) {
+      await notifyCodeGenerated(client, {
+        transferId: row.id,
+        publicCode: row.public_code,
+        itemTitle: row.item_title,
+        holderPartyId: holderParty,
+        pendingPartyId,
+        handoffVersion: row.handoff_version,
+      });
+    }
   }
 
   return {

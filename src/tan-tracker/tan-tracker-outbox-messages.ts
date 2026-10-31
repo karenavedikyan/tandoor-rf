@@ -18,6 +18,14 @@ export function buildTanTrackerStaffOutboxMessage(
     itemTitle: String(payload.itemTitle ?? "Передача"),
     handoffVersion: Number(payload.handoffVersion ?? 0),
     reason: payload.reason != null ? String(payload.reason) : null,
+    routeFromDisplayName:
+      typeof payload.routeFromDisplayName === "string" && payload.routeFromDisplayName.trim()
+        ? payload.routeFromDisplayName.trim()
+        : undefined,
+    routeToDisplayName:
+      typeof payload.routeToDisplayName === "string" && payload.routeToDisplayName.trim()
+        ? payload.routeToDisplayName.trim()
+        : undefined,
   };
   const text = staffNotificationMessengerText(eventType, normalized, appOrigin);
   if (/\d{6}/.test(text)) {

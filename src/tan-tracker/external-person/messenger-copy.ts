@@ -1,3 +1,5 @@
+import { formatTransferContextHeader } from "../staff-notification-route";
+
 export type ExternalPersonMessengerEvent =
   | "declined"
   | "after_code"
@@ -5,6 +7,20 @@ export type ExternalPersonMessengerEvent =
   | "delivered"
   | "closed"
   | "handoff_code";
+
+function externalContextBlock(input: {
+  publicCode: string;
+  itemTitle: string;
+  routeFromDisplayName?: string | null;
+  routeToDisplayName?: string | null;
+}): string {
+  return formatTransferContextHeader({
+    publicCode: input.publicCode,
+    itemTitle: input.itemTitle,
+    routeFromDisplayName: input.routeFromDisplayName,
+    routeToDisplayName: input.routeToDisplayName,
+  });
+}
 
 function buildReceivedTransferMessengerBody(title: string, publicCode: string, holderUrl?: string | null): string {
   const lines = [
@@ -27,31 +43,36 @@ export function buildExternalPersonMessengerBody(input: {
   holderUrl?: string | null;
   shellUrl?: string | null;
   extraLine?: string;
+  routeFromDisplayName?: string | null;
+  routeToDisplayName?: string | null;
 }): string {
   const title = input.itemTitle.trim() || "Передача";
   const code = input.publicCode;
   const link = input.holderUrl || input.shellUrl;
   const linkLine = link ? `\nОткрыть: ${link}` : "";
+  const ctx = externalContextBlock(input);
   switch (input.event) {
     case "declined":
       return (
+        `${ctx}\n\n` +
         (input.extraLine ? `${input.extraLine}\n` : "") +
-        `Заявка «${title}» (${code}) отклонена.`
+        `Заявка отклонена.`
       );
     case "handoff_code":
       return (
-        `Код для передачи ${code}: ${input.extraLine ?? ""}`.trim() +
-        "\nСообщите код держателю лично. Код одноразовый."
+        `${ctx}\n\n` +
+        `Код для передачи: следующим сообщением шесть цифр для копирования.\n` +
+        `Сообщите код держателю лично. Код одноразовый.`
       );
     case "after_code":
-      return `Передача «${title}» (${code}): код подтверждён, предмет передан дальше.${linkLine}`;
+      return `${ctx}\n\nКод подтверждён, предмет передан дальше.${linkLine}`;
     case "after_receipt":
-      return buildReceivedTransferMessengerBody(title, code, link);
+      return `${ctx}\n\nВы получили «${title}».\n\nОткройте передачу, чтобы посмотреть историю, передать предмет дальше или вернуть отправителю.${linkLine}`;
     case "delivered":
-      return buildReceivedTransferMessengerBody(title, code, link);
+      return `${ctx}\n\nВы получили «${title}».\n\nОткройте передачу, чтобы посмотреть историю, передать предмет дальше или вернуть отправителю.${linkLine}`;
     case "closed":
-      return `Передача «${title}» (${code}) завершена.${linkLine}`;
+      return `${ctx}\n\nПередача завершена.${linkLine}`;
     default:
-      return `Тан-трекер: ${title} (${code}).${linkLine}`;
+      return `${ctx}\n\nТан-трекер.${linkLine}`;
   }
 }

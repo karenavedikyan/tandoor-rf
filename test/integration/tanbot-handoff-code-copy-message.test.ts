@@ -115,6 +115,7 @@ describe("handoff code copy-only follow-up message", { concurrency: false }, () 
         sendMessageCalls += 1;
         if (sendMessageCalls === 1) {
           assert.match(String(body.text), /Код приёма/i);
+          assert.doesNotMatch(String(body.text), /\b\d{6}\b/);
           return { ok: true, result: {} };
         }
         assert.equal(String(body.text), extra.copyOnlyCode);

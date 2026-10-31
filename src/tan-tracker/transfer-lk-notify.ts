@@ -4,17 +4,39 @@ import {
   transferPayload,
   uniqueStaffUserIdsFromParties,
 } from "./staff-notify-fanout";
+import { buildNotificationRouteSnapshot } from "./staff-notification-route";
+import type { StaffNotificationPayload } from "./staff-notification-copy";
 
 export { uniqueStaffUserIdsFromParties as uniqueStaffUserIds };
 
+async function payloadWithRoute(
+  client: PoolClient,
+  base: Omit<StaffNotificationPayload, "routeFromDisplayName" | "routeToDisplayName">,
+  route: { fromPartyId?: string | null; toPartyId?: string | null },
+): Promise<StaffNotificationPayload> {
+  const snap = await buildNotificationRouteSnapshot(client, route.fromPartyId, route.toPartyId);
+  return { ...transferPayload(base), ...snap };
+}
+
 export async function notifyTransferAssignment(
   client: PoolClient,
-  input: { transferId: string; publicCode: string; itemTitle: string; holderUserId: string; handoffVersion: number },
+  input: {
+    transferId: string;
+    publicCode: string;
+    itemTitle: string;
+    holderUserId: string;
+    holderPartyId: string;
+    handoffVersion: number;
+    fromPartyId?: string | null;
+  },
 ): Promise<void> {
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.assignment",
     recipientUserIds: [input.holderUserId],
-    payload: transferPayload(input),
+    payload: await payloadWithRoute(client, input, {
+      fromPartyId: input.fromPartyId,
+      toPartyId: input.holderPartyId,
+    }),
   });
 }
 
@@ -25,6 +47,7 @@ export async function notifyCodeGenerated(
     publicCode: string;
     itemTitle: string;
     holderPartyId: string;
+    pendingPartyId: string;
     handoffVersion: number;
   },
 ): Promise<void> {
@@ -32,7 +55,10 @@ export async function notifyCodeGenerated(
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.code_obtained",
     recipientUserIds: userIds,
-    payload: transferPayload(input),
+    payload: await payloadWithRoute(client, input, {
+      fromPartyId: input.holderPartyId,
+      toPartyId: input.pendingPartyId,
+    }),
   });
 }
 
@@ -57,7 +83,10 @@ export async function notifyHandoffConfirmed(
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.handoff_confirmed",
     recipientUserIds: userIds,
-    payload: transferPayload(input),
+    payload: await payloadWithRoute(client, input, {
+      fromPartyId: input.previousHolderPartyId,
+      toPartyId: input.newHolderPartyId,
+    }),
   });
 }
 
@@ -82,7 +111,10 @@ export async function notifyTransferDelivered(
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.delivered",
     recipientUserIds: userIds,
-    payload: transferPayload(input),
+    payload: await payloadWithRoute(client, input, {
+      fromPartyId: input.previousHolderPartyId,
+      toPartyId: input.holderPartyId,
+    }),
   });
 }
 
@@ -107,7 +139,10 @@ export async function notifyRouteContinued(
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.continued",
     recipientUserIds: userIds,
-    payload: transferPayload(input),
+    payload: await payloadWithRoute(client, input, {
+      fromPartyId: input.holderPartyId,
+      toPartyId: input.newPendingPartyId,
+    }),
   });
 }
 
@@ -127,7 +162,10 @@ export async function notifyReturnToCreator(
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.returned",
     recipientUserIds: userIds,
-    payload: transferPayload(input),
+    payload: await payloadWithRoute(client, input, {
+      fromPartyId: input.holderPartyId,
+      toPartyId: input.creatorPartyId,
+    }),
   });
 }
 
@@ -152,7 +190,10 @@ export async function notifyPendingCancelled(
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.pending_cancelled",
     recipientUserIds: userIds,
-    payload: transferPayload(input),
+    payload: await payloadWithRoute(client, input, {
+      fromPartyId: input.holderPartyId,
+      toPartyId: input.revokedPendingPartyId,
+    }),
   });
 }
 
@@ -164,24 +205,39 @@ export async function notifyClosed(
     itemTitle: string;
     partyIds: string[];
     handoffVersion: number;
+    holderPartyId?: string | null;
   },
 ): Promise<void> {
   const userIds = await uniqueStaffUserIdsFromParties(client, input.partyIds);
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.closed",
     recipientUserIds: userIds,
-    payload: transferPayload(input),
+    payload: await payloadWithRoute(client, input, {
+      fromPartyId: input.holderPartyId,
+      toPartyId: null,
+    }),
   });
 }
 
 export async function notifyExternalCreatedStaff(
   client: PoolClient,
-  input: { transferId: string; staffUserId: string; itemTitle: string; publicCode: string; handoffVersion: number },
+  input: {
+    transferId: string;
+    staffUserId: string;
+    itemTitle: string;
+    publicCode: string;
+    handoffVersion: number;
+    externalPartyId: string;
+    staffPartyId: string;
+  },
 ): Promise<void> {
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.external_created",
     recipientUserIds: [input.staffUserId],
-    payload: transferPayload(input),
+    payload: await payloadWithRoute(client, input, {
+      fromPartyId: input.externalPartyId,
+      toPartyId: input.staffPartyId,
+    }),
   });
 }
 
@@ -194,12 +250,17 @@ export async function notifyExternalDeclinedStaff(
     publicCode: string;
     reason: string | null;
     handoffVersion: number;
+    externalPartyId?: string | null;
+    staffPartyId?: string | null;
   },
 ): Promise<void> {
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.external_declined",
     recipientUserIds: [input.staffUserId],
-    payload: transferPayload({ ...input, reason: input.reason }),
+    payload: await payloadWithRoute(client, { ...input, reason: input.reason }, {
+      fromPartyId: input.externalPartyId,
+      toPartyId: input.staffPartyId,
+    }),
   });
 }
 

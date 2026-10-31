@@ -147,6 +147,7 @@ export async function legacyCompleteHandler(req: AccessRequest, res: Response): 
           (id): id is string => !!id,
         ),
         handoffVersion: closedHv,
+        holderPartyId: row.holder_party_id,
       });
       await notifyExternalPartyAfterHandoff(client, {
         externalPartyId: row.holder_party_id,

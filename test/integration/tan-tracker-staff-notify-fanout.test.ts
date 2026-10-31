@@ -87,6 +87,7 @@ describe("tan-tracker staff notify fanout (PostgreSQL)", { concurrency: false },
         publicCode: "FAN1",
         itemTitle: "Fanout item",
         holderUserId: holder.id,
+        holderPartyId: party.id,
         handoffVersion: 1,
       });
       await notifyTransferAssignment(client, {
@@ -94,6 +95,7 @@ describe("tan-tracker staff notify fanout (PostgreSQL)", { concurrency: false },
         publicCode: "FAN1",
         itemTitle: "Fanout item",
         holderUserId: holder.id,
+        holderPartyId: party.id,
         handoffVersion: 1,
       });
       await client.query("COMMIT");

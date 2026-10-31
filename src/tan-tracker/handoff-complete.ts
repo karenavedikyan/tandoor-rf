@@ -114,6 +114,8 @@ export async function applyPendingReceiptHandoff(
         publicCode: m.public_code,
         itemTitle: m.item_title,
         holderUserId,
+        holderPartyId: to,
+        fromPartyId: from,
         handoffVersion: newHandoffVersion,
       });
     }

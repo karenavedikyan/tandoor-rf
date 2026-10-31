@@ -1,11 +1,7 @@
 import type { PoolClient } from "pg";
+import { staffNotificationContextBlock, type StaffNotificationPayload } from "./staff-notification-copy";
 
-export type StaffOutboxPayload = {
-  transferId: string;
-  publicCode: string;
-  itemTitle: string;
-  handoffVersion: number;
-};
+export type StaffOutboxPayload = StaffNotificationPayload;
 
 export function normalizeStaffOutboxPayload(payload: Record<string, unknown>): StaffOutboxPayload {
   return {
@@ -13,6 +9,11 @@ export function normalizeStaffOutboxPayload(payload: Record<string, unknown>): S
     publicCode: String(payload.publicCode ?? ""),
     itemTitle: String(payload.itemTitle ?? "Передача"),
     handoffVersion: Number(payload.handoffVersion ?? 0),
+    reason: payload.reason != null ? String(payload.reason) : null,
+    routeFromDisplayName:
+      typeof payload.routeFromDisplayName === "string" ? payload.routeFromDisplayName : undefined,
+    routeToDisplayName:
+      typeof payload.routeToDisplayName === "string" ? payload.routeToDisplayName : undefined,
   };
 }
 
@@ -26,19 +27,20 @@ export function staffTransferLkDetailUrl(appOrigin: string, publicCode: string):
 }
 
 export function buildStaffExternalCreatedNoticeText(
-  itemTitle: string,
-  publicCode: string,
+  payload: StaffOutboxPayload,
   pilotEnabled: boolean,
 ): string {
-  const item = itemTitle.trim() || "Передача";
+  const ctx = staffNotificationContextBlock(payload);
   if (pilotEnabled) {
     return (
-      `Тан-трекер: вам передают «${item}» (${publicCode}).\n` +
+      `${ctx}\n\n` +
+      `Вам передают от клиента.\n` +
       `Кнопка ниже выдаст одноразовый код приёма. Когда получите предмет в руки, сообщите код отправителю: он введёт его и подтвердит передачу.`
     );
   }
   return (
-    `Тан-трекер: вам передают «${item}» (${publicCode}).\n` +
+    `${ctx}\n\n` +
+    `Вам передают от клиента.\n` +
     `Получите код приёма в личном кабинете и сообщите его отправителю, когда предмет будет у вас.`
   );
 }
