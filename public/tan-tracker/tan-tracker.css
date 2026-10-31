@@ -121,11 +121,20 @@ body.tt-recipient-shell .main { align-self:start; margin-top:0; margin-bottom:au
 .tt-ext-bar-exit { border:1px solid var(--line); background:var(--tt-panel); color:var(--tt-muted); border-radius:999px; padding:6px 12px; font-size:13px; font-weight:600; min-height:34px; cursor:pointer; flex-shrink:0; }
 .tt-ext-cta { font-size:16px; }
 .tt-ext-cta-hint { margin:8px 0 0; font-size:12.5px; color:var(--tt-muted); text-align:center; }
+.tt-ext-new-entry { margin-top:16px; padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
+.tt-ext-new-entry h2 { margin:0; font-size:16px; line-height:1.4; }
+.tt-ext-new-entry .tt-ext-cta-hint { text-align:left; }
+.tt-ext-new-entry .tt-ext-cta { margin-top:12px; }
+.tt-ext-forward-hint { margin:10px 0 0; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+.tt-forward-current h2 { margin-top:0; font-size:20px; line-height:1.4; }
+.tt-forward-current .tt-wizard-field { display:grid; gap:6px; margin:16px 0; }
+.tt-forward-current .tt-wizard-field input { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:7px; background:var(--tt-panel); color:var(--tt-ink); }
 .tt-ext-bar--compact { display:flex; align-items:center; gap:10px; margin:0 0 12px; min-height:36px; }
 .tt-ext-bar-back { border:0; background:transparent; color:var(--green,#507f22); font-weight:700; font-size:14px; padding:6px 0; cursor:pointer; white-space:nowrap; }
 .tt-ext-bar-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; color:var(--tt-muted); text-align:right; }
 .tt-ext-groups { display:flex; flex-direction:column; gap:20px; }
 .tt-ext-group-title { display:flex; align-items:center; gap:8px; margin:0 0 10px; font-size:13px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--tt-muted); }
+.tt-ext-group .tt-cards { display:grid !important; gap:10px; }
 .tt-ext-group-count { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:22px; padding:0 7px; border-radius:999px; background:var(--tt-panel); border:1px solid var(--line); font-size:12px; color:var(--tt-ink); }
 .tt-ext-empty i, .tt-ext-empty svg { width:40px; height:40px; color:var(--tt-muted); margin-bottom:8px; }
 .tt-ext-empty p { margin:4px 0; }

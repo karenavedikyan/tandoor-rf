@@ -4582,8 +4582,9 @@
         : f.mode === "new" && f.newPhoneStep === "name"
           ? btn("Сохранить и выбрать", 'data-tt="confirm-transfer"', "tt-primary")
           : "";
-    return `<div class="tt-panel"><h2>Передать «${E(o.item)}»</h2>
-      <label>Поиск<input data-tt-field="pickQ" value="${E(f.pickQ)}"></label>
+    return `<div class="tt-panel tt-forward-current"><h2>Передать дальше: «${E(o.item)}»</h2>
+      <p class="tt-muted" data-tt="forward-existing-context">Трек ${E(o.id)} сохранится. Выберите, кому передаёте этот предмет.</p>
+      <label class="tt-wizard-field">Поиск получателя<input data-tt-field="pickQ" value="${E(f.pickQ)}"></label>
       <div data-tt="contact-pick">${pickHtml}</div>
       ${btn("Новый получатель", 'data-tt="toggle-new"')}
       ${newBlock}
@@ -4788,7 +4789,8 @@
     if (isExternalShell() && state.view === "ext-request" && window.TtExternalUi?.extRequestView) {
       return window.TtExternalUi.extRequestView();
     }
-    if (isExternalShell() && o) return detailView(o);
+    // A remembered order must not turn the registry into a detail card with list-level creation chrome.
+    if (isExternalShell() && o && state.view !== "list") return detailView(o);
     if (isExternalShell() && window.TtExternalUi?.externalShellHomeHtml) return window.TtExternalUi.externalShellHomeHtml();
     if (isExternalShell()) return `<div class="tt-empty"><p>Нет доступных передач для этого участника.</p></div>`;
     return registryView();
@@ -4913,8 +4915,8 @@
 
     const lkRuntime = TT_LK || isPublicGuestPage();
     const demoBody = lkRuntime
-      ? `<div data-tt="chrome">${TT_LK && !isPublicGuestPage() ? chrome : ""}</div>`
-      : `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p><div data-tt="chrome">${chrome}</div>`;
+      ? `<div data-tt="chrome">${TT_LK && !isPublicGuestPage() && !ext ? chrome : ""}</div>`
+      : `<p class="tt-demo tt-demo-inline">Демо-данные · изменения до обновления страницы</p><div data-tt="chrome">${ext ? "" : chrome}</div>`;
     const demoShell = `${lkReadOnlyBannerHtml()}${
       state.userTestEnvironmentBanner
         ? `<div class="tt-user-test-banner" role="alert">${E(state.userTestEnvironmentBanner)}</div>`
@@ -6336,7 +6338,9 @@
         state.publicHolderAccessToken =
           authoritativeHat || data.holderAccessToken || state.publicHolderAccessToken || "";
       }
-      if (data.publicHolder) state.orderId = data.orders?.[0]?.id || state.orderId;
+      // An external person's registry can contain several items. Never switch the selected
+      // item to the first bootstrap row (or implicitly open one when entering the registry).
+      if (data.publicHolder && !data.externalPerson) state.orderId = data.orders?.[0]?.id || state.orderId;
       window.__TT_PUBLIC_HOLDER__ = !!state.publicHolderAccessToken;
     }
     if (data.lkMode && data.externalPerson) {

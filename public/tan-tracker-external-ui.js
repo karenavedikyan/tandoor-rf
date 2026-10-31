@@ -125,7 +125,8 @@
     var c = st && contactById(st.actingContactId);
     var name = (c && c.name) || "Мои передачи";
     var phone = (c && c.phone) || "";
-    if (st && (st.view === "ext-request" || ((st.view === "detail" || st.view === "code") && st.orderId))) {
+    // Creation is a list-level action, never an action on an existing item.
+    if (st && st.view !== "list") {
       return (
         '<div class="tt-ext-bar tt-ext-bar--compact" data-tt="external-bar">' +
         btn("← Мои передачи", "back-list", "tt-ext-bar-back") +
@@ -148,22 +149,28 @@
       "вход через Telegram или MAX</p></div>" +
       btn("Выйти", "ext-logout-all", "tt-ext-bar-exit") +
       "</div>" +
-      btn("Отправить предмет", "ext-request-open", "tt-primary tt-btn-block tt-ext-cta") +
-      '<p class="tt-ext-cta-hint">Как в боте: что передаёте → фото → кому → срок. Сотрудник получит уведомление.</p></header>'
+      '<section class="tt-ext-new-entry" aria-labelledby="tt-ext-new-title">' +
+      '<h2 id="tt-ext-new-title">Новый предмет</h2>' +
+      '<p class="tt-ext-cta-hint">Для другого предмета будет создан отдельный трек.</p>' +
+      btn("Создать новую передачу", "ext-request-open", "tt-btn-ghost tt-btn-block tt-ext-cta") +
+      "</section></header>"
     );
   }
 
   function externalGroupOrders(rows, actor) {
     var action = [];
+    var held = [];
     var progress = [];
     var done = [];
     rows.forEach(function (o) {
       if (o.status === "completed") done.push(o);
       else if (o.pendingId === actor || (o.holderId === actor && o.pendingId)) action.push(o);
+      else if (o.holderId === actor) held.push(o);
       else progress.push(o);
     });
     return [
       { id: "action", title: "Требуют вашего действия", items: action },
+      { id: "held", title: "Предметы у вас", items: held },
       { id: "progress", title: "В пути", items: progress },
       { id: "done", title: "Недавно завершённые", items: done },
     ].filter(function (g) {
@@ -487,7 +494,7 @@
       '<div class="tt-panel tt-ext-request" data-tt="ext-request">' +
       '<div class="tt-ext-chat-head">' +
       '<span class="tt-ext-chat-avatar" aria-hidden="true"><i data-lucide="bot"></i></span>' +
-      "<div><h2>Отправить предмет</h2><p class=\"tt-ext-chat-sub\">Бот Тан-трекера</p></div>" +
+      "<div><h2>Создать новую передачу</h2><p class=\"tt-ext-chat-sub\">Новый предмет · отдельный трек</p></div>" +
       stepLabel +
       "</div>" +
       progress +
@@ -866,12 +873,15 @@
         E(fin?.name || "—") +
         "</p>" +
         (o.dueAt ? '<p class="tt-muted">Срок: до ' + E(fmtDt(o.dueAt)) + "</p>" : "") +
-        btn("Передать дальше", "transfer", "tt-primary tt-btn-block") +
+        btn("Передать этот предмет дальше", "transfer", "tt-primary tt-btn-block") +
+        '<p class="tt-muted tt-ext-forward-hint">Продолжение трека ' + E(o.id) + ". Новый трек не создаётся.</p>" +
         "</div>";
     } else if (deliveredFinal) {
       nextStep =
-        '<div class="tt-panel" data-tt="holder-delivered"><p class="tt-success">Передача дошла до вас. Делать ничего не нужно.</p>' +
-        btn("Передать дальше или вернуть", "transfer", "tt-btn-ghost tt-btn-block") +
+        '<div class="tt-panel" data-tt="holder-delivered"><p class="tt-success">Вы получили этот предмет.</p>' +
+        btn("Передать этот предмет дальше", "transfer", "tt-primary tt-btn-block") +
+        '<p class="tt-muted tt-ext-forward-hint">Можно передать дальше или вернуть отправителю. Это продолжение трека ' +
+        E(o.id) + ", а не новая передача.</p>" +
         "</div>";
     } else if (o.status === "completed") {
       nextStep =

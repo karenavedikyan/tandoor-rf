@@ -83,7 +83,8 @@ describe("external person UI markup (prototype parity hooks)", () => {
     );
     assert.match(html, /data-tt="holder-delivered"/);
     assert.match(html, /data-tt="transfer"/);
-    assert.match(html, /Передать дальше или вернуть/);
+    assert.match(html, /Передать этот предмет дальше/);
+    assert.match(html, /продолжение трека D1, а не новая передача/);
   });
 });
 
