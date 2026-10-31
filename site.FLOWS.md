@@ -377,3 +377,20 @@ client directory, role scope, fullscreen registry and client card tabs work.
 - Desktop 1440x1000, 375px mobile and short desktop; light and dark readability,
   vertical scrolling, contained table scrolling, keyboard/dialog focus and Escape.
 - Verify deployed version in a fresh browser context; no production release.
+
+## Каталог продукции (раздел единого прототипа, 1 ноября 2026)
+
+- Baseline before edit: unified prototype at `1a3c044`, nav «Моя работа · Подготовка рейса · Клиенты · Дистрибуция · Визиты · Маркетинг · Замещение · Тан-трекер · Команда · Аналитика · Источники», theme toggle, role picker, Tan-tracker registry and create wizard open; no «Каталог» item.
+- Requested: new nav item **«Каталог»** (icon `door-open`) right after «Клиенты» for every employee role (manager/regional/rop/director/admin); hidden only in assistant-only shell. Route `#catalog`.
+- Data `site/catalog-data.js`: 167 products in 4 sections / 13 subsections; names, colours, photos and retail prices taken from tandoor.ru; stock by 3 warehouses, partner prices, incoming dates, «складская/заказная» are synthetic demo values and are labelled so in the UI.
+- Flow «Открыть каталог»: click «Каталог» → h1 «Каталог продукции», counter «167 товаров», section tree with counts, search field focused on desktop.
+- Flow «Поиск»: type `422` → only products whose name/colour/code contains 422 (≥1, «422 · Белый ЭВО ПЭТ»); type `qwerty` → empty state with «Сбросить фильтры».
+- Flow «Разделы»: click «Входные двери» → 29 товаров, subsections chips shown; click «С терморазрывом» → 7; «Все разделы» resets.
+- Flow «Фильтры»: chip «В наличии» → only products with total stock > 0; «Белые» gamma; price range min/max; sort by price asc/desc; active filters shown as removable chips.
+- Flow «Вид карточек»: three card variants A «Как на сайте», B «Витрина» (default), C «Таблица»; switching preserves filters and results count.
+- Flow «Карточка товара»: click a card → side panel with photo, price, partner price (employee only), stock per warehouse, incoming, sizes/types, specs, «Скопировать ответ клиенту» (clipboard + notice), «Открыть на tandoor.ru», Escape / × closes.
+- Flow «Режим клиента»: toggle «Как видит клиент» hides partner price and exact stock numbers (shows only «В наличии / Под заказ»), both in grid and panel.
+- Flow «Мобильный»: 375px — sections as horizontal chips, filters behind «Фильтры» button (drawer), 2-column grid, panel full-screen.
+- Regression: existing nav items still open their screens; theme toggle works on catalog; role picker switch keeps catalog visible; Tan-tracker registry opens; no console errors.
+- Done 01.11.2026: `catalog-qa.js` — 69 checks PASS (desktop 1356×900 + mobile 375px, light/dark, roles manager/regional/rop/director/admin, cold entry by hash `#catalog?sec=entry&sub=…`). Observed shell behaviour kept as is: role switch always returns to «Клиенты» (original `switchPrototypeRole`). `assistant-qa.js` fails identically on baseline `1a3c044` (pre-existing, unrelated).
+- Table view: columns Модель · Раздел · Размеры (≥1500px) · Розница · Партнёр · Наличие · КРД · РНД · Шоурум · copy; fits 1356px without horizontal scroll.
