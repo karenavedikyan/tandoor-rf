@@ -133,9 +133,17 @@
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:42%; flex-shrink:1; min-width:12ch;
 }
 .tt-card-v2-route-arrow { opacity:.5; font-size:12px; flex-shrink:0; }
-.tt-card-v2-foot { display:flex; flex-wrap:nowrap; align-items:center; gap:8px; justify-content:space-between; margin-bottom:6px; }
+.tt-card-v2-foot { display:flex; flex-wrap:wrap; align-items:center; gap:8px; justify-content:space-between; margin-bottom:6px; }
 .tt-card-v2-foot .tt-status-group { min-width:0; flex:1; }
-.tt-card-v2-foot .tt-status-chip { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tt-card-v2-foot .tt-status-chip { max-width:100%; white-space:normal; }
+.tt-custody { display:flex; flex-direction:column; gap:6px; min-width:0; margin-bottom:8px; color:var(--text); }
+.tt-custody-current { display:flex; align-items:center; gap:8px; min-width:0; }
+.tt-custody-copy { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.tt-custody-label { font-size:11px; line-height:1.35; font-weight:500; color:var(--text); }
+.tt-custody-name { font-size:13px; line-height:1.4; overflow-wrap:anywhere; }
+.tt-custody-next { display:flex; flex-direction:column; gap:2px; padding-left:36px; }
+.tt-status-label { min-width:0; overflow-wrap:anywhere; white-space:normal; }
+.tt-detail-holder-line { margin:8px 0 12px; font-size:13px; line-height:1.5; overflow-wrap:anywhere; color:var(--text); }
 .tt-card-v2-due-inline { font-size:13px; font-weight:700; flex-shrink:0; text-align:right; }
 .tt-card-v2-meta { margin:0; font-size:11px; color:var(--muted,var(--tt-muted)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
@@ -170,8 +178,12 @@
 .tt-status-chip--wait { background:color-mix(in srgb, var(--tt-blue-bg,#edf4fb) 90%, var(--surface)); color:var(--tt-blue,#285a82); }
 .tt-status-chip--inbox { background:var(--warm,#fff4df); color:var(--warn,#93600d); }
 .tt-status-chip--route { background:var(--bg); color:var(--muted); }
-.tt-status-chip--done { background:color-mix(in srgb, var(--tint) 70%, var(--surface)); color:var(--green,#507f22); }
+.tt-status-chip--done { background:color-mix(in srgb, var(--tint) 70%, var(--surface)); color:var(--text); }
 .tt-status-chip--bad { background:color-mix(in srgb, var(--tt-bad-bg) 90%, var(--surface)); color:var(--bad,#ac4343); }
+.tt-status-chip--waiting { background:var(--tt-blue-bg,#edf4fb); color:var(--tt-blue,#285a82); }
+.tt-status-chip--received { background:color-mix(in srgb, var(--tint,#eef5e7) 70%, var(--surface)); color:var(--text); }
+.tt-status-chip--ready { background:var(--bg); color:var(--text); }
+.tt-status-chip--received svg, .tt-status-chip--done svg { color:var(--green,#507f22); }
 
 .tt-due-human { font-size:13px; font-weight:600; color:var(--text); }
 .tt-due-human--over { color:var(--bad,#ac4343); }

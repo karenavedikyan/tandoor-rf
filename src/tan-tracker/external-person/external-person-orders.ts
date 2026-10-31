@@ -64,6 +64,7 @@ export async function loadExternalPersonOrders(
             }))
         : [];
     const dto = mapTransferToOrderDto(row, timeline.rows, revoked, { attachments });
+    dto.hasConfirmedReceipt = row.first_custody_at != null || auditConfirmedIds.has(row.id);
     dto.attachments = attachments;
     dto.timeline = dto.timeline.filter((e) => e.from === partyId || e.to === partyId);
     if (

@@ -180,6 +180,7 @@ export function mapTransferToOrderDto(
     dueAt: row.due_at ? row.due_at.getTime() : null,
     comment: row.comment_text ?? "",
     holderSince: row.holder_since.getTime(),
+    hasConfirmedReceipt: row.first_custody_at != null,
     timeline: timeline.map((t) => ({
       at: t.occurred_at.getTime(),
       from: t.from_party_id,

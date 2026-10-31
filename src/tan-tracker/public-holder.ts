@@ -13,6 +13,7 @@ import {
 } from "./holder-access";
 import { loadOpenHolderAccessBinding } from "./holder-access-binding";
 import { applyPendingReceiptHandoff } from "./handoff-complete";
+import { transferIdsWithConfirmedFirstCustodyAudit } from "./custody-state";
 import { requireHandoffOtpPepper } from "./otp-config";
 import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS } from "./otp-config";
 import { hashOtp } from "./phone-verification";
@@ -46,7 +47,7 @@ async function loadHolderTransfer(
     await client.query(
       `SELECT id, public_code, item_title, qty_label, comment_text, status,
               creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
-              due_at, holder_since, handoff_version, allow_legacy_complete, completed_at, row_version
+              due_at, holder_since, first_custody_at, handoff_version, allow_legacy_complete, completed_at, row_version
        FROM tt_transfers
        WHERE id = $1 AND holder_party_id = $2::uuid AND handoff_version = $3
          AND status IN ('active', 'waiting', 'delivered')
@@ -73,7 +74,7 @@ async function buildPublicHolderJson(pool: NonNullable<ReturnType<typeof getPool
     await pool.query(
       `SELECT id, public_code, item_title, qty_label, comment_text, status,
               creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
-              due_at, holder_since, handoff_version, allow_legacy_complete, completed_at, row_version
+              due_at, holder_since, first_custody_at, handoff_version, allow_legacy_complete, completed_at, row_version
        FROM tt_transfers WHERE id = $1 LIMIT 1`,
       [transferId],
     )
@@ -85,6 +86,8 @@ async function buildPublicHolderJson(pool: NonNullable<ReturnType<typeof getPool
   const dto = mapTransferToOrderDto(row, timeline, revoked, {
     attachments: attMap.get(row.id) ?? [],
   });
+  dto.hasConfirmedReceipt = row.first_custody_at != null ||
+    (await transferIdsWithConfirmedFirstCustodyAudit(pool, [row.id])).has(row.id);
   dto.attachments = (dto.attachments ?? []).map((a) => ({ ...a, url: undefined }));
   const partyIdSet = new Set<string>(
     [

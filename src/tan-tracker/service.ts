@@ -170,6 +170,7 @@ export async function buildTanTrackerBootstrap(
     const dto = mapTransferToOrderDto(row, timeline, revoked, {
       attachments: attachmentMap.get(row.id) ?? [],
     });
+    dto.hasConfirmedReceipt = row.first_custody_at != null || auditConfirmedIds.has(row.id);
     if (canViewOrder(dto, ctx, contacts, teamEmployeeGuids, false, partyEmployeeMap)) {
       if (
         actorPartyId &&

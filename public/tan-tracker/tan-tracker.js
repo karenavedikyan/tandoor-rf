@@ -1703,29 +1703,47 @@
     return `<i data-lucide="${ctx.icon}"></i>`;
   }
 
+  function transferLifecycleContext(o) {
+    if (o.status === "completed") return { key: "done", label: "Завершена", icon: "check-circle" };
+    if (o.pendingId) return {
+      key: "waiting", label: "Ожидает приёма", icon: "key-round",
+      hint: contactById(o.pendingId)?.name || "Получатель не указан",
+    };
+    if (o.status === "delivered" || o.hasConfirmedReceipt === true)
+      return { key: "received", label: "Получение подтверждено", icon: "package-check" };
+    return { key: "ready", label: "Ожидает передачи", icon: "send" };
+  }
+
+  function responsibleHolderName(o, actor) {
+    if (actor && o.holderId === actor) return "Вы";
+    return contactById(o.holderId)?.name || "Не указан";
+  }
+
   function statusBadge(o, actor, opts = {}) {
-    actor = actor ?? state.actingContactId ?? employeeContact(state.employeeId)?.id;
-    const ctx = registryActorContext(o, actor);
+    actor = actor ?? actorContactId();
+    const ctx = transferLifecycleContext(o);
     const overdue = isOverdue(o);
-    const compact = !!opts.compact;
     const overdueChip = overdue
       ? `<span class="tt-status-chip tt-status-chip--bad" data-tt-status="overdue"><i data-lucide="alert-triangle"></i>Просрочено</span>`
       : "";
-    const label = ctx.key === "wait" && compact ? ctx.label : `${ctx.label}${ctx.hint && !compact ? ` · ${ctx.hint}` : ""}`;
-    const main = `<span class="tt-status-chip tt-status-chip--${ctx.key}" data-tt-status="${ctx.key}">${statusChipIcon(ctx)}${E(label)}</span>`;
+    const label = `${ctx.label}${ctx.hint ? ` · ${ctx.hint}` : ""}`;
+    const main = `<span class="tt-status-chip tt-status-chip--${ctx.key}" data-tt-status="${ctx.key}">${statusChipIcon(ctx)}<span class="tt-status-label">${E(label)}</span></span>`;
     if (ctx.key === "done") return main;
     return `<span class="tt-status-group">${main}${overdueChip}</span>`;
   }
 
-  function registryRouteLine(o, { table = false } = {}) {
+  function registryRouteLine(o, { actor } = {}) {
     const h = contactById(o.holderId);
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
-    const next = p || (fin && fin.id !== o.holderId ? fin : null);
-    const name = (c) => E(routeDisplayName(c, { table }));
-    return `<span class="tt-card-v2-route">${contactAvatarHtml(h)}<span class="tt-card-v2-route-name">${name(h)}</span>${
+    const next = o.status === "completed" ? null : p || (fin && fin.id !== o.holderId ? fin : null);
+    return `<span class="tt-custody" data-tt-custody>
+      <span class="tt-custody-current">${contactAvatarHtml(h)}<span class="tt-custody-copy">
+        <span class="tt-custody-label">${o.status === "completed" ? "Последний держатель" : "Ответственный"}</span>
+        <strong class="tt-custody-name" data-tt-holder>${E(responsibleHolderName(o, actor))}</strong>
+      </span></span>${
       next
-        ? `<span class="tt-card-v2-route-arrow" aria-hidden="true">→</span>${contactAvatarHtml(next)}<span class="tt-card-v2-route-name">${name(next)}</span>`
+        ? `<span class="tt-custody-next"><span class="tt-custody-label">${p ? "Ожидаемый получатель" : "Конечный получатель"}</span><span class="tt-custody-name">${E(next.name)}</span></span>`
         : ""
     }</span>`;
   }
@@ -1762,7 +1780,7 @@
     const cardInner = `<button type="button" class="tt-card-v2${overdue ? " tt-card-v2--overdue" : ""}${done ? " tt-card-v2--completed" : ""}" data-tt-open="${E(o.id)}" style="--tt-card-accent:${accent}">
       <span class="tt-card-v2-accent" aria-hidden="true"></span>
       <div class="tt-card-v2-top"><h3 class="tt-card-v2-title">${extBadge}${E(o.item)}</h3><i data-lucide="chevron-right"></i></div>
-      ${registryRouteLine(o)}
+      ${registryRouteLine(o, { actor })}
       <div class="tt-card-v2-foot">${statusBadge(o, actor, { compact: true })}<span class="tt-card-v2-due-inline ${due.overdue ? "tt-due-human--over" : ""}">${E(registryCardDuePrimary(o))}</span></div>
       <p class="tt-card-v2-meta">${registryCardMeta(o)}</p>
     </button>`;
@@ -1771,7 +1789,7 @@
   }
 
   function registryCounts() {
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = actorContactId();
     const base = orders.filter((o) => orderVisible(o));
     const handoff = base.filter(
       (o) => o.holderId === actor && o.status !== "completed" && o.finalRecipientId && o.holderId !== o.finalRecipientId
@@ -1800,7 +1818,7 @@
   }
 
   function registrySectionsHtml(rows) {
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = actorContactId();
     const groups = registryGroupOrders(rows, actor);
     if (!groups.length) return "";
     return groups
@@ -1818,7 +1836,7 @@
   }
 
   function registryRowsHtml(rows) {
-    const actor = state.actingContactId || employeeContact(state.employeeId)?.id;
+    const actor = actorContactId();
     return rows
       .map((o) => {
         const overdue = isOverdue(o);
@@ -1828,7 +1846,7 @@
         return `<tr data-tt-open="${E(o.id)}" class="${overdue ? "tt-row--overdue" : ""}${selected ? " tt-is-selected" : ""}">
           ${checkCol}
           <td><strong>${E(o.item)}</strong><small>${E(o.id)}${o.qty ? ` · ${E(o.qty)}` : ""}</small></td>
-          <td>${registryRouteLine(o)}</td>
+          <td>${registryRouteLine(o, { actor })}</td>
           <td>${statusBadge(o, actor)}</td>
           <td class="tt-table-due">${humanDueTableCell(o)}</td>
         </tr>`;
@@ -2732,6 +2750,7 @@
     const to = o.pendingId;
     o.holderId = to;
     o.pendingId = null;
+    o.hasConfirmedReceipt = true;
     o.holderSince = now();
     o.status = "active";
     o.code = null;
@@ -3429,7 +3448,7 @@
       ["waiting", "Ожидает код"],
       ["handoff", "Нужно передать"],
       ["receive", "Жду получения"],
-      ["route", "В пути"],
+      ["route", "У других"],
       ["overdue", "Просрочено"],
       ["completed", "Завершена"],
     ];
@@ -3769,7 +3788,7 @@
             ["waiting", "Ожидает код"],
             ["handoff", "Нужно передать"],
             ["receive", "Жду получения"],
-            ["route", "В пути"],
+            ["route", "У других"],
             ["overdue", "Просрочено"],
             ["completed", "Завершена"],
           ]
@@ -3797,7 +3816,7 @@
       ${
         rows.length
           ? `<div class="tt-table-scroll" tabindex="0" aria-label="Реестр передач"><table class="tt-table tt-table-v2" data-tt="registry"><thead><tr>
-      ${selectionCol}<th>Передача</th><th>Маршрут</th><th>Статус</th><th>Срок</th>
+      ${selectionCol}<th>Передача</th><th>Ответственный</th><th>Статус</th><th>Срок</th>
     </tr></thead><tbody id="tt-registry-body">${registryRowsHtml(rows)}</tbody></table></div>
     <div class="tt-cards" data-tt="cards"><div data-tt="registry-sections">${registryCardsHtml(rows)}</div></div>`
           : registryEmptyHtml()
@@ -4118,6 +4137,7 @@
     const dueCls = dueHuman.overdue ? "tt-due-overdue" : "tt-due-line";
     const rows = [
       `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Статус</span><span class="tt-detail-fact-value">${statusBadge(o, actor)}</span></div>`,
+      `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">${o.status === "completed" ? "Последний держатель" : "Ответственный"}</span><span class="tt-detail-fact-value" data-tt-holder>${E(responsibleHolderName(o, actor))}</span></div>`,
       `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Срок</span><span class="tt-detail-fact-value ${dueCls}">${E(duePhrase)}</span></div>`,
     ];
     if (o.qty) rows.push(`<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Количество</span><span class="tt-detail-fact-value">${E(o.qty)}</span></div>`);
@@ -4493,7 +4513,8 @@
       typeof window !== "undefined" && window.innerWidth <= 767 ? detailMobilePrimaryDock(o) : "";
     const metaBlock = desktopDetail
       ? ""
-      : `<div class="tt-detail-meta">${statusBadge(o, actor)}<span class="${dueCls}">${E(dueLabel)}</span></div>`;
+      : `<div class="tt-detail-meta">${statusBadge(o, actor)}<span class="${dueCls}">${E(dueLabel)}</span></div>
+        <p class="tt-detail-holder-line">${o.status === "completed" ? "Последний держатель" : "Ответственный"}: <strong data-tt-holder>${E(responsibleHolderName(o, actor))}</strong></p>`;
     return `<div class="tt-panel tt-detail-panel tt-view-enter${mobileDock ? " tt-detail-panel--has-dock" : ""}" data-tt="detail">
       <header class="tt-detail-head tt-detail-head-v2">
         ${

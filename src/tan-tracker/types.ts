@@ -78,6 +78,8 @@ export type TanTrackerOrderDto = {
   dueAt: number | null;
   comment: string;
   holderSince: number;
+  /** Canonical custody proof, not inferred from user-editable timeline text. */
+  hasConfirmedReceipt?: boolean;
   timeline: Array<{ at: number; from: string | null; to: string | null; note: string }>;
   finalRecipientId?: string | null;
   createdById?: string | null;

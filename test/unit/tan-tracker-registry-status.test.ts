@@ -86,3 +86,55 @@ describe("tan-tracker registryActorContext completed status", () => {
     assert.equal(registryActorContext(sendOnly, "h1").key, "send");
   });
 });
+
+function lifecycle(o: Record<string, unknown>, name = "Карина") {
+  const source = fs.readFileSync(path.join(process.cwd(), "public/tan-tracker/tan-tracker.js"), "utf8");
+  const fn = vm.runInNewContext(`${extractFunctionSource(source, "transferLifecycleContext")}; transferLifecycleContext;`, {
+    contactById: (id: string) => id === "missing" ? null : { id, name },
+  });
+  return fn(o) as ActorCtx;
+}
+
+describe("registry lifecycle is independent of viewer role", () => {
+  it("completed takes precedence over stale pending and custody hints", () => {
+    assert.equal(lifecycle({ status: "completed", pendingId: "p", hasConfirmedReceipt: true }).key, "done");
+  });
+  it("pending shows exact intended recipient, never moves or replaces current holder", () => {
+    const o = { status: "waiting", pendingId: "karina", holderId: "oasis", hasConfirmedReceipt: true };
+    const r = lifecycle(o);
+    assert.equal(r.key, "waiting");
+    assert.equal(r.label, "Ожидает приёма");
+    assert.equal(r.hint, "Карина");
+    assert.equal(o.holderId, "oasis");
+  });
+  it("both delivered and canonical intermediate receipt show confirmed", () => {
+    assert.equal(lifecycle({ status: "delivered", pendingId: null }).label, "Получение подтверждено");
+    assert.equal(lifecycle({ status: "active", hasConfirmedReceipt: true }).key, "received");
+  });
+  it("new or unproven custody cannot masquerade as receipt using a name or editable note", () => {
+    assert.equal(lifecycle({ status: "active", holderId: "other", timeline: [{ note: "Подтверждено одноразовым кодом" }] }).key, "ready");
+    assert.equal(lifecycle({ status: "active", hasConfirmedReceipt: false }).label, "Ожидает передачи");
+  });
+  it("missing recipient is neutral and long names are not shortened by lifecycle logic", () => {
+    assert.equal(lifecycle({ status: "waiting", pendingId: "missing" }).hint, "Получатель не указан");
+    const name = "Карина Очень Длинная Фамилия <не HTML>";
+    assert.equal(lifecycle({ status: "waiting", pendingId: "karina" }, name).hint, name);
+  });
+  it("standalone handoff mirrors canonical receipt only after a successful transition", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "public/tan-tracker/tan-tracker.js"), "utf8");
+    const complete = vm.runInNewContext(`${extractFunctionSource(source, "completeHandoff")}; completeHandoff;`, {
+      state: {}, archiveInvitation: () => {}, resetPhoneIdentity: () => {}, now: () => 100,
+    });
+    const o = { status: "waiting", holderId: "sender", pendingId: "oasis", finalRecipientId: "karina", timeline: [], hasConfirmedReceipt: false };
+    assert.equal(complete(o, "code"), true);
+    assert.equal(o.holderId, "oasis");
+    assert.equal(o.hasConfirmedReceipt, true);
+    assert.equal(lifecycle(o).key, "received");
+    assert.equal(complete(o, "code"), false);
+    o.pendingId = "karina";
+    assert.equal(lifecycle(o).key, "waiting");
+    assert.equal(complete(o, "qr"), true);
+    assert.equal(o.status, "delivered");
+    assert.equal(lifecycle(o).key, "received");
+  });
+});
