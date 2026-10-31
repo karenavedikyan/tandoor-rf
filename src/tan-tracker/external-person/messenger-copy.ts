@@ -61,8 +61,8 @@ export function buildExternalPersonMessengerBody(input: {
     case "handoff_code":
       return (
         `${ctx}\n\n` +
-        `Код для передачи: следующим сообщением шесть цифр для копирования.\n` +
-        `Сообщите код держателю лично. Код одноразовый.`
+        `Код для передачи ${code}: ${input.extraLine ?? ""}`.trim() +
+        "\nСообщите код держателю лично. Код одноразовый."
       );
     case "after_code":
       return `${ctx}\n\nКод подтверждён, предмет передан дальше.${linkLine}`;

@@ -31,16 +31,17 @@ describe("staff notification route display", () => {
     assert.match(full, /Кому: Ivan/);
   });
 
-  it("issued code primary text never contains six-digit OTP", () => {
+  it("issued code primary includes actual code for clipboard parse", () => {
     const text = formatIssuedCodeMessage({
       publicCode: "PUB-1",
       itemTitle: "Item",
+      code: "012345",
       expiresAt: Date.UTC(2026, 0, 1, 12, 0, 0),
       replacedPrevious: false,
       routeFromDisplayName: "H",
       routeToDisplayName: "P",
     });
-    assert.match(text, /следующим сообщением/i);
-    assert.doesNotMatch(text, /\b\d{6}\b/);
+    assert.match(text, /Код приёма: 012345/);
+    assert.match(text, /От: H/);
   });
 });

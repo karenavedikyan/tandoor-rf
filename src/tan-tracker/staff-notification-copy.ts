@@ -101,5 +101,5 @@ export function staffNotificationMessengerText(
 ): string {
   const lk = staffNotificationLkCopy(eventType, payload);
   const url = `${appOrigin.replace(/\/$/, "")}/tan-tracker`;
-  return `${lk.body}\n\n${lk.title}.\nОткрыть: ${url}`;
+  return `${lk.body}\n\nОткрыть: ${url}`;
 }
