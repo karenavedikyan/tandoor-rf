@@ -46,9 +46,9 @@ export function buildExternalPersonMessengerBody(input: {
     case "after_code":
       return `Передача «${title}» (${code}): код подтверждён, предмет передан дальше.${linkLine}`;
     case "after_receipt":
-      return buildReceivedTransferMessengerBody(title, code, input.holderUrl ?? input.shellUrl);
+      return buildReceivedTransferMessengerBody(title, code, link);
     case "delivered":
-      return buildReceivedTransferMessengerBody(title, code, input.holderUrl ?? input.shellUrl);
+      return buildReceivedTransferMessengerBody(title, code, link);
     case "closed":
       return `Передача «${title}» (${code}) завершена.${linkLine}`;
     default:
