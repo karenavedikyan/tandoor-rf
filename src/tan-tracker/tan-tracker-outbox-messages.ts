@@ -1,5 +1,6 @@
 import type { StaffTransferEventType } from "./staff-notification-copy";
 import { staffNotificationMessengerText, type StaffNotificationPayload } from "./staff-notification-copy";
+import { normalizeNotificationTransferState } from "./notification-transfer-state";
 
 const TAN_TRACKER_EVENT_PREFIX = "tan_tracker.";
 
@@ -17,6 +18,7 @@ export function buildTanTrackerStaffOutboxMessage(
     publicCode: String(payload.publicCode ?? ""),
     itemTitle: String(payload.itemTitle ?? "Передача"),
     handoffVersion: Number(payload.handoffVersion ?? 0),
+    notificationState: normalizeNotificationTransferState(payload.notificationState),
     reason: payload.reason != null ? String(payload.reason) : null,
     routeFromDisplayName:
       typeof payload.routeFromDisplayName === "string" && payload.routeFromDisplayName.trim()

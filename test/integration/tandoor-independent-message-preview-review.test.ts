@@ -32,11 +32,13 @@ test("independent: public OG/image and actual MAX HTTP payload, without external
     const personalUrl = "https://lk.tandoor.ru/tan-tracker/?cap=SYNTHETIC_CAP&tt_hat=SYNTHETIC_HAT";
     const stored = buildExternalPersonMessengerBody({
       event: "delivered", itemTitle: "Synthetic parcel", publicCode: "TEST-001", holderUrl: personalUrl,
+      notificationState: { phase: "received", holderName: "Synthetic recipient" },
     });
     const presentation = buildMaxExternalPersonOutboxPresentation(stored, "https://lk.tandoor.ru");
     assert.equal(presentation.mode, "rich");
     if (presentation.mode !== "rich") return;
     assert.match(presentation.text, /Вы получили «Synthetic parcel»/);
+    assert.match(presentation.text, /Статус: Получение подтверждено\nОтветственный: Synthetic recipient/);
     assert.match(presentation.text, /посмотреть историю, передать предмет дальше или вернуть отправителю/);
     assert.equal(/https?:|SYNTHETIC_CAP|SYNTHETIC_HAT/.test(presentation.text), false);
     let captured: { url: string; body: any } | null = null;

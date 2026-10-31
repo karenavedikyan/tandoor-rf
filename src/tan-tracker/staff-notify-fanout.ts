@@ -52,6 +52,7 @@ export async function fanoutStaffTransferNotification(
     ...(input.payload.reason != null ? { reason: input.payload.reason } : {}),
     ...(input.payload.routeFromDisplayName ? { routeFromDisplayName: input.payload.routeFromDisplayName } : {}),
     ...(input.payload.routeToDisplayName ? { routeToDisplayName: input.payload.routeToDisplayName } : {}),
+    ...(input.payload.notificationState ? { notificationState: input.payload.notificationState } : {}),
   };
 
   for (const userId of deduped) {

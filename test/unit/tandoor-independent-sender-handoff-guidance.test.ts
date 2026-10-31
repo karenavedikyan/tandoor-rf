@@ -37,12 +37,13 @@ it("Telegram sender receives native entry, not a recipient code-generation callb
   assert.doesNotMatch(r.text, /https?:\/\//);
   assert.equal(r.disable_web_page_preview, true);
 });
-it("LK copy explains sender next action; unrelated event copy and links remain unchanged", () => {
+it("LK copy explains sender next action; receipt confirms holder transition and preserves safe links", () => {
   instructions(staffNotificationLkCopy("tan_tracker.code_obtained", payload).body);
   const r = staffNotificationMessengerText("tan_tracker.handoff_confirmed", payload, origin);
   assert.ok(!r.includes(SENDER_HANDOFF_GUIDANCE));
   assert.ok(r.endsWith("/tan-tracker"));
-  assert.match(r, /Передача подтверждена по коду/u);
+  assert.match(r, /Предмет принят новым держателем/u);
+  assert.match(r, /Предыдущий отправитель выполнил свой этап/u);
 });
 it("card identifiers are encoded and never become recipient capabilities", () => {
   const href = staffTransferLkDetailUrl(`${origin}/`, "TT-2026-042&mst=synthetic");

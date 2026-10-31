@@ -6,6 +6,7 @@ import {
 } from "./staff-notify-fanout";
 import { buildNotificationRouteSnapshot } from "./staff-notification-route";
 import type { StaffNotificationPayload } from "./staff-notification-copy";
+import { buildNotificationTransferState } from "./notification-transfer-state";
 
 export { uniqueStaffUserIdsFromParties as uniqueStaffUserIds };
 
@@ -15,7 +16,7 @@ async function payloadWithRoute(
   route: { fromPartyId?: string | null; toPartyId?: string | null },
 ): Promise<StaffNotificationPayload> {
   const snap = await buildNotificationRouteSnapshot(client, route.fromPartyId, route.toPartyId);
-  return { ...transferPayload(base), ...snap };
+  return { ...transferPayload(base), ...snap, notificationState: await buildNotificationTransferState(client, base.transferId) };
 }
 
 export async function notifyTransferAssignment(

@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { formatNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
 import { getAppOrigin } from "../../config";
 import { mintExternalMessengerSession } from "../../tan-tracker/external-messenger/session-service";
 
@@ -17,6 +18,8 @@ export function formatForwardableRecipientInvitation(input: {
     `Отправитель: ${line(input.senderName)}`,
     `Получатель: ${line(input.recipientName)}`,
     `Предмет: ${line(input.item, 500)}`,
+    "",
+    formatNotificationTransferState({ phase: "waiting", holderName: input.senderName, pendingName: input.recipientName }),
     "",
     "Откройте ссылку, посмотрите детали и получите код приёма. Вход в личный кабинет не нужен.",
     "Сообщите код отправителю при получении посылки. Отправитель введёт его, чтобы подтвердить передачу.",

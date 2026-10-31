@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { buildNotificationTransferState, formatNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
 import type { NativeCreateContext, NativeCreateReply } from "./engine";
 import { assertNativeCreateContext, lockNativeCreateMessenger } from "./access-guard";
 import { buildReceiptEntryCallback, type ReceiptEntryCallback } from "../receipt-entry-callback";
@@ -198,8 +199,9 @@ export async function handleReceiptEntryText(
   });
   if (!result.ok) return withCancel(ctx, row, `${contextText(row)}\n\n${result.message}\nПередача не подтверждена.`);
   await clearReceiptEntry(client, ctx);
+  const status = formatNotificationTransferState(await buildNotificationTransferState(client, row.id));
   return buildNativeMainMenuReply(client, ctx, {
-    prefix: `${contextText(row)}\n\nКод проверен. Передача подтверждена, получатель стал текущим держателем. Теперь можно передать посылку.`,
+    prefix: `${contextText(row)}\n\n${status}\n\nКод проверен. Передача подтверждена, получатель стал текущим держателем. Теперь можно передать посылку.`,
     lock: false,
   });
 }

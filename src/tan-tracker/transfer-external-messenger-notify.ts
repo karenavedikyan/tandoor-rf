@@ -6,6 +6,7 @@ import { resolveInvitationHandoffForNotify } from "./external-person/invitation-
 import type { ExternalMessengerChannel } from "./external-person/messenger-provenance";
 import { isExternalParty } from "./transfer-lk-notify";
 import { buildNotificationRouteSnapshot } from "./staff-notification-route";
+import { buildNotificationTransferState } from "./notification-transfer-state";
 
 async function transferMeta(client: PoolClient, transferId: string) {
   return (
@@ -74,6 +75,7 @@ export async function notifyExternalPartyAfterHandoff(
     shellUrl: links?.shellUrl,
     routeFromDisplayName: route.routeFromDisplayName,
     routeToDisplayName: route.routeToDisplayName,
+    notificationState: await buildNotificationTransferState(client, input.transferId),
   });
   await enqueueExternalPersonMessengerEvent(client, {
     externalPartyId: input.externalPartyId,
@@ -99,11 +101,15 @@ export async function notifyExternalPartyHandoffCode(
   if (!(await isExternalParty(client, input.externalPartyId))) return;
   const meta = await transferMeta(client, input.transferId);
   if (!meta) return;
+  const notificationState = await buildNotificationTransferState(client, input.transferId);
   const body = buildExternalPersonMessengerBody({
     event: "handoff_code",
     publicCode: meta.public_code,
     itemTitle: meta.item_title,
     extraLine: input.code,
+    notificationState,
+    routeFromDisplayName: notificationState?.holderName,
+    routeToDisplayName: notificationState?.pendingName,
   });
   await enqueueExternalPersonMessengerEvent(client, {
     externalPartyId: input.externalPartyId,

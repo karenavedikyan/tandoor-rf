@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { staffNotificationContextBlock, type StaffNotificationPayload } from "./staff-notification-copy";
+import { normalizeNotificationTransferState } from "./notification-transfer-state";
 
 export { staffTransferLkDetailUrl } from "./staff-notification-route";
 
@@ -11,6 +12,7 @@ export function normalizeStaffOutboxPayload(payload: Record<string, unknown>): S
     publicCode: String(payload.publicCode ?? ""),
     itemTitle: String(payload.itemTitle ?? "Передача"),
     handoffVersion: Number(payload.handoffVersion ?? 0),
+    notificationState: normalizeNotificationTransferState(payload.notificationState),
     reason: payload.reason != null ? String(payload.reason) : null,
     routeFromDisplayName:
       typeof payload.routeFromDisplayName === "string" ? payload.routeFromDisplayName : undefined,

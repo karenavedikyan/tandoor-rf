@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { buildNotificationTransferState, formatNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
 import { createPersonBrowserSession } from "../../tan-tracker/external-person/person-service";
 import { getAppOrigin } from "../../config";
 import {
@@ -898,7 +899,7 @@ export async function handleNativeCreateCallback(
         return appendReceiptEntryChoices(client, ctx, await nativeCompletionMenuReply(
           client,
           ctx,
-          `Заявка отправлена: ${created.publicCode}. Сотрудник получит уведомление.`,
+          `Заявка отправлена: ${created.publicCode}.\n\n${formatNotificationTransferState(await buildNotificationTransferState(client, created.publicCode))}\n\nСотрудник получит уведомление.`,
         ), created.publicCode);
       }
     } catch (err: unknown) {

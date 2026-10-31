@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { formatNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
 import { generateHandoffCodeForPendingParty } from "../../tan-tracker/handoff-code-generate";
 import {
   assertSessionTransferStillOpen,
@@ -66,7 +67,10 @@ async function issueExternalMessengerCode(
     itemTitle: generated.itemTitle,
     routeFromDisplayName: route.routeFromDisplayName,
     routeToDisplayName: route.routeToDisplayName,
-  });
+  }) + "\n\n" + formatNotificationTransferState({
+    phase: "waiting", holderName: route.routeFromDisplayName ?? undefined,
+    pendingName: route.routeToDisplayName ?? undefined,
+  }) + "\nВыдача кода ещё не подтверждает получение.";
   return {
     text:
       `${ctx}\n\n` +

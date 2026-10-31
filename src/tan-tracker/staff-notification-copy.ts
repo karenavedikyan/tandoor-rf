@@ -2,6 +2,7 @@
 
 import { formatTransferContextHeader, staffTransferLkDetailUrl } from "./staff-notification-route";
 import { SENDER_HANDOFF_GUIDANCE } from "./sender-handoff-guidance";
+import { formatNotificationTransferState, type NotificationTransferState } from "./notification-transfer-state";
 
 export type StaffTransferEventType =
   | "tan_tracker.assignment"
@@ -23,12 +24,17 @@ export type StaffNotificationPayload = {
   reason?: string | null;
   routeFromDisplayName?: string;
   routeToDisplayName?: string;
+  notificationState?: NotificationTransferState;
 };
 
 function eventActionLine(eventType: StaffTransferEventType, payload: StaffNotificationPayload): string {
   switch (eventType) {
     case "tan_tracker.assignment":
-      return "Вам назначена передача.";
+      return payload.notificationState?.phase === "received"
+        ? "Вы получили предмет. Теперь вы отвечаете за дальнейшие действия с передачей."
+        : payload.notificationState?.phase === "waiting"
+          ? "Вам назначена передача. Получите код приёма и сообщите его отправителю."
+          : "Вам назначена передача.";
     case "tan_tracker.external_created":
       return "Вам передают от клиента.";
     case "tan_tracker.external_declined":
@@ -36,15 +42,15 @@ function eventActionLine(eventType: StaffTransferEventType, payload: StaffNotifi
     case "tan_tracker.code_obtained":
       return `Получатель запросил код приёма.\n\n${SENDER_HANDOFF_GUIDANCE}`;
     case "tan_tracker.handoff_confirmed":
-      return "Передача подтверждена по коду.";
+      return "Предмет принят новым держателем. Предыдущий отправитель выполнил свой этап.";
     case "tan_tracker.delivered":
-      return "Доставлено конечному получателю.";
+      return "Предмет принят конечным получателем. Получение не завершает трек автоматически.";
     case "tan_tracker.continued":
       return "Назначен следующий получатель.";
     case "tan_tracker.pending_cancelled":
-      return "Ожидание передачи отменено.";
+      return "Ожидание приёма отменено. Предмет остаётся у текущего держателя.";
     case "tan_tracker.returned":
-      return "Возврат создателю.";
+      return "Назначен возврат создателю. До подтверждения приёма ответственный не меняется.";
     case "tan_tracker.closed":
       return "Передача завершена.";
     default:
@@ -53,12 +59,14 @@ function eventActionLine(eventType: StaffTransferEventType, payload: StaffNotifi
 }
 
 export function staffNotificationContextBlock(payload: StaffNotificationPayload): string {
-  return formatTransferContextHeader({
+  const context = formatTransferContextHeader({
     publicCode: payload.publicCode,
     itemTitle: payload.itemTitle,
     routeFromDisplayName: payload.routeFromDisplayName,
     routeToDisplayName: payload.routeToDisplayName,
   });
+  const state = formatNotificationTransferState(payload.notificationState);
+  return state ? `${context}\n\n${state}` : context;
 }
 
 export function staffNotificationLkCopy(
@@ -79,9 +87,9 @@ export function staffNotificationLkCopy(
     case "tan_tracker.code_obtained":
       return { title: "Получатель запросил код", body: `${ctx}\n\n${action}` };
     case "tan_tracker.handoff_confirmed":
-      return { title: "Передача подтверждена", body: `${ctx}\n\n${action}` };
+      return { title: "Получение подтверждено", body: `${ctx}\n\n${action}` };
     case "tan_tracker.delivered":
-      return { title: "Доставлено конечному получателю", body: `${ctx}\n\n${action}` };
+      return { title: "Получение подтверждено", body: `${ctx}\n\n${action}` };
     case "tan_tracker.continued":
       return { title: "Назначен следующий получатель", body: `${ctx}\n\n${action}` };
     case "tan_tracker.pending_cancelled":
@@ -89,7 +97,7 @@ export function staffNotificationLkCopy(
     case "tan_tracker.returned":
       return { title: "Возврат создателю", body: `${ctx}\n\n${action}` };
     case "tan_tracker.closed":
-      return { title: "Передача завершена", body: `${ctx}\n\n${action}` };
+      return { title: "Завершена", body: `${ctx}\n\n${action}` };
     default:
       return { title: "Тан-трекер", body: `${item} (${code})` };
   }

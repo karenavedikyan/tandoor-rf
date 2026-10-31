@@ -133,6 +133,8 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         const messageId = ++seq;
         const done = await send(a, `Передача ${t.id}\nКод приёма: ${code}\nОт: Synthetic sender\nКому: Synthetic recipient`, undefined, messageId);
         assert.match(done.text, /Передача подтверждена/);
+        assert.match(done.text, /Статус: Получение подтверждено\nОтветственный: Synthetic recipient/);
+        assert.doesNotMatch(done.text, /Статус: Завершена|Ответственный: Synthetic sender/);
         const s = await state(t.id);
         assert.equal(s.holder_party_id, t.recipient); assert.equal(s.pending_party_id, null);
         assert.equal(s.handoff_version, 2); assert.equal(s.status, "delivered"); assert.equal(s.successes, 1);

@@ -1,4 +1,5 @@
 import { formatTransferContextHeader } from "../staff-notification-route";
+import { formatNotificationTransferState, type NotificationTransferState } from "../notification-transfer-state";
 
 export type ExternalPersonMessengerEvent =
   | "declined"
@@ -45,12 +46,14 @@ export function buildExternalPersonMessengerBody(input: {
   extraLine?: string;
   routeFromDisplayName?: string | null;
   routeToDisplayName?: string | null;
+  notificationState?: NotificationTransferState;
 }): string {
   const title = input.itemTitle.trim() || "Передача";
   const code = input.publicCode;
   const link = input.holderUrl || input.shellUrl;
   const linkLine = link ? `\nОткрыть: ${link}` : "";
-  const ctx = externalContextBlock(input);
+  const state = formatNotificationTransferState(input.notificationState);
+  const ctx = [externalContextBlock(input), state].filter(Boolean).join("\n\n");
   switch (input.event) {
     case "declined":
       return (
@@ -62,10 +65,10 @@ export function buildExternalPersonMessengerBody(input: {
       return (
         `${ctx}\n\n` +
         `Код для передачи ${code}: ${input.extraLine ?? ""}`.trim() +
-        "\nСообщите код держателю лично. Код одноразовый."
+        "\nСообщите код держателю лично. Код одноразовый. Выдача кода ещё не подтверждает получение."
       );
     case "after_code":
-      return `${ctx}\n\nКод подтверждён, предмет передан дальше.${linkLine}`;
+      return `${ctx}\n\nКод подтверждён, предмет передан дальше. Ваш этап завершён, ответственность перешла новому держателю.${linkLine}`;
     case "after_receipt":
       return `${ctx}\n\nВы получили «${title}».\n\nОткройте передачу, чтобы посмотреть историю, передать предмет дальше или вернуть отправителю.${linkLine}`;
     case "delivered":

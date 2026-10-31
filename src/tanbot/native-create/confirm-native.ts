@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
+import { buildNotificationTransferState, formatNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
 import { NATIVE_SENDER_HANDOFF_GUIDANCE as SENDER_HANDOFF_GUIDANCE } from "../../tan-tracker/sender-handoff-guidance";
 import { loadAccessContext } from "../../access/context";
 import { createTransferInTransaction } from "../../tan-tracker/create-transfer-service";
@@ -146,6 +147,7 @@ export async function confirmNativeStaffDraft(
     [publicCode],
   );
   const pRow = pending.rows[0];
+  const status = formatNotificationTransferState(await buildNotificationTransferState(client, publicCode));
   if (pRow?.kind === "external" && pRow.pending_party_id) {
     const invite = await buildExternalPendingInviteMessage(client, {
       transferId: publicCode,
@@ -156,14 +158,14 @@ export async function confirmNativeStaffDraft(
     if (invite) {
       return {
         publicCode,
-        resultText: `Передача создана: ${publicCode}.\nСледом придёт готовое приглашение. Перешлите его получателю целиком.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`,
+        resultText: `Передача создана: ${publicCode}.\n\n${status}\n\nСледом придёт готовое приглашение. Перешлите его получателю целиком.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`,
         forwardInvitationText: invite,
       };
     }
   }
   return {
     publicCode,
-    resultText: `Передача создана: ${publicCode}. Получатель увидит её в личном кабинете.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`,
+    resultText: `Передача создана: ${publicCode}.\n\n${status}\n\nПолучатель увидит её в личном кабинете.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`,
   };
 }
 

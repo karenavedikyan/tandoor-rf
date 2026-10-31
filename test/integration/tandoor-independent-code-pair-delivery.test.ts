@@ -9,11 +9,14 @@ import { deliverTelegramWebhookReply } from "../../src/tanbot-telegram/webhook-r
 import { deliverMaxWebhookReply } from "../../src/tanbot-max/webhook-reply-delivery";
 import type { TelegramDeliveryTransport } from "../../src/tanbot-telegram/delivery-transport";
 import type { MaxDeliveryTransport } from "../../src/tanbot-max/delivery-transport";
+import { formatIssuedCodeMessage } from "../../src/tanbot/handoff-code-bot-service";
 
 const url = getIntegrationDatabaseUrl();
 type Channel = "telegram" | "max";
 let serial = 990000;
-const primary = "Код приёма тестовой передачи: 012345. Сообщите отправителю.";
+const primary = formatIssuedCodeMessage({ publicCode: "TT-2026-42", itemTitle: "Документы",
+  code: "012345", expiresAt: Date.UTC(2026, 10, 1), replacedPrevious: false,
+  routeFromDisplayName: "Оазис", routeToDisplayName: "Карина" });
 const marker = { kind: "synthetic-future-media", references: ["synthetic-local-ref"] };
 function deferred() {
   let resolve!: () => void;
