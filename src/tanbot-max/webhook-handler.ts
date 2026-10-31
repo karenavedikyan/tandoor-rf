@@ -134,7 +134,7 @@ async function processUpdateInTransaction(
             contact,
             isForwarded,
           })) ?? null);
-      if (!ext && isExternalMessengerFeatureEnabled()) {
+      if (!reply && !ext && isExternalMessengerFeatureEnabled()) {
         const maxCfg = loadTanbotMaxStage2Config();
         const token = maxCfg.ok ? maxCfg.config.botToken : "";
         const phoneDigits = extractPhoneFromVcf(contact.vcfInfo);
@@ -155,7 +155,7 @@ async function processUpdateInTransaction(
           });
         }
       }
-      reply = ext
+      if (!reply) reply = ext
         ? {
             userId: update.maxUserId,
             chatId: update.chatId,

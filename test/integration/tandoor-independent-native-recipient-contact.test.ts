@@ -588,7 +588,9 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
     assert.equal(payload.recipientExternal?.phone, phone);
     assert.match(String(payload.recipientExternal?.name ?? ""), /Own/i);
     assert.equal(before.rows[0].n, (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_person_verifications`)).rows[0].n);
-    assert.doesNotMatch(reply.text, /\d{6}/, "signed own card in wizard must not trigger verification code handoff");
+    assert.ok(reply.buttons.some(b => /Оставить имя/u.test(b.text)), "native response must not be overwritten");
+    assert.doesNotMatch(reply.text, /Код приёма|Код для передачи|одноразовый код/iu,
+      "signed own card in wizard must not trigger verification code handoff");
   });
 
   it("both channels: multi-number card is rejected without mutating draft", async () => {

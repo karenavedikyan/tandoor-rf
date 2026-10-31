@@ -102,6 +102,16 @@ export function parseRecipientContactFromTelegram(input: {
   lastName?: string | null;
   vcard?: string | null;
 }): ParseRecipientContactResult {
+  if (
+    Buffer.byteLength(input.phoneRaw, "utf8") > 64 ||
+    (input.vcard && Buffer.byteLength(input.vcard, "utf8") > MAX_RECIPIENT_VCF_BYTES)
+  ) {
+    return { ok: false, code: "TOO_LARGE", message: "Контакт слишком большой. Отправьте другой или введите телефон вручную." };
+  }
+  const phone = normalizeRuPhoneE164(input.phoneRaw);
+  if (!phone) {
+    return { ok: false, code: "NO_PHONE", message: "Номер не распознан. Введите телефон вручную: 10 цифр после +7." };
+  }
   if (input.vcard?.trim()) {
     const fromVcf = parseRecipientContactFromVcf(input.vcard);
     if (fromVcf.ok && fromVcf.data.phonesE164.length) {
@@ -111,15 +121,11 @@ export function parseRecipientContactFromTelegram(input: {
       return {
         ok: true,
         data: {
-          phonesE164: fromVcf.data.phonesE164,
+          phonesE164: uniquePhones([phone, ...fromVcf.data.phonesE164]),
           suggestedName: tgName ?? fromVcf.data.suggestedName,
         },
       };
     }
-  }
-  const phone = normalizeRuPhoneE164(input.phoneRaw);
-  if (!phone) {
-    return { ok: false, code: "NO_PHONE", message: "Номер не распознан. Введите телефон вручную: 10 цифр после +7." };
   }
   const suggestedName = sanitizeRecipientDisplayName(
     [input.firstName, input.lastName].filter(Boolean).join(" "),

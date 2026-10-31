@@ -3,6 +3,7 @@ import { after, before, it } from "node:test";
 import request from "supertest";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 import { closePool, getPool, resetPoolForTests } from "../../src/db/pool";
+import { createHmac } from "node:crypto";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
 import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2-config";
 import { loadTanbotMaxStage2Config } from "../../src/tanbot-max/stage2-config";
@@ -13,7 +14,7 @@ type Channel = "max" | "telegram";
 type Actor = { channel: Channel; userId: string; partyId: string; id: number; chatId: number };
 type Button = { text: string; callback_data?: string; payload?: string };
 type Reply = { text: string; buttons: Button[] };
-type Card = { name?: string; phone?: string; vcf?: string };
+type Card = { name?: string; phone?: string; vcf?: string; signedOwn?: boolean };
 const db = getIntegrationDatabaseUrl();
 let app: ReturnType<typeof import("../../src/server").createApp>;
 let seq = 910000;
@@ -87,10 +88,15 @@ async function send(a: Actor, input: { text?: string; callback?: string; card?: 
       return { ok: true, result: { message_id: id } };
     }, { deliveryEnabled: true });
   } else {
+    const cardVcf = input.card?.vcf ?? `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${input.card?.name ?? ""}\r\nTEL;TYPE=cell:${input.card?.phone ?? ""}\r\nEND:VCARD\r\n`;
+    const proof = input.card?.signedOwn ? {
+      hash: createHmac("sha256", process.env.TANBOT_MAX_BOT_TOKEN!).update(cardVcf, "utf8").digest("hex"),
+      max_info: { user_id: a.id },
+    } : {};
     const message = { sender: { user_id: a.id, is_bot: false, first_name: "Actual Sender Name" },
       recipient: { chat_id: a.chatId, chat_type: input.chatType === undefined ? "dialog" : input.chatType, user_id: 999000 },
       body: { mid: `contact-${id}`, ...(input.card ? { attachments: [{ type: "contact", payload: {
-        vcf_info: input.card.vcf ?? `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${input.card.name ?? ""}\r\nTEL;TYPE=cell:${input.card.phone ?? ""}\r\nEND:VCARD\r\n`,
+        vcf_info: cardVcf, ...proof,
       } }] } : { text: input.text ?? "" }) } };
     const raw = input.callback ? { update_type: "message_callback", timestamp: id, message,
       callback: { callback_id: `contact-${id}`, payload: input.callback, user: { user_id: a.id, is_bot: false } } }
@@ -143,9 +149,12 @@ for (const channel of ["max", "telegram"] as const) {
     await startExternal(a);
     await send(a, { text: "Моё название получателя" });
     const before = await privacyCounts();
-    let r = await send(a, { card: { name: "Чужое имя в контактах", phone: "8 (999) 111-22-33" } });
+    // Separate senders use separate external recipients: cross-creator reuse is governed by existing eligibility.
+    const expectedPhone = channel === "max" ? "+79991112233" : "+79991112234";
+    let r = await send(a, { card: { name: "Чужое имя в контактах",
+      phone: channel === "max" ? "8 (999) 111-22-33" : "8 (999) 111-22-34" } });
     let d = await draft(a);
-    assert.deepEqual(d.payload.recipientExternal, { name: "Моё название получателя", phone: "+79991112233" });
+    assert.deepEqual(d.payload.recipientExternal, { name: "Моё название получателя", phone: expectedPhone });
     assert.deepEqual(await privacyCounts(), before, "contact only fills draft, never verifies or creates identities/transfers");
     assert.ok(!JSON.stringify(d).includes("BEGIN:VCARD"));
     if (d.step === "recipient_ext_phone") {
@@ -156,13 +165,14 @@ for (const channel of ["max", "telegram"] as const) {
     assert.equal(d.step, "due");
     r = await send(a, { callback: button(r, /Без срока/i) });
     assert.match(r.text, /Моё название получателя/);
-    assert.ok(r.text.replace(/\D/g, "").includes("79991112233"), "summary must display selected phone");
-    await send(a, { callback: button(r, /^Создать$/i) });
+    assert.ok(r.text.replace(/\D/g, "").includes(expectedPhone.slice(1)), "summary must display selected phone");
+    const created = await send(a, { callback: button(r, /^Создать$/i) });
+    assert.match(created.text, /Передача создана/, `explicit create failed: ${created.text}`);
     const rows = (await getPool()!.query(`SELECT t.id,p.display_name,p.phone_e164
       FROM tt_transfers t JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.creator_party_id=$1`, [a.partyId])).rows;
     assert.equal(rows.length, 1);
     assert.equal(rows[0].display_name, "Моё название получателя");
-    assert.equal(rows[0].phone_e164, "+79991112233");
+    assert.equal(rows[0].phone_e164, expectedPhone);
     assert.equal((await privacyCounts()).verified, before.verified, "explicit create is still not recipient identity verification");
   });
   it(`${channel}: independent contact-first supports rename, malformed card preserves good draft, and replay is inert`, async () => {
@@ -239,6 +249,9 @@ for (const channel of ["max", "telegram"] as const) {
     r = await send(a, { callback: button(r, /Без срока/i) });
     r = await send(a, { callback: button(r, /Изменить/i) });
     r = await send(a, { callback: button(r, /Получатель/i) });
+    for (let page = 0; page < 20 && !r.buttons.some(b => /Synthetic Contact Staff Target/.test(b.text)); page++) {
+      r = await send(a, { callback: button(r, /Стр\. ▶/) });
+    }
     r = await send(a, { callback: button(r, /Synthetic Contact Staff Target/) });
     assert.equal((await draft(a)).payload.recipientExternal, undefined,
       "selecting a staff recipient clears old external target");
@@ -250,6 +263,22 @@ for (const channel of ["max", "telegram"] as const) {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].kind, "user");
     assert.equal(rows[0].display_name, "Synthetic Contact Staff Target");
+  });
+  it(`${channel}: independent oversized contact preserves prior good recipient and emits no business side effects`, async () => {
+    const a = await actor(channel);
+    await startExternal(a);
+    await send(a, { card: { name: "Уже выбранный контакт", phone: "+79993332211" } });
+    const before = await draft(a);
+    const identities = await privacyCounts();
+    for (const card of [
+      { name: "Не подменять", phone: "+79990001122", vcf: "X".repeat(16385) },
+      { name: "Не подменять", phone: "+79990001122" + " ".repeat(20000) },
+    ]) {
+      const r = await send(a, { card });
+      assert.match(r.text, /слишком больш|другой|вручную/i);
+      assert.deepEqual(await draft(a), before);
+      assert.deepEqual(await privacyCounts(), identities);
+    }
   });
 }
 
@@ -268,4 +297,27 @@ it("max: independent folded/escaped VCF and ambiguous multiple phones never sile
   assert.equal(d.payload.recipientExternal.phone, "+79995556677");
   assert.equal(d.payload.recipientExternal.name, "Сложное имя");
   assert.ok(!JSON.stringify(d).includes("BEGIN:VCARD"));
+});
+
+it("max: independent signed own-card inside recipient wizard stays data-only and preserves native response", async () => {
+  const a = await actor("max");
+  await startExternal(a);
+  const before = await privacyCounts();
+  const r = await send(a, { card: { signedOwn: true, name: "Свой контакт как получатель", phone: "+79997778899" } });
+  assert.match(r.text, /Свой контакт как получатель/);
+  assert.ok(r.buttons.some(b => /Оставить имя/i.test(b.text)), "native reply must not be replaced by own-proof fallback");
+  assert.deepEqual((await draft(a)).payload.recipientExternal, { name: "Свой контакт как получатель", phone: "+79997778899" });
+  assert.deepEqual(await privacyCounts(), before);
+});
+
+it("telegram: independent conflicting primary and vcard phones cannot silently change recipient", async () => {
+  const a = await actor("telegram");
+  await startExternal(a);
+  const before = await draft(a);
+  const identities = await privacyCounts();
+  const r = await send(a, { card: { name: "Два разных номера", phone: "+79991113344",
+    vcf: "BEGIN:VCARD\nFN:Два разных номера\nTEL:+79995556677\nEND:VCARD" } });
+  assert.match(r.text, /несколько|один/i);
+  assert.deepEqual(await draft(a), before);
+  assert.deepEqual(await privacyCounts(), identities);
 });

@@ -59,4 +59,20 @@ describe("recipient contact parse (unverified card)", () => {
       assert.match(r.data.suggestedName ?? "", /Мария/);
     }
   });
+  it("telegram does not fall back to primary phone when supplied vcard exceeds bounds", () => {
+    const r = parseRecipientContactFromTelegram({ phoneRaw: "+79995556677", vcard: "X".repeat(16385) });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.code, "TOO_LARGE");
+  });
+  it("telegram rejects oversized primary phone without normalizing away its excessive whitespace", () => {
+    const r = parseRecipientContactFromTelegram({ phoneRaw: "+79995556677" + " ".repeat(1000) });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.code, "TOO_LARGE");
+  });
+  it("telegram reports ambiguity instead of silently choosing a vcard phone different from the visible primary", () => {
+    const r = parseRecipientContactFromTelegram({ phoneRaw: "+79995556677",
+      vcard: "BEGIN:VCARD\nFN:Contact\nTEL:+79991112233\nEND:VCARD" });
+    assert.ok(r.ok);
+    if (r.ok) assert.deepEqual(r.data.phonesE164, ["+79995556677", "+79991112233"]);
+  });
 });
