@@ -292,6 +292,41 @@ for (const channel of ["max", "telegram"] as const) {
     const id = await create(known, r, "Указанное мной имя");
     assert.equal((await getPool()!.query("SELECT pending_party_id FROM tt_transfers WHERE id=$1", [id])).rows[0].pending_party_id, targetPartyId);
   });
+  it(`${channel}: external unknown recipient is refused only at explicit Create with no business writes`, async () => {
+    const a = await actor(channel, false);
+    await start(a); const before = await counts();
+    let r = await send(a, { text: absentPhone });
+    r = await send(a, { text: "Имя из моей записи" });
+    r = await advanceToDue(a, r);
+    r = await send(a, { callback: button(r, /без срока/iu) });
+    assert.ok(r.text.includes("Имя из моей записи"));
+    r = await send(a, { callback: button(r, /^Создать передачу$/u) });
+    assert.match(r.text, /недоступен|проверьте|получател/iu);
+    assert.doesNotMatch(JSON.stringify(r), /Иван Петров|Поиск Тестовый|Без Карточки/u);
+    assert.equal((await draft(a)).confirmed_transfer_id, null);
+    assert.deepEqual(await counts(), before, "unknown external recipient cannot create an arbitrary party or partial transfer");
+  });
+  it(`${channel}: external recipient cards are private DATA, preserve suggested name and match canonical party-phone fallback`, async () => {
+    const known = await actor(channel, false), unknown = await actor(channel, false);
+    await start(known); await start(unknown);
+    await getPool()!.query("UPDATE users SET phone=NULL WHERE id=$1", [targetId]);
+    try {
+      const before = await counts(), name = "Имя из отправленного контакта";
+      let r = await send(known, { phone: privatePhone, cardName: name, signed: true });
+      const other = await send(unknown, { phone: absentPhone, cardName: name, signed: true });
+      const sanitize = (s: string) => s.replace(/\+?[\d ()-]{10,}/gu, "<phone>");
+      assert.equal(sanitize(r.text), sanitize(other.text), "contact input must not reveal whether staff phone exists");
+      assert.equal((await draft(known)).step, (await draft(unknown)).step);
+      assert.doesNotMatch(JSON.stringify(r), /Иван Петров|Поиск Тестовый|Без Карточки/u);
+      assert.doesNotMatch(JSON.stringify(other), /Иван Петров|Поиск Тестовый|Без Карточки/u);
+      r = await advanceToDue(known, r);
+      assert.deepEqual(await counts(), before, "recipient card is data, never identity proof or early canonical write");
+      const id = await create(known, r, name);
+      assert.equal((await getPool()!.query("SELECT pending_party_id FROM tt_transfers WHERE id=$1", [id])).rows[0].pending_party_id, targetPartyId);
+    } finally {
+      await getPool()!.query("UPDATE users SET phone=$2 WHERE id=$1", [targetId, privatePhone]);
+    }
+  });
   it(`${channel}: group, foreign chat and revoked staff binding cannot read internal search results`, async () => {
     const a = await actor(channel); staffPrompt(await start(a)); const before = await counts();
     noPrivateData(await send(a, { text: "Петров", chatType: channel === "max" ? "chat" : "group", optional: true }));
