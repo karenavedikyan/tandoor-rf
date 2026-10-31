@@ -179,7 +179,7 @@ async function create(a: Actor, r: Reply) {
 
 for (const channel of ["max", "telegram"] as const) {
   it(`${channel}: one intuitive input finds surname/reversed-name/phone/card, fresh choice creates exact staff target`, async () => {
-    const a = await actor(channel); staffPrompt(await start(a)); const before = await counts();
+    const a = await actor(channel), before = await counts(); staffPrompt(await start(a));
     let r = await send(a, { text: "пЕтРоВ" });
     const stalePick = button(r, /Иван Петров/u);
     r = await send(a, { text: "Петров Иван" }); button(r, /Иван Петров/u);
@@ -219,8 +219,9 @@ for (const channel of ["max", "telegram"] as const) {
     const name = `Новый Сотрудник ${++seq}`;
     const u = await createTestUser({ databaseUrl: db, email: `unmaterialized-${++seq}@test.local`,
       password: "StrongPass123!", fullName: name, role: "manager" });
-    staffPrompt(await start(a));
     const before = await counts();
+    staffPrompt(await start(a));
+    assert.equal((await getPool()!.query("SELECT id FROM tt_parties WHERE user_id=$1", [u.id])).rowCount, 0);
     let r = await send(a, { text: name });
     r = await send(a, { callback: button(r, new RegExp(name, "u")) });
     assert.deepEqual(await counts(), before);
