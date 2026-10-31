@@ -410,7 +410,7 @@ describe("external person blocker fixes", { concurrency: false }, () => {
     assert.equal(badTimeline.rowCount, 0);
 
     const outbox = await pool.query(
-      `SELECT channel FROM tt_external_person_message_outbox WHERE person_id = $1::uuid ORDER BY channel`,
+      `SELECT channel, body FROM tt_external_person_message_outbox WHERE person_id = $1::uuid ORDER BY channel`,
       [personId],
     );
     assert.equal(outbox.rowCount, 2);
@@ -418,5 +418,12 @@ describe("external person blocker fixes", { concurrency: false }, () => {
       outbox.rows.map((r) => r.channel),
       ["max", "telegram"],
     );
+    for (const row of outbox.rows) {
+      assert.match(row.body, /От:\s*Decline Ext/);
+      assert.match(row.body, /Кому:\s*Decline Staff/);
+      assert.match(row.body, /Передача EXTDECL1/);
+      assert.match(row.body, /Decline me/);
+      assert.match(row.body, /Не могу принять/);
+    }
   });
 });

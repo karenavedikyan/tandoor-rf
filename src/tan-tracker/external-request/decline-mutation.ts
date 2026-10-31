@@ -11,6 +11,7 @@ import { enqueueExternalPersonMessengerNotice } from "../external-person/externa
 import { invalidateOpenHandoffArtifacts } from "../handoff-invalidation";
 import { notifyExternalDeclinedStaff } from "../transfer-lk-notify";
 import { buildExternalPersonMessengerBody } from "../external-person/messenger-copy";
+import { buildNotificationRouteSnapshot } from "../staff-notification-route";
 
 export async function declineExternalRequestHandler(req: AccessRequest, res: Response): Promise<void> {
   const gate = requireTanTrackerMutationAccess(req, res);
@@ -95,6 +96,7 @@ export async function declineExternalRequestHandler(req: AccessRequest, res: Res
         publicCode: row.public_code,
         itemTitle: row.item_title,
         extraLine: reason ? `Причина: ${reason}` : undefined,
+        ...(await buildNotificationRouteSnapshot(client, row.creator_party_id, party.id)),
       }),
       idempotencyKey: `tt-ext-decline:${row.id}`,
       eventType: "external_person.declined",
