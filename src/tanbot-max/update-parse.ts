@@ -91,9 +91,9 @@ function messageHasImageAttachments(message: Record<string, unknown>): boolean {
 function readMaxMessageMid(msg: Record<string, unknown>, body: unknown): string | null {
   if (typeof body === "object" && body && !Array.isArray(body)) {
     const bodyMid = (body as Record<string, unknown>).mid;
-    if (typeof bodyMid === "string" && bodyMid.trim()) return bodyMid.trim();
+    if (typeof bodyMid === "string" && bodyMid) return bodyMid;
   }
-  if (typeof msg.mid === "string" && msg.mid.trim()) return msg.mid.trim();
+  if (typeof msg.mid === "string") return msg.mid;
   return null;
 }
 
@@ -408,7 +408,8 @@ export function parseMaxWebhookUpdate(raw: unknown):
       timestamp,
       chatId,
       userId,
-      messageMid: mid,
+      // Keep published text-event keys; timestamp fallback is specific to images.
+      messageMid: readMaxMessageMid(msg, body),
     });
     return {
       ok: true,
