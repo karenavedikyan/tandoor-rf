@@ -129,7 +129,12 @@ async function privacyCounts() {
   return (await getPool()!.query(`SELECT
     (SELECT count(*) FROM tt_external_person_verifications)::int verified,
     (SELECT count(*) FROM tt_external_persons)::int persons,
-    (SELECT count(*) FROM tt_transfers)::int transfers`)).rows[0];
+    (SELECT count(*) FROM tt_transfers)::int transfers,
+    (SELECT count(*) FROM tt_handoff_codes)::int codes,
+    (SELECT count(*) FROM tt_transfer_invitations)::int invitations,
+    (SELECT count(*) FROM tt_audit_log)::int transfer_audit,
+    (SELECT count(*) FROM tanbot_notification_outbox)::int staff_notices,
+    (SELECT count(*) FROM tt_external_person_message_outbox)::int external_notices`)).rows[0];
 }
 
 for (const channel of ["max", "telegram"] as const) {
