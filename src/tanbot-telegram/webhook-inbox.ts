@@ -55,6 +55,7 @@ export async function claimTelegramUpdate(client: PoolClient, updateId: number):
         text: row.reply_text,
         replyMarkup: extra.replyMarkup,
         answerCallbackQueryId: extra.answerCallbackQueryId,
+        replyExtra: extra,
       },
     };
   }
@@ -79,6 +80,17 @@ export async function commitTelegramUpdateReply(
      SET status = 'committed', reply_chat_id = $2, reply_text = $3, reply_extra = $4::jsonb
      WHERE update_id = $1`,
     [updateId, reply.chatId.toString(), reply.text, extra ? JSON.stringify(extra) : null],
+  );
+}
+
+export async function updateTelegramReplyExtra(
+  db: Pool | PoolClient,
+  updateId: number,
+  extra: Record<string, unknown>,
+): Promise<void> {
+  await db.query(
+    `UPDATE tanbot_telegram_update_dedup SET reply_extra = $2::jsonb WHERE update_id = $1`,
+    [updateId, JSON.stringify(extra)],
   );
 }
 

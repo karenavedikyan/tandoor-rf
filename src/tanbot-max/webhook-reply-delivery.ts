@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 import type { TanbotMaxStage2Config } from "./stage2-config";
 import type { MaxDeliveryTransport, MaxDeliveryResult } from "./delivery-transport";
 import type { WebhookReply } from "./webhook-handler";
-import { markMaxReplyDelivered } from "./webhook-inbox";
+import { markMaxReplyDelivered, updateMaxReplyExtra } from "./webhook-inbox";
 import {
   loadMaxReplyRowLocked,
   maxExtraFromStored,
@@ -11,6 +11,7 @@ import {
   withMaxReplyDeliveryLock,
 } from "../tanbot/webhook-reply-pair-delivery";
 import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
+import { deliverMaxNativeMediaFromExtra } from "../tanbot/native-create/media-delivery";
 
 async function deliverMaxWebhookReplyUnderLock(
   client: import("pg").PoolClient,
@@ -29,7 +30,7 @@ async function deliverMaxWebhookReplyUnderLock(
 
   let lastResult: MaxDeliveryResult | null = null;
 
-  for (let guard = 0; guard < 3; guard++) {
+  for (let guard = 0; guard < 12; guard++) {
     row = await loadMaxReplyRowLocked(client, dedupKey);
     if (!row || row.reply_delivered_at) break;
     extra = maxExtraFromStored(row.reply_extra);
@@ -60,6 +61,27 @@ async function deliverMaxWebhookReplyUnderLock(
       });
       if (!lastResult.ok) return lastResult;
       await mergeMaxReplyDeliveryProgress(client, dedupKey, "copyOnly");
+      continue;
+    }
+
+    if (step === "nativeMedia") {
+      const scope = extra.nativeMediaScope;
+      if (!scope) break;
+      const media = await deliverMaxNativeMediaFromExtra(client, config, transport, {
+        userId: reply.userId,
+        replyExtra: row.reply_extra,
+        scope,
+      });
+      await updateMaxReplyExtra(client, dedupKey, media.extra);
+      if (!media.ok) {
+        return {
+          ok: false,
+          code: "MEDIA_DELIVERY",
+          message: "Native media delivery failed.",
+          retryable: media.retryable !== false,
+        };
+      }
+      continue;
     }
   }
 
@@ -68,7 +90,7 @@ async function deliverMaxWebhookReplyUnderLock(
   if (row && !row.reply_delivered_at && isHandoffReplyFullyDelivered(extra)) {
     await markMaxReplyDelivered(client, dedupKey);
   }
-  return lastResult;
+  return lastResult ?? { ok: true, result: {} };
 }
 
 export async function deliverMaxWebhookReply(

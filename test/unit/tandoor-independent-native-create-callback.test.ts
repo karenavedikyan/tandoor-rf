@@ -29,6 +29,12 @@ describe("independent native callback safety", () => {
   it("rejects oversized values instead of silently truncating UTF-8 or action arguments", () => {
     assert.equal(buildNativeCreateCallback("recipient", draftA, 1, "я".repeat(80)), null);
   });
+  it("accepts edit field recipient (9 chars) within the 64-byte callback limit", () => {
+    const encoded = buildNativeCreateCallback("edit", draftA, 42, "recipient");
+    assert.ok(encoded);
+    assert.ok(Buffer.byteLength(encoded!, "utf8") <= 64);
+    assert.equal(parseNativeCreateCallback(encoded!)?.arg, "recipient");
+  });
   it("rejects unrecognized trailing fields and oversize payloads", () => {
     const encoded = buildNativeCreateCallback("due", draftA, 1, "t");
     assert.ok(encoded);

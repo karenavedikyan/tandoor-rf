@@ -10,6 +10,8 @@ import {
 export const TELEGRAM_REPLY_DELIVERY_LOCK_NS = 847291;
 export const MAX_REPLY_DELIVERY_LOCK_NS = 847292;
 
+export type ReplyDeliveryStep = "primary" | "copyOnly" | "nativeMedia" | "done";
+
 export function maxDeliveryLockKeys(dedupKey: string): [number, number] {
   let h1 = 0;
   let h2 = 0;
@@ -127,16 +129,61 @@ export async function mergeMaxReplyDeliveryProgress(
   );
 }
 
-export function nextTelegramDeliveryStep(extra: TelegramReplyExtra): "primary" | "copyOnly" | "done" {
+export async function mergeTelegramNativeMediaProgress(
+  client: PoolClient,
+  updateId: number,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await client.query(
+    `UPDATE tanbot_telegram_update_dedup
+     SET reply_extra = jsonb_set(
+       COALESCE(reply_extra, '{}'::jsonb),
+       '{nativeMediaProgress}',
+       COALESCE(reply_extra->'nativeMediaProgress', '{}'::jsonb) || $2::jsonb,
+       true
+     )
+     WHERE update_id = $1`,
+    [updateId, JSON.stringify(patch)],
+  );
+}
+
+export async function mergeMaxNativeMediaProgress(
+  client: PoolClient,
+  dedupKey: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await client.query(
+    `UPDATE tanbot_max_update_dedup
+     SET reply_extra = jsonb_set(
+       COALESCE(reply_extra, '{}'::jsonb),
+       '{nativeMediaProgress}',
+       COALESCE(reply_extra->'nativeMediaProgress', '{}'::jsonb) || $2::jsonb,
+       true
+     )
+     WHERE dedup_key = $1`,
+    [dedupKey, JSON.stringify(patch)],
+  );
+}
+
+function nextDeliveryStep(extra: TelegramReplyExtra | MaxReplyExtra): ReplyDeliveryStep {
   if (!extra.delivery?.primary) return "primary";
   if (extra.copyOnlyCode && !extra.delivery.copyOnly) return "copyOnly";
+  const queueLen = extra.nativeMediaQueue?.length ?? 0;
+  if (queueLen > 0) {
+    const prog = extra.nativeMediaProgress ?? {};
+    if (prog.disposition !== "canceled" && (prog.mediaDeliveredCount ?? 0) < queueLen) {
+      return "nativeMedia";
+    }
+  }
   return "done";
 }
 
-export function nextMaxDeliveryStep(extra: MaxReplyExtra): "primary" | "copyOnly" | "done" {
-  if (!extra.delivery?.primary) return "primary";
-  if (extra.copyOnlyCode && !extra.delivery.copyOnly) return "copyOnly";
-  return "done";
+export function nextTelegramDeliveryStep(extra: TelegramReplyExtra): ReplyDeliveryStep {
+  return nextDeliveryStep(extra);
+}
+
+export function nextMaxDeliveryStep(extra: MaxReplyExtra): ReplyDeliveryStep {
+  return nextDeliveryStep(extra);
 }
 
 export function telegramExtraFromStored(raw: unknown): TelegramReplyExtra {

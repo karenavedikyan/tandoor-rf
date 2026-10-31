@@ -99,5 +99,6 @@ export async function handleExternalPersonTelegramPhoto(
     buffer: bytes.buffer,
     mimeType: bytes.mimeType,
     fileName: input.fileName ?? "photo.jpg",
+    telegramFileId: input.fileId,
   });
 }

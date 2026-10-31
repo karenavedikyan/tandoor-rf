@@ -34,6 +34,7 @@ export type WebhookReply = {
   replyMarkup?: Record<string, unknown>;
   answerCallbackQueryId?: string;
   copyOnlyCode?: string;
+  replyExtra?: Record<string, unknown>;
 } | null;
 
 async function disconnectTelegramAccountOnClient(client: PoolClient, userId: string): Promise<void> {
@@ -145,11 +146,23 @@ async function processParsedUpdate(
           privateDialogOk: true,
         });
         if (native) {
+          const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
+          const account = await findAccountByTelegramUserId(client, update.telegramUserId);
           reply = {
             chatId: update.chatId,
             text: native.text,
             replyMarkup: native.replyMarkup,
             answerCallbackQueryId: update.callbackQueryId,
+            replyExtra: nativeTelegramReplyExtra(
+              native,
+              {
+                messengerChatId: update.chatId.toString(),
+                messengerUserId: update.telegramUserId.toString(),
+                actor: account ? "staff" : "external",
+                channel: "telegram",
+              },
+              update.callbackQueryId,
+            ),
           };
         }
       }
@@ -310,6 +323,7 @@ async function processParsedUpdate(
           privateDialogOk: true,
         });
         if (native) {
+          const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
           reply = {
             chatId: update.chatId,
             text: native.text,
@@ -320,6 +334,12 @@ async function processParsedUpdate(
                   resize_keyboard: true,
                 }
               : native.replyMarkup,
+            replyExtra: nativeTelegramReplyExtra(native, {
+              messengerChatId: update.chatId.toString(),
+              messengerUserId: update.telegramUserId.toString(),
+              actor: "staff",
+              channel: "telegram",
+            }),
           };
         }
       }

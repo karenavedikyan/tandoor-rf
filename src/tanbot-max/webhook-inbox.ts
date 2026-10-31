@@ -54,6 +54,7 @@ export async function claimMaxUpdate(client: PoolClient, dedupKey: string): Prom
         chatId: row.reply_chat_id ? BigInt(row.reply_chat_id) : BigInt(row.reply_user_id),
         text: row.reply_text,
         inlineButtons: extra.inlineButtons,
+        replyExtra: extra,
       },
     };
   }
@@ -93,4 +94,15 @@ export async function markMaxUpdateFailed(client: PoolClient, dedupKey: string):
 
 export async function markMaxReplyDelivered(db: Pool | PoolClient, dedupKey: string): Promise<void> {
   await db.query(`UPDATE tanbot_max_update_dedup SET reply_delivered_at = NOW() WHERE dedup_key = $1`, [dedupKey]);
+}
+
+export async function updateMaxReplyExtra(
+  db: Pool | PoolClient,
+  dedupKey: string,
+  extra: Record<string, unknown>,
+): Promise<void> {
+  await db.query(`UPDATE tanbot_max_update_dedup SET reply_extra = $2::jsonb WHERE dedup_key = $1`, [
+    dedupKey,
+    JSON.stringify(extra),
+  ]);
 }

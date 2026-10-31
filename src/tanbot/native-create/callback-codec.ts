@@ -59,7 +59,7 @@ export function buildNativeCreateCallback(
   const code = ACTION_CODE[action];
   const parts = [PREFIX, code, hex, String(revision)];
   if (arg != null && arg !== "") {
-    if (!/^[a-z0-9._-]{1,8}$/i.test(arg)) return null;
+    if (!/^[a-z0-9._-]{1,16}$/i.test(arg)) return null;
     parts.push(arg);
   }
   const payload = parts.join(":");
@@ -86,7 +86,7 @@ export function parseNativeCreateCallback(data: string): ParsedNativeCreateCallb
   if (!Number.isSafeInteger(revision) || revision < 1) return null;
   if (parts.length > 5) return null;
   const arg = parts[4]?.trim() || undefined;
-  if (arg && !/^[a-z0-9._-]{1,8}$/i.test(arg)) return null;
+  if (arg && !/^[a-z0-9._-]{1,16}$/i.test(arg)) return null;
   return { action, draftIdHex, revision, arg };
 }
 

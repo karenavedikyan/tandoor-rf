@@ -101,10 +101,31 @@ export async function handleExternalPersonMaxPhoto(
     downloadUrl: string;
     fileName: string | null;
     recipientChatType?: string | null;
+    mediaToken?: string | null;
   },
 ): Promise<ExternalPersonBotReply | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
   if (await findAccountByMaxUserId(client, input.maxUserId)) return null;
+  const ctx = await (
+    await import("../native-create/adapters")
+  ).buildMaxNativeCreateContext(client, {
+    chatId: input.chatId,
+    maxUserId: input.maxUserId,
+    recipientChatType: input.recipientChatType,
+  });
+  const { assertNativeCreateContext, lockNativeCreateMessenger } = await import("../native-create/access-guard");
+  const { loadNativeBotDraft } = await import("../native-create/draft-scope");
+  const { assertDraftPersonRow } = await import("../native-create/access-guard");
+  await lockNativeCreateMessenger(client, ctx);
+  try {
+    await assertNativeCreateContext(client, ctx);
+  } catch {
+    return null;
+  }
+  const actor = ctx.isLinkedStaff ? "staff" : "external";
+  const draft = await loadNativeBotDraft(client, ctx.channel, ctx.messengerChatId, actor, { forUpdate: true });
+  if (!draft || draft.step !== "photo") return null;
+  assertDraftPersonRow(draft, ctx);
   if (!input.downloadUrl?.trim()) {
     return { text: "Изображение принимается только с серверов MAX. Отправьте фото заново из чата." };
   }
@@ -117,6 +138,7 @@ export async function handleExternalPersonMaxPhoto(
     buffer: bytes.buffer,
     mimeType: bytes.mimeType,
     fileName: input.fileName ?? "photo.jpg",
+    maxFileToken: input.mediaToken,
     recipientChatType: input.recipientChatType,
   });
   if (!native) return null;
