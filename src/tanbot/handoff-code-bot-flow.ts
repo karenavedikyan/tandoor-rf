@@ -7,7 +7,7 @@ import {
   formatPendingTransfersMessage,
   issueHandoffCodeViaBot,
   listPendingTransfersForParty,
-  parseHandoffGenCallback,
+  parseHandoffGenCallbackDetail,
   resolveStaffUserIdForBotChannel,
   type BotChannel,
 } from "./handoff-code-bot-service";
@@ -73,13 +73,14 @@ export async function buildHandoffCodeBotReply(
     return { text: access.message };
   }
 
-  const genCode = parseHandoffGenCallback(input.callbackPayload ?? "");
+  const genCode = parseHandoffGenCallbackDetail(input.callbackPayload ?? "");
   if (genCode) {
     const issued = await issueHandoffCodeViaBot(client, {
       channel,
       userId: staffUserId,
       partyId: access.partyId,
-      transferPublicCode: genCode,
+      transferPublicCode: genCode.publicCode,
+      expectedHandoffVersion: genCode.handoffVersion,
     });
     return { text: issued.ok ? issued.message : issued.message };
   }

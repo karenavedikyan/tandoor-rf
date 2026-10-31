@@ -470,7 +470,8 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
     const est = fixture.estToken;
     assert.ok(est);
     const browser = await launchRequired(webkit, t);
-    const context = await browser!.newContext({ ...IPHONE_13, baseURL: fixture.baseUrl });
+    if (!browser) return;
+    const context = await browser.newContext({ ...IPHONE_13, baseURL: fixture.baseUrl });
     let page: Page | undefined;
     try {
       page = await context.newPage();
@@ -488,7 +489,7 @@ describe("external person tan-tracker shell (browser)", { concurrency: false }, 
       throw err;
     } finally {
       await context.close();
-      await browser!.close();
+      await browser.close();
     }
   });
 });

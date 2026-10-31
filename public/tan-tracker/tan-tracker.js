@@ -4173,7 +4173,7 @@
     return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-pending-recipient">
       <h3 class="tt-detail-task-heading">${E(heading)}${fromExt ? ' <span class="tt-badge" data-tt="from-external">от клиента</span>' : ""}</h3>
       <p class="tt-detail-task-instructions">${intro}</p>
-      ${fromExt ? "" : pendingRecipientCodeBlock(o)}
+      ${pendingRecipientCodeBlock(o)}
       ${declineConfirm || decline}
       ${state.error ? `<p class="tt-error">${E(state.error)}</p>` : ""}
     </section>`;
