@@ -6,6 +6,20 @@ export type ExternalPersonMessengerEvent =
   | "closed"
   | "handoff_code";
 
+function buildReceivedTransferMessengerBody(title: string, publicCode: string, holderUrl?: string | null): string {
+  const lines = [
+    `Вы получили «${title}».`,
+    "",
+    "Откройте передачу, чтобы посмотреть историю, передать предмет дальше или вернуть отправителю.",
+    "",
+    `Передача ${publicCode}.`,
+  ];
+  if (holderUrl) {
+    lines.push(`Открыть: ${holderUrl}`);
+  }
+  return lines.join("\n");
+}
+
 export function buildExternalPersonMessengerBody(input: {
   event: ExternalPersonMessengerEvent;
   publicCode: string;
@@ -32,9 +46,9 @@ export function buildExternalPersonMessengerBody(input: {
     case "after_code":
       return `Передача «${title}» (${code}): код подтверждён, предмет передан дальше.${linkLine}`;
     case "after_receipt":
-      return `Вы получили «${title}» (${code}).${linkLine}`;
+      return buildReceivedTransferMessengerBody(title, code, input.holderUrl ?? input.shellUrl);
     case "delivered":
-      return `Передача «${title}» (${code}) доставлена конечному получателю.${linkLine}`;
+      return buildReceivedTransferMessengerBody(title, code, input.holderUrl ?? input.shellUrl);
     case "closed":
       return `Передача «${title}» (${code}) завершена.${linkLine}`;
     default:

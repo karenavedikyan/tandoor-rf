@@ -6,6 +6,7 @@ import { processTanbotMaxNotificationOutbox } from "./outbox-worker";
 import { isTanbotMaxDeliveryEnabled } from "./stage2-config";
 import { processUndeliveredMaxWebhookReplies } from "./reply-retry";
 import { processExternalPersonMessageOutbox } from "../tan-tracker/external-person/outbox-worker";
+import { buildMaxExternalPersonOutboxPresentation } from "../tan-tracker/external-person/max-outbox-presentation";
 
 const DEFAULT_INTERVAL_MS = 15_000;
 
@@ -32,12 +33,16 @@ export async function runTanbotMaxOutboxWorkerOnce(
     maxResponseBytes: config.maxResponseBytes,
     deliveryEnabled,
     transport: async ({ messengerUserId, text, botToken, timeoutMs, maxResponseBytes }) => {
+      const appOrigin = config.appOrigin || process.env.APP_ORIGIN || "";
+      const presentation = buildMaxExternalPersonOutboxPresentation(text, appOrigin);
       const send = await deliveryTransport({
         token: botToken,
         userId: BigInt(messengerUserId),
-        text,
+        text: presentation.text,
         timeoutMs,
         maxResponseBytes,
+        inlineButtons: presentation.mode === "rich" ? presentation.inlineButtons : undefined,
+        shareUrl: presentation.mode === "rich" ? presentation.shareUrl : undefined,
       });
       if (send.ok) return { ok: true };
       return {

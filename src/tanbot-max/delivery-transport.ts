@@ -6,7 +6,8 @@ import { createMaxDispatcher, isLikelyTlsError, readMaxTlsCaBundle, wrapFetchWit
 
 export type MaxCallbackButton = { type: "callback"; text: string; payload: string };
 export type MaxRequestContactButton = { type: "request_contact"; text: string };
-export type MaxInlineButton = MaxCallbackButton | MaxRequestContactButton;
+export type MaxLinkButton = { type: "link"; text: string; url: string };
+export type MaxInlineButton = MaxCallbackButton | MaxRequestContactButton | MaxLinkButton;
 
 export type MaxDeliveryResult =
   | { ok: true; result: unknown }
@@ -26,6 +27,7 @@ export type MaxDeliveryTransport = (input: {
   timeoutMs: number;
   maxResponseBytes: number;
   inlineButtons?: MaxInlineButton[][];
+  shareUrl?: string;
 }) => Promise<MaxDeliveryResult>;
 
 /** Documented success: HTTP 200 with message object (not necessarily success:true). */
@@ -59,7 +61,14 @@ function maxButtonToWire(b: MaxInlineButton): Record<string, string> {
   if (b.type === "request_contact") {
     return { type: "request_contact", text: b.text };
   }
+  if (b.type === "link") {
+    return { type: "link", text: b.text, url: b.url };
+  }
   return { type: "callback", text: b.text, payload: b.payload };
+}
+
+export function buildMaxShareAttachment(shareUrl: string): { type: "share"; payload: { url: string } } {
+  return { type: "share", payload: { url: shareUrl } };
 }
 
 export function buildMaxInlineKeyboardAttachment(buttons: MaxInlineButton[][]) {
@@ -74,10 +83,18 @@ export function buildMaxInlineKeyboardAttachment(buttons: MaxInlineButton[][]) {
 export function buildMaxSendMessagePayload(input: {
   text: string;
   inlineButtons?: MaxInlineButton[][];
+  shareUrl?: string;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { text: input.text };
+  const attachments: unknown[] = [];
+  if (input.shareUrl?.trim()) {
+    attachments.push(buildMaxShareAttachment(input.shareUrl.trim()));
+  }
   if (input.inlineButtons?.length) {
-    body.attachments = [buildMaxInlineKeyboardAttachment(input.inlineButtons)];
+    attachments.push(buildMaxInlineKeyboardAttachment(input.inlineButtons));
+  }
+  if (attachments.length) {
+    body.attachments = attachments;
   }
   return body;
 }
@@ -89,14 +106,11 @@ export function createDefaultMaxDeliveryTransport(
   const ca = readMaxTlsCaBundle(env);
   const fetchWithTls = wrapFetchWithMaxTls(fetchImpl, createMaxDispatcher(ca));
 
-  return async ({ token, userId, text, timeoutMs, maxResponseBytes, inlineButtons }) => {
+  return async ({ token, userId, text, timeoutMs, maxResponseBytes, inlineButtons, shareUrl }) => {
     const url = `${MAX_API_ORIGIN}/messages?user_id=${encodeURIComponent(userId.toString())}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const body: Record<string, unknown> = { text };
-    if (inlineButtons?.length) {
-      body.attachments = [buildMaxInlineKeyboardAttachment(inlineButtons)];
-    }
+    const body = buildMaxSendMessagePayload({ text, inlineButtons, shareUrl });
     try {
       const response = await fetchWithTls(url, {
         method: "POST",
@@ -168,10 +182,12 @@ export function createDefaultMaxDeliveryTransport(
 }
 
 export function createRecordingMaxDeliveryTransport(
-  sink: { calls: Array<{ userId: string; text: string; inlineButtons?: MaxInlineButton[][] }> },
+  sink: {
+    calls: Array<{ userId: string; text: string; inlineButtons?: MaxInlineButton[][]; shareUrl?: string }>;
+  },
 ): MaxDeliveryTransport {
-  return async ({ userId, text, inlineButtons }) => {
-    sink.calls.push({ userId: userId.toString(), text, inlineButtons });
+  return async ({ userId, text, inlineButtons, shareUrl }) => {
+    sink.calls.push({ userId: userId.toString(), text, inlineButtons, shareUrl });
     return { ok: true, result: { message: { mid: "test-mid" } } };
   };
 }
