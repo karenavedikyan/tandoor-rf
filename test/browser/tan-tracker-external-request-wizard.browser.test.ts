@@ -398,4 +398,178 @@ describe("external request wizard photo + comment UX (browser)", { concurrency: 
       await browser.close();
     }
   });
+
+  it("delayed stale payload save cannot overwrite new draft (Chromium)", async (t) => {
+    const browser = await launchRequired(chromium, t);
+    assert.ok(browser);
+    const est = fixture.estToken!;
+    const page = await browser.newPage();
+    let releaseStaleSave: (() => void) | null = null;
+    const staleSaveGate = new Promise<void>((resolve) => {
+      releaseStaleSave = resolve;
+    });
+    let holdStalePhotoSave = true;
+    await page.route("**/api/tan-tracker/public/external/request/draft", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      let body: { step?: string; payload?: { item?: string }; startFresh?: boolean } = {};
+      try {
+        body = JSON.parse(route.request().postData() || "{}");
+      } catch (_e) {
+        body = {};
+      }
+      if (holdStalePhotoSave && body.step === "photo" && body.payload?.item === "OLD_ITEM") {
+        holdStalePhotoSave = false;
+        await staleSaveGate;
+      }
+      await route.continue();
+    });
+    try {
+      await openExternalHome(page, fixture.baseUrl, est);
+      await page.click('[data-tt="ext-request-open"]');
+      await page.waitForSelector('[data-tt-field="extItem"]', { timeout: 10000 });
+      await page.fill('[data-tt-field="extItem"]', "OLD_ITEM");
+      const staleReq = page.waitForRequest(
+        (r) => {
+          if (!r.url().includes("/api/tan-tracker/public/external/request/draft") || r.method() !== "POST") {
+            return false;
+          }
+          try {
+            const body = JSON.parse(r.postData() || "{}") as { step?: string; payload?: { item?: string } };
+            return body.step === "photo" && body.payload?.item === "OLD_ITEM";
+          } catch (_e) {
+            return false;
+          }
+        },
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-request-next"]');
+      await staleReq;
+      await page.click('[data-tt="ext-request-close"]');
+      await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 10000 });
+
+      await page.click('[data-tt="ext-request-open"]');
+      await page.waitForSelector('[data-tt-field="extItem"]', { timeout: 10000 });
+      await page.fill('[data-tt-field="extItem"]', "NEW_ITEM");
+      const freshDraft = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/draft") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      await page.click('[data-tt="ext-request-next"]');
+      assert.equal((await freshDraft).status(), 200);
+      await page.waitForSelector('[data-tt="ext-photo-add"]', { timeout: 15000 });
+
+      const staleResp = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/draft") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      releaseStaleSave!();
+      const staleStatus = (await staleResp).status();
+      assert.ok(staleStatus === 404 || staleStatus === 409);
+
+      const formItem = await page.evaluate(() => {
+        const f = (window as unknown as { TanTrackerPrototype?: { state?: { extRequestForm?: { item?: string } } } })
+          .TanTrackerPrototype?.state?.extRequestForm;
+        return f?.item || "";
+      });
+      assert.equal(formItem, "NEW_ITEM");
+      assert.equal(await page.locator('[data-tt-field="extItem"]').count(), 0);
+
+      const pool = new Pool({ connectionString: fixture.databaseUrl, max: 2 });
+      try {
+        const row = await pool.query<{ item: string; c: number }>(
+          `SELECT payload->>'item' AS item, COUNT(*) OVER()::int AS c
+           FROM tt_external_request_drafts
+           WHERE person_id = $1::uuid AND confirmed_transfer_id IS NULL`,
+          [fixture.personId],
+        );
+        assert.equal(row.rows[0]?.c, 1);
+        assert.equal(row.rows[0]?.item, "NEW_ITEM");
+      } finally {
+        await pool.end();
+      }
+    } finally {
+      releaseStaleSave?.();
+      await page.close();
+      await browser.close();
+    }
+  });
+
+  it("delayed startFresh from canceled flow leaves one active draft (Chromium)", async (t) => {
+    const browser = await launchRequired(chromium, t);
+    assert.ok(browser);
+    const est = fixture.estToken!;
+    const page = await browser.newPage();
+    let releaseStartFresh: (() => void) | null = null;
+    const startFreshGate = new Promise<void>((resolve) => {
+      releaseStartFresh = resolve;
+    });
+    let holdStartFresh = true;
+    await page.route("**/api/tan-tracker/public/external/request/draft", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      let body: { startFresh?: boolean } = {};
+      try {
+        body = JSON.parse(route.request().postData() || "{}");
+      } catch (_e) {
+        body = {};
+      }
+      if (holdStartFresh && body.startFresh === true) {
+        holdStartFresh = false;
+        await startFreshGate;
+      }
+      await route.continue();
+    });
+    try {
+      await openExternalHome(page, fixture.baseUrl, est);
+      await page.click('[data-tt="ext-request-open"]');
+      await page.waitForSelector('[data-tt-field="extItem"]', { timeout: 10000 });
+      await page.fill('[data-tt-field="extItem"]', "FIRST_FLOW");
+      void page.click('[data-tt="ext-request-next"]');
+      await page.click('[data-tt="ext-request-close"]');
+      await page.waitForSelector('[data-tt="ext-request-open"]', { timeout: 10000 });
+
+      await page.click('[data-tt="ext-request-open"]');
+      await page.waitForSelector('[data-tt-field="extItem"]', { timeout: 10000 });
+      await page.fill('[data-tt-field="extItem"]', "SECOND_FLOW");
+      const secondStart = page.waitForResponse(
+        (r) => r.url().includes("/api/tan-tracker/public/external/request/draft") && r.request().method() === "POST",
+        { timeout: 30000 },
+      );
+      void page.click('[data-tt="ext-request-next"]');
+      releaseStartFresh!();
+      assert.equal((await secondStart).status(), 200);
+      await page.waitForSelector('[data-tt="ext-photo-add"]', { timeout: 15000 });
+
+      const draftId = await page.evaluate(() => {
+        return (
+          (window as unknown as { TanTrackerPrototype?: { state?: { extRequestForm?: { draftId?: string } } } })
+            .TanTrackerPrototype?.state?.extRequestForm?.draftId || ""
+        );
+      });
+      assert.ok(draftId);
+
+      const pool = new Pool({ connectionString: fixture.databaseUrl, max: 2 });
+      try {
+        const rows = await pool.query<{ id: string; item: string }>(
+          `SELECT id::text, payload->>'item' AS item FROM tt_external_request_drafts
+           WHERE person_id = $1::uuid AND confirmed_transfer_id IS NULL`,
+          [fixture.personId],
+        );
+        assert.equal(rows.rowCount, 1);
+        assert.equal(rows.rows[0]!.id, draftId);
+        assert.equal(rows.rows[0]!.item, "SECOND_FLOW");
+      } finally {
+        await pool.end();
+      }
+    } finally {
+      releaseStartFresh?.();
+      await page.close();
+      await browser.close();
+    }
+  });
 });

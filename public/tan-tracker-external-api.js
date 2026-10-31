@@ -56,6 +56,7 @@
       opts = opts || {};
       var body = { step: step, payload: payload || {} };
       if (opts.startFresh === true) body.startFresh = true;
+      if (opts.draftId) body.draftId = opts.draftId;
       return json("/api/tan-tracker/public/external/request/draft", { method: "POST", body: body });
     },
     confirmDraft: function (draftId) {
