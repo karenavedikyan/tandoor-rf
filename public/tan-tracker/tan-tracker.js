@@ -1321,15 +1321,27 @@
     });
   }
 
+  function findDetailMobileDockHero(root) {
+    const dock = root.querySelector('[data-tt="detail-mobile-dock"]');
+    const heroes = root.querySelectorAll("[data-tt-detail-hero-primary]");
+    for (let i = 0; i < heroes.length; i++) {
+      const el = heroes[i];
+      if (dock && dock.contains(el)) continue;
+      return el;
+    }
+    return null;
+  }
+
   function setupDetailMobileDock() {
     detailDockObserver?.disconnect();
     detailDockObserver = null;
     const root = document.querySelector('[data-tt="detail"]');
     const dock = document.querySelector('[data-tt="detail-mobile-dock"]');
-    const hero = document.querySelector("[data-tt-detail-hero-primary]");
-    if (!root || !dock || !hero) return;
+    if (!root || !dock) return;
     dock.hidden = true;
     root.classList.remove("tt-detail-panel--dock-visible");
+    const hero = findDetailMobileDockHero(root);
+    if (!hero) return;
     detailDockObserver = new IntersectionObserver(
       (entries) => {
         const visible = entries[0]?.isIntersecting;
