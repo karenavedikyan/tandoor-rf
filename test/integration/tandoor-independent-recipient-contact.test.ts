@@ -211,6 +211,27 @@ for (const channel of ["max", "telegram"] as const) {
     assert.equal(d.step, "due");
     assert.deepEqual(d.payload.recipientExternal, { name: "Получатель без имени в карточке", phone: "+79994445566" });
   });
+  it(`${channel}: independent keep contact name then edit to staff never creates for old external phone`, async () => {
+    const a = await actor(channel);
+    await startExternal(a);
+    let r = await send(a, { card: { name: "Сохранить имя карточки", phone: "+79996667788" } });
+    r = await send(a, { callback: button(r, /оставить|использовать|подтвердить/iu) });
+    assert.equal((await draft(a)).step, "due");
+    r = await send(a, { callback: button(r, /Без срока/i) });
+    r = await send(a, { callback: button(r, /Изменить/i) });
+    r = await send(a, { callback: button(r, /Получатель/i) });
+    r = await send(a, { callback: button(r, /Synthetic Contact Staff Target/) });
+    assert.equal((await draft(a)).payload.recipientExternal, undefined,
+      "selecting a staff recipient clears old external target");
+    assert.match(r.text, /Synthetic Contact Staff Target/);
+    assert.doesNotMatch(r.text, /Сохранить имя карточки|79996667788/);
+    await send(a, { callback: button(r, /^Создать$/i) });
+    const rows = (await getPool()!.query(`SELECT p.kind,p.display_name FROM tt_transfers t
+      JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.creator_party_id=$1`, [a.partyId])).rows;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].kind, "user");
+    assert.equal(rows[0].display_name, "Synthetic Contact Staff Target");
+  });
 }
 
 it("max: independent folded/escaped VCF and ambiguous multiple phones never silently pick wrong number", async () => {
