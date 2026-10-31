@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { Pool } from "pg";
 import { webkit, type Browser, type Page } from "playwright";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
@@ -120,8 +121,9 @@ describe("independent whole-message handoff code paste with canonical acceptance
         await paste(page, code, engine === "chromium");
         assert.equal(await input.inputValue(), code);
 
-        await mkdir("/home/user/workspace/tandoor-code-paste-qa", { recursive: true });
-        await page.screenshot({ path: `/home/user/workspace/tandoor-code-paste-qa/${engine}-six-digits.png`, fullPage: true });
+        const qaDir = path.join(process.cwd(), "var/independent-code-paste-qa");
+        await mkdir(qaDir, { recursive: true });
+        await page.screenshot({ path: path.join(qaDir, `${engine}-six-digits.png`), fullPage: true });
         const verification = page.waitForResponse(r => r.request().method() === "POST" && r.url().includes("/code/verify"));
         await page.locator('[data-tt="confirm-code"]').click();
         assert.equal((await verification).status(), 200);
