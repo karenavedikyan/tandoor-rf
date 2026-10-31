@@ -322,6 +322,21 @@ for (const channel of ["max", "telegram"] as const) {
     assert.equal((await draft(a)).confirmed_transfer_id, null);
     assert.deepEqual(await counts(), before, "unknown external recipient cannot create an arbitrary party or partial transfer");
   });
+  it(`${channel}: legacy external summary never renders a cached private staff display name`, async () => {
+    const a = await actor(channel, false);
+    await start(a);
+    let r = await send(a, { text: privatePhone });
+    r = await send(a, { text: "Введённое мной имя" });
+    r = await advanceToDue(a, r);
+    r = await send(a, { callback: button(r, /без срока/iu) });
+    const d = await draft(a), before = await counts();
+    await getPool()!.query(`UPDATE tt_external_request_drafts
+      SET payload=jsonb_set(payload - 'externalRecipientDisplayName','{recipientDisplayName}',to_jsonb($2::text))
+      WHERE id=$1`, [d.id, "Иван Петров"]);
+    r = await send(a, { text: "Создать передачу" });
+    assert.doesNotMatch(JSON.stringify(r), /Иван Петров|Поиск Тестовый|Без Карточки/u);
+    assert.deepEqual(await counts(), before);
+  });
   it(`${channel}: external recipient cards are private DATA, preserve suggested name and match canonical party-phone fallback`, async () => {
     const known = await actor(channel, false), unknown = await actor(channel, false);
     await start(known); await start(unknown);
