@@ -7,18 +7,21 @@ import { normalizeSearch, parseProductsJson, type Product } from "../../src/inte
 import { listItem } from "../../src/internal-catalog/repository";
 import { catalogueFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
 import { resolveMockResponse } from "./helpers/clients-api-mocks";
+import sharp from "sharp";
 
 describe("internal catalogue UI (synthetic API; real import/access covered in integration)", { concurrency: false }, () => {
   let server: http.Server, browser: Browser, base: string;
+  let photoBytes: Buffer;
   before(async () => {
     server = http.createServer(createApp());
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     const address = server.address(); assert.ok(address && typeof address === "object");
     base = `http://127.0.0.1:${address.port}`;
     browser = await chromium.launch({ headless: true, channel: "chromium" });
+    photoBytes = await sharp({ create: { width: 20, height: 10, channels: 3, background: "#426428" } }).webp().toBuffer();
   });
   after(async () => { await browser?.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  async function open(options: { products?: Product[]; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string } = {}) {
+  async function open(options: { products?: Product[]; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string; images?: boolean; brokenImages?: boolean } = {}) {
     const context = await browser.newContext({ viewport: options.mobile ? { width: 375, height: 812 } : { width: 1440, height: 1000 } });
     const page = await context.newPage();
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
@@ -30,7 +33,7 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
       let status = 200, data: unknown;
       if (pathname === "/api/internal-catalog/meta") {
         status = options.metaStatus ?? 200;
-        data = status !== 200 ? { error: { message: "Нет доступа" } } : { snapshot: options.empty ? null : {
+        data = status !== 200 ? { error: { message: "Нет доступа" } } : { imagesConfigured: options.images === true, snapshot: options.empty ? null : {
           id: fixtureGuid(900), sha256: parsed.sha256, sourceName: "synthetic.json",
           importedAt: "2026-10-31T08:00:00Z", summary: parsed.summary,
         } };
@@ -49,6 +52,10 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
           data = { snapshotId: fixtureGuid(900), total: filtered.length, page: pageNumber, pageSize: 24,
             items: filtered.slice((pageNumber - 1) * 24, pageNumber * 24).map(listItem) };
         }
+      } else if (pathname.includes("/images/")) {
+        await route.fulfill(options.brokenImages ? { status: 404, body: "unavailable" } :
+          { status: 200, contentType: "image/webp", body: photoBytes });
+        return;
       } else if (pathname.startsWith("/api/internal-catalog/products/")) {
         const product = products.find(x => x.guid === pathname.split("/").pop());
         status = product ? 200 : 404;
@@ -68,6 +75,38 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     await page.waitForFunction(expected => document.querySelector("#ic-count")?.textContent === `Найдено: ${expected} из 30` &&
       document.querySelector("#ic-results")?.getAttribute("aria-busy") === "false", count);
   }
+  it("shows opt-in covers/gallery with pinned same-origin URLs and mobile-safe layout", async () => {
+    const products = catalogueFixture();
+    products[0].files.push({ guid: fixtureGuid(301), name: 'Фото "2" <без HTML>', path: "second.png" });
+    const { page, context, errors } = await open({ mobile: true, images: true, products });
+    try {
+      const cover = page.locator(".ic-cover img");
+      await cover.evaluate((img: HTMLImageElement) => img.decode());
+      assert.equal(await cover.count(), 1);
+      const href = await page.locator(".ic-cover a").getAttribute("href");
+      assert.equal(href, "/api/internal-catalog/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300) + "?version=" + fixtureGuid(900));
+      assert.equal(await page.locator(".ic-cover a").getAttribute("target"), "_blank");
+      await page.locator(".ic-card-footer").first().click();
+      await page.locator(".ic-gallery img").first().evaluate((img: HTMLImageElement) => img.decode());
+      assert.equal(await page.locator(".ic-gallery img").count(), 2);
+      assert.equal(await page.locator(".ic-gallery img").nth(1).getAttribute("alt"), 'Фото "2" <без HTML>');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.keyboard.press("Escape");
+      assert.equal(await page.locator("#ic-detail").evaluate((dialog: HTMLDialogElement) => dialog.open), false);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+  it("missing photos show a readable fallback without breaking cards or characteristics", async () => {
+    const { page, context, errors } = await open({ images: true, brokenImages: true });
+    try {
+      await page.locator(".ic-cover .ic-image-error").waitFor({ state: "visible" });
+      assert.equal(await page.locator(".ic-cover a").isVisible(), false);
+      await page.locator(".ic-card-footer").first().click();
+      await page.locator(".ic-gallery .ic-image-error").waitFor({ state: "visible" });
+      assert.equal(await page.locator(".ic-properties").first().isVisible(), true);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
   it("searches, combines filters, resets and changes pages without losing controls", async () => {
     const { page, context, errors } = await open();
     await page.getByLabel("Найти товар", { exact: true }).fill("ЕЛКА 100%_");

@@ -44,6 +44,13 @@
 .ic-card-footer { border-top: 1px solid var(--rf-border); display: block; padding: var(--ic-space-3) var(--ic-space-5); color: var(--ic-accent); font-size: .875rem; text-decoration: none; font-weight: 600; }
 .ic-card-footer:hover { background: var(--ic-accent-soft); }
 .ic-card-footer span { float: right; }
+.ic-photo { background: var(--ic-accent-soft); border: 1px solid var(--rf-border); border-radius: .5rem; min-width: 0; overflow: hidden; }
+.ic-photo a { display: block; }
+.ic-photo img { display: block; width: 100%; height: 260px; object-fit: contain; }
+.ic-cover { border: 0; border-bottom: 1px solid var(--rf-border); border-radius: 0; }
+.ic-cover img { height: 190px; }
+.ic-image-error { padding: var(--ic-space-4); margin: 0; color: var(--rf-text-muted); font-size: .875rem; }
+.ic-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ic-space-3); }
 .ic-pagination { display: flex; align-items: center; justify-content: center; gap: var(--ic-space-4); margin-top: var(--ic-space-6); font-size: .875rem; }
 .ic-footnote { max-width: 80ch; font-size: .75rem; color: var(--rf-text-muted); margin-top: var(--ic-space-6); }
 .ic-state, .ic-empty { padding: var(--ic-space-8); border: 1px solid var(--rf-border); border-radius: .75rem; background: var(--rf-surface); line-height: 1.6; }
@@ -71,6 +78,7 @@ body:has(#ic-detail[open]) { overflow: hidden; }
   .ic-query { grid-column: 1 / -1; }
 }
 @media (max-width: 600px) {
+  .ic-gallery { grid-template-columns: minmax(0, 1fr); }
   .internal-catalog-page .legacy-topbar__theme,
   .internal-catalog-page .legacy-topbar__user,
   .internal-catalog-page .legacy-topbar__avatar { width: 44px; min-width: 44px; height: 44px; }

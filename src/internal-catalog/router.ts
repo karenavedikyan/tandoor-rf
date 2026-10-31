@@ -6,6 +6,7 @@ import { requirePool } from "../db/pool";
 import { setNoStore } from "../http/no-store";
 import { GUID, normalizeSearch } from "./model";
 import { loadProduct, loadSnapshot, searchProducts } from "./repository";
+import { internalCatalogImagesConfigured, readInternalCatalogImage } from "./images";
 
 export function createInternalCatalogRouter(): express.Router {
   const router = express.Router();
@@ -31,7 +32,7 @@ export function createInternalCatalogRouter(): express.Router {
     return result;
   }
   router.get("/meta", wrap(async (_req, res) => {
-    res.json({ snapshot: await loadSnapshot(requirePool()) });
+    res.json({ snapshot: await loadSnapshot(requirePool()), imagesConfigured: internalCatalogImagesConfigured() });
   }));
   router.get("/products", wrap(async (req, res) => {
     const q = field(req, "q", 160), section = field(req, "section", 36),
@@ -55,6 +56,21 @@ export function createInternalCatalogRouter(): express.Router {
       return;
     }
     res.json({ snapshotId: current!.id, importedAt: current!.importedAt, product });
+  }));
+  router.get("/products/:guid/images/:fileGuid", wrap(async (req, res) => {
+    const { guid, fileGuid } = req.params;
+    if (!GUID.test(guid) || !GUID.test(fileGuid)) { invalid(res, "Некорректная ссылка на фотографию."); return; }
+    const current = await snapshot(req, res);
+    if (current === undefined) return;
+    const product = current ? await loadProduct(requirePool(), current.id, guid) : null;
+    const file = product?.files.find(item => item.guid === fileGuid.toLowerCase());
+    const bytes = file ? await readInternalCatalogImage(file) : null;
+    if (!bytes) {
+      res.status(404).json({ error: { code: "IMAGE_UNAVAILABLE", message: "Фотография пока недоступна." } });
+      return;
+    }
+    res.set("X-Content-Type-Options", "nosniff");
+    res.type("image/webp").send(bytes);
   }));
   return router;
 }

@@ -45,7 +45,8 @@ export async function importSnapshot(pool: Pool, parsed: ParsedSnapshot, sourceN
 export type Search = { q: string; section: string; brand: string; page: number; pageSize: number };
 export function listItem(product: Product) {
   return { guid: product.guid, name: product.name, sections: product.chapter, brand: propertyValue(product, "Бренд"),
-    article: propertyValue(product, "Артикул"), imagePathCount: product.files.length };
+    article: propertyValue(product, "Артикул"), imagePathCount: product.files.length,
+    coverFileGuid: product.files[0]?.guid ?? null };
 }
 export async function searchProducts(db: Pool | PoolClient, snapshotId: string, search: Search) {
   const values: unknown[] = [snapshotId], clauses = ["snapshot_id=$1::uuid"];

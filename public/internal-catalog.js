@@ -44,10 +44,33 @@
   }
   function tags(items) { return '<div class="ic-sections">' + items.map(function (x) { return '<span class="ic-tag">' + esc(x.name) + "</span>"; }).join("") + "</div>"; }
   function productUrl(guid) { var p = paramsWithFilters(); p.set("product", guid); return url(p); }
+  var imagesConfigured = false;
+  function imageUrl(guid, fileGuid) {
+    return "/api/internal-catalog/products/" + encodeURIComponent(guid) + "/images/" +
+      encodeURIComponent(fileGuid) + "?version=" + encodeURIComponent(snapshot.id);
+  }
+  function photo(guid, file, title, cover) {
+    var src = imageUrl(guid, file.guid);
+    return '<div class="ic-photo' + (cover ? " ic-cover" : "") + '"><a href="' + esc(src) +
+      '" target="_blank" rel="noopener noreferrer" aria-label="Открыть фотографию: ' + esc(title) + '">' +
+      '<img src="' + esc(src) + '" alt="' + esc(title) + '" loading="lazy" decoding="async"></a>' +
+      '<p class="ic-image-error" role="status" hidden>Фото недоступно. Попробуйте открыть карточку позднее.</p></div>';
+  }
+  function bindImageErrors(container) {
+    container.querySelectorAll(".ic-photo img").forEach(function (image) {
+      image.addEventListener("error", function () {
+        var box = image.closest(".ic-photo");
+        box.querySelector("a").hidden = true;
+        box.querySelector(".ic-image-error").hidden = false;
+      }, { once: true });
+    });
+  }
   function renderCard(item) {
-    return '<article class="ic-card"><div class="ic-card-head"><span class="ic-brand">' +
+    return '<article class="ic-card">' +
+      (imagesConfigured && item.coverFileGuid ? photo(item.guid, { guid: item.coverFileGuid }, item.name, true) : "") +
+      '<div class="ic-card-head"><span class="ic-brand">' +
       esc(item.brand || "Бренд не указан") + '</span><span class="ic-photo-note">' +
-      (item.imagePathCount ? "Фото ещё не подключены" : "Без фото в выгрузке") + "</span></div><h2>" +
+      (item.imagePathCount ? (imagesConfigured ? "Фото из 1С" : "Фото ещё не подключены") : "Без фото в выгрузке") + "</span></div><h2>" +
       '<a data-product="' + esc(item.guid) + '" href="' + esc(productUrl(item.guid)) + '">' + esc(item.name) + "</a></h2>" +
       '<div class="ic-card-body"><p class="ic-card-meta">' + (item.article ? "Артикул: " + esc(item.article) : "Артикул не указан") +
       "</p>" + tags(item.sections) + '</div><a class="ic-card-footer" data-product="' + esc(item.guid) +
@@ -75,6 +98,7 @@
       el.results.innerHTML = data.items.length ? data.items.map(renderCard).join("") :
         '<div class="ic-empty"><h2>Ничего не найдено</h2><p>Попробуйте другое название, артикул или сбросьте фильтры.</p>' +
         actionButton("ic-empty-reset", "Показать все товары") + "</div>";
+      bindImageErrors(el.results);
       if (byId("empty-reset")) byId("empty-reset").onclick = reset;
       el.pagination.hidden = data.total <= data.pageSize;
       el.prev.disabled = data.page <= 1; el.next.disabled = data.page * data.pageSize >= data.total;
@@ -108,14 +132,17 @@
     var technicalRows = p.properties.filter(technical);
     return '<h2 id="ic-detail-title" tabindex="-1">' + esc(p.name) + "</h2>" +
       '<p class="ic-card-meta">' + esc([property(p, "Бренд"), property(p, "Артикул") ? "Артикул: " + property(p, "Артикул") : ""].filter(Boolean).join(" · ") || "Артикул и бренд не указаны") + "</p>" +
-      tags(p.chapter) + '<h3>Фотографии</h3><p class="ic-notice">' +
-      (p.files.length ? "В 1С указано файлов изображений: " + p.files.length + ". Сами фотографии не входят в JSON. Они появятся после подключения папки с изображениями." :
-        "В этой выгрузке у товара не указаны файлы изображений.") + "</p>" +
+      tags(p.chapter) + '<h3>Фотографии</h3>' +
+      (imagesConfigured && p.files.length ? '<p class="ic-card-meta">Нажмите на фотографию, чтобы открыть крупнее.</p><div class="ic-gallery">' +
+        p.files.map(function (file) { return photo(p.guid, file, file.name || p.name, false); }).join("") + "</div>" :
+        '<p class="ic-notice">' + (p.files.length ? "В 1С указано файлов изображений: " + p.files.length + ". Сами фотографии не входят в JSON. Они появятся после подключения папки с изображениями." :
+          "В этой выгрузке у товара не указаны файлы изображений.") + "</p>") +
       '<h3>Характеристики из 1С</h3><p class="ic-card-meta">Справочные данные: цены, остатки и даты ожидания могли измениться. Актуальные значения уточняйте в 1С.</p>' +
       (rows ? '<dl class="ic-properties">' + rows + "</dl>" : '<p class="ic-card-meta">Характеристики не указаны.</p>') +
       (technicalRows.length ? '<details><summary>Служебные поля 1С (' + technicalRows.length + ')</summary><dl class="ic-properties">' + technicalRows.map(row).join("") + "</dl></details>" : "") +
       (p.files.length ? '<details><summary>Файлы изображений из 1С (' + p.files.length + ")</summary>" +
-        p.files.map(function (file) { return '<p class="ic-file">' + esc(file.name) + ' <span class="ic-photo-note">· не подключён</span></p>'; }).join("") + "</details>" : "") +
+        p.files.map(function (file) { return '<p class="ic-file">' + esc(file.name) + ' <span class="ic-photo-note">· ' +
+          (imagesConfigured ? "доступность проверяется при загрузке фото" : "не подключён") + "</span></p>"; }).join("") + "</details>" : "") +
       (p.properties.some(function (x) { return x.value.length === 1024; }) ?
         '<p class="ic-card-meta">В выгрузке есть текст длиной 1024 символа. Его полноту необходимо проверить в 1С; каталог показывает полученное значение без дополнений.</p>' : "") +
       '<p class="ic-provenance">GUID: ' + esc(p.guid) + "<br>Источник: " + esc(snapshot.sourceName) + " · загружен " +
@@ -133,6 +160,7 @@
       var data = await request("/products/" + encodeURIComponent(guid) + "?version=" + encodeURIComponent(snapshot.id));
       if (sequence !== detailSequence || !el.detail.open) return;
       el["detail-body"].innerHTML = renderDetail(data);
+      bindImageErrors(el["detail-body"]);
     } catch (error) {
       if (sequence !== detailSequence || !el.detail.open) return;
       el["detail-body"].innerHTML = '<h2 id="ic-detail-title">Карточка недоступна</h2><p>' + esc(error.message) + "</p>" +
@@ -151,6 +179,8 @@
     try {
       var data = await request("/meta");
       snapshot = data.snapshot;
+      imagesConfigured = data.imagesConfigured === true;
+      byId("photo-status").textContent = imagesConfigured ? "Источник фотографий задан; доступность каждого файла проверяется при загрузке." : "Изображения ещё не подключены.";
       if (!snapshot) { state("Каталог ещё не загружен", "Данные появятся после загрузки проверенного products.json администратором.", false); return; }
       el.section.innerHTML = '<option value="">Все разделы</option>' + snapshot.summary.sections.map(function (s) {
         return '<option value="' + esc(s.guid) + '">' + esc(s.name) + "</option>";
