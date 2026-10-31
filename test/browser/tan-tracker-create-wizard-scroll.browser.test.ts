@@ -125,6 +125,7 @@ describe("internal create wizard scroll follow (browser)", { concurrency: false 
             await page.fill('[data-tt-field="comment"]', "Handle with care — scroll test");
             await page.click('[data-tt="create-wizard-next"]');
             await page.waitForSelector('[data-create-phase="review"]', { timeout: 10000 });
+            await waitCreateWizardScrollFrame(page);
             const yAfter = await page.evaluate(() => window.scrollY);
             assert.ok(yAfter > 24, "must not jump to document top after Done");
             await anchorInViewport(page, '[data-tt="create-wizard-submit"]', "submit after comment edit");
@@ -143,6 +144,7 @@ describe("internal create wizard scroll follow (browser)", { concurrency: false 
       await page.fill('[data-tt-field="item"]', "Upload scroll");
       await page.click('[data-tt="create-wizard-next"]');
       await page.waitForSelector('[data-create-phase="files"]');
+      await waitCreateWizardScrollFrame(page);
       await page.evaluate(() => window.scrollTo(0, 220));
       await page.evaluate(() => {
         (window as unknown as { __ttScrollWatch?: { max: number; last: number } }).__ttScrollWatch = {
@@ -195,18 +197,15 @@ describe("internal create wizard scroll follow (browser)", { concurrency: false 
     });
   });
 
-  it("recipient validation reveals error without jumping to top (Chromium 1280x650)", async () => {
-    await withPage(fixture.browser, { width: 1280, height: 650 }, async (page) => {
+  it("empty item validation reveals error without jumping away from input (Chromium short screen)", async () => {
+    await withPage(fixture.browser, { width: 1280, height: 500 }, async (page) => {
       await page.goto("/tan-tracker");
       await clickCreateEntry(page);
-      await page.fill('[data-tt-field="item"]', "Validation scroll");
-      await page.click('[data-tt="create-wizard-next"]');
-      await page.click('[data-tt="create-skip-files"]');
-      await page.evaluate(() => window.scrollTo(0, 180));
+      await page.fill('[data-tt-field="item"]', "   ");
       await page.click('[data-tt="create-wizard-next"]');
       await page.waitForSelector('[data-tt="form-error"]', { timeout: 10000 });
-      const y = await page.evaluate(() => window.scrollY);
-      assert.ok(y > 20, "validation should not reset scroll to top");
+      await page.waitForSelector('[data-create-phase="item"]');
+      assert.match(await page.locator('[data-tt="form-error"]').innerText(), /обязательное поле/);
       await anchorInViewport(page, '[data-tt="form-error"]', "validation error");
     });
   });

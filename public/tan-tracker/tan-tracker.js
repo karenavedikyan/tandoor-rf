@@ -454,10 +454,8 @@
   let pendingClipboardFallbackSelect = null;
   let createWizardRenderGen = 0;
   let createWizardScrollRaf = 0;
-  /** @type {null | { type: string; phase?: string; anchor?: string; selector?: string; focus?: boolean; preferNext?: boolean }} */
+  /** @type {null | { type: string; phase?: string; anchor?: string; selector?: string; focus?: boolean }} */
   let pendingCreateWizardNav = null;
-  const CREATE_WIZARD_HEAD_MARGIN = 88;
-  const CREATE_WIZARD_DOCK_MARGIN = 140;
 
   function trackerShellLive(main) {
     return !!(main && main.querySelector("#tt-root") && main.querySelector("#tt-content"));
@@ -1371,6 +1369,7 @@
   function restoreFocus(snap, opts = {}) {
     if (!snap) return;
     requestAnimationFrame(() => {
+      if (opts.valid && !opts.valid()) return;
       const el =
         snap.type === "search"
           ? document.querySelector('[data-tt="search"]')
@@ -1408,37 +1407,30 @@
   }
 
   function createWizardNestedScrollSnapshot(root) {
-    const nested = [];
-    if (!root) return nested;
-    root.querySelectorAll(".tt-wizard-contact-list").forEach((el) => {
-      if (el.scrollHeight > el.clientHeight + 1) nested.push({ el, top: el.scrollTop });
-    });
-    return nested;
+    if (!root) return null;
+    const selector = ".tt-wizard-contact-list, .tt-contact-pick, .tt-wizard-body";
+    const inside = Array.from(root.querySelectorAll(selector), (el) => ({ top: el.scrollTop, left: el.scrollLeft }));
+    const parents = [];
+    for (let el = root.parentElement; el && el !== document.documentElement; el = el.parentElement) {
+      parents.push({ el, top: el.scrollTop, left: el.scrollLeft });
+    }
+    return { selector, inside, parents };
   }
 
   function restoreCreateWizardNestedScroll(nested) {
-    for (const row of nested || []) {
-      if (document.contains(row.el)) row.el.scrollTop = row.top;
+    if (!nested) return;
+    document.getElementById("tt-content")?.querySelectorAll(nested.selector).forEach((el, i) => {
+      const row = nested.inside[i];
+      if (row) { el.scrollTop = row.top; el.scrollLeft = row.left; }
+    });
+    for (const row of nested.parents) {
+      if (document.contains(row.el)) { row.el.scrollTop = row.top; row.el.scrollLeft = row.left; }
     }
   }
 
   function reviewAnchorSelector(name) {
     if (name === "relay") return '[data-tt-wizard-anchor="review-relay"], [data-tt="review-handoff"]';
     return `[data-tt-wizard-anchor="review-${name}"]`;
-  }
-
-  function nextReviewActionAfterAnchor(anchor, f) {
-    const form = f || state.form || defaultCreateForm();
-    const order = ["item", "recipient", "relay", "due", "files", "comment", "submit"];
-    const start = Math.max(0, order.indexOf(anchor));
-    for (let i = start + 1; i < order.length; i++) {
-      const key = order[i];
-      if (key === "due" && !form.due) return reviewAnchorSelector("due");
-      if (key === "files" && !state.attachStaging.length) return reviewAnchorSelector("files");
-      if (key === "comment" && !(form.comment || "").trim()) return reviewAnchorSelector("comment");
-      if (key === "submit") return '[data-tt="create-wizard-submit"]';
-    }
-    return '[data-tt="create-wizard-submit"]';
   }
 
   function createWizardPhaseRevealSelector(phase) {
@@ -1455,7 +1447,7 @@
       if (f.recipientStep === "confirmed") return '[data-tt="create-wizard-next"]';
       return '[data-tt="create-recipient-browse"], [data-tt="recipient-choose"]';
     }
-    if (phase === "review") return '[data-tt="create-wizard-submit"], [data-tt-wizard-anchor="review-due"]';
+    if (phase === "review") return ".tt-wizard-title";
     return '[data-tt="create-wizard-next"]';
   }
 
@@ -1478,62 +1470,67 @@
   function queryFirstVisible(selectors) {
     for (const sel of selectors.split(",")) {
       const el = document.querySelector(sel.trim());
-      if (el) return el;
+      if (el && el.getClientRects().length && getComputedStyle(el).visibility !== "hidden") return el;
     }
     return null;
   }
 
-  function revealCreateWizardElement(el, behavior) {
+  function revealCreateWizardElement(el) {
     if (!el || !document.contains(el)) return;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const beh = reduce ? "auto" : behavior;
+    const viewport = window.visualViewport;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportBottom = viewportTop + (viewport?.height || window.innerHeight);
+    const header = document.getElementById("legacy-topbar")?.getBoundingClientRect();
+    const dock = document.querySelector(".tt-wizard-actions--dock")?.getBoundingClientRect();
+    const top = Math.max(viewportTop, header?.bottom || 0) + 12;
+    const bottom = Math.max(top + 44, viewportBottom - (dock?.height || 0) - 12);
+    function deltaFor(r, lo, hi) {
+      if (r.top < lo || r.height > hi - lo) return r.top - lo;
+      if (r.bottom > hi) return r.bottom - hi;
+      return 0;
+    }
     let node = el.parentElement;
-    while (node && node !== document.documentElement) {
+    while (node && node !== document.body && node !== document.documentElement) {
       const style = getComputedStyle(node);
       const scrollable =
         (/(auto|scroll)/.test(style.overflowY) || node.classList.contains("tt-wizard-contact-list")) &&
         node.scrollHeight > node.clientHeight + 1;
       if (scrollable) {
         const cr = node.getBoundingClientRect();
-        const er = el.getBoundingClientRect();
-        if (er.top < cr.top + CREATE_WIZARD_HEAD_MARGIN) {
-          node.scrollBy({ top: er.top - cr.top - CREATE_WIZARD_HEAD_MARGIN, behavior: beh });
-        } else if (er.bottom > cr.bottom - CREATE_WIZARD_DOCK_MARGIN) {
-          node.scrollBy({ top: er.bottom - cr.bottom + CREATE_WIZARD_DOCK_MARGIN, behavior: beh });
-        }
+        const delta = deltaFor(el.getBoundingClientRect(), Math.max(top, cr.top + 4), Math.min(bottom, cr.bottom - 4));
+        if (delta) node.scrollBy({ top: delta, behavior: "instant" });
       }
       node = node.parentElement;
     }
-    const r = el.getBoundingClientRect();
-    const vh = window.innerHeight;
-    let delta = 0;
-    if (r.top < CREATE_WIZARD_HEAD_MARGIN) delta = r.top - CREATE_WIZARD_HEAD_MARGIN;
-    else if (r.bottom > vh - CREATE_WIZARD_DOCK_MARGIN) delta = r.bottom - (vh - CREATE_WIZARD_DOCK_MARGIN);
-    if (delta) window.scrollBy({ top: delta, behavior: beh });
+    const delta = deltaFor(el.getBoundingClientRect(), top, bottom);
+    if (delta) window.scrollBy({ top: delta, behavior: "instant" });
   }
 
   function finishCreateWizardScroll(ctx) {
     const nav = takeCreateWizardNav();
-    const gen = ++createWizardRenderGen;
-    if (ctx.opts?.soft && !nav && !ctx.viewKeyChanged) {
-      requestAnimationFrame(() => {
-        if (gen !== createWizardRenderGen) return;
-        if (!isInternalCreateWizardView()) return;
+    cancelCreateWizardScrollJob();
+    const gen = createWizardRenderGen;
+    const valid = () => gen === createWizardRenderGen && current === ROUTE && isInternalCreateWizardView();
+    if (!nav && !ctx.viewKeyChanged) {
+      const restore = () => {
+        if (!valid()) return;
         if (ctx.preserve) {
-          window.scrollTo({ top: ctx.preserve.windowY, left: 0, behavior: "auto" });
           restoreCreateWizardNestedScroll(ctx.preserve.nested);
+          window.scrollTo({ top: ctx.preserve.windowY, left: ctx.preserve.windowX, behavior: "instant" });
         }
-        restoreFocus(ctx.snap, { preventScroll: true });
+      };
+      restore();
+      createWizardScrollRaf = requestAnimationFrame(() => {
+        createWizardScrollRaf = 0;
+        restore();
       });
+      restoreFocus(ctx.snap, { preventScroll: true, valid });
       return;
     }
     createWizardScrollRaf = requestAnimationFrame(() => {
       createWizardScrollRaf = requestAnimationFrame(() => {
         createWizardScrollRaf = 0;
-        if (gen !== createWizardRenderGen) return;
-        if (!isInternalCreateWizardView()) return;
-        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-        const behavior = reduce ? "auto" : "smooth";
+        if (!valid()) return;
         let el = null;
         let focusField = false;
         if (nav?.type === "validation") {
@@ -1542,12 +1539,8 @@
             queryFirstVisible(createWizardPhaseRevealSelector(nav.phase || state.createPhase));
         } else if (nav?.type === "review-return") {
           const anchor = nav.anchor || "comment";
-          el = document.querySelector(
-            nav.preferNext ? nextReviewActionAfterAnchor(anchor) : reviewAnchorSelector(anchor),
-          );
-          if (!el && nav.preferNext) {
-            el = document.querySelector(reviewAnchorSelector(anchor));
-          }
+          const block = document.querySelector(reviewAnchorSelector(anchor));
+          el = block?.querySelector('[data-tt^="create-edit-"]') || block;
         } else if (nav?.type === "reveal") {
           el = document.querySelector(nav.selector || "");
           focusField = !!nav.focus;
@@ -1559,7 +1552,7 @@
           focusField = createWizardPhaseShouldFocus(state.createPhase);
         }
         if (!el) return;
-        revealCreateWizardElement(el, behavior);
+        revealCreateWizardElement(el);
         if (focusField && el.matches("input, textarea, select")) {
           try {
             el.focus({ preventScroll: true });
@@ -4792,6 +4785,7 @@
     if (inInternalCreateNow && document.getElementById("tt-content")) {
       createScrollPreserve = {
         windowY: window.scrollY,
+        windowX: window.scrollX,
         nested: createWizardNestedScrollSnapshot(document.getElementById("tt-content")),
       };
     }
@@ -4848,7 +4842,7 @@
       return;
     }
     if (opts.soft && (state.view === "create" || state.view === "transfer") && document.activeElement?.dataset?.ttField === "pickQ" && patchContactPick()) {
-      restoreFocus(snap);
+      restoreFocus(snap, inInternalCreateNow ? { preventScroll: true } : {});
       return;
     }
 
@@ -5177,6 +5171,10 @@
         state.form.recipientId = pid;
         state.form.recipientStep = "confirmed";
       }
+      if (isInternalCreateWizardView()) queueCreateWizardNav({
+        type: "reveal",
+        selector: '[data-tt="create-wizard-next"]',
+      });
       renderTracker();
       return;
     }
@@ -5207,6 +5205,7 @@
       state.createPhase = "item";
       state.createReturnPhase = null;
       state.createReviewScrollAnchor = null;
+      state.createReviewScrollAnchor = null;
       state.form = defaultCreateForm();
       state.error = "";
       clearCompleteConfirm();
@@ -5221,30 +5220,13 @@
         renderTracker();
         return;
       }
-      const fromPhase = state.createPhase;
       const returnAnchor = state.createReviewScrollAnchor;
+      const returningToReview = state.createReturnPhase === "review";
       if (wizardAdvance()) {
         writeUrl();
-        if (
-          state.createPhase === "review" &&
-          (fromPhase === "edit-comment" ||
-            fromPhase === "edit-due" ||
-            fromPhase === "edit-relay" ||
-            fromPhase === "item" ||
-            fromPhase === "files")
-        ) {
-          const anchor =
-            returnAnchor ||
-            (fromPhase === "edit-comment"
-              ? "comment"
-              : fromPhase === "edit-due"
-                ? "due"
-                : fromPhase === "edit-relay"
-                  ? "relay"
-                  : fromPhase === "item"
-                    ? "item"
-                    : "files");
-          queueCreateWizardNav({ type: "review-return", anchor, preferNext: true });
+        if (state.createPhase === "review" && returningToReview) {
+          queueCreateWizardNav({ type: "review-return", anchor: returnAnchor || "recipient" });
+          state.createReviewScrollAnchor = null;
         } else {
           queueCreateWizardNav({ type: "phase-enter", phase: state.createPhase });
         }
@@ -5262,6 +5244,7 @@
       }
       const fromPhase = state.createPhase;
       const returnAnchor = state.createReviewScrollAnchor;
+      const returningToReview = state.createReturnPhase === "review";
       const r = wizardBack();
       if (r === "cancel") {
         if (state.editDraftOrderId) {
@@ -5280,12 +5263,12 @@
         clearCompleteConfirm();
         clearAttachStaging();
       }
-      if (r !== "cancel" && state.createPhase === "review" && (fromPhase.startsWith("edit-") || state.createReturnPhase === "review")) {
+      if (r !== "cancel" && state.createPhase === "review" && (fromPhase.startsWith("edit-") || returningToReview)) {
         queueCreateWizardNav({
           type: "review-return",
           anchor: returnAnchor || "comment",
-          preferNext: false,
         });
+        state.createReviewScrollAnchor = null;
       } else if (r !== "cancel" && state.view === "create") {
         queueCreateWizardNav({ type: "phase-enter", phase: state.createPhase });
       }
@@ -5300,9 +5283,14 @@
       }
       if (state.createPhase === "files") {
         state.error = "";
-        state.createPhase = "recipient";
+        const returningToReview = state.createReturnPhase === "review";
+        state.createPhase = returningToReview ? "review" : "recipient";
+        if (returningToReview) {
+          state.createReturnPhase = null;
+          queueCreateWizardNav({ type: "review-return", anchor: state.createReviewScrollAnchor || "files" });
+          state.createReviewScrollAnchor = null;
+        } else queueCreateWizardNav({ type: "phase-enter", phase: "recipient" });
         writeUrl();
-        queueCreateWizardNav({ type: "phase-enter", phase: "recipient" });
       }
       renderTracker();
       return;
