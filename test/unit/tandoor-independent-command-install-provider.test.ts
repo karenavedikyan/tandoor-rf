@@ -6,7 +6,7 @@ import { buildNativeBotCommandInstallPlan } from "../../src/tanbot/native-create
 type Provider = "max" | "telegram";
 type Call = { path: string; init: RequestInit & { dispatcher?: { close(): Promise<void> } } };
 type Options = { readFailure?: boolean; malformed?: boolean; menuFailure?: boolean; webApp?: boolean;
-  badWrite?: string; missingAck?: string; throwWrite?: boolean; size?: number };
+  badWrite?: string; missingAck?: string; throwWrite?: boolean; size?: number; nullable?: boolean; mismatch?: boolean };
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const dispatchers = new Set<{ close(): Promise<void> }>();
@@ -61,8 +61,15 @@ function mock(provider: Provider, options: Options = {}) {
       if (path === "/me") {
         if (options.readFailure) { status = 503; data = { code: "unavailable" }; }
         else data = { user_id: 123, first_name: "Synthetic", is_bot: true,
-          commands: options.malformed ? "invalid-list" : existing.map(x => ({ name: x.command, description: x.description })) };
-      } else if (path === "/me/commands") data = { success: options.badWrite !== path };
+          commands: options.malformed ? "invalid-list" : existing.map((x, i) =>
+            options.nullable ? { name: x.command, ...(i === 0 ? { description: null } : {}) } :
+              { name: x.command, description: x.description }) };
+      } else if (path === "/me/commands") {
+        // Official response is the saved list, not {success:true}.
+        const commands = JSON.parse(String(init.body)).commands;
+        data = options.badWrite === path ? { success: false } :
+          { commands: options.mismatch ? commands.slice(1) : commands };
+      }
       else assert.fail("unexpected MAX command-install endpoint");
     }
     return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
@@ -145,4 +152,18 @@ it("MAX command GET and PATCH both honor existing custom TLS dispatcher configur
   const r = await factory("max", impl)(buildNativeBotCommandInstallPlan("max", { dryRun: false }));
   assert.equal(r.ok, true);
   for (const path of ["/me", "/me/commands"]) assert.ok(calls.find(c => c.path === path)?.init.dispatcher, path);
+});
+it("MAX accepts official saved-list acknowledgement and preserves legal null or absent custom descriptions", async () => {
+  const { calls, impl } = mock("max", { nullable: true, size: 2 });
+  const r = await factory("max", impl)(buildNativeBotCommandInstallPlan("max", { dryRun: false }));
+  assert.equal(r.ok, true);
+  const patch = calls.find(c => c.path === "/me/commands"); assert.ok(patch);
+  const { commands } = JSON.parse(String(patch.init.body));
+  assert.deepEqual(commands.find((c: { name: string }) => c.name === "custom_0"), { name: "custom_0", description: null });
+  assert.deepEqual(commands.find((c: { name: string }) => c.name === "custom_1"), { name: "custom_1" });
+});
+it("MAX mismatched saved command list is not a successful registration and is not automatically retried", async () => {
+  const { calls, impl } = mock("max", { mismatch: true });
+  const r = await factory("max", impl)(buildNativeBotCommandInstallPlan("max", { dryRun: false }));
+  assert.equal(r.ok, false); assert.equal(writes(calls).length, 1);
 });

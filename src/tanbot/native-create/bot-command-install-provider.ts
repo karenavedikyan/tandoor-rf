@@ -147,7 +147,11 @@ function parseMaxCommandsFromMe(
     }
     const name = (row as { name?: unknown }).name;
     const description = (row as { description?: unknown }).description;
-    if (typeof name !== "string" || typeof description !== "string") {
+    if (
+      typeof name !== "string" || name.length < 1 || name.length > 64 ||
+      (description !== undefined && description !== null &&
+        (typeof description !== "string" || description.length < 1 || description.length > 128))
+    ) {
       return { ok: false, code: "provider_error", message: "Invalid command metadata." };
     }
     commands.push({ command: name.replace(/^\//, ""), description });
@@ -155,9 +159,19 @@ function parseMaxCommandsFromMe(
   return { ok: true, commands };
 }
 
-function parseMaxPatchAck(json: unknown): boolean {
-  if (!json || typeof json !== "object") return false;
-  return (json as { success?: unknown }).success === true;
+/**
+ * MAX returns the saved command list, not a SimpleQueryResult.
+ * https://dev.max.ru/docs-api/methods/PATCH/me/commands
+ */
+function parseMaxPatchAck(json: unknown, expected: ManagedMessengerBotCommand[]): boolean {
+  if (!json || typeof json !== "object" || !Array.isArray((json as { commands?: unknown }).commands)) return false;
+  const parsed = parseMaxCommandsFromMe(json);
+  if (!parsed.ok || parsed.commands.length !== expected.length) return false;
+  const actual = new Map(parsed.commands.map(c => [c.command, c]));
+  return actual.size === expected.length && expected.every(c => {
+    const saved = actual.get(c.command);
+    return saved != null && (saved.description ?? null) === (c.description ?? null);
+  });
 }
 
 export function createTelegramCommandInstallTransport(
@@ -278,7 +292,7 @@ export function createMaxCommandInstallTransport(
       }),
     });
     if (!patchRes.ok) return patchRes;
-    if (!parseMaxPatchAck(patchRes.json)) {
+    if (!parseMaxPatchAck(patchRes.json, merged)) {
       return { ok: false, code: "provider_error", message: "MAX command update was not acknowledged." };
     }
 

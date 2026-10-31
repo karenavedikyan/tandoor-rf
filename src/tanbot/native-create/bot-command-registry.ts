@@ -2,7 +2,7 @@
 
 export type ManagedMessengerBotCommand = {
   command: string;
-  description: string;
+  description?: string | null;
 };
 
 export const MANAGED_NATIVE_BOT_COMMANDS: ManagedMessengerBotCommand[] = [
