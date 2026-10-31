@@ -6,11 +6,10 @@ import { apiError, ERROR_CODES } from "../shared/errors";
 import { resolveTanTrackerAuditUserId } from "./effective-user";
 import { buildTanTrackerBootstrap } from "./service";
 import { ensurePartyForUserOnWrite } from "./repository";
-import { hashOtp } from "./phone-verification";
 import { requireTanTrackerMutationAccess } from "./guards";
-import { HANDOFF_CODE_MAX_VERIFY_ATTEMPTS, requireHandoffOtpPepper } from "./otp-config";
+import { requireHandoffOtpPepper } from "./otp-config";
 import { generateHandoffCodeForPendingParty } from "./handoff-code-generate";
-import { applyPendingReceiptHandoff } from "./handoff-complete";
+import { verifyPendingReceiptCode } from "./verify-pending-receipt-code";
 import { transferWriteBlocked, TRANSFER_WRITE_BLOCKED_MESSAGE } from "./transfer-write-guard";
 
 async function loadTransfer(client: { query: Function }, id: string) {
@@ -136,71 +135,9 @@ export async function verifyHandoffCodeHandler(req: AccessRequest, res: Response
       if (row.holder_party_id !== party.id) {
         return { ok: false, http: 403, message: "Подтверждать код может только текущий держатель." };
       }
-      const codeRes = await client.query<{
-        id: string;
-        code_hash: string;
-        expires_at: Date;
-        verify_attempt_count: number;
-      }>(
-        `SELECT id, code_hash, expires_at, verify_attempt_count FROM tt_handoff_codes
-         WHERE transfer_id = $1 AND handoff_version = $2 AND pending_party_id = $3 AND consumed_at IS NULL
-         ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-        [row.id, row.handoff_version, row.pending_party_id],
-      );
-      const codeRow = codeRes.rows[0];
-      if (!codeRow) {
-        return { ok: false, http: 409, message: "Код не выпущен или истёк." };
-      }
-      if (codeRow.expires_at.getTime() <= Date.now()) {
-        await client.query(`UPDATE tt_handoff_codes SET consumed_at = NOW() WHERE id = $1`, [codeRow.id]);
-        return { ok: false, http: 409, message: "Срок кода истёк. Получатель должен выпустить новый код." };
-      }
-      if (codeRow.verify_attempt_count >= HANDOFF_CODE_MAX_VERIFY_ATTEMPTS) {
-        await client.query(`UPDATE tt_handoff_codes SET consumed_at = NOW() WHERE id = $1`, [codeRow.id]);
-        return {
-          ok: false,
-          http: 409,
-          message: "Превышено число попыток. Получатель должен выпустить новый код.",
-        };
-      }
-
-      const hash = hashOtp(rawCode, pepper);
-      if (hash !== codeRow.code_hash) {
-        const attempts = codeRow.verify_attempt_count + 1;
-        await client.query(`UPDATE tt_handoff_codes SET verify_attempt_count = $2 WHERE id = $1`, [
-          codeRow.id,
-          attempts,
-        ]);
-        await client.query(
-          `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
-           VALUES ($1,$2::uuid,$3,'code_verify_fail',$4::jsonb)`,
-          [row.id, auditUserId, party.id, JSON.stringify({ attempts })],
-        );
-        if (attempts >= HANDOFF_CODE_MAX_VERIFY_ATTEMPTS) {
-          await client.query(`UPDATE tt_handoff_codes SET consumed_at = NOW() WHERE id = $1`, [codeRow.id]);
-          return {
-            ok: false,
-            http: 409,
-            message: "Превышено число попыток. Получатель должен выпустить новый код.",
-          };
-        }
-        return { ok: false, http: 400, message: "Неверный код. Текущий держатель не изменился." };
-      }
-
-      await client.query(`UPDATE tt_handoff_codes SET consumed_at = NOW() WHERE id = $1`, [codeRow.id]);
-      await applyPendingReceiptHandoff(
-        client,
-        row,
-        auditUserId,
-        party.id,
-        "Подтверждено одноразовым кодом",
-      );
-      await client.query(
-        `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
-         VALUES ($1,$2::uuid,$3,'code_verify_ok','{}'::jsonb)`,
-        [row.id, auditUserId, party.id],
-      );
-      return { ok: true };
+      return verifyPendingReceiptCode(client, {
+        row, code: rawCode, auditUserId, actingPartyId: party.id, pepper,
+      });
     });
   } catch {
     setNoStore(res);

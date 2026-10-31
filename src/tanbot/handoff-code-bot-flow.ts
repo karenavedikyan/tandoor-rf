@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import type { MaxInlineButton } from "../tanbot-max/delivery-transport";
+import { lockTanbotMaxMessenger, lockTanbotTelegramMessenger } from "./link-advisory-locks";
 import {
   HANDOFF_CALLBACK_MENU,
   assertHandoffCodeBotAccess,
@@ -65,6 +66,15 @@ export async function buildHandoffCodeBotReply(
     commandText?: string | null;
   },
 ): Promise<HandoffBotReply> {
+  const parsedGeneration = parseHandoffGenCallbackDetail(input.callbackPayload ?? "");
+  if (parsedGeneration || input.callbackPayload === HANDOFF_CALLBACK_MENU || isCodeMenuCommand(input.commandText ?? null)) {
+    // Selecting recipient code issuance deliberately leaves sender code-entry mode.
+    // Same messenger lock/order as native selection: never lock entry/transfer in reverse order.
+    if (channel === "max") await lockTanbotMaxMessenger(client, input.externalUserId);
+    else await lockTanbotTelegramMessenger(client, input.externalUserId);
+    await client.query(`DELETE FROM tt_bot_receipt_code_entries WHERE channel=$1 AND messenger_user_id=$2`,
+      [channel, input.externalUserId.toString()]);
+  }
   const staffUserId = await resolveStaffUserIdForBotChannel(client, channel, input.externalUserId);
   if (!staffUserId) {
     return { text: "Канал не подключён к личному кабинету." };
@@ -75,7 +85,7 @@ export async function buildHandoffCodeBotReply(
     return { text: access.message };
   }
 
-  const genCode = parseHandoffGenCallbackDetail(input.callbackPayload ?? "");
+  const genCode = parsedGeneration;
   if (genCode) {
     const issued = await issueHandoffCodeViaBot(client, {
       channel,

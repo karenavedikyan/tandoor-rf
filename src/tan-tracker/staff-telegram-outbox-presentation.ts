@@ -1,5 +1,8 @@
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
 import { buildHandoffGenCallback } from "../tanbot/handoff-code-bot-service";
+import { buildReceiptEntryCallback } from "../tanbot/receipt-entry-callback";
+import { NATIVE_SENDER_HANDOFF_GUIDANCE } from "./sender-handoff-guidance";
+import { staffNotificationContextBlock } from "./staff-notification-copy";
 import {
   buildStaffExternalCreatedNoticeText,
   normalizeStaffOutboxPayload,
@@ -59,6 +62,12 @@ export function buildTanTrackerStaffTelegramOutboxSendBody(
   const text = buildTanTrackerStaffOutboxMessage(eventType, payload, appOrigin);
   if (eventType === "tan_tracker.code_obtained") {
     const p = normalizeStaffOutboxPayload(payload);
+    const callback = buildReceiptEntryCallback("code", p.transferId || p.publicCode, p.handoffVersion);
+    if (callback) return {
+      text: `${staffNotificationContextBlock(p)}\n\nПолучатель запросил код приёма.\n\n${NATIVE_SENDER_HANDOFF_GUIDANCE}`,
+      disable_web_page_preview: true,
+      reply_markup: { inline_keyboard: [[{ text: "Ввести код", callback_data: callback }]] },
+    };
     return {
       text,
       disable_web_page_preview: true,

@@ -10,7 +10,7 @@ import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2
 import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-retry";
 import { processUndeliveredTelegramWebhookReplies } from "../../src/tanbot-telegram/reply-retry";
 import { buildMaxSendMessagePayload } from "../../src/tanbot-max/delivery-transport";
-import { SENDER_HANDOFF_GUIDANCE } from "../../src/tan-tracker/sender-handoff-guidance";
+import { NATIVE_SENDER_HANDOFF_GUIDANCE as SENDER_HANDOFF_GUIDANCE } from "../../src/tan-tracker/sender-handoff-guidance";
 
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; id: number; chatId: number; staffId?: string };

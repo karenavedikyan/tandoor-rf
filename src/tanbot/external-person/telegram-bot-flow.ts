@@ -68,6 +68,8 @@ export async function handleExternalPersonTelegramMessage(
 
   const { parseNativeBotSlashCommand } = await import("../native-create/main-menu");
   if (lower === "мои передачи" || parseNativeBotSlashCommand(text) === "my") {
+    const native = await tryNativeCreateTelegramMessage(client, input);
+    if (native) return native;
     if (!person) {
       return {
         text: "Подтвердите свой номер телефона кнопкой ниже — так мы покажем только ваши передачи.",

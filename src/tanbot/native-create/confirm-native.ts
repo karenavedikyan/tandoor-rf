@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import { SENDER_HANDOFF_GUIDANCE } from "../../tan-tracker/sender-handoff-guidance";
+import { NATIVE_SENDER_HANDOFF_GUIDANCE as SENDER_HANDOFF_GUIDANCE } from "../../tan-tracker/sender-handoff-guidance";
 import { loadAccessContext } from "../../access/context";
 import { createTransferInTransaction } from "../../tan-tracker/create-transfer-service";
 import { confirmExternalRequestDraft } from "../../tan-tracker/external-request/confirm";

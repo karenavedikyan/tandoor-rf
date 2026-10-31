@@ -1,6 +1,9 @@
 import type { MaxInlineButton } from "../tanbot-max/delivery-transport";
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
 import { buildHandoffGenCallback } from "../tanbot/handoff-code-bot-service";
+import { buildReceiptEntryCallback } from "../tanbot/receipt-entry-callback";
+import { NATIVE_SENDER_HANDOFF_GUIDANCE } from "./sender-handoff-guidance";
+import { staffNotificationContextBlock } from "./staff-notification-copy";
 import {
   buildStaffExternalCreatedNoticeText,
   normalizeStaffOutboxPayload,
@@ -54,6 +57,11 @@ export function buildTanTrackerStaffMaxOutboxDelivery(
 
   if (eventType === "tan_tracker.code_obtained") {
     const p = normalizeStaffOutboxPayload(payload);
+    const callback = buildReceiptEntryCallback("code", p.transferId || p.publicCode, p.handoffVersion);
+    if (callback) return {
+      text: `${staffNotificationContextBlock(p)}\n\nПолучатель запросил код приёма.\n\n${NATIVE_SENDER_HANDOFF_GUIDANCE}`,
+      inlineButtons: [[{ type: "callback", text: "Ввести код", payload: callback }]],
+    };
     return {
       text: buildTanTrackerStaffOutboxMessage(eventType, payload, appOrigin),
       inlineButtons: [[{ type: "link", text: "Открыть передачу",

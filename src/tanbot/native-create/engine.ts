@@ -49,6 +49,7 @@ import {
 } from "./recipient-unified";
 import { userIdFromPendingUserPartyRef } from "../../tan-tracker/recipient-catalog";
 import { isUuid } from "../../tan-tracker/phone-normalize";
+import { parseReceiptEntryCallback } from "../receipt-entry-callback";
 
 export type NativeCreateReply = {
   text: string;
@@ -81,7 +82,7 @@ export {
 } from "./main-menu";
 
 export function isNativeCreateCallback(data: string): boolean {
-  return parseNativeCreateCallback(data) != null;
+  return parseNativeCreateCallback(data) != null || parseReceiptEntryCallback(data) != null;
 }
 
 export function navError(message: string, channel: "telegram" | "max"): NativeCreateReply {
@@ -331,7 +332,8 @@ export async function renderDraftPrompt(
   };
 }
 
-async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext): Promise<NativeCreateReply> {
+async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, receiptPage = 0): Promise<NativeCreateReply> {
+  const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
   const { buildNativeMainMenuReply, nativeVerifiedContactRequiredReply } = await import("./main-menu");
   if (!ctx.isLinkedStaff && !ctx.personId) {
     return nativeVerifiedContactRequiredReply(
@@ -342,21 +344,21 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext): P
   const menu = await buildNativeMainMenuReply(client, ctx, { lock: false });
   if (ctx.isLinkedStaff && ctx.staffUserId) {
     const origin = getAppOrigin() ?? "https://example.invalid";
-    return {
+    return appendReceiptEntryChoices(client, ctx, {
       text: `Мои передачи в личном кабинете:\n${origin}/tan-tracker/`,
       replyMarkup: menu.replyMarkup,
       maxInlineButtons: menu.maxInlineButtons,
       telegramInlineKeyboard: undefined,
-    };
+    }, undefined, receiptPage);
   }
   const sessionRaw = await createPersonBrowserSession(client, ctx.personId!, ctx.channel);
   const origin = getAppOrigin() ?? "https://example.invalid";
-  return {
+  return appendReceiptEntryChoices(client, ctx, {
     text: `Мои передачи:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
     replyMarkup: menu.replyMarkup,
     maxInlineButtons: menu.maxInlineButtons,
     telegramInlineKeyboard: undefined,
-  };
+  }, undefined, receiptPage);
 }
 
 async function startOrResumeCreate(client: PoolClient, ctx: NativeCreateContext): Promise<NativeCreateReply> {
@@ -527,12 +529,28 @@ export async function handleNativeCreateCallback(
   ctx: NativeCreateContext,
   callbackData: string,
 ): Promise<NativeCreateReply | null> {
+  const receipt = parseReceiptEntryCallback(callbackData);
+  if (receipt) {
+    await lockNativeCreateMessenger(client, ctx);
+    if (receipt.action === "list") {
+      if (!/^\d{1,5}$/.test(receipt.transferId)) return null;
+      try { await assertNativeCreateContext(client, ctx); }
+      catch { return { text: "Передачи недоступны. Откройте главное меню и проверьте подключение профиля." }; }
+      const { clearReceiptEntry } = await import("./receipt-code-entry");
+      await clearReceiptEntry(client, ctx);
+      return myTransfersReply(client, ctx, Number(receipt.transferId));
+    }
+    const { handleReceiptEntryCallback } = await import("./receipt-code-entry");
+    return handleReceiptEntryCallback(client, ctx, receipt);
+  }
   const parsed = parseNativeCreateCallback(callbackData);
   if (!parsed) return null;
-
   await lockNativeCreateMessenger(client, ctx);
-
   const { buildNativeMainMenuReply, nativeVerifiedContactRequiredReply } = await import("./main-menu");
+  // Any draft/menu callback deliberately leaves receipt-code input mode; never consume the next
+  // message as a code after the user has switched back to creation/navigation.
+  const { clearReceiptEntry } = await import("./receipt-code-entry");
+  await clearReceiptEntry(client, ctx);
 
   if (parsed.action === "menu") {
     try {
@@ -829,10 +847,11 @@ export async function handleNativeCreateCallback(
           channel: ctx.channel,
         });
         const { nativeCompletionMenuReply } = await import("./main-menu");
-        return {
+        const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
+        return appendReceiptEntryChoices(client, ctx, {
           ...await nativeCompletionMenuReply(client, ctx, created.resultText),
           ...(created.forwardInvitationText ? { forwardInvitationText: created.forwardInvitationText } : {}),
-        };
+        }, created.publicCode);
       }
       if (payload.actor === "external" && ctx.personId) {
         const party = await client.query<{ party_id: string }>(
@@ -859,11 +878,12 @@ export async function handleNativeCreateCallback(
           draftId: id,
         });
         const { nativeCompletionMenuReply } = await import("./main-menu");
-        return nativeCompletionMenuReply(
+        const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
+        return appendReceiptEntryChoices(client, ctx, await nativeCompletionMenuReply(
           client,
           ctx,
           `Заявка отправлена: ${created.publicCode}. Сотрудник получит уведомление.`,
-        );
+        ), created.publicCode);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Не удалось создать передачу.";
@@ -879,6 +899,9 @@ export async function handleNativeCreateMessage(
   ctx: NativeCreateContext,
   text: string,
 ): Promise<NativeCreateReply | null> {
+  const { handleReceiptEntryText } = await import("./receipt-code-entry");
+  const receiptReply = await handleReceiptEntryText(client, ctx, text);
+  if (receiptReply) return receiptReply;
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
   const {
