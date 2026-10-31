@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import crypto from "crypto";
-import { writeAttachmentBytes } from "../../tan-tracker/attachments";
+import { decodeUploadFilename, writeAttachmentBytes } from "../../tan-tracker/attachments";
 
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
@@ -31,7 +31,8 @@ export async function appendNativeCreateDraftPhoto(
   if (!mime.startsWith("image/")) {
     return { ok: false, message: "Нужен файл изображения." };
   }
-  const key = `native-draft/${input.draftId}/${crypto.randomUUID()}-${input.fileName}`;
+  const safeFileName = decodeUploadFilename(input.fileName || "photo.jpg");
+  const key = `native-draft/${input.draftId}/${crypto.randomUUID()}-${safeFileName}`;
   await writeAttachmentBytes(client, key, input.buffer);
   await client.query(
     `INSERT INTO tt_external_request_draft_files (
@@ -40,7 +41,7 @@ export async function appendNativeCreateDraftPhoto(
     [
       input.draftId,
       key,
-      input.fileName,
+      safeFileName,
       input.mimeType,
       input.buffer.length,
       input.sortOrder,

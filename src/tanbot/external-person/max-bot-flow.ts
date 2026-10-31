@@ -102,7 +102,12 @@ export async function handleExternalPersonMaxPhoto(
     fileName: string | null;
     recipientChatType?: string | null;
     mediaToken?: string | null;
-    images?: Array<{ downloadUrl: string; fileName: string; mediaToken?: string | null }>;
+    images?: Array<{
+      downloadUrl: string;
+      fileName: string;
+      mediaToken?: string | null;
+      ingestReject?: import("./max-image-parse").MaxImageIngestReject;
+    }>;
   },
 ): Promise<ExternalPersonBotReply | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
