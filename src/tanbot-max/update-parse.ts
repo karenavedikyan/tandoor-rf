@@ -5,9 +5,11 @@ import {
   parseMaxUnsignedRecipientVcfFromMessage,
 } from "../tanbot/external-recipient/max-contact-verify";
 import {
-  parseMaxImagesFromMessage,
-  type ParsedMaxImageAttachment,
-} from "../tanbot/external-person/max-image-parse";
+  parseMaxAttachmentsFromMessage,
+  messageHasNativeFileOrImageAttachments,
+  type ParsedMaxMixedAttachment,
+} from "../tanbot/external-person/max-attachment-parse";
+import type { ParsedMaxImageAttachment } from "../tanbot/external-person/max-image-parse";
 
 const MAX_MESSAGE_TEXT_LEN = 4096;
 
@@ -26,8 +28,12 @@ export type ParsedMaxWebhookUpdate = {
   imageMediaToken?: string | null;
   /** All image attachments in one message (album). Legacy single-image fields mirror [0]. */
   normalizedImages?: ParsedMaxImageAttachment[];
+  /** Image and file attachments in webhook order. */
+  normalizedAttachments?: ParsedMaxMixedAttachment[];
   /** Image attachment present but URL/token failed allowlist or shape checks. */
   imageRejected?: boolean;
+  /** File/image attachment present but every slot failed parse (unsafe URL, etc.). */
+  attachmentRejected?: boolean;
   recipientChatType: string | null;
 };
 
@@ -74,18 +80,7 @@ function readMaxMessageRecipient(message: Record<string, unknown> | null | undef
 }
 
 function messageHasImageAttachments(message: Record<string, unknown>): boolean {
-  const body = message.body;
-  const attachmentsRaw =
-    body && typeof body === "object" && !Array.isArray(body)
-      ? (body as Record<string, unknown>).attachments
-      : message.attachments;
-  if (!Array.isArray(attachmentsRaw)) return false;
-  return attachmentsRaw.some((att) => {
-    if (!att || typeof att !== "object") return false;
-    const typeRaw = (att as Record<string, unknown>).type;
-    const type = typeof typeRaw === "string" ? typeRaw : "";
-    return type.toLowerCase() === "image";
-  });
+  return messageHasNativeFileOrImageAttachments(message);
 }
 
 function readMaxMessageMid(msg: Record<string, unknown>, body: unknown): string | null {
@@ -332,15 +327,16 @@ export function parseMaxWebhookUpdate(raw: unknown):
     }
 
     const body = msg.body;
-    const images = parseMaxImagesFromMessage(msg);
+    const attachments = parseMaxAttachmentsFromMessage(msg);
+    const images = attachments.filter((a) => a.kind === "image");
     const mid = readMaxMessageMid(msg, body) ?? String(timestamp);
     const textRaw =
       typeof body === "object" && body && !Array.isArray(body)
         ? (body as Record<string, unknown>).text
         : msg.text;
 
-    if (images.length > 0) {
-      const first = images[0]!;
+    if (attachments.length > 0) {
+      const first = attachments[0]!;
       const dedupKey = computeMaxUpdateDedupKey({
         updateType,
         timestamp,
@@ -361,10 +357,11 @@ export function parseMaxWebhookUpdate(raw: unknown):
           startPayload: null,
           commandText: null,
           callbackPayload: null,
-          imageDownloadUrl: first.downloadUrl || null,
-          imageFileName: first.fileName,
-          imageMediaToken: first.mediaToken,
+          imageDownloadUrl: first.kind === "image" ? first.downloadUrl || null : null,
+          imageFileName: first.kind === "image" ? first.fileName : undefined,
+          imageMediaToken: first.kind === "image" ? first.mediaToken : null,
           normalizedImages: images,
+          normalizedAttachments: attachments,
           recipientChatType: chatType,
         },
       };
@@ -392,12 +389,46 @@ export function parseMaxWebhookUpdate(raw: unknown):
           commandText: null,
           callbackPayload: null,
           imageRejected: true,
+          attachmentRejected: true,
           recipientChatType: chatType,
         },
       };
     }
 
     if (typeof textRaw !== "string") {
+      const hasOnlyAttachments =
+        messageHasNativeFileOrImageAttachments(msg) ||
+        (typeof body === "object" &&
+          body &&
+          !Array.isArray(body) &&
+          Array.isArray((body as Record<string, unknown>).attachments) &&
+          ((body as Record<string, unknown>).attachments as unknown[]).length > 0);
+      if (hasOnlyAttachments) {
+        const dedupKey = computeMaxUpdateDedupKey({
+          updateType,
+          timestamp,
+          chatId,
+          userId,
+          messageMid: mid,
+        });
+        return {
+          ok: true,
+          update: {
+            dedupKey,
+            updateType,
+            chatId: BigInt(chatId),
+            maxUserId: BigInt(userId),
+            username: normalizeUsername(senderRow.username),
+            firstName:
+              typeof senderRow.first_name === "string" ? senderRow.first_name.trim().slice(0, 128) : null,
+            startPayload: null,
+            commandText: null,
+            callbackPayload: null,
+            attachmentRejected: true,
+            recipientChatType: chatType,
+          },
+        };
+      }
       return { ok: false, reason: "no_text" };
     }
     const text = textRaw.trim().slice(0, MAX_MESSAGE_TEXT_LEN);

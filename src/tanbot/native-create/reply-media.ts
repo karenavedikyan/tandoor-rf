@@ -1,7 +1,10 @@
+export type NativeReplyMediaKind = "image" | "file";
+
 export type NativeReplyMediaItem = {
   draftId: string;
   sortOrder: number;
   channel: "telegram" | "max";
+  mediaKind: NativeReplyMediaKind;
   telegramFileId?: string;
   maxFileToken?: string;
   caption?: string;
@@ -17,7 +20,7 @@ export const NATIVE_MEDIA_QUEUE_KEY = "nativeMediaQueue";
 export const NATIVE_MEDIA_PROGRESS_KEY = "nativeMediaProgress";
 export const NATIVE_MEDIA_SCOPE_KEY = "nativeMediaScope";
 
-export function nativeMediaQueueFromDraftPhoto(input: {
+export function nativeMediaQueueFromDraftAttachment(input: {
   channel: "telegram" | "max";
   draftId: string;
   sortOrder: number;
@@ -27,7 +30,10 @@ export function nativeMediaQueueFromDraftPhoto(input: {
   maxFileToken: string | null;
 }): NativeReplyMediaItem | null {
   const mime = input.mimeType?.toLowerCase() ?? "";
-  if (!mime.startsWith("image/")) return null;
+  const isPdf = mime === "application/pdf";
+  const isImage = mime.startsWith("image/");
+  if (!isPdf && !isImage) return null;
+  const mediaKind: NativeReplyMediaKind = isPdf ? "file" : "image";
   if (input.channel === "telegram") {
     const telegramFileId = input.telegramFileId?.trim();
     if (!telegramFileId) return null;
@@ -35,6 +41,7 @@ export function nativeMediaQueueFromDraftPhoto(input: {
       channel: "telegram",
       draftId: input.draftId,
       sortOrder: input.sortOrder,
+      mediaKind,
       telegramFileId,
       caption: input.fileName,
     };
@@ -45,9 +52,25 @@ export function nativeMediaQueueFromDraftPhoto(input: {
     channel: "max",
     draftId: input.draftId,
     sortOrder: input.sortOrder,
+    mediaKind,
     maxFileToken,
     caption: input.fileName,
   };
+}
+
+/** @deprecated use nativeMediaQueueFromDraftAttachment */
+export function nativeMediaQueueFromDraftPhoto(input: {
+  channel: "telegram" | "max";
+  draftId: string;
+  sortOrder: number;
+  fileName: string;
+  mimeType: string;
+  telegramFileId: string | null;
+  maxFileToken: string | null;
+}): NativeReplyMediaItem | null {
+  const item = nativeMediaQueueFromDraftAttachment(input);
+  if (!item || item.mediaKind !== "image") return null;
+  return item;
 }
 
 export function readNativeMediaQueue(raw: unknown): NativeReplyMediaItem[] {
@@ -63,7 +86,8 @@ export function readNativeMediaQueue(raw: unknown): NativeReplyMediaItem[] {
     const sortOrder = typeof r.sortOrder === "number" ? r.sortOrder : Number(r.sortOrder);
     const channel = r.channel === "max" ? "max" : r.channel === "telegram" ? "telegram" : null;
     if (!draftId || !Number.isInteger(sortOrder) || !channel) continue;
-    const entry: NativeReplyMediaItem = { draftId, sortOrder, channel };
+    const mediaKind: NativeReplyMediaKind = r.mediaKind === "file" ? "file" : "image";
+    const entry: NativeReplyMediaItem = { draftId, sortOrder, channel, mediaKind };
     if (typeof r.telegramFileId === "string" && r.telegramFileId.trim()) {
       entry.telegramFileId = r.telegramFileId.trim();
     }

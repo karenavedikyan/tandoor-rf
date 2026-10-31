@@ -40,11 +40,21 @@ export type ParsedTelegramPhotoUpdate = {
   fileName: string | null;
 };
 
+export type ParsedTelegramDocumentUpdate = {
+  updateId: number;
+  chatId: bigint;
+  telegramUserId: bigint;
+  fileId: string;
+  fileName: string | null;
+  mimeType: string | null;
+};
+
 export type ParsedTelegramWebhookUpdate =
   | { kind: "message"; update: ParsedPrivateMessageUpdate }
   | { kind: "contact"; update: ParsedTelegramContactUpdate }
   | { kind: "callback"; update: ParsedCallbackUpdate }
-  | { kind: "photo"; update: ParsedTelegramPhotoUpdate };
+  | { kind: "photo"; update: ParsedTelegramPhotoUpdate }
+  | { kind: "document"; update: ParsedTelegramDocumentUpdate };
 
 function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhookUpdate | { ok: false; reason: string } {
   const updateId = row.update_id;
@@ -133,8 +143,32 @@ function parseMessageUpdate(row: Record<string, unknown>): ParsedTelegramWebhook
     }
   }
 
+  const document = msg.document;
+  if (document && typeof document === "object" && !Array.isArray(document)) {
+    const doc = document as Record<string, unknown>;
+    const fileId = typeof doc.file_id === "string" ? doc.file_id : "";
+    const fileName = typeof doc.file_name === "string" ? doc.file_name : null;
+    const mimeType = typeof doc.mime_type === "string" ? doc.mime_type : null;
+    if (fileId) {
+      return {
+        kind: "document",
+        update: {
+          updateId,
+          chatId: BigInt(chatId),
+          telegramUserId: BigInt(userId),
+          fileId,
+          fileName,
+          mimeType,
+        },
+      };
+    }
+  }
+
   const textRaw = msg.text;
   if (typeof textRaw !== "string") {
+    if (msg.caption != null) {
+      return { ok: false, reason: "no_text" };
+    }
     return { ok: false, reason: "no_text" };
   }
   const text = textRaw.trim().slice(0, MAX_MESSAGE_TEXT_LEN);

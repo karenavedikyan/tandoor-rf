@@ -25,7 +25,7 @@ import {
   assertNativeCreateContext,
   lockNativeCreateMessenger,
 } from "./access-guard";
-import { type NativeReplyMediaItem, nativeMediaQueueFromDraftPhoto } from "./reply-media";
+import type { NativeReplyMediaItem } from "./reply-media";
 import { isNativeMenuDraftHex, NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
 import {
   parseRecipientContactFromTelegram,
@@ -91,14 +91,24 @@ export function navError(message: string, channel: "telegram" | "max"): NativeCr
   };
 }
 
-function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount: number): string {
+function stepPrompt(
+  step: string,
+  payload: NativeCreateDraftPayload,
+  attachmentStats: { total: number; imageCount: number; pdfCount: number },
+): string {
+  const photoCount = attachmentStats.total;
   switch (step) {
     case "item":
       return "Что передаёте? Кратко опишите предмет (до 500 символов).";
     case "photo":
-      return photoCount > 0
-        ? `Фото: ${photoCount}/5. Пришлите ещё или нажмите «Далее». «Пропустить» доступно только без фото.`
-        : "Пришлите до 5 фото (по 8 МБ). После добавления нажмите «Далее» или «Пропустить», если фото не нужны.";
+      if (photoCount > 0) {
+        const countLine =
+          attachmentStats.pdfCount > 0 ?
+            `Файлы: ${photoCount}/5.`
+          : `Фото: ${photoCount}/5.`;
+        return `${countLine} Пришлите ещё фото или PDF или нажмите «Далее». «Пропустить» доступно только без вложений.`;
+      }
+      return "Пришлите до 5 фото или PDF (по 8 МБ каждый). После добавления нажмите «Далее» или «Пропустить», если вложения не нужны.";
     case "comment":
       return "Комментарий к передаче или нажмите «Пропустить».";
     case "recipient":
@@ -138,13 +148,17 @@ function stepPrompt(step: string, payload: NativeCreateDraftPayload, photoCount:
     case "edit":
       return "Что изменить?";
     case "summary":
-      return formatSummary(payload, photoCount);
+      return formatSummary(payload, attachmentStats);
     default:
       return "Продолжите оформление передачи.";
   }
 }
 
-function formatSummary(payload: NativeCreateDraftPayload, photoCount: number): string {
+function formatSummary(
+  payload: NativeCreateDraftPayload,
+  attachmentStats: { total: number; imageCount: number; pdfCount: number },
+): string {
+  const photoCount = attachmentStats.total;
   const due =
     payload.dueMode === "tomorrow" ? "завтра" : payload.dueMode === "none" ? "без срока" : "сегодня";
   let recipient = "—";
@@ -173,7 +187,11 @@ function formatSummary(payload: NativeCreateDraftPayload, photoCount: number): s
     `• Получатель: ${recipientLine}\n` +
     `• Комментарий: ${payload.comment?.trim() ? payload.comment : "—"}\n` +
     `• Срок: ${due}\n` +
-    `• Фото: ${photoCount}\n\n` +
+    `${
+      attachmentStats.pdfCount > 0 ?
+        `• Файлы: ${photoCount} (фото: ${attachmentStats.imageCount}, PDF: ${attachmentStats.pdfCount})\n\n`
+      : `• Фото: ${photoCount}\n\n`
+    }` +
     "Нажмите «Создать передачу» ниже: данные сохранятся в трекере.\n" +
     "Получение посылки подтверждается отдельно кодом."
   );
@@ -187,15 +205,32 @@ async function photoCount(client: PoolClient, draftId: string): Promise<number> 
   return c.rows[0]?.n ?? 0;
 }
 
+async function draftAttachmentStats(
+  client: PoolClient,
+  draftId: string,
+): Promise<{ total: number; imageCount: number; pdfCount: number }> {
+  const c = await client.query<{ mime_type: string }>(
+    `SELECT mime_type FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`,
+    [draftId],
+  );
+  let imageCount = 0;
+  let pdfCount = 0;
+  for (const row of c.rows) {
+    if (row.mime_type === "application/pdf") pdfCount += 1;
+    else if (row.mime_type?.toLowerCase().startsWith("image/")) imageCount += 1;
+  }
+  return { total: c.rows.length, imageCount, pdfCount };
+}
+
 async function listDraftPhotoMeta(
   client: PoolClient,
   draftId: string,
-): Promise<Array<{ sortOrder: number; fileName: string }>> {
-  const c = await client.query<{ sort_order: number; file_name: string }>(
-    `SELECT sort_order, file_name FROM tt_external_request_draft_files WHERE draft_id = $1::uuid ORDER BY sort_order`,
+): Promise<Array<{ sortOrder: number; fileName: string; mimeType: string }>> {
+  const c = await client.query<{ sort_order: number; file_name: string; mime_type: string }>(
+    `SELECT sort_order, file_name, mime_type FROM tt_external_request_draft_files WHERE draft_id = $1::uuid ORDER BY sort_order`,
     [draftId],
   );
-  return c.rows.map((r) => ({ sortOrder: r.sort_order, fileName: r.file_name }));
+  return c.rows.map((r) => ({ sortOrder: r.sort_order, fileName: r.file_name, mimeType: r.mime_type }));
 }
 
 function filteredRecipients(payload: NativeCreateDraftPayload): Array<{ userId: string; fullName: string }> {
@@ -209,8 +244,9 @@ export async function renderDraftPrompt(
   step: string,
   payload: NativeCreateDraftPayload,
 ): Promise<NativeCreateReply> {
-  const count = await photoCount(client, draftId);
-  const text = stepPrompt(step, payload, count);
+  const stats = await draftAttachmentStats(client, draftId);
+  const count = stats.total;
+  const text = stepPrompt(step, payload, stats);
   let ui = buildStepUi(channel, draftId, payload.revision ?? 1, "nav");
   if (step === "photo") {
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "photo", { photoSkipHidden: count > 0 });
@@ -232,7 +268,10 @@ export async function renderDraftPrompt(
     const photos = count > 0 ? await listDraftPhotoMeta(client, draftId) : [];
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "summary", {
       photoInspectButtons: photos.map((p) => ({
-        label: `Фото ${p.sortOrder + 1}`,
+        label:
+          p.mimeType === "application/pdf" ?
+            `PDF ${p.sortOrder + 1}`
+          : `Фото ${p.sortOrder + 1}`,
         arg: String(p.sortOrder),
       })),
     });
@@ -673,7 +712,8 @@ export async function handleNativeCreateCallback(
     );
     const file = files.rows[0];
     if (!file) return renderDraftPrompt(client, ctx.channel, id, step, payload);
-    const media = nativeMediaQueueFromDraftPhoto({
+    const { nativeMediaQueueFromDraftAttachment } = await import("./reply-media");
+    const media = nativeMediaQueueFromDraftAttachment({
       channel: ctx.channel,
       draftId: id,
       sortOrder,
@@ -683,11 +723,18 @@ export async function handleNativeCreateCallback(
       maxFileToken: file.max_file_token,
     });
     if (!media) {
-      return navError("Фото недоступно для предпросмотра. Добавьте снимок заново.", ctx.channel);
+      const isPdf = file.mime_type === "application/pdf";
+      return navError(
+        isPdf ?
+          "PDF недоступен для предпросмотра в чате. Отправьте файл заново из MAX или Telegram."
+        : "Фото недоступно для предпросмотра. Добавьте снимок заново.",
+        ctx.channel,
+      );
     }
     const ui = buildStepUi(ctx.channel, id, payload.revision ?? 1, "photo_inspect");
+    const isPdf = file.mime_type === "application/pdf";
     return {
-      text: `Фото ${sortOrder + 1}: ${file.file_name}`,
+      text: `${isPdf ? "PDF" : "Фото"} ${sortOrder + 1}: ${file.file_name}`,
       replyMarkup: menuReplyKeyboard(),
       telegramInlineKeyboard: ui.telegramInlineKeyboard,
       maxInlineButtons: ui.maxInlineButtons,
@@ -899,11 +946,19 @@ export async function handleNativeCreatePhoto(
   assertDraftBoundToCaller(payload, ctx);
 
   const count = await photoCount(client, draft.id);
+  const hasPdf = await (await import("./photo-store")).draftHasPdfAttachment(client, draft.id);
   const { appendNativeCreateDraftPhoto } = await import("./photo-store");
-  const { formatPhotoStepFeedback } = await import("./photo-feedback-text");
+  const { formatNativeAttachmentStepFeedback, nativeAttachmentLimitMessage } = await import(
+    "./attachment-feedback-text"
+  );
   if (count >= 5) {
     const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", payload);
-    const prefix = formatPhotoStepFeedback(0, count, ["Достигнут лимит 5 фото. Нажмите «Далее»."]);
+    const prefix = formatNativeAttachmentStepFeedback(
+      { addedImages: 0, addedPdfs: 0 },
+      count,
+      [nativeAttachmentLimitMessage(hasPdf)],
+      hasPdf,
+    );
     return { ...rendered, text: `${prefix}\n\n${rendered.text}` };
   }
   const append = await appendNativeCreateDraftPhoto(client, {
@@ -917,12 +972,26 @@ export async function handleNativeCreatePhoto(
   });
   if (!append.ok) {
     const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", payload);
-    const prefix = formatPhotoStepFeedback(0, count, [append.message]);
+    const prefix = formatNativeAttachmentStepFeedback(
+      { addedImages: 0, addedPdfs: 0 },
+      count,
+      [append.message],
+      hasPdf,
+    );
     return { ...rendered, text: `${prefix}\n\n${rendered.text}` };
   }
   const nextPayload = await bumpDraftRevision(client, draft.id, "photo", payload);
   const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, "photo", nextPayload);
-  const prefix = formatPhotoStepFeedback(1, count + 1, []);
+  const added =
+    input.mimeType === "application/pdf" ?
+      { addedImages: 0, addedPdfs: 1 }
+    : { addedImages: 1, addedPdfs: 0 };
+  const prefix = formatNativeAttachmentStepFeedback(
+    added,
+    count + 1,
+    [],
+    hasPdf || input.mimeType === "application/pdf",
+  );
   return { ...rendered, text: `${prefix}\n\n${rendered.text}` };
 }
 
