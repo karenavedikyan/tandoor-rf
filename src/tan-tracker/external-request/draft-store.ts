@@ -63,6 +63,13 @@ export async function discardActiveUnconfirmedDraftForWebFreshStart(
 ): Promise<{ discardedId: string | null }> {
   const active = await loadActiveExternalRequestDraft(client, input.channel, input.messengerChatId);
   if (!active) return { discardedId: null };
+  if (input.messengerChatId.startsWith("native:")) {
+    return { discardedId: null };
+  }
+  const origin = (active.payload as { draftOrigin?: string })?.draftOrigin;
+  if (origin === "native_bot") {
+    return { discardedId: null };
+  }
   if (active.person_id && active.person_id !== input.personId) {
     const err = new Error("Черновик принадлежит другому профилю.") as Error & { http?: number };
     err.http = 403;
