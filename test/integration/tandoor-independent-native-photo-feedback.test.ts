@@ -17,7 +17,7 @@ type Button = { text: string; callback_data?: string; payload?: string };
 type Reply = { text: string; buttons: Button[] };
 type Input = {
   text?: string; callback?: string; photos?: string[]; id?: number; timestamp?: number;
-  caption?: string | null; chatType?: string; optionalReply?: boolean;
+  caption?: string | null; chatType?: string; optionalReply?: boolean; fileName?: string;
 };
 const db = getIntegrationDatabaseUrl();
 let app: ReturnType<typeof import("../../src/server").createApp>;
@@ -112,7 +112,7 @@ async function send(a: Actor, input: Input): Promise<Reply> {
       if ("caption" in input) body.text = input.caption;
       body.attachments = input.photos.map(key => ({ type: "image", payload: {
         ...(key === "tokenonly" ? {} : { url: key === "unsafe" ? "https://127.0.0.1/photo.jpg" : `https://synthetic.oneme.ru/${key}.jpg` }),
-        token: `synthetic-token-${key}`, file_name: `${key}.jpg`,
+        token: `synthetic-token-${key}`, file_name: input.fileName ?? `${key}.jpg`,
       } }));
     } else body.text = input.text ?? "";
     const message = { sender: { user_id: a.id, is_bot: false },
@@ -316,4 +316,28 @@ it("MAX: album exceeding remaining slots keeps exactly five with explicit limit 
   const saved = await files(a);
   assert.equal(saved.length, 5);
   assert.deepEqual(await readAttachmentBytes(saved[4].storage_key), bytesFor("slot5"));
+});
+it("MAX: mixed good and rejected attachments acknowledge partial success, not silently omit rejection", async () => {
+  const a = await actor("max", false); await start(a);
+  const reply = await send(a, { photos: ["valid-mixed", "unsafe", "tokenonly"] });
+  photoGuidance(reply, 1);
+  assert.match(reply.text, /не удалось|не добав|пропущ|недоступ|заново|сервер/iu);
+  assert.equal((await files(a)).length, 1);
+  const unsafeOnlyMix = await send(a, { photos: ["valid-unsafe-mix", "unsafe"] });
+  photoGuidance(unsafeOnlyMix, 2);
+  assert.match(unsafeOnlyMix.text, /не удалось|не добав|пропущ|недоступ|заново|сервер/iu,
+    "valid+unsafe album must not claim wholly successful ingestion");
+  assert.equal((await files(a)).length, 2);
+});
+it("MAX: hostile provider filename is safely normalized before metadata/storage key construction", async () => {
+  const a = await actor("max", true); await start(a);
+  const reply = await send(a, { photos: ["safe-name"], fileName: "../../../outside.jpg\r\n" });
+  photoGuidance(reply, 1);
+  const row = (await getPool()!.query(`SELECT file_name,storage_key FROM tt_external_request_draft_files
+    WHERE draft_id=$1`, [(await draft(a)).id])).rows[0];
+  assert.ok(row);
+  assert.doesNotMatch(row.file_name, /[/\\\0\r\n]/u);
+  assert.ok(row.file_name.length <= 200);
+  assert.match(row.storage_key, /^native-draft\/[^/]+\/[^/\\\0\r\n]+$/u);
+  assert.deepEqual(await readAttachmentBytes(row.storage_key), bytesFor("safe-name"));
 });
