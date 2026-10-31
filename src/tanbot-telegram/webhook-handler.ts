@@ -62,8 +62,6 @@ async function processParsedUpdate(
     try {
       const account = await findAccountByTelegramUserId(client, update.telegramUserId);
       const person = account ? null : await findPersonByMessenger(client, "telegram", update.telegramUserId);
-      const ownContact =
-        update.contactUserId != null && BigInt(update.contactUserId) === update.telegramUserId;
       if (account || person) {
         const adapters = await import("../tanbot/native-create/adapters");
         const native = await adapters.tryNativeCreateTelegramContact(client, {
@@ -90,14 +88,6 @@ async function processParsedUpdate(
           await commitTelegramUpdateReply(client, update.updateId, reply);
           return reply;
         }
-        if (person && !ownContact) {
-          const reply: WebhookReply = {
-            chatId: update.chatId,
-            text: "Контакт не принят.",
-          };
-          await commitTelegramUpdateReply(client, update.updateId, reply);
-          return reply;
-        }
       }
       let ext =
         (await handleExternalRecipientTelegramContact(client, {
@@ -108,18 +98,14 @@ async function processParsedUpdate(
           isForwarded: update.isForwarded,
         })) ?? null;
       if (!ext && isExternalMessengerFeatureEnabled()) {
-        const ownContact =
-          update.contactUserId != null && BigInt(update.contactUserId) === update.telegramUserId;
-        if (ownContact) {
-          ext = await handleExternalPersonTelegramContact(client, {
-            chatId: update.chatId,
-            telegramUserId: update.telegramUserId,
-            phoneRaw: update.phoneNumber,
-            firstName: update.contactFirstName,
-            contactUserId: update.contactUserId,
-            isForwarded: update.isForwarded,
-          });
-        }
+        ext = await handleExternalPersonTelegramContact(client, {
+          chatId: update.chatId,
+          telegramUserId: update.telegramUserId,
+          phoneRaw: update.phoneNumber,
+          firstName: update.contactFirstName,
+          contactUserId: update.contactUserId,
+          isForwarded: update.isForwarded,
+        });
       }
       const reply: WebhookReply = ext
         ? {

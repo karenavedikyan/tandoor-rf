@@ -699,6 +699,10 @@ export async function handleNativeCreateCallback(
     if (step !== "summary") return renderDraftPrompt(client, ctx.channel, id, step, payload);
     try {
       if (payload.actor === "staff" && ctx.staffUserId) {
+        const selectedRef = payload.recipientPartyId ?? payload.recipientUserId;
+        if (selectedRef && !(await revalidateStaffRecipientPick(client, ctx.staffUserId, selectedRef))) {
+          return navError("Получатель недоступен для этой передачи. Выберите другого получателя.", ctx.channel);
+        }
         const created = await confirmNativeStaffDraft(client, {
           staffUserId: ctx.staffUserId,
           draftId: id,

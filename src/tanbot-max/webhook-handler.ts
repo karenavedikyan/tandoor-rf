@@ -110,7 +110,6 @@ async function processUpdateInTransaction(
     if (!reply && contact) {
       const linkedStaff = await findAccountByMaxUserId(client, update.maxUserId);
       const person = linkedStaff ? null : await findPersonByMessenger(client, "max", update.maxUserId);
-      const ownContact = contact.contactUserId === Number(update.maxUserId);
       const canNativeRecipient = (linkedStaff || person) && recipientChatType === "dialog" && !isForwarded;
       if (canNativeRecipient) {
         const { tryNativeCreateMaxRecipientContact } = await import("../tanbot/native-create/adapters");
@@ -138,7 +137,7 @@ async function processUpdateInTransaction(
             contact,
             isForwarded,
           })) ?? null);
-      if (!reply && !ext && isExternalMessengerFeatureEnabled() && ownContact) {
+      if (!reply && !ext && isExternalMessengerFeatureEnabled()) {
         const maxCfg = loadTanbotMaxStage2Config();
         const token = maxCfg.ok ? maxCfg.config.botToken : "";
         const phoneDigits = extractPhoneFromVcf(contact.vcfInfo);

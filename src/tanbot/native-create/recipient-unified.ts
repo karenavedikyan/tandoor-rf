@@ -220,7 +220,11 @@ export async function revalidateStaffRecipientPick(
   const p = row.rows[0];
   if (!p) return null;
   if (p.kind === "user" && p.user_id) {
-    await loadEligibleUserRowForRecipient(client, p.user_id, staffUserId);
+    try {
+      await loadEligibleUserRowForRecipient(client, p.user_id, staffUserId);
+    } catch {
+      return null;
+    }
   }
   return { ref, fullName: p.display_name, phone: p.phone_e164 };
 }
