@@ -1,39 +1,39 @@
 (function () {
   "use strict";
 
-  var CODE_LABEL =
-    /(?:код(?:\s+при[её]ма)?(?:\s+для\s+передачи)?|handoff\s+code|one-time\s+code)/i;
-
-  function isStandaloneSixDigits(match, text, index) {
+  function isStandaloneSixDigits(_match, text, index) {
     var before = index > 0 ? text[index - 1] : "";
-    var after = index + match.length < text.length ? text[index + match.length] : "";
+    var after = index + 6 < text.length ? text[index + 6] : "";
     if (before >= "0" && before <= "9") return false;
     if (after >= "0" && after <= "9") return false;
     return true;
   }
 
-  function collectLabeledCandidates(text) {
+  function isTrackPublicCodeSuffix(text, digitStart) {
+    var before = text.slice(Math.max(0, digitStart - 32), digitStart);
+    return /(?:^|[\s,.(])TT-\d{4}-$/i.test(before.trimEnd()) || /передача\s+TT-\d{4}-$/i.test(before.toLowerCase());
+  }
+
+  function acceptSixAt(text, digitStart, digits) {
+    if (!isStandaloneSixDigits(digits, text, digitStart)) return false;
+    if (isTrackPublicCodeSuffix(text, digitStart)) return false;
+    return true;
+  }
+
+  function collectColonLabeledCandidates(text) {
     var found = [];
-    var searchFrom = 0;
-    while (searchFrom < text.length) {
-      var slice = text.slice(searchFrom);
-      var labelMatch = slice.match(CODE_LABEL);
-      if (!labelMatch || labelMatch.index == null) break;
-      var afterLabel = searchFrom + labelMatch.index + labelMatch[0].length;
-      var windowText = text.slice(afterLabel, afterLabel + 160);
-      var digitRe = /(?<![0-9])(\d{6})(?![0-9])/g;
+    var patterns = [
+      /(?:код(?:\s+при[её]ма)?(?:\s+для\s+передачи)?(?!\s+пока\s+не)|handoff\s+code|one-time\s+code)(?:\s+TT[-\w]+)?\s*[:：]\s*(?<![0-9])(\d{6})(?![0-9])/gi,
+      /(?:^|[\n\r])\s*код\s*[:：]\s*(?<![0-9])(\d{6})(?![0-9])/gi,
+      /повтор\s+кода\s*[:：]\s*(?<![0-9])(\d{6})(?![0-9])/gi,
+    ];
+    for (var p = 0; p < patterns.length; p++) {
+      var re = patterns[p];
       var m;
-      while ((m = digitRe.exec(windowText))) {
-        var abs = afterLabel + m.index;
-        if (isStandaloneSixDigits(m[1], text, abs)) found.push(m[1]);
+      while ((m = re.exec(text))) {
+        var idx = m.index + m[0].length - m[1].length;
+        if (acceptSixAt(text, idx, m[1])) found.push(m[1]);
       }
-      searchFrom = afterLabel + 1;
-    }
-    if (found.length) return found;
-    var colonRe = /код(?:\s+для\s+передачи)?[^:\n]{0,100}:\s*(?<![0-9])(\d{6})(?![0-9])/gi;
-    var cm;
-    while ((cm = colonRe.exec(text))) {
-      if (cm[1]) found.push(cm[1]);
     }
     return found;
   }
@@ -69,7 +69,7 @@
     var direct = directSixDigitCompact(text);
     if (direct) return { ok: true, code: direct };
 
-    var labeled = collectLabeledCandidates(text);
+    var labeled = collectColonLabeledCandidates(text);
     var uniq = uniqueCodes(labeled);
     if (uniq.length === 1) return { ok: true, code: uniq[0] };
     if (uniq.length > 1) {
@@ -80,19 +80,6 @@
       };
     }
 
-    var loose = [];
-    var looseRe = /(?<![0-9])(\d{6})(?![0-9])/g;
-    var lm;
-    while ((lm = looseRe.exec(text))) loose.push(lm[1]);
-    var looseUniq = uniqueCodes(loose);
-    if (looseUniq.length === 1 && CODE_LABEL.test(text)) return { ok: true, code: looseUniq[0] };
-    if (looseUniq.length > 1) {
-      return {
-        ok: false,
-        ambiguous: true,
-        reason: "Не удалось однозначно определить код. Вставьте сообщение с подписью «код» или только 6 цифр.",
-      };
-    }
     if (text.replace(/\D/g, "").length > 6) {
       return {
         ok: false,

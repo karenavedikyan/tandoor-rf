@@ -26,6 +26,10 @@ describe("handoff code paste parse", () => {
     assert.deepEqual(r, { ok: true, code: "012345" });
   });
 
+  it("rejects track suffix even when the word код appears elsewhere", () => {
+    assert.equal(parseHandoffCodePaste("Передача TT-2026-123456. Код пока не получен.").ok, false);
+  });
+
   it("empty paste is non-destructive signal", () => {
     assert.deepEqual(parseHandoffCodePaste("   "), { ok: false, reason: "" });
   });
