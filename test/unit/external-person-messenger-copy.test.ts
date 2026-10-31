@@ -37,7 +37,7 @@ describe("buildExternalPersonMessengerBody receipt/delivered copy", () => {
       holderUrl: holder,
     });
     assert.match(afterCode, /Передача TT-1/);
-    assert.match(afterCode, /код подтверждён/);
+    assert.match(afterCode, /Код подтверждён/i);
     assert.doesNotMatch(afterCode, /Вы получили/);
   });
 
