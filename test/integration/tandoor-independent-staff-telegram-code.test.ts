@@ -133,6 +133,20 @@ test("independent: real external draft → Telegram intended recipient callback 
       String(s.body.chat_id) === "885501" && /\b\d{6}\b/.test(String(s.body.text))).at(-1);
     assert.ok(codeReply, "actual callback reply must privately deliver a one-time code");
     const code = String(codeReply.body.text).match(/\b(\d{6})\b/)![1];
+    const codeMessages = sends.filter(s => s.method === "sendMessage" && String(s.body.text).includes(code));
+    assert.equal(codeMessages.length, 2, "one explanatory message and one plain-copy message per issuance");
+    assert.notEqual(String(codeMessages[0].body.text), code);
+    assert.equal(codeMessages[1].body.text, code);
+    assert.equal(codeMessages[1].body.chat_id, codeMessages[0].body.chat_id);
+    assert.equal(codeMessages[1].body.reply_markup, undefined);
+    assert.equal(codeMessages[1].body.parse_mode, undefined);
+    assert.notEqual(codeMessages[1].body.disable_web_page_preview, false,
+      "a code-only message contains no URL and must not explicitly enable previews");
+    const afterPair = sends.length;
+    process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = "true";
+    try { await runTanbotOutboxWorkerOnce(pool, config.config, transport); }
+    finally { process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = "false"; }
+    assert.equal(sends.length, afterPair, "fully delivered pair is not resent by the next worker tick");
     assert.equal((await webhook(885501, "independent-valid-once")).status, 200);
     assert.equal(await codeCount(), 1, "replayed callback id must not rotate or duplicate code");
     const received = await request(app).post("/api/tan-tracker/public/holder/code/verify")

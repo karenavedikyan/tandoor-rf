@@ -119,6 +119,18 @@ test("independent: real external draft → MAX intended recipient callback → s
     const codeReply = sends.filter(s => s.userId === 885501n && /\b\d{6}\b/.test(s.text)).at(-1);
     assert.ok(codeReply, "actual callback reply must privately deliver a one-time code");
     const code = codeReply.text.match(/\b(\d{6})\b/)![1];
+    const codeMessages = sends.filter(s => s.text.includes(code));
+    assert.equal(codeMessages.length, 2, "one explanatory message and one plain-copy message per issuance");
+    assert.notEqual(codeMessages[0].text, code);
+    assert.equal(codeMessages[1].text, code);
+    assert.equal(codeMessages[1].userId, codeMessages[0].userId);
+    assert.equal(codeMessages[1].inlineButtons, undefined);
+    assert.equal(codeMessages[1].shareUrl, undefined);
+    const afterPair = sends.length;
+    process.env.TANBOT_MAX_DELIVERY_ENABLED = "true";
+    try { await runTanbotMaxOutboxWorkerOnce(pool, config.config, transport); }
+    finally { process.env.TANBOT_MAX_DELIVERY_ENABLED = "false"; }
+    assert.equal(sends.length, afterPair, "fully delivered pair is not resent by the next worker tick");
     assert.equal((await webhook(885501, "independent-valid-once")).status, 200);
     assert.equal(await codeCount(), 1, "replayed callback id must not rotate or duplicate code");
     const received = await request(app).post("/api/tan-tracker/public/holder/code/verify")
