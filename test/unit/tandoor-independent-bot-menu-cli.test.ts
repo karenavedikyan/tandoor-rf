@@ -21,23 +21,24 @@ function run(args: string[]) {
 }
 for (const provider of ["max", "telegram"]) {
   it(`${provider} real built menu CLI defaults to a useful dry-run without loading credentials or network`, () => {
-    const r = run(["--provider", provider]);
+    const r = run([`--${provider}`]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /"dryRun"\s*:\s*true|"mode"\s*:\s*"dry-run"/u);
     const commands = [...r.stdout.matchAll(/"(?:name|command)"\s*:\s*"([^"]+)"/gu)].map(x => x[1]);
     for (const name of ["start", "menu", "new", "my"]) assert.ok(commands.includes(name), `missing managed command ${name}`);
   });
   it(`${provider} explicit apply without credentials fails closed before any provider fetch`, () => {
-    const r = run(["--provider", provider, "--apply"]);
+    const r = run([`--${provider}`, "--apply"]);
     assert.notEqual(r.status, 0);
     assert.ok(!/installed|registered|успешно установлено/iu.test(r.stdout));
   });
 }
 it("menu CLI rejects unknown options instead of silently treating them as a dry-run or apply", () => {
-  const r = run(["--provider", "max", "--arbitrary-option"]);
+  const r = run(["--max", "--arbitrary-option"]);
   assert.notEqual(r.status, 0);
 });
 it("menu CLI rejects unknown provider before opening any network or reading live bot settings", () => {
-  const r = run(["--provider", "unknown"]);
+  const r = run(["--unknown"]);
   assert.notEqual(r.status, 0);
+  assert.notEqual(run(["--max", "--telegram"]).status, 0, "scope must not silently select the last provider");
 });
