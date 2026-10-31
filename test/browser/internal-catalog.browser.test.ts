@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import { createApp } from "../../src/server";
@@ -21,13 +23,18 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     photoBytes = await sharp({ create: { width: 20, height: 10, channels: 3, background: "#426428" } }).webp().toBuffer();
   });
   after(async () => { await browser?.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  async function open(options: { products?: Product[]; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string; images?: boolean; brokenImages?: boolean } = {}) {
+  async function open(options: { products?: Product[]; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string; images?: boolean; brokenImages?: boolean; role?: "admin" | "manager"; forbidden?: boolean } = {}) {
     const context = await browser.newContext({ viewport: options.mobile ? { width: 375, height: 812 } : { width: 1440, height: 1000 } });
     const page = await context.newPage();
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
     const products = options.products ?? catalogueFixture();
     const parsed = parseProductsJson(Buffer.from(JSON.stringify(products)));
     const control = { failList: false, hold: "", release: null as (() => void) | null };
+    // Synthetic UI only. Real HTML/admin authorization is covered in integration.
+    await page.route(url => url.pathname === "/internal-catalog", async route => {
+      await route.fulfill({ contentType: "text/html",
+        body: await readFile(path.resolve("server/pages/internal-catalog.html"), "utf8") });
+    });
     await page.route("**/api/**", async route => {
       const url = new URL(route.request().url()), pathname = url.pathname;
       let status = 200, data: unknown;
@@ -61,20 +68,29 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
         status = product ? 200 : 404;
         data = product ? { snapshotId: fixtureGuid(900), importedAt: "2026-10-31T08:00:00Z", product } : { error: { message: "Товар не найден" } };
       } else {
-        const mock = resolveMockResponse(url, { role: "admin" }, { listCalls: 0 }, route.request().method());
+        const mock = resolveMockResponse(url, { role: options.role ?? "admin" }, { listCalls: 0, catalogProductsCalls: 0 }, route.request().method());
         if (mock) { await route.fulfill(mock); return; }
         status = 404; data = { error: "not mocked" };
       }
       await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
     });
     await page.goto(base + "/internal-catalog" + (options.product ? "?product=" + options.product : ""));
-    if (!options.empty && !options.metaStatus) await page.locator(".ic-card").first().waitFor();
+    if (!options.empty && !options.metaStatus && !options.forbidden) await page.locator(".ic-card").first().waitFor();
     return { page, context, errors, control };
   }
   async function idle(page: Page, count: number) {
     await page.waitForFunction(expected => document.querySelector("#ic-count")?.textContent === `Найдено: ${expected} из 30` &&
       document.querySelector("#ic-results")?.getAttribute("aria-busy") === "false", count);
   }
+  it("hides catalogue navigation and blocks UI boot for non-admin staff", async () => {
+    const { page, context, errors } = await open({ role: "manager", forbidden: true, mobile: true });
+    try {
+      await page.getByText("Раздел доступен только администратору для тестирования.", { exact: true }).waitFor();
+      assert.equal(await page.locator('a[href="/internal-catalog"]').count(), 0);
+      assert.equal(await page.locator(".ic-card").count(), 0);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
   it("shows opt-in covers/gallery with pinned same-origin URLs and mobile-safe layout", async () => {
     const products = catalogueFixture();
     products[0].files.push({ guid: fixtureGuid(301), name: 'Фото "2" <без HTML>', path: "second.png" });

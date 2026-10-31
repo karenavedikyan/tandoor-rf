@@ -22,6 +22,7 @@ import { createAccessAdminRouter, createAccessRouter } from "./access/router";
 import { createAdminClientsRouter } from "./clients/admin-onec-update-router";
 import { createClientsRouter } from "./clients/router";
 import { createInternalCatalogRouter } from "./internal-catalog/router";
+import { internalCatalogAccess } from "./internal-catalog/access";
 import { createWorkRouter } from "./work/router";
 import { createTanTrackerRouter } from "./tan-tracker/router";
 import { createTanbotTelegramAdminRouter } from "./tanbot-telegram/admin-router";
@@ -323,8 +324,9 @@ export function createApp(): express.Application {
   app.get("/clients/:guid/catalog", (_req: Request, res: Response) => {
     sendHtmlPage(res, publicDir, "client-catalog-workspace.html");
   });
-  app.get("/internal-catalog", (_req: Request, res: Response) => {
-    sendHtmlPage(res, publicDir, "internal-catalog.html");
+  app.get(["/internal-catalog", "/internal-catalog.html"], ...internalCatalogAccess, (_req: Request, res: Response) => {
+    // Outside public: encoded/static aliases cannot bypass the admin gate.
+    res.sendFile(path.resolve(__dirname, "../server/pages/internal-catalog.html"));
   });
 
   app.get("/clients/:guid", (_req: Request, res: Response) => {

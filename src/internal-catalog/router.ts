@@ -1,17 +1,13 @@
 import express from "express";
-import { attachAccessContext, requireClientReadAccess } from "../access/middleware";
-import { requireAuth } from "../middleware/auth";
-import { requireDatabaseReady } from "../middleware/database";
 import { requirePool } from "../db/pool";
-import { setNoStore } from "../http/no-store";
+import { internalCatalogAccess } from "./access";
 import { GUID, normalizeSearch } from "./model";
 import { loadProduct, loadSnapshot, searchProducts } from "./repository";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "./images";
 
 export function createInternalCatalogRouter(): express.Router {
   const router = express.Router();
-  router.use((_req, res, next) => { setNoStore(res); next(); });
-  router.use(requireDatabaseReady, requireAuth, attachAccessContext, requireClientReadAccess);
+  router.use(...internalCatalogAccess);
   const wrap = (handler: (req: express.Request, res: express.Response) => Promise<void>): express.RequestHandler =>
     (req, res, next) => { void handler(req, res).catch(next); };
   function invalid(res: express.Response, message = "Проверьте параметры поиска.") {

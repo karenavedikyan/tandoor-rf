@@ -284,8 +284,9 @@ describe("legacy shell DOM", () => {
     assert.ok(app.classList.contains("sidebar-collapsed"));
     assert.ok(sidebar.classList.contains("is-collapsed"));
     assert.ok(document.querySelector(".legacy-topbar__logo"));
-    assert.equal(document.querySelectorAll(".legacy-sidebar__nav a").length, 4);
-    assert.equal(document.querySelector('a[href="/internal-catalog"]')?.textContent?.trim(), "Каталог продукции");
+    assert.equal(document.querySelectorAll(".legacy-sidebar__nav a").length, 3);
+    // No authenticated admin was mounted in this fixture: the pilot must stay hidden.
+    assert.equal(document.querySelector('a[href="/internal-catalog"]'), null);
     assert.equal(collapseBtnHiddenOnMobile(document), false);
   });
 

@@ -220,8 +220,8 @@
     if (oldKey !== filterKey()) loadList(false);
   });
   shell.mountAuthenticatedShell("internal-catalog", function (user, reason) {
-    if (!user || reason) {
-      state("Каталог недоступен", "Войдите в личный кабинет сотрудника. Если ошибка повторяется, проверьте соединение или обратитесь к администратору.", false);
+    if (!user || reason || user.role !== "admin") {
+      state("Каталог недоступен", "Раздел доступен только администратору для тестирования.", false);
       return;
     }
     boot();

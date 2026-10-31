@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { USER_ROLES } from "../../src/shared/user";
+import { parseSessionToken } from "../../src/auth/cookie";
+import { resolveSessionUser } from "../../src/auth/session";
+import { setSessionPreviewUser } from "../../src/access/preview-service";
 import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -17,6 +21,8 @@ const ORIGIN = "http://127.0.0.1:3000";
 describe("internal catalogue API and import isolation", { concurrency: false }, () => {
   let pool: Pool, app: ReturnType<(typeof import("../../src/server"))["createApp"]>, cookie: string, staffCookie: string, deniedCookie: string, snapshotId: string;
   let imageRoot: string;
+  let staffId: string, adminId: string;
+  const nonAdminCookies: string[] = [];
   const originalImageRoot = process.env.INTERNAL_CATALOG_IMAGE_SOURCE_DIR;
   before(async () => {
     const databaseUrl = getIntegrationDatabaseUrl();
@@ -29,6 +35,7 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
       await sharp({ create: { width: 20, height: 10, channels: 3, background: "#426428" } }).jpeg().toBuffer());
     const admin = await createTestUser({ databaseUrl, email: "catalog-admin@test.local", fullName: "Catalog Admin", password: "StrongPass123!", role: "admin" });
     const staff = await createTestUser({ databaseUrl, email: "catalog-staff@test.local", fullName: "Catalog Staff", password: "StrongPass123!", role: "rop" });
+    staffId = staff.id; adminId = admin.id;
     await linkUserToEmployee({ databaseUrl, userId: staff.id, employeeId: fixtureGuid(500), confirmedByUserId: admin.id });
     await createTestUser({ databaseUrl, email: "unlinked@test.local", fullName: "External User", password: "StrongPass123!", role: "manager" });
     app = (await import("../../src/server")).createApp();
@@ -38,6 +45,12 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
       return (result.headers["set-cookie"]?.[0] ?? "").split(";")[0];
     }
     cookie = await login("catalog-admin@test.local"); staffCookie = await login("catalog-staff@test.local"); deniedCookie = await login("unlinked@test.local");
+    nonAdminCookies.push(staffCookie, deniedCookie);
+    for (const role of USER_ROLES.filter(role => !["admin", "rop", "manager"].includes(role))) {
+      const email = `catalog-${role}@test.local`;
+      await createTestUser({ databaseUrl, email, fullName: role, password: "StrongPass123!", role });
+      nonAdminCookies.push(await login(email));
+    }
   });
   after(async () => {
     if (originalImageRoot === undefined) delete process.env.INTERNAL_CATALOG_IMAGE_SOURCE_DIR;
@@ -59,6 +72,44 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
       assert.equal(denied.body.snapshot, undefined);
     }
   });
+  it("limits HTML, API and photos to admins, including every other business role", async () => {
+    const paths = ["/internal-catalog", "/internal-catalog.html", "/api/internal-catalog/meta",
+      "/api/internal-catalog/products", "/api/internal-catalog/products/" + fixtureGuid(1),
+      "/api/internal-catalog/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300)];
+    for (const path of paths) {
+      assert.equal((await request(app).get(path)).status, 401, path);
+      for (const denied of nonAdminCookies) {
+        const result = await request(app).get(path).set("Cookie", denied);
+        assert.equal(result.status, 403, path);
+        assert.match(result.headers["cache-control"], /no-store/);
+      }
+    }
+    for (const path of ["/internal-catalog", "/internal-catalog.html"]) {
+      const page = await request(app).get(path).set("Cookie", cookie);
+      assert.equal(page.status, 200); assert.match(page.text, /Каталог продукции/);
+      assert.match(page.headers["cache-control"], /no-store/);
+    }
+    for (const path of ["/%69nternal-catalog.html", "/x/%2e%2e/internal-catalog.html", "/internal-catalog.html/"]) {
+      assert.notEqual((await request(app).get(path)).status, 200, path);
+      assert.notEqual((await request(app).get(path).set("Cookie", staffCookie)).status, 200, path);
+    }
+  });
+  it("denies admin preview sessions and rechecks role changes with the same issued session", async () => {
+    const session = await resolveSessionUser(parseSessionToken(cookie)!); assert.ok(session);
+    await setSessionPreviewUser(session.sessionId, staffId);
+    try {
+      for (const path of ["/internal-catalog", "/internal-catalog.html", "/api/internal-catalog/meta",
+        "/api/internal-catalog/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300)]) {
+        assert.equal((await request(app).get(path).set("Cookie", cookie)).status, 403, path);
+      }
+    } finally { await setSessionPreviewUser(session.sessionId, null); }
+    await pool.query("UPDATE users SET role='director' WHERE id=$1", [adminId]);
+    try {
+      assert.equal((await get("/meta")).status, 403);
+      assert.equal((await request(app).get("/internal-catalog").set("Cookie", cookie)).status, 403);
+    } finally { await pool.query("UPDATE users SET role='admin' WHERE id=$1", [adminId]); }
+    assert.equal((await get("/meta")).status, 200);
+  });
   it("imports into separate tables, preserving existing XML state/counts exactly; same hash is a no-op", async () => {
     const before = await pool.query("SELECT * FROM onec_catalog_state");
     const count = await pool.query("SELECT COUNT(*) FROM onec_catalog_products");
@@ -73,7 +124,7 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
   });
   it("searches names, article, GUID, multiple words and ё without interpreting wildcards", async () => {
     const staffResult = await request(app).get("/api/internal-catalog/products").set("Cookie", staffCookie);
-    assert.equal(staffResult.status, 200); assert.equal(staffResult.body.total, 30);
+    assert.equal(staffResult.status, 403);
     for (const q of ["ЕЛКА", "100%_", "елка A/B", fixtureGuid(1)]) {
       const res = await get("/products").query({ q, version: snapshotId });
       assert.equal(res.status, 200); assert.equal(res.body.total, 1, q); assert.equal(res.body.items[0].guid, fixtureGuid(1));
@@ -110,7 +161,7 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     process.env.INTERNAL_CATALOG_IMAGE_SOURCE_DIR = imageRoot;
     try {
       assert.equal((await get("/meta")).body.imagesConfigured, true);
-      const photo = await request(app).get("/api/internal-catalog" + url).set("Cookie", staffCookie).query({ version: snapshotId });
+      const photo = await request(app).get("/api/internal-catalog" + url).set("Cookie", cookie).query({ version: snapshotId });
       assert.equal(photo.status, 200); assert.match(photo.headers["content-type"], /image\/webp/);
       assert.match(photo.headers["cache-control"], /no-store/);
       assert.equal(photo.headers["x-content-type-options"], "nosniff");
@@ -150,13 +201,14 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     try {
       assert.equal((await get("/meta")).body.imagesConfigured, true);
       const url = "/api/internal-catalog/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300);
-      const first = await request(app).get(url).set("Cookie", staffCookie).query({ version: snapshotId });
+      const first = await request(app).get(url).set("Cookie", cookie).query({ version: snapshotId });
       assert.equal(first.status, 200);
       assert.equal((await sharp(first.body).metadata()).format, "webp");
       assert.match(first.headers["cache-control"], /no-store/);
       assert.equal(first.headers["x-content-type-options"], "nosniff");
       // Repeated request uses the preview cache but never bypasses middleware/file binding.
       assert.equal((await request(app).get(url).set("Cookie", cookie).query({ version: snapshotId })).status, 200);
+      assert.equal((await request(app).get(url).set("Cookie", staffCookie).query({ version: snapshotId })).status, 403);
       assert.equal((await request(app).get(url)).status, 401);
       assert.equal((await request(app).get(url).set("Cookie", deniedCookie)).status, 403);
       assert.equal((await get("/products/" + fixtureGuid(2) + "/images/" + fixtureGuid(300))).status, 404);
