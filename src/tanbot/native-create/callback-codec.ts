@@ -17,6 +17,7 @@ export type NativeCreateCallbackAction =
   | "menu"
   | "menu_create"
   | "menu_my"
+  | "menu_resume"
   | "recipient_ext_tel"
   | "recipient_ext_next"
   | "recipient_ext_keep"
@@ -39,6 +40,7 @@ const ACTION_CODE: Record<NativeCreateCallbackAction, string> = {
   photo_view: "c",
   menu_create: "e",
   menu_my: "f",
+  menu_resume: "k",
   recipient_ext_tel: "h",
   recipient_ext_next: "g",
   recipient_ext_keep: "i",

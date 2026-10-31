@@ -8,10 +8,20 @@ export type NativeCreateUi = {
   maxInlineButtons?: MaxInlineButton[][];
 };
 
-export function menuReplyKeyboard(): Record<string, unknown> {
+export function menuReplyKeyboard(options: { showContinue?: boolean } = {}): Record<string, unknown> {
+  const rows: Array<Array<{ text: string }>> = [
+    [{ text: "Оформить передачу" }],
+    [{ text: "Мои передачи" }],
+  ];
+  if (options.showContinue) {
+    rows.push([{ text: "Продолжить оформление" }]);
+  }
+  rows.push([{ text: "Меню" }]);
   return {
-    keyboard: [[{ text: "Мои передачи" }, { text: "Создать передачу" }]],
+    keyboard: rows,
     resize_keyboard: true,
+    is_persistent: true,
+    one_time_keyboard: false,
   };
 }
 
@@ -51,16 +61,30 @@ const NAV: BtnDef[] = [
   { label: "Меню", action: "menu" },
 ];
 
-/** MAX/TG inline entry when reply keyboard is unavailable (MAX). */
-export function buildMainMenuInline(channel: "telegram" | "max"): NativeCreateUi {
+/** MAX inline main menu; Telegram main menu uses reply keyboard only. */
+export function buildMainMenuInline(
+  channel: "telegram" | "max",
+  resume?: { draftId: string; revision: number },
+): NativeCreateUi {
   const draftId = NATIVE_MENU_DRAFT_HEX;
   const primary: BtnDef[] = [
-    { label: "Создать передачу", action: "menu_create" },
+    { label: "Оформить передачу", action: "menu_create" },
     { label: "Мои передачи", action: "menu_my" },
   ];
-  return channel === "telegram"
-    ? { telegramInlineKeyboard: [tgRow(draftId, MENU_REVISION, primary)] }
-    : { maxInlineButtons: [maxRow(draftId, MENU_REVISION, primary)] };
+  if (channel === "telegram") {
+    const rows: BtnDef[][] = [primary, [{ label: "Меню", action: "menu" }]];
+    return { telegramInlineKeyboard: rows.map((row) => tgRow(draftId, MENU_REVISION, row)) };
+  }
+  const maxPrimary: MaxInlineButton[] = maxRow(draftId, MENU_REVISION, primary);
+  if (resume) {
+    const resumePayload = buildNativeCreateCallback("menu_resume", resume.draftId, resume.revision);
+    if (resumePayload) {
+      maxPrimary.unshift({ type: "callback", text: "Продолжить оформление", payload: resumePayload });
+    }
+  }
+  return {
+    maxInlineButtons: [maxPrimary, maxRow(draftId, MENU_REVISION, [{ label: "Меню", action: "menu" }])],
+  };
 }
 
 export function buildStepUi(

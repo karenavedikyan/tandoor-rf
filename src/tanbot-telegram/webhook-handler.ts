@@ -320,9 +320,34 @@ async function processParsedUpdate(
     } else if (command.startsWith("/start")) {
       const lkUrl = `${config.appOrigin}/profile`;
       if (!update.startPayload) {
-        const account = await findAccountByTelegramUserId(client, update.telegramUserId);
-        const { menuReplyKeyboard } = await import("../tanbot/native-create/keyboards");
-        reply = {
+        if (isExternalMessengerFeatureEnabled()) {
+          const { tryNativeCreateTelegramMessage } = await import("../tanbot/native-create/adapters");
+          const native = await tryNativeCreateTelegramMessage(client, {
+            chatId: update.chatId,
+            telegramUserId: update.telegramUserId,
+            text: "/start",
+            privateDialogOk: true,
+          });
+          if (native) {
+            const { nativeTelegramReplyExtra } = await import("../tanbot/native-create/adapters");
+            const linkedStaff = await findAccountByTelegramUserId(client, update.telegramUserId);
+            reply = {
+              chatId: update.chatId,
+              text: native.text,
+              replyMarkup: native.replyMarkup,
+              replyExtra: nativeTelegramReplyExtra(native, {
+                messengerChatId: update.chatId.toString(),
+                messengerUserId: update.telegramUserId.toString(),
+                actor: linkedStaff ? "staff" : "external",
+                channel: "telegram",
+              }),
+            };
+          }
+        }
+        if (!reply) {
+          const account = await findAccountByTelegramUserId(client, update.telegramUserId);
+          const { menuReplyKeyboard } = await import("../tanbot/native-create/keyboards");
+          reply = {
             chatId: update.chatId,
             text: buildMessengerPlainStartReply({
               channelLabel: "Telegram",
@@ -332,6 +357,7 @@ async function processParsedUpdate(
             }),
             ...(account ? { replyMarkup: menuReplyKeyboard() } : {}),
           };
+        }
       } else {
         const outcome = await consumeStartTokenForTelegramUser(
           pool,
