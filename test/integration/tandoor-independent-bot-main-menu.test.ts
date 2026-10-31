@@ -239,8 +239,11 @@ for (const channel of ["max", "telegram"] as const) {
       assert.equal((await draft(a))?.step, "item");
       r = await send(a, { text: "Не потерять документы меню" });
       r = await send(a, { file: true }); assert.equal((await snapshot(a)).files.length, 1);
+      const oldWizardMenu = button(r, /^Меню$/u);
       const frozen = await snapshot(a), beforeCounts = await counts();
       r = await click(a, r, /^Меню$/u); main(a, r, true);
+      assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
+      r = await send(a, { start: true }); main(a, r, true);
       assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
       for (const command of ["/start", "/menu", "Меню"]) {
         r = await send(a, { text: command }); main(a, r, true);
@@ -259,6 +262,14 @@ for (const channel of ["max", "telegram"] as const) {
       const recipient = await snapshot(a);
       r = await send(a, { text: "/start" }); main(a, r, true);
       assert.deepEqual(await snapshot(a), recipient, "Start must not become recipient search/phone");
+      r = await send(a, { callback: oldWizardMenu.callback_data ?? oldWizardMenu.payload });
+      main(a, r, true);
+      assert.deepEqual(await snapshot(a), recipient, "old Menu remains pure and usable after wizard revision changed");
+      r = await send(a, oldResume.callback_data ?? oldResume.payload
+        ? { callback: oldResume.callback_data ?? oldResume.payload } : { text: oldResume.text });
+      button(r, /^Отмена$/u);
+      assert.deepEqual(await snapshot(a), recipient, "old Continue renders current owned step, not an old revision");
+      r = await send(a, { text: "Меню" }); main(a, r, true);
       const nonSessionCounts = await counts(false);
       r = await click(a, r, /^Мои передачи$/u);
       assert.deepEqual(await snapshot(a), recipient);
