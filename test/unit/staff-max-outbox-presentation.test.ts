@@ -29,6 +29,7 @@ describe("staff MAX outbox presentation", () => {
       ORIGIN,
     );
     assert.match(delivery.text, /одноразовый код приёма/i);
+    assert.match(delivery.text, /когда получите предмет в руки/i);
     assert.ok(!/\d{6}/.test(delivery.text));
     assert.equal(delivery.inlineButtons?.length, 1);
     assert.equal(delivery.inlineButtons?.[0]?.length, 1);
