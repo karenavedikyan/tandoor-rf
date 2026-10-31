@@ -146,8 +146,10 @@ async function counts() {
     (SELECT count(*) FROM tt_handoff_codes)::int codes,
     (SELECT count(*) FROM tt_transfer_invitations)::int invitations,
     (SELECT count(*) FROM tt_external_person_verifications)::int verifications,
+    (SELECT count(*) FROM tt_external_persons)::int persons,
     (SELECT count(*) FROM tt_audit_log)::int audit,
-    (SELECT count(*) FROM tanbot_notification_outbox)::int notices`)).rows[0];
+    (SELECT count(*) FROM tanbot_notification_outbox)::int notices,
+    (SELECT count(*) FROM tt_external_person_message_outbox)::int external_notices`)).rows[0];
 }
 async function start(a: Actor) {
   await send(a, { text: "Создать передачу" });
