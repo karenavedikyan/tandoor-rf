@@ -20,6 +20,7 @@ import {
 import { tanTrackerCanWrite } from "../../tan-tracker/guards";
 import type { NativeCreateDraftPayload } from "./draft-scope";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
+import { externalUnavailableMessage } from "./recipient-unified";
 
 async function stageDraftFilesForStaff(
   client: PoolClient,
@@ -204,14 +205,21 @@ export async function confirmNativeExternalDraft(
   }
 }
 
+export type NativeExternalToExternalConfirmResult = {
+  publicCode: string;
+  forwardInvitationText?: string;
+};
+
 export async function confirmNativeExternalToExternalDraft(
   client: PoolClient,
   input: {
     personId: string;
     externalPartyId: string;
     draftId: string;
+    channel: "telegram" | "max";
+    messengerChatKey: string;
   },
-): Promise<{ publicCode: string }> {
+): Promise<NativeExternalToExternalConfirmResult> {
   const idempotencyKey = `native-ext2ext:${input.draftId}`;
 
   const person = (
@@ -230,16 +238,27 @@ export async function confirmNativeExternalToExternalDraft(
       idempotency_key: string | null;
       confirmed_transfer_id: string | null;
       person_id: string | null;
+      channel: string;
+      messenger_chat_id: string;
+      step: string;
     }>(
-      `SELECT payload, idempotency_key, confirmed_transfer_id, person_id::text
+      `SELECT payload, idempotency_key, confirmed_transfer_id, person_id::text, channel, messenger_chat_id, step
        FROM tt_external_request_drafts WHERE id = $1::uuid FOR UPDATE`,
       [input.draftId],
     )
   ).rows[0];
   if (!draft) throw Object.assign(new Error("Черновик не найден."), { http: 404 });
-  if (draft.person_id && draft.person_id !== input.personId) {
+  if (!draft.person_id || draft.person_id !== input.personId) {
     throw Object.assign(new Error("Черновик принадлежит другой сессии."), { http: 403 });
   }
+  if (draft.channel !== input.channel || draft.messenger_chat_id !== input.messengerChatKey) {
+    throw Object.assign(new Error("Черновик недоступен в этом чате."), { http: 403 });
+  }
+  const payload = (draft.payload ?? {}) as NativeCreateDraftPayload;
+  if (payload.draftOrigin !== "native_bot" || payload.actor !== "external") {
+    throw Object.assign(new Error("Черновик недоступен."), { http: 403 });
+  }
+
   if (draft.confirmed_transfer_id) {
     const existing = await client.query<{ public_code: string }>(
       `SELECT public_code FROM tt_transfers WHERE id = $1 LIMIT 1`,
@@ -249,14 +268,9 @@ export async function confirmNativeExternalToExternalDraft(
       return { publicCode: existing.rows[0].public_code };
     }
   }
-  if (draft.idempotency_key === idempotencyKey && draft.confirmed_transfer_id) {
-    const existing = await client.query<{ public_code: string }>(
-      `SELECT public_code FROM tt_transfers WHERE id = $1 LIMIT 1`,
-      [draft.confirmed_transfer_id],
-    );
-    if (existing.rows[0]) {
-      return { publicCode: existing.rows[0].public_code };
-    }
+
+  if (draft.step !== "summary") {
+    throw Object.assign(new Error("Заполните все шаги заявки."), { http: 409 });
   }
 
   const open = await countOpenExternalRequests(client, input.externalPartyId);
@@ -264,7 +278,6 @@ export async function confirmNativeExternalToExternalDraft(
     throw Object.assign(new Error("Достигнут лимит открытых заявок (5)."), { http: 409 });
   }
 
-  const payload = draft.payload ?? {};
   const item = String(payload.item ?? "").trim();
   const phoneRaw = payload.externalRecipientPhone?.trim() ?? "";
   const name = payload.externalRecipientDisplayName?.trim() ?? "";
@@ -294,7 +307,10 @@ export async function confirmNativeExternalToExternalDraft(
       phone: phoneE164,
     });
   } catch (err) {
-    if (err instanceof PhonePartyConflictError || err instanceof EmployeePhoneCollisionError) {
+    if (err instanceof EmployeePhoneCollisionError) {
+      throw Object.assign(new Error(externalUnavailableMessage()), { http: 403 });
+    }
+    if (err instanceof PhonePartyConflictError) {
       throw Object.assign(err, { http: err.http });
     }
     throw err;
@@ -352,13 +368,24 @@ export async function confirmNativeExternalToExternalDraft(
       [publicCode, f.storage_key, f.file_name, f.mime_type, f.byte_size],
     );
   }
+
+  const forwardInvitationText = await buildExternalPendingInviteMessage(client, {
+    transferId: publicCode,
+    pendingPartyId: recipientPartyId,
+    handoffVersion: 1,
+    channel: input.channel,
+  });
+  if (!forwardInvitationText) {
+    throw Object.assign(new Error("Не удалось подготовить приглашение."), { http: 503 });
+  }
+
   await client.query(
     `UPDATE tt_external_request_drafts
-     SET idempotency_key = $2, confirmed_transfer_id = $3, step = 'done', person_id = COALESCE(person_id, $4::uuid), updated_at = NOW()
+     SET idempotency_key = $2, confirmed_transfer_id = $3, step = 'done', person_id = $4::uuid, updated_at = NOW()
      WHERE id = $1::uuid`,
     [input.draftId, idempotencyKey, publicCode, input.personId],
   );
-  return { publicCode };
+  return { publicCode, forwardInvitationText };
 }
 
 export async function confirmNativeExternalToExternalDraftWithSavepoint(
@@ -367,8 +394,10 @@ export async function confirmNativeExternalToExternalDraftWithSavepoint(
     personId: string;
     externalPartyId: string;
     draftId: string;
+    channel: "telegram" | "max";
+    messengerChatKey: string;
   },
-): Promise<{ publicCode: string }> {
+): Promise<NativeExternalToExternalConfirmResult> {
   await client.query("SAVEPOINT native_ext2ext_confirm");
   try {
     const result = await confirmNativeExternalToExternalDraft(client, input);

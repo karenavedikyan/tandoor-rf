@@ -315,7 +315,6 @@ for (const channel of ["max", "telegram"] as const) {
     let r = await send(a, { text: absentPhone });
     r = await send(a, { text: "Имя из моей записи" });
     r = await advanceToDue(a, r);
-    r = await send(a, { callback: button(r, /без срока/iu) });
     assert.ok(r.text.includes("Имя из моей записи"));
     const id = await create(a, r, "Имя из моей записи");
     const transfer = (await getPool()!.query(

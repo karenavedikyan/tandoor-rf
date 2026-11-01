@@ -9,6 +9,7 @@ import {
   discardNativeBotDraft,
   ensureNativeBotDraft,
   loadNativeBotDraft,
+  nativeBotDraftChatKey,
   stripTransientRecipientDraftFields,
   type NativeCreateDraftPayload,
 } from "./draft-scope";
@@ -912,34 +913,25 @@ export async function handleNativeCreateCallback(
           personId: ctx.personId,
           externalPartyId: partyId,
           draftId: id,
+          channel: ctx.channel,
+          messengerChatKey: nativeBotDraftChatKey({
+            channel: ctx.channel,
+            messengerChatId: ctx.messengerChatId,
+            actor: "external",
+          }),
         });
         const { nativeCompletionMenuReply } = await import("./main-menu");
         const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
-        const { buildExternalPendingInviteMessage } = await import("./invitation-handoff");
-        const pending = await client.query<{ pending_party_id: string; handoff_version: number }>(
-          `SELECT t.pending_party_id::text, t.handoff_version
-           FROM tt_transfers t WHERE t.id = $1`,
-          [created.publicCode],
-        );
-        const pRow = pending.rows[0];
         const status = formatNotificationTransferState(await buildNotificationTransferState(client, created.publicCode));
         const { NATIVE_SENDER_HANDOFF_GUIDANCE: SENDER_HANDOFF_GUIDANCE } = await import(
           "../../tan-tracker/sender-handoff-guidance"
         );
-        let resultText = `Передача создана: ${created.publicCode}.\n\n${status}\n\nСледом придёт готовое приглашение. Перешлите его получателю целиком.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`;
-        let forwardInvitationText: string | undefined;
-        if (pRow?.pending_party_id) {
-          const invite = await buildExternalPendingInviteMessage(client, {
-            transferId: created.publicCode,
-            pendingPartyId: pRow.pending_party_id,
-            handoffVersion: pRow.handoff_version,
-            channel: ctx.channel,
-          });
-          if (invite) forwardInvitationText = invite;
-        }
+        const resultText = created.forwardInvitationText
+          ? `Передача создана: ${created.publicCode}.\n\n${status}\n\nСледом придёт готовое приглашение. Перешлите его получателю целиком.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`
+          : `Передача уже создана: ${created.publicCode}.\n\n${status}\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`;
         return appendReceiptEntryChoices(client, ctx, {
           ...await nativeCompletionMenuReply(client, ctx, resultText),
-          ...(forwardInvitationText ? { forwardInvitationText } : {}),
+          ...(created.forwardInvitationText ? { forwardInvitationText: created.forwardInvitationText } : {}),
         }, created.publicCode);
       }
     } catch (err: unknown) {

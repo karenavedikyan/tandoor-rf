@@ -65,6 +65,10 @@ export async function assertPublicHolderPendingEligible(
   }
   if (allowed.has(pendingPartyId)) return;
 
+  const creatorUserId = await loadPublicHolderCreatorUserId(client, transferId);
+  if (!creatorUserId) {
+    throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
+  }
   const ext = (
     await client.query<{ id: string }>(
       `SELECT id::text FROM tt_parties WHERE id = $1::uuid AND kind = 'external' LIMIT 1`,
@@ -73,12 +77,30 @@ export async function assertPublicHolderPendingEligible(
   ).rows[0];
   if (ext) return;
 
-  const creatorUserId = await loadPublicHolderCreatorUserId(client, transferId);
-  if (!creatorUserId) {
+  throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
+}
+
+/** After phone resolver for external creator (no staff user): pending must be a new/canonical external party. */
+export async function assertNullCreatorPhoneResolvedPending(
+  client: Db,
+  holderPartyId: string,
+  pendingPartyId: string,
+): Promise<void> {
+  if (!isUuid(pendingPartyId)) {
+    throw Object.assign(new Error("Некорректный получатель."), { http: 400 });
+  }
+  if (pendingPartyId === holderPartyId) {
+    throw Object.assign(new Error("Нельзя передать самому себе."), { http: 400 });
+  }
+  const row = (
+    await client.query<{ kind: string }>(
+      `SELECT kind FROM tt_parties WHERE id = $1::uuid LIMIT 1`,
+      [pendingPartyId],
+    )
+  ).rows[0];
+  if (row?.kind !== "external") {
     throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
   }
-
-  throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
 }
 
 export async function resolvePublicHolderPendingPartyId(
@@ -93,7 +115,11 @@ export async function resolvePublicHolderPendingPartyId(
     const id = creatorUserId
       ? await resolveExternalRecipientPartyId(client, creatorUserId, external)
       : await resolveExternalRecipientPartyIdForExternalActor(client, external);
-    await assertPublicHolderPendingEligible(client, transferId, holderPartyId, id);
+    if (creatorUserId) {
+      await assertPublicHolderPendingEligible(client, transferId, holderPartyId, id);
+    } else {
+      await assertNullCreatorPhoneResolvedPending(client, holderPartyId, id);
+    }
     return id;
   }
   const resolved = String(pendingPartyId ?? "").trim();
