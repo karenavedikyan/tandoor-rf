@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import type { TanTrackerOrderDto, TanTrackerPersonalRecipientViewDto } from "./types";
+import { orderParticipantIds } from "./scope";
 
 export const TT_PERSONAL_RECIPIENT_LABEL_SET = "personal_recipient_label_set";
 export const TT_PERSONAL_RECIPIENT_LABEL_RESET = "personal_recipient_label_reset";
@@ -23,6 +24,9 @@ export class PersonalRecipientNameValidationError extends Error {
 
 /** Trim, collapse spaces, 1..120 chars, no ASCII control chars. */
 export function validatePersonalRecipientName(raw: unknown): string {
+  if (raw !== null && raw !== undefined && typeof raw !== "string") {
+    throw new PersonalRecipientNameValidationError("Имя получателя должно быть текстом.");
+  }
   const collapsed = String(raw ?? "")
     .replace(/[\u0000-\u001F\u007F]/g, "")
     .trim()
@@ -34,6 +38,30 @@ export function validatePersonalRecipientName(raw: unknown): string {
     throw new PersonalRecipientNameValidationError("Имя получателя не длиннее 120 символов.");
   }
   return collapsed;
+}
+
+/** Optional personal name on create/API; rejects non-string before trim. */
+export function optionalPersonalRecipientName(raw: unknown): string | undefined {
+  if (raw == null || raw === "") return undefined;
+  return validatePersonalRecipientName(raw);
+}
+
+const TT_PERSONAL_RECIPIENT_LABEL_LOCK_NS = 902_451_022;
+
+function personalLabelLockKey(ownerPartyId: string, transferId: string, recipientPartyId: string): string {
+  return `${ownerPartyId}:${transferId}:${recipientPartyId}`;
+}
+
+async function lockPersonalRecipientLabelRow(
+  client: PoolClient,
+  ownerPartyId: string,
+  transferId: string,
+  recipientPartyId: string,
+): Promise<void> {
+  await client.query(`SELECT pg_advisory_xact_lock($1, hashtext($2))`, [
+    TT_PERSONAL_RECIPIENT_LABEL_LOCK_NS,
+    personalLabelLockKey(ownerPartyId, transferId, recipientPartyId),
+  ]);
 }
 
 type Db = Pool | PoolClient;
@@ -56,9 +84,15 @@ export async function insertPersonalRecipientLabelSet(
     editorUserId: input.actorUserId,
     editorDisplayName: input.editorDisplayName.slice(0, 200),
   };
+  await lockPersonalRecipientLabelRow(
+    client,
+    input.ownerPartyId,
+    input.transferId,
+    input.recipientPartyId,
+  );
   await client.query(
-    `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
-     VALUES ($1, $2::uuid, $3::uuid, $4, $5::jsonb)`,
+    `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail, created_at)
+     VALUES ($1, $2::uuid, $3::uuid, $4, $5::jsonb, clock_timestamp())`,
     [
       input.transferId,
       input.actorUserId,
@@ -84,9 +118,15 @@ export async function insertPersonalRecipientLabelReset(
     editorUserId: input.actorUserId,
     editorDisplayName: input.editorDisplayName.slice(0, 200),
   };
+  await lockPersonalRecipientLabelRow(
+    client,
+    input.ownerPartyId,
+    input.transferId,
+    input.recipientPartyId,
+  );
   await client.query(
-    `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
-     VALUES ($1, $2::uuid, $3::uuid, $4, $5::jsonb)`,
+    `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail, created_at)
+     VALUES ($1, $2::uuid, $3::uuid, $4, $5::jsonb, clock_timestamp())`,
     [
       input.transferId,
       input.actorUserId,
@@ -222,10 +262,15 @@ export async function loadPersonalRecipientLabelsForTransfers(
 }
 
 export function recipientPartyIdsForOrder(dto: TanTrackerOrderDto): string[] {
-  const ids = new Set<string>();
-  if (dto.finalRecipientId) ids.add(dto.finalRecipientId);
-  if (dto.pendingId) ids.add(dto.pendingId);
-  return [...ids];
+  return [...orderParticipantIds(dto)];
+}
+
+export function externalShellPartyCanAccessOrder(
+  partyId: string,
+  dto: TanTrackerOrderDto,
+): boolean {
+  const slots = [dto.createdById, dto.holderId, dto.pendingId, dto.finalRecipientId];
+  return slots.some((id) => id === partyId);
 }
 
 export function attachPersonalRecipientViewsToOrder(
@@ -234,7 +279,8 @@ export function attachPersonalRecipientViewsToOrder(
   canonicalNames: Map<string, string>,
 ): void {
   const views: Record<string, TanTrackerPersonalRecipientViewDto> = {};
-  for (const partyId of recipientPartyIdsForOrder(dto)) {
+  const partyIds = new Set<string>([...labels.keys(), ...recipientPartyIdsForOrder(dto)]);
+  for (const partyId of partyIds) {
     const canonical = canonicalNames.get(partyId)?.trim() || "—";
     const label = labels.get(partyId);
     if (!label?.personalName) {
@@ -279,7 +325,8 @@ export async function enrichOrdersWithPersonalRecipientLabels(
   for (const dto of orders) {
     const labels = labelMaps.get(dto.id) ?? new Map<string, ResolvedPersonalRecipientLabel>();
     const canonicalNames = new Map<string, string>();
-    for (const pid of recipientPartyIdsForOrder(dto)) {
+    const partyIds = new Set<string>([...labels.keys(), ...recipientPartyIdsForOrder(dto)]);
+    for (const pid of partyIds) {
       canonicalNames.set(pid, contactNameByPartyId.get(pid)?.trim() || "—");
     }
     attachPersonalRecipientViewsToOrder(dto, labels, canonicalNames);
@@ -297,14 +344,19 @@ export async function maybeSavePersonalRecipientLabelOnCreate(
     personalNameRaw: string | null | undefined;
   },
 ): Promise<void> {
-  const raw = input.personalNameRaw?.trim();
-  if (!raw) return;
+  let personalName: string;
+  try {
+    personalName = optionalPersonalRecipientName(input.personalNameRaw) ?? "";
+  } catch {
+    return;
+  }
+  if (!personalName) return;
   await insertPersonalRecipientLabelSet(client, {
     transferId: input.transferId,
     ownerPartyId: input.ownerPartyId,
     actorUserId: input.actorUserId,
     recipientPartyId: input.recipientPartyId,
-    personalName: raw,
+    personalName,
     editorDisplayName: input.actorDisplayName,
   });
 }

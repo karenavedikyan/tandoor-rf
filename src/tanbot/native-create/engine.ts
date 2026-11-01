@@ -15,6 +15,12 @@ import {
 } from "./draft-scope";
 import { buildMainMenuInline, buildStepUi, menuReplyKeyboard } from "./keyboards";
 import {
+  boundRecipientPartyIdForPersonalLabel,
+  canonicalRecipientSummaryLine,
+  personalNameForNativeCreate,
+  syncPersonalLabelPartyBinding,
+} from "./personal-recipient-draft";
+import {
   draftIdMatchesHex,
   parseNativeCreateCallback,
   type ParsedNativeCreateCallback,
@@ -167,6 +173,12 @@ function stepPrompt(
       return "Выберите срок передачи.";
     case "edit":
       return "Что изменить?";
+    case "recipient_personal_name":
+      return (
+        "Имя получателя для меня.\n" +
+        "Видно только вам в этой передаче; приглашение и код используют имя из справочника.\n" +
+        `Справочное имя: ${canonicalRecipientSummaryLine(payload).replace(/\n/g, " ")}`
+      );
     case "summary":
       return formatSummary(payload, attachmentStats);
     default:
@@ -182,30 +194,16 @@ function formatSummary(
   const genericSummary = attachmentStats.pdfCount > 0 || attachmentStats.otherCount > 0;
   const due =
     payload.dueMode === "tomorrow" ? "завтра" : payload.dueMode === "none" ? "без срока" : "сегодня";
-  let recipient = "—";
-  let recipientPhone: string | undefined;
-  if (payload.actor === "external") {
-    const trustedName = payload.externalRecipientDisplayName?.trim();
-    recipient = trustedName
-      ? trustedName
-      : payload.externalRecipientPhone?.trim()
-        ? externalSummaryDisplayName(payload.externalRecipientPhone.trim())
-        : "—";
-    recipientPhone = payload.externalRecipientPhone?.trim();
-  } else {
-    recipient = payload.recipientDisplayName ?? payload.recipientExternal?.name ?? "—";
-    recipientPhone = payload.recipientExternal?.phone?.trim();
-  }
-  const recipientLine =
-    recipientPhone && payload.actor === "external"
-      ? `${recipient} (${recipientPhone})`
-      : recipientPhone && payload.recipientPartyId == null && payload.recipientUserId == null
-        ? `${recipient} (${recipientPhone})`
-        : recipient;
+  const recipientLine = canonicalRecipientSummaryLine(payload);
+  const personal = payload.recipientPersonalNameForMe?.trim();
+  const personalLine = personal
+    ? `• Имя для меня: ${personal}\n`
+    : "";
   return (
     "Проверьте данные:\n" +
     `• Предмет: ${payload.item ?? "—"}\n` +
-    `• Получатель: ${recipientLine}\n` +
+    `• Получатель (справочник): ${recipientLine}\n` +
+    personalLine +
     `• Комментарий: ${payload.comment?.trim() ? payload.comment : "—"}\n` +
     `• Срок: ${due}\n` +
     `${
@@ -328,6 +326,8 @@ export async function renderDraftPrompt(
     if (ext?.phone && ext.name?.trim()) {
       ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient_ext_phone");
     }
+  } else if (step === "recipient_personal_name") {
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "nav");
   }
   return {
     text,
@@ -505,6 +505,7 @@ async function pickRecipientByIndex(
     }
     const display =
       valid.fullName.replace(/\s*\(\+[^)]+\)\s*$/, "").trim() || valid.fullName;
+    syncPersonalLabelPartyBinding(payload, pick.userId);
     const nextPayload = await bumpDraftRevision(client, id, nextStep, {
       ...payload,
       recipientDisplayName: display,
@@ -520,6 +521,7 @@ async function pickRecipientByIndex(
   }
   const nextStep = payload.editReturnStep === "summary" ? "summary" : "due";
   clearExternalRecipientTarget(payload);
+  syncPersonalLabelPartyBinding(payload, pick.userId);
   const nextPayload = await bumpDraftRevision(client, id, nextStep, {
     ...payload,
     recipientDisplayName: pick.fullName,
@@ -665,6 +667,10 @@ export async function handleNativeCreateCallback(
             ? "comment"
             : step === "due"
               ? "recipient"
+              : step === "recipient_personal_name"
+                ? payload.personalNameReturnStep === "summary"
+                  ? "summary"
+                  : "summary"
               : step === "summary"
                 ? "due"
                 : step === "edit"
@@ -793,6 +799,21 @@ export async function handleNativeCreateCallback(
     }
     if (step === "edit" && parsed.arg) {
       const field = parsed.arg;
+      if (field === "personal_name") {
+        const bound = boundRecipientPartyIdForPersonalLabel(payload);
+        if (payload.actor === "staff" && !bound && !payload.recipientExternal?.phone) {
+          return navError("Сначала выберите получателя.", ctx.channel);
+        }
+        if (payload.actor === "external" && !payload.externalRecipientPhone?.trim()) {
+          return navError("Сначала укажите телефон получателя.", ctx.channel);
+        }
+        if (bound) syncPersonalLabelPartyBinding(payload, bound);
+        const nextPayload = await bumpDraftRevision(client, id, "recipient_personal_name", {
+          ...payload,
+          personalNameReturnStep: "summary",
+        });
+        return renderDraftPrompt(client, ctx.channel, id, "recipient_personal_name", nextPayload);
+      }
       if (field === "recipient") {
         payload.eligibleRecipients = [];
         payload.recipientPage = 0;
@@ -1048,6 +1069,19 @@ export async function handleNativeCreateMessage(
       return { ...rendered, text: `${handled.message}\n\n${rendered.text}` };
     }
     return rendered;
+  }
+
+  if (step === "recipient_personal_name") {
+    if (!trimmed) {
+      return navError("Введите имя (от 1 до 120 символов) или вернитесь назад.", ctx.channel);
+    }
+    payload.recipientPersonalNameForMe = trimmed.slice(0, 120);
+    const bound = boundRecipientPartyIdForPersonalLabel(payload);
+    if (bound) syncPersonalLabelPartyBinding(payload, bound);
+    const returnStep = payload.personalNameReturnStep === "summary" ? "summary" : "summary";
+    delete payload.personalNameReturnStep;
+    const nextPayload = await bumpDraftRevision(client, draft.id, returnStep, payload);
+    return renderDraftPrompt(client, ctx.channel, draft.id, returnStep, nextPayload);
   }
 
   if (step === "recipient_ext_name") {

@@ -23,8 +23,9 @@ for (const channel of ["max", "telegram"] as const) {
       assert.equal(callback, buildNativeCreateCallback("confirm", draftId, revision),
         "presentation change preserves canonical confirmation callback");
       assert.equal(rows.flat().filter(b => b.text === "Создать передачу").length, 1);
+      assert.equal(rows[1][0].text, "Имя для меня");
       if (photoCount) {
-        assert.deepEqual(rows[1].map(b => b.text),
+        assert.deepEqual(rows[2].map(b => b.text),
           Array.from({ length: photoCount }, (_, i) => `Фото ${i + 1}`));
       }
       assert.deepEqual(rows.at(-2)!.map(b => b.text), ["Изменить данные", "◀ Назад"]);

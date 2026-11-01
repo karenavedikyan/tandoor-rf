@@ -17,6 +17,10 @@ import type { NativeCreateDraftPayload } from "./draft-scope";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 import { resolveNativeExternalPendingPartyByPhone } from "./native-external-recipient-by-phone";
 import { maybeSavePersonalRecipientLabelOnCreate } from "../../tan-tracker/personal-recipient-label";
+import {
+  personalNameForNativeCreate,
+  syncPersonalLabelPartyBinding,
+} from "./personal-recipient-draft";
 
 async function stageDraftFilesForStaff(
   client: PoolClient,
@@ -132,11 +136,7 @@ export async function confirmNativeStaffDraft(
         finalRecipientExternal,
         stagingAttachmentIds: stagingIds,
         auditDetail: { source: "native_bot" },
-        finalRecipientPersonalName:
-          input.payload.recipientNameManual &&
-          (input.payload.recipientDisplayName?.trim() || input.payload.recipientExternal?.name?.trim())
-            ? input.payload.recipientDisplayName?.trim() || input.payload.recipientExternal?.name?.trim()
-            : undefined,
+        finalRecipientPersonalName: personalNameForNativeCreate(input.payload),
       },
     );
 
@@ -342,7 +342,9 @@ export async function confirmNativeExternalToExternalDraft(
       }),
     ],
   );
-  if (name) {
+  syncPersonalLabelPartyBinding(payload, recipientPartyId);
+  const personalOnly = personalNameForNativeCreate(payload);
+  if (personalOnly) {
     const personRow = (
       await client.query<{ display_name: string }>(
         `SELECT display_name FROM tt_external_persons WHERE id = $1::uuid`,
@@ -355,7 +357,7 @@ export async function confirmNativeExternalToExternalDraft(
       actorUserId: null,
       actorDisplayName: personRow?.display_name?.trim() || "Внешний участник",
       recipientPartyId,
-      personalNameRaw: name,
+      personalNameRaw: personalOnly,
     });
   }
   const files = await client.query<{ storage_key: string; file_name: string; mime_type: string; byte_size: string }>(

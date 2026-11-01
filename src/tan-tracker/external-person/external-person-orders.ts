@@ -6,10 +6,8 @@ import { registryCleanupActorFromExternalParty } from "../registry-cleanup/conte
 import { listRevokedParties, mapTransferToOrderDto } from "../repository";
 import { listAttachmentsForTransfers } from "../attachments";
 import { holderAccessTtlMs, signHolderAccess } from "../holder-access";
-import {
-  enrichOrdersWithPersonalRecipientLabels,
-  recipientPartyIdsForOrder,
-} from "../personal-recipient-label";
+import { enrichOrdersWithPersonalRecipientLabels } from "../personal-recipient-label";
+import { orderParticipantIds } from "../scope";
 
 const OPEN_HOLDER_STATUSES = new Set(["active", "waiting", "delivered"]);
 
@@ -90,7 +88,7 @@ export async function loadExternalPersonOrders(
       deleteActor,
       auditConfirmedIds,
     );
-    for (const pid of recipientPartyIdsForOrder(dto)) {
+    for (const pid of orderParticipantIds(dto as TanTrackerOrderDto)) {
       if (!contactNameByPartyId.has(pid)) {
         const pr = await pool.query<{ display_name: string }>(
           `SELECT display_name FROM tt_parties WHERE id = $1::uuid`,

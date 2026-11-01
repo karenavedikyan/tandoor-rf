@@ -243,7 +243,7 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
 .tt-personal-recipient-panel { max-width:420px; }
 .tt-personal-sheet-hint,.tt-wizard-personal-name-hint,.tt-wizard-recipient-canonical-hint { font-size:13px; color:var(--muted,var(--tt-muted)); margin:0 0 10px; line-height:1.4; }
 .tt-personal-sheet-meta,.tt-route-personal-meta { display:block; font-size:12px; color:var(--muted,var(--tt-muted)); margin:4px 0 8px; }
-.tt-route-personal-edit { margin:6px 0 8px; padding:0; border:0; background:transparent; color:var(--green); font-weight:600; font-size:13px; cursor:pointer; text-align:left; }
+.tt-route-personal-edit { margin:6px 0 8px; min-height:44px; padding:10px 0; border:0; background:transparent; color:var(--green); font-weight:600; font-size:13px; cursor:pointer; text-align:left; }
 .tt-personal-sheet-actions { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
 .tt-wizard-personal-name-field { margin-top:12px; }
 .tt-filter-chips { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }

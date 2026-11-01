@@ -14,7 +14,7 @@ import {
 } from "./repository";
 import { requireTanTrackerMutationAccess } from "./guards";
 import { resolveTanTrackerAuditUserId, resolveTanTrackerEffectiveUser } from "./effective-user";
-import { canViewOrder } from "./scope";
+import { canViewOrder, orderParticipantIds } from "./scope";
 import { loadPartyEmployeeMap } from "./party-employee-map";
 import { loadTanTrackerTeamEmployeeGuids } from "./team-scope";
 import { buildTanTrackerBootstrap } from "./service";
@@ -22,7 +22,7 @@ import {
   insertPersonalRecipientLabelReset,
   insertPersonalRecipientLabelSet,
   PersonalRecipientNameValidationError,
-  recipientPartyIdsForOrder,
+  externalShellPartyCanAccessOrder,
   validatePersonalRecipientName,
 } from "./personal-recipient-label";
 import { resolveExternalPersonAuth } from "./external-person/resolve-auth";
@@ -33,6 +33,27 @@ type LabelBody = {
   personalName?: string;
   reset?: boolean;
 };
+
+function parseLabelBody(raw: unknown): LabelBody {
+  if (raw === null || typeof raw !== "object") {
+    throw Object.assign(new Error("Некорректное тело запроса."), { http: 400 });
+  }
+  const b = raw as Record<string, unknown>;
+  if (b.recipientPartyId !== undefined && typeof b.recipientPartyId !== "string") {
+    throw Object.assign(new Error("Укажите получателя."), { http: 400 });
+  }
+  if (b.personalName !== undefined && typeof b.personalName !== "string") {
+    throw Object.assign(new Error("Имя получателя должно быть текстом."), { http: 400 });
+  }
+  if (b.reset !== undefined && typeof b.reset !== "boolean") {
+    throw Object.assign(new Error("Некорректный флаг сброса."), { http: 400 });
+  }
+  return {
+    recipientPartyId: b.recipientPartyId as string | undefined,
+    personalName: b.personalName as string | undefined,
+    reset: b.reset as boolean | undefined,
+  };
+}
 
 async function assertTransferRecipientAccess(
   client: import("pg").PoolClient,
@@ -63,9 +84,9 @@ async function assertTransferRecipientAccess(
     )
   ).rows[0];
   const dto = mapTransferToOrderDto(transferRow, timeline, revoked);
-  const allowedRecipients = new Set(recipientPartyIdsForOrder(dto));
-  if (!allowedRecipients.has(recipientPartyId)) {
-    throw Object.assign(new Error("Получатель не относится к этой передаче."), { http: 400 });
+  const participantIds = [...orderParticipantIds(dto)];
+  if (!participantIds.includes(recipientPartyId)) {
+    throw Object.assign(new Error("Участник не относится к этой передаче."), { http: 400 });
   }
   const teamGuids = access
     ? await loadTanTrackerTeamEmployeeGuids({
@@ -78,7 +99,7 @@ async function assertTransferRecipientAccess(
   if (!pool) {
     throw Object.assign(new Error("Сервис недоступен."), { http: 503 });
   }
-  const partyMap = await loadPartyEmployeeMap(pool, [...allowedRecipients]);
+  const partyMap = await loadPartyEmployeeMap(pool, participantIds);
   const ctx = {
     userId,
     role,
@@ -86,7 +107,11 @@ async function assertTransferRecipientAccess(
     actorPartyId: ownerPartyId,
     previewReadOnly: false,
   };
-  if (!canViewOrder(dto, ctx, [], teamGuids, externalActing, partyMap)) {
+  if (externalActing) {
+    if (!externalShellPartyCanAccessOrder(ownerPartyId, dto)) {
+      throw Object.assign(new Error("Нет доступа к этой передаче."), { http: 403 });
+    }
+  } else if (!canViewOrder(dto, ctx, [], teamGuids, false, partyMap)) {
     throw Object.assign(new Error("Нет доступа к этой передаче."), { http: 403 });
   }
   return { transferInternalId: row.id };
@@ -160,7 +185,15 @@ export async function lkPersonalRecipientLabelHandler(req: AccessRequest, res: R
     partyId = ensured.id;
   }
   const transferId = String(req.params.id ?? "").trim();
-  const body = req.body as LabelBody;
+  let body: LabelBody;
+  try {
+    body = parseLabelBody(req.body);
+  } catch (err) {
+    const http = (err as { http?: number }).http ?? 400;
+    const message = err instanceof Error ? err.message : "Некорректное тело запроса.";
+    res.status(http).json(apiError(ERROR_CODES.VALIDATION_ERROR, message));
+    return;
+  }
   const auditUserId = resolveTanTrackerAuditUserId(req.authUser!, gate.access);
   try {
     await applyLabelMutation(
@@ -212,7 +245,15 @@ export async function externalPersonalRecipientLabelHandler(req: Request, res: R
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Нет доступа к этой передаче."));
     return;
   }
-  const body = req.body as LabelBody;
+  let body: LabelBody;
+  try {
+    body = parseLabelBody(req.body);
+  } catch (err) {
+    const http = (err as { http?: number }).http ?? 400;
+    const message = err instanceof Error ? err.message : "Некорректное тело запроса.";
+    res.status(http).json(apiError(ERROR_CODES.VALIDATION_ERROR, message));
+    return;
+  }
   try {
     await applyLabelMutation(
       transferId,

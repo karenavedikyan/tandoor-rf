@@ -555,6 +555,7 @@
     messengerInviteError: "",
     messengerInviteManualKey: null,
     personalRecipientEdit: null,
+    personalRecipientEditFocusReturn: null,
     messengerInviteManualVisible: false,
     messengerInviteActionGen: 0,
     registryPersonal: null,
@@ -1780,7 +1781,7 @@
 
   function responsibleHolderName(o, actor) {
     if (actor && o.holderId === actor) return "Вы";
-    return contactById(o.holderId)?.name || "Не указан";
+    return recipientDisplayName(o, o.holderId) || contactById(o.holderId)?.name || "Не указан";
   }
 
   function statusBadge(o, actor, opts = {}) {
@@ -4165,7 +4166,12 @@
       return `<div class="tt-route-stepper${horizontalDone ? " tt-route-stepper--horizontal" : ""}" data-tt="detail-route-grid" data-tt-route-nodes="${nodeCount}">${nodes.join("")}</div>`;
     }
 
-    nodes.push(routeStepperNode(h, "Сейчас у · ответственный", "current", false, !!(o.pendingId || (fin && o.holderId !== o.finalRecipientId))));
+    nodes.push(
+      routeStepperNode(h, "Сейчас у · ответственный", "current", false, !!(o.pendingId || (fin && o.holderId !== o.finalRecipientId)), {
+        order: o,
+        partyId: o.holderId,
+      }),
+    );
     nodeCount = 1;
 
     if (o.pendingId) {
@@ -4952,6 +4958,13 @@
     return `<div class="tt-user-test-banner" role="alert">${E(state.userTestEnvironmentBanner)}</div>`;
   }
 
+  function syncPersonalRecipientEditFromDom() {
+    const ed = state.personalRecipientEdit;
+    if (!ed) return;
+    const input = document.querySelector('[data-tt="personal-recipient-input"]');
+    if (input && typeof input.value === "string") ed.value = input.value;
+  }
+
   function personalRecipientSheetHtml() {
     const ed = state.personalRecipientEdit;
     if (!ed) return "";
@@ -4964,9 +4977,9 @@
         : "";
     const disabled = ed.saving ? " disabled" : "";
     return `<div class="tt-filter-sheet tt-personal-recipient-sheet" data-tt="personal-recipient-sheet" data-open="true">
-      <div class="tt-filter-sheet-backdrop" data-tt="personal-recipient-close"></div>
-      <div class="tt-filter-sheet-panel tt-personal-recipient-panel">
-        <h3>Имя получателя для меня</h3>
+      <div class="tt-filter-sheet-backdrop" data-tt="personal-recipient-close"${ed.saving ? "" : ""}></div>
+      <div class="tt-filter-sheet-panel tt-personal-recipient-panel" role="dialog" aria-modal="true" aria-labelledby="tt-personal-recipient-title">
+        <h3 id="tt-personal-recipient-title">Имя получателя для меня</h3>
         <p class="tt-personal-sheet-hint">Видно только вам в этой передаче. Приглашения и код используют имя «${E(canonical)}».</p>
         ${metaLine}
         <label class="tt-wizard-field">Имя<input data-tt="personal-recipient-input" value="${E(ed.value || "")}" maxlength="120"${disabled}></label>
@@ -4980,11 +4993,50 @@
     </div>`;
   }
 
+  function setupPersonalRecipientSheetA11y() {
+    const ed = state.personalRecipientEdit;
+    const panel = document.querySelector(".tt-personal-recipient-panel");
+    if (!ed || !panel) return;
+    const input = panel.querySelector('[data-tt="personal-recipient-input"]');
+    if (input && !ed.saving) input.focus();
+    const trap = (e) => {
+      if (!state.personalRecipientEdit) return;
+      if (e.key === "Escape" && !state.personalRecipientEdit.saving) {
+        e.preventDefault();
+        state.personalRecipientEdit = null;
+        renderTracker();
+        const ret = state.personalRecipientEditFocusReturn;
+        state.personalRecipientEditFocusReturn = null;
+        if (ret && typeof ret.focus === "function") ret.focus();
+        return;
+      }
+      if (e.key !== "Tab" || !panel.contains(document.activeElement)) return;
+      const focusable = panel.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable.length) return;
+      const list = [...focusable];
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    if (!setupPersonalRecipientSheetA11y._bound) {
+      document.addEventListener("keydown", trap);
+      setupPersonalRecipientSheetA11y._bound = trap;
+    }
+  }
+
   function savePersonalRecipientLabel(opts = {}) {
     const ed = state.personalRecipientEdit;
     if (!ed || ed.saving) return;
-    const input = document.querySelector('[data-tt="personal-recipient-input"]');
-    const value = opts.reset ? "" : (input?.value ?? ed.value ?? "").trim();
+    syncPersonalRecipientEditFromDom();
+    const value = opts.reset ? "" : (ed.value ?? "").trim();
     if (!opts.reset && !value) {
       ed.error = "Укажите имя получателя (от 1 до 120 символов).";
       renderTracker();
@@ -5004,9 +5056,12 @@
           : Promise.reject(new Error("Сохранение недоступно."));
     apiCall
       .then(() => {
+        const ret = state.personalRecipientEditFocusReturn;
         state.personalRecipientEdit = null;
+        state.personalRecipientEditFocusReturn = null;
         state.toast = opts.reset ? "Имя сброшено к исходному." : "Имя сохранено.";
         renderTracker();
+        if (ret && typeof ret.focus === "function") ret.focus();
       })
       .catch((err) => {
         ed.saving = false;
@@ -5206,6 +5261,7 @@
       main.appendChild(sheetHost);
     }
     if (sheetHost) sheetHost.innerHTML = personalRecipientSheetHtml();
+    if (state.personalRecipientEdit) setupPersonalRecipientSheetA11y();
     RC()?.afterRenderContent?.();
     paintQrHosts();
     paintCodeCells();
@@ -5473,6 +5529,7 @@
       const order = orders.find((x) => x.id === state.orderId);
       if (!order || !partyId || !canEditPersonalRecipientLabels()) return;
       const view = personalRecipientView(order, partyId);
+      state.personalRecipientEditFocusReturn = document.activeElement;
       state.personalRecipientEdit = {
         orderId: order.id,
         partyId,
@@ -5484,8 +5541,12 @@
       return;
     }
     if (action === "personal-recipient-close") {
+      if (state.personalRecipientEdit?.saving) return;
+      const ret = state.personalRecipientEditFocusReturn;
       state.personalRecipientEdit = null;
+      state.personalRecipientEditFocusReturn = null;
       renderTracker();
+      if (ret && typeof ret.focus === "function") ret.focus();
       return;
     }
     if (action === "personal-recipient-save") {

@@ -5,6 +5,7 @@ import {
   TT_PERSONAL_RECIPIENT_LABEL_SET,
   attachPersonalRecipientViewsToOrder,
   validatePersonalRecipientName,
+  optionalPersonalRecipientName,
 } from "../../src/tan-tracker/personal-recipient-label";
 import type { TanTrackerOrderDto } from "../../src/tan-tracker/types";
 
@@ -14,6 +15,7 @@ describe("tan-tracker personal recipient label", () => {
     assert.throws(() => validatePersonalRecipientName(""), /Укажите имя/);
     assert.throws(() => validatePersonalRecipientName("a".repeat(121)), /120/);
     assert.throws(() => validatePersonalRecipientName("\u0007"), /Укажите имя/);
+    assert.throws(() => optionalPersonalRecipientName({ bad: true }), /текстом/);
   });
 
   it("attaches per-party private views without mutating canonical map", () => {

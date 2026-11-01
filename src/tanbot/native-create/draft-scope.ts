@@ -47,6 +47,12 @@ export type NativeCreateDraftPayload = ExternalDraftPayload & {
   externalRecipientPhone?: string;
   /** External actor: display name for summary (never staff profile). */
   externalRecipientDisplayName?: string;
+  /** Private label for creator only at confirm (not invitation / party display_name). */
+  recipientPersonalNameForMe?: string;
+  /** Party id the personal label applies to (stable across summary return). */
+  recipientPersonalLabelPartyId?: string;
+  /** Summary/edit return target after «Имя для меня» step. */
+  personalNameReturnStep?: string;
   /** Provider-native media kind per attachment sort_order (image/file/video for resend). */
   nativeAttachmentTransportBySort?: Record<string, "image" | "file" | "video">;
 };
@@ -60,12 +66,18 @@ export function clearExternalRecipientTarget(payload: NativeCreateDraftPayload):
   delete payload.recipientPendingExternalName;
   delete payload.externalRecipientPhone;
   delete payload.externalRecipientDisplayName;
+  delete payload.recipientPersonalNameForMe;
+  delete payload.recipientPersonalLabelPartyId;
+  delete payload.personalNameReturnStep;
 }
 
 export function clearStaffRecipientTarget(payload: NativeCreateDraftPayload): void {
   delete payload.recipientPartyId;
   delete payload.recipientUserId;
   delete payload.recipientDisplayName;
+  delete payload.recipientPersonalNameForMe;
+  delete payload.recipientPersonalLabelPartyId;
+  delete payload.personalNameReturnStep;
 }
 
 export function stripTransientRecipientDraftFields(payload: NativeCreateDraftPayload): void {

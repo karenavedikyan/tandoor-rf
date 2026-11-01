@@ -171,6 +171,7 @@ export function buildStepUi(
   if (kind === "summary") {
     const rows: BtnDef[][] = [
       [{ label: "Создать передачу", action: "confirm" }],
+      [{ label: "Имя для меня", action: "edit", arg: "personal_name" }],
     ];
     if (extra?.photoInspectButtons?.length) {
       rows.push(extra.photoInspectButtons.map((b) => ({

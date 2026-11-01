@@ -6,7 +6,11 @@ import { ensurePartyForUserOnWrite, nextPublicTransferCode } from "./repository"
 import { resolveRecipientPartyId, type ExternalRecipientInput } from "./party-eligibility";
 import { linkStagedAttachmentsToTransfer } from "./attachments";
 import { tanTrackerCanWrite } from "./guards";
-import { maybeSavePersonalRecipientLabelOnCreate } from "./personal-recipient-label";
+import {
+  maybeSavePersonalRecipientLabelOnCreate,
+  optionalPersonalRecipientName,
+  PersonalRecipientNameValidationError,
+} from "./personal-recipient-label";
 
 export type CreateTransferInput = {
   item: string;
@@ -126,13 +130,22 @@ export async function createTransferInTransaction(
   if (stagingRaw.length) {
     await linkStagedAttachmentsToTransfer(client, user.id, publicCode, stagingRaw);
   }
+  let personalName: string | undefined;
+  try {
+    personalName = optionalPersonalRecipientName(body.finalRecipientPersonalName);
+  } catch (err) {
+    if (err instanceof PersonalRecipientNameValidationError) {
+      throw Object.assign(new Error(err.message), { http: 400 });
+    }
+    throw err;
+  }
   await maybeSavePersonalRecipientLabelOnCreate(client, {
     transferId: publicCode,
     ownerPartyId: holderParty.id,
     actorUserId: auditUserId,
     actorDisplayName: user.fullName,
     recipientPartyId: finalId,
-    personalNameRaw: body.finalRecipientPersonalName,
+    personalNameRaw: personalName,
   });
   return publicCode;
 }
