@@ -713,8 +713,8 @@ describe("native external sender to external recipient (both channels)", { concu
         });
         await getPool()!.query(`UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id, raw8]);
         await getPool()!.query(`DELETE FROM tt_parties WHERE user_id=$1`, [staff.id]);
-        const before = await bizSnapshot();
         const sender = await externalActor(channel);
+        const before = await bizSnapshot();
         const summary = await wizardToSummary(sender, e164, "Shadow Attempt");
         await confirmSummary(sender, summary);
         const party = (await getPool()!.query(
@@ -940,11 +940,14 @@ describe("native external sender to external recipient (both channels)", { concu
          WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [draftKey],
       )).rows[0];
       assert.equal(afterDraft.id, beforeDraft.id);
-      assert.equal(afterDraft.step, "comment");
+      assert.equal(afterDraft.step, "recipient_ext_name");
       const payload = (afterDraft.payload ?? {}) as {
         recipientExternal?: { phone?: string; name?: string };
+        recipientContactSuggestedName?: string;
       };
       assert.equal(payload.recipientExternal?.phone, thirdE164);
+      assert.equal(payload.recipientContactSuggestedName, "Other");
+      assert.equal(payload.recipientExternal?.name, "Other");
       const holderAfter = (await getPool()!.query(
         `SELECT holder_party_id::text, pending_party_id::text FROM tt_transfers WHERE id=$1`, [transfer],
       )).rows[0];
