@@ -53,6 +53,10 @@ import {
   externalRegistryCleanupHandler,
   lkRegistryCleanupHandler,
 } from "./registry-cleanup/handlers";
+import {
+  externalPersonalRecipientLabelHandler,
+  lkPersonalRecipientLabelHandler,
+} from "./personal-recipient-label-mutations";
 
 export function createTanTrackerRouter(): express.Router {
   const router = express.Router();
@@ -182,9 +186,22 @@ export function createTanTrackerRouter(): express.Router {
     void lkRegistryCleanupHandler(req, res).catch(next);
   });
 
+  router.post("/transfers/:id/personal-recipient-label", csrfProtection, ...writeChain, (req, res, next) => {
+    void lkPersonalRecipientLabelHandler(req, res).catch(next);
+  });
+
   router.post("/public/external/registry/cleanup", csrfOriginProtection, requireDatabaseReady, (req, res, next) => {
     void externalRegistryCleanupHandler(req, res).catch(next);
   });
+
+  router.post(
+    "/public/external/transfers/:id/personal-recipient-label",
+    csrfOriginProtection,
+    requireDatabaseReady,
+    (req, res, next) => {
+      void externalPersonalRecipientLabelHandler(req, res).catch(next);
+    },
+  );
 
   router.post("/transfers", csrfProtection, ...writeChain, (req, res, next) => {
     void createTransferHandler(req, res).catch(next);

@@ -18,6 +18,7 @@ type CreateBody = {
   relayPartyId?: string | null;
   relayExternal?: ExternalRecipientInput;
   stagingAttachmentIds?: string[];
+  finalRecipientPersonalName?: string | null;
 };
 
 function parseDueAt(raw: string | null | undefined): Date | null {
@@ -58,6 +59,7 @@ export async function createTransferHandler(req: AccessRequest, res: Response): 
           relayPartyId: body.relayPartyId,
           relayExternal: body.relayExternal,
           stagingAttachmentIds: body.stagingAttachmentIds,
+          finalRecipientPersonalName: body.finalRecipientPersonalName,
         },
       ),
     );

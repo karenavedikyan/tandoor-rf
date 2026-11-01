@@ -542,6 +542,20 @@
     },
     setStagingUploadTimeoutForTests: setStagingUploadTimeoutForTests,
     setMessengerInviteTimeoutForTests: setMessengerInviteTimeoutForTests,
+    savePersonalRecipientLabel: function (transferId, body) {
+      return api
+        .apiRequest(
+          "/api/tan-tracker/transfers/" + encodeURIComponent(transferId) + "/personal-recipient-label",
+          { method: "POST", body: body },
+        )
+        .then(function (result) {
+          if (result.response.status === 200 && result.data && result.data.bootstrap) {
+            window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
+            return true;
+          }
+          throw new Error(api.extractErrorMessage(result.data, "Не удалось сохранить имя."));
+        });
+    },
     registryCleanup: function (payload) {
       return api
         .apiRequest("/api/tan-tracker/registry/cleanup", { method: "POST", body: payload })

@@ -28,8 +28,10 @@ function loadRegistryActorContext(): (o: Record<string, unknown>, actor: string 
   const source = fs.readFileSync(file, "utf8");
   const fnSource = extractFunctionSource(source, "registryActorContext");
   const script = `${fnSource}; registryActorContext;`;
+  const contactById = (id: string) => ({ id, name: "Fixture Contact" });
   const sandbox = {
-    contactById: (id: string) => ({ id, name: "Fixture Contact" }),
+    contactById,
+    recipientDisplayName: (_o: unknown, partyId: string) => contactById(partyId).name,
   };
   return vm.runInNewContext(script, sandbox, { filename: "tan-tracker-registryActorContext.js" }) as (
     o: Record<string, unknown>,
@@ -89,8 +91,10 @@ describe("tan-tracker registryActorContext completed status", () => {
 
 function lifecycle(o: Record<string, unknown>, name = "Карина") {
   const source = fs.readFileSync(path.join(process.cwd(), "public/tan-tracker/tan-tracker.js"), "utf8");
+  const contactById = (id: string) => (id === "missing" ? null : { id, name });
   const fn = vm.runInNewContext(`${extractFunctionSource(source, "transferLifecycleContext")}; transferLifecycleContext;`, {
-    contactById: (id: string) => id === "missing" ? null : { id, name },
+    contactById,
+    recipientDisplayName: (_o: unknown, partyId: string) => contactById(partyId)?.name || "—",
   });
   return fn(o) as ActorCtx;
 }

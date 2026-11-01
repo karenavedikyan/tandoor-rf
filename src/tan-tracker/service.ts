@@ -33,6 +33,7 @@ import {
 import { isExternalMessengerFeatureEnabled } from "./external-messenger/config";
 import { loadPersonalRegistryLists } from "./registry-cleanup/personal-flags";
 import type { TanTrackerRegistryPersonalBootstrap } from "./types";
+import { enrichOrdersWithPersonalRecipientLabels } from "./personal-recipient-label";
 
 function mapRoleToPrototype(role: string): string {
   if (role === "regional_manager") return "regional";
@@ -190,6 +191,15 @@ export async function buildTanTrackerBootstrap(
       orders.push(dto);
     }
   }
+
+  const contactNameByPartyId = new Map(contacts.map((c) => [c.id, c.name]));
+  await enrichOrdersWithPersonalRecipientLabels(
+    pool,
+    actorPartyId,
+    ctx.previewReadOnly,
+    orders,
+    contactNameByPartyId,
+  );
 
   const actorContact =
     actorPartyId != null

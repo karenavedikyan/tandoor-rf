@@ -68,6 +68,15 @@ export type TanTrackerAttachmentDto = {
   addedBy?: string | null;
 };
 
+export type TanTrackerPersonalRecipientViewDto = {
+  recipientPartyId: string;
+  canonicalName: string;
+  personalName: string | null;
+  editedAt: number | null;
+  editedByUserId: string | null;
+  editedByDisplayName: string | null;
+};
+
 export type TanTrackerOrderDto = {
   id: string;
   item: string;
@@ -99,6 +108,8 @@ export type TanTrackerOrderDto = {
   canAdminDeleteTransfer?: boolean;
   /** Signed public-holder capability scoped to this order (external person bootstrap only). */
   holderAccessToken?: string | null;
+  /** Per-viewer private display names for route recipients (not shared invitations). */
+  personalRecipientViews?: Record<string, TanTrackerPersonalRecipientViewDto>;
 };
 
 export type TanTrackerRegistryPersonalBootstrap = {

@@ -6,6 +6,7 @@ import { ensurePartyForUserOnWrite, nextPublicTransferCode } from "./repository"
 import { resolveRecipientPartyId, type ExternalRecipientInput } from "./party-eligibility";
 import { linkStagedAttachmentsToTransfer } from "./attachments";
 import { tanTrackerCanWrite } from "./guards";
+import { maybeSavePersonalRecipientLabelOnCreate } from "./personal-recipient-label";
 
 export type CreateTransferInput = {
   item: string;
@@ -18,6 +19,8 @@ export type CreateTransferInput = {
   relayExternal?: ExternalRecipientInput;
   stagingAttachmentIds?: string[];
   auditDetail?: Record<string, unknown>;
+  /** Private label for creator only; does not change party display_name. */
+  finalRecipientPersonalName?: string | null;
 };
 
 export type CreateTransferActor = {
@@ -123,5 +126,13 @@ export async function createTransferInTransaction(
   if (stagingRaw.length) {
     await linkStagedAttachmentsToTransfer(client, user.id, publicCode, stagingRaw);
   }
+  await maybeSavePersonalRecipientLabelOnCreate(client, {
+    transferId: publicCode,
+    ownerPartyId: holderParty.id,
+    actorUserId: auditUserId,
+    actorDisplayName: user.fullName,
+    recipientPartyId: finalId,
+    personalNameRaw: body.finalRecipientPersonalName,
+  });
   return publicCode;
 }

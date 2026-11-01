@@ -77,6 +77,33 @@
   function contactById(id) {
     return contacts.find((c) => c.id === id);
   }
+
+  function personalRecipientView(o, partyId) {
+    if (!o || !partyId) return null;
+    return o.personalRecipientViews?.[partyId] || null;
+  }
+
+  function recipientDisplayName(o, partyId) {
+    const v = personalRecipientView(o, partyId);
+    if (v?.personalName) return v.personalName;
+    return contactById(partyId)?.name || "—";
+  }
+
+  function canonicalRecipientName(o, partyId) {
+    const v = personalRecipientView(o, partyId);
+    if (v?.canonicalName) return v.canonicalName;
+    return contactById(partyId)?.name || "—";
+  }
+
+  function canEditPersonalRecipientLabels() {
+    return (
+      TT_LK &&
+      state.lkCanWrite &&
+      !state.lkPreviewReadOnly &&
+      !state.recipientMode &&
+      !isPublicGuestPage()
+    );
+  }
   function employeeContact(empId) {
     return contacts.find((c) => c.employeeId === empId);
   }
@@ -527,6 +554,7 @@
     messengerInviteOrderId: null,
     messengerInviteError: "",
     messengerInviteManualKey: null,
+    personalRecipientEdit: null,
     messengerInviteManualVisible: false,
     messengerInviteActionGen: 0,
     registryPersonal: null,
@@ -1700,7 +1728,7 @@
     if (o.pendingId === actor) return { key: "inbox", label: "Жду получения", icon: "download" };
     if (o.holderId === actor && o.pendingId) {
       const p = contactById(o.pendingId);
-      return { key: "wait", label: "Ожидает код", icon: "key-round", hint: p?.name };
+      return { key: "wait", label: "Ожидает код", icon: "key-round", hint: recipientDisplayName(o, o.pendingId) };
     }
     if (o.holderId === actor && !o.pendingId && o.status !== "completed" && o.status !== "delivered")
       return { key: "send", label: "Нужно передать", icon: "send" };
@@ -1738,7 +1766,12 @@
     if (o.status === "completed") return { key: "done", label: "Завершена", icon: "check-circle" };
     if (o.pendingId) return {
       key: "waiting", label: "Ожидает приёма", icon: "key-round",
-      hint: contactById(o.pendingId)?.name || "Получатель не указан",
+      hint: !o.pendingId
+        ? "Получатель не указан"
+        : (() => {
+            const label = recipientDisplayName(o, o.pendingId);
+            return label === "—" ? "Получатель не указан" : label;
+          })(),
     };
     if (o.status === "delivered" || o.hasConfirmedReceipt === true)
       return { key: "received", label: "Получение подтверждено", icon: "package-check" };
@@ -1774,7 +1807,7 @@
         <strong class="tt-custody-name" data-tt-holder>${E(responsibleHolderName(o, actor))}</strong>
       </span></span>${
       next
-        ? `<span class="tt-custody-next"><span class="tt-custody-label">${p ? "Ожидаемый получатель" : "Конечный получатель"}</span><span class="tt-custody-name">${E(next.name)}</span></span>`
+        ? `<span class="tt-custody-next"><span class="tt-custody-label">${p ? "Ожидаемый получатель" : "Конечный получатель"}</span><span class="tt-custody-name">${E(recipientDisplayName(o, next.id))}</span></span>`
         : ""
     }</span>`;
   }
@@ -2154,6 +2187,7 @@
       newPhone: "",
       existingMatchId: "",
       newPhoneStep: "phone",
+      recipientPersonalName: "",
       mode: "list",
       pickTarget: "final",
       recipientStep: "choose",
@@ -2192,11 +2226,19 @@
   function wizardRecipientSelectedCard(contactId) {
     const c = contactById(contactId);
     if (!c) return "";
+    const f = state.form || defaultCreateForm();
+    const personal = (f.recipientPersonalName || "").trim();
+    const shown = personal || c.name;
     return `<div class="tt-wizard-recipient-selected" data-tt="recipient-selected">
       <div class="tt-wizard-recipient-selected-card">
         <span class="tt-wizard-recipient-selected-label">Конечный получатель</span>
-        <strong class="tt-wizard-recipient-selected-name">${E(c.name)}</strong>
+        <strong class="tt-wizard-recipient-selected-name">${E(shown)}</strong>
+        ${personal && personal !== c.name ? `<span class="tt-wizard-recipient-canonical-hint">В справочнике: ${E(c.name)}</span>` : ""}
         <span class="tt-wizard-recipient-selected-phone">${E(fmtPhone(c.phone))}</span>
+        <label class="tt-wizard-field tt-wizard-personal-name-field">Имя для меня
+          <input data-tt-field="recipientPersonalName" value="${E(f.recipientPersonalName || "")}" placeholder="${E(c.name)}" maxlength="120">
+        </label>
+        <p class="tt-wizard-personal-name-hint">Видно только вам в этой передаче. Приглашения и код используют имя из справочника.</p>
       </div>
       ${wizardReviewLink("Выбрать другого получателя", "create-recipient-change", "Выбрать другого получателя")}
     </div>`;
@@ -2341,7 +2383,8 @@
     const fid = f.finalRecipientId || f.recipientId;
     if (fid) {
       const c = contactById(fid);
-      return c ? `${c.name} · ${fmtPhone(c.phone)}` : "—";
+      const label = (f.recipientPersonalName || "").trim() || c?.name;
+      return c && label ? `${label} · ${fmtPhone(c.phone)}` : "—";
     }
     if (f.mode === "new" && f.newName && f.newPhone) {
       const p = normPhone(f.newPhone);
@@ -3436,7 +3479,16 @@
     list = list.filter((o) => {
       const h = contactById(o.holderId);
       const p = o.pendingId ? contactById(o.pendingId) : null;
-      const hay = [o.id, o.item, h?.name, p?.name].join(" ").toLowerCase();
+      const hay = [
+        o.id,
+        o.item,
+        h?.name,
+        p?.name,
+        o.pendingId ? recipientDisplayName(o, o.pendingId) : "",
+        o.finalRecipientId ? recipientDisplayName(o, o.finalRecipientId) : "",
+      ]
+        .join(" ")
+        .toLowerCase();
       if (q && !hay.includes(q)) return false;
       const st = orderStatus(o);
       if (state.statusFilter === "waiting" && st !== "waiting") return false;
@@ -4050,7 +4102,23 @@
     return parts[0].slice(0, 2).toUpperCase();
   }
 
-  function routeStepperNode(c, roleEyebrow, variant, planned, showLine) {
+  function routeStepperNode(c, roleEyebrow, variant, planned, showLine, routeOpts = {}) {
+    const partyId = routeOpts.partyId;
+    const order = routeOpts.order;
+    const displayName =
+      partyId && order ? recipientDisplayName(order, partyId) : c?.name || "—";
+    const personalMeta = partyId && order ? personalRecipientView(order, partyId) : null;
+    const metaLine =
+      personalMeta?.personalName && personalMeta.editedAt
+        ? `<span class="tt-route-personal-meta">Изменено ${E(personalMeta.editedByDisplayName || "вы")} · ${E(dt(personalMeta.editedAt))}</span>`
+        : "";
+    const editBtn =
+      partyId &&
+      order &&
+      canEditPersonalRecipientLabels() &&
+      (variant === "pending" || variant === "final" || variant === "delivered")
+        ? `<button type="button" class="tt-route-personal-edit" data-tt="personal-recipient-edit" data-party-id="${E(partyId)}" aria-label="Изменить имя для себя">Изменить имя для себя</button>`
+        : "";
     const phoneCore = c?.phone ? fmtPhoneCore(c.phone) : "";
     const telDigits = c?.phone ? normPhone(c.phone) : "";
     const lkRuntime = (typeof TT_LK !== "undefined" && TT_LK) || window.__TT_PUBLIC_RECIPIENT__;
@@ -4069,7 +4137,9 @@
       <div class="tt-route-stepper-body">
         <span class="tt-route-label tt-route-role">${E(roleEyebrow)}</span>
         ${plannedChip}
-        <strong class="tt-route-name">${E(c?.name || "—")}</strong>
+        <strong class="tt-route-name">${E(displayName)}</strong>
+        ${metaLine}
+        ${editBtn}
         ${phoneHtml}
       </div>
     </article>`;
@@ -4085,7 +4155,12 @@
     if (o.status === "completed") {
       const delivered = contactById(o.holderId);
       nodeCount = 1;
-      nodes.push(routeStepperNode(delivered, "Доставлено · конечный получатель", "delivered", false, false));
+      nodes.push(
+        routeStepperNode(delivered, "Доставлено · конечный получатель", "delivered", false, false, {
+          order: o,
+          partyId: o.holderId,
+        }),
+      );
       const horizontalDone = typeof window !== "undefined" && window.innerWidth >= 1024;
       return `<div class="tt-route-stepper${horizontalDone ? " tt-route-stepper--horizontal" : ""}" data-tt="detail-route-grid" data-tt-route-nodes="${nodeCount}">${nodes.join("")}</div>`;
     }
@@ -4095,19 +4170,39 @@
 
     if (o.pendingId) {
       if (fin && o.pendingId === o.finalRecipientId) {
-        nodes.push(routeStepperNode(p, "Следующий · конечный получатель", "pending", true, false));
+        nodes.push(
+          routeStepperNode(p, "Следующий · конечный получатель", "pending", true, false, {
+            order: o,
+            partyId: o.pendingId,
+          }),
+        );
         nodeCount += 1;
       } else {
         const hasFinAfter = !!(fin && o.pendingId !== o.finalRecipientId);
-        nodes.push(routeStepperNode(p, "Следующий получатель", "pending", true, hasFinAfter));
+        nodes.push(
+          routeStepperNode(p, "Следующий получатель", "pending", true, hasFinAfter, {
+            order: o,
+            partyId: o.pendingId,
+          }),
+        );
         nodeCount += 1;
         if (hasFinAfter) {
-          nodes.push(routeStepperNode(fin, "Конечный получатель", "final", false, false));
+          nodes.push(
+            routeStepperNode(fin, "Конечный получатель", "final", false, false, {
+              order: o,
+              partyId: o.finalRecipientId,
+            }),
+          );
           nodeCount += 1;
         }
       }
     } else if (fin && o.holderId !== o.finalRecipientId) {
-      nodes.push(routeStepperNode(fin, "Конечный получатель", "final", false, false));
+      nodes.push(
+        routeStepperNode(fin, "Конечный получатель", "final", false, false, {
+          order: o,
+          partyId: o.finalRecipientId,
+        }),
+      );
       nodeCount += 1;
     }
 
@@ -4857,6 +4952,69 @@
     return `<div class="tt-user-test-banner" role="alert">${E(state.userTestEnvironmentBanner)}</div>`;
   }
 
+  function personalRecipientSheetHtml() {
+    const ed = state.personalRecipientEdit;
+    if (!ed) return "";
+    const o = orders.find((x) => x.id === ed.orderId);
+    const canonical = canonicalRecipientName(o, ed.partyId);
+    const meta = personalRecipientView(o, ed.partyId);
+    const metaLine =
+      meta?.editedAt && meta.personalName
+        ? `<p class="tt-personal-sheet-meta">Последнее изменение: ${E(meta.editedByDisplayName || "—")} · ${E(dt(meta.editedAt))}</p>`
+        : "";
+    const disabled = ed.saving ? " disabled" : "";
+    return `<div class="tt-filter-sheet tt-personal-recipient-sheet" data-tt="personal-recipient-sheet" data-open="true">
+      <div class="tt-filter-sheet-backdrop" data-tt="personal-recipient-close"></div>
+      <div class="tt-filter-sheet-panel tt-personal-recipient-panel">
+        <h3>Имя получателя для меня</h3>
+        <p class="tt-personal-sheet-hint">Видно только вам в этой передаче. Приглашения и код используют имя «${E(canonical)}».</p>
+        ${metaLine}
+        <label class="tt-wizard-field">Имя<input data-tt="personal-recipient-input" value="${E(ed.value || "")}" maxlength="120"${disabled}></label>
+        ${ed.error ? `<p class="tt-error">${E(ed.error)}</p>` : ""}
+        <div class="tt-personal-sheet-actions">
+          ${btn(ed.saving ? "Сохранение…" : "Сохранить", `data-tt="personal-recipient-save"${disabled}`, "tt-primary tt-btn-block")}
+          ${btn("Сбросить к исходному", `data-tt="personal-recipient-reset"${disabled}`, "tt-link tt-btn-block")}
+          ${btn("Отмена", 'data-tt="personal-recipient-close"', "tt-link tt-btn-block")}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function savePersonalRecipientLabel(opts = {}) {
+    const ed = state.personalRecipientEdit;
+    if (!ed || ed.saving) return;
+    const input = document.querySelector('[data-tt="personal-recipient-input"]');
+    const value = opts.reset ? "" : (input?.value ?? ed.value ?? "").trim();
+    if (!opts.reset && !value) {
+      ed.error = "Укажите имя получателя (от 1 до 120 символов).";
+      renderTracker();
+      return;
+    }
+    ed.saving = true;
+    ed.error = "";
+    renderTracker();
+    const body = opts.reset
+      ? { recipientPartyId: ed.partyId, reset: true }
+      : { recipientPartyId: ed.partyId, personalName: value };
+    const apiCall =
+      isExternalShell() && window.TtExternalApi?.savePersonalRecipientLabel
+        ? window.TtExternalApi.savePersonalRecipientLabel(ed.orderId, body)
+        : window.TanTrackerLk?.savePersonalRecipientLabel
+          ? window.TanTrackerLk.savePersonalRecipientLabel(ed.orderId, body)
+          : Promise.reject(new Error("Сохранение недоступно."));
+    apiCall
+      .then(() => {
+        state.personalRecipientEdit = null;
+        state.toast = opts.reset ? "Имя сброшено к исходному." : "Имя сохранено.";
+        renderTracker();
+      })
+      .catch((err) => {
+        ed.saving = false;
+        ed.error = err?.message || "Не удалось сохранить имя.";
+        renderTracker();
+      });
+  }
+
   function renderTracker(opts = {}) {
     if (window.__TT_MESSENGER_PORTAL_ONLY__) return;
     if (current !== ROUTE) return;
@@ -5041,6 +5199,13 @@
       content.innerHTML =
         externalShellChromeHtml() + bodyHtml() + (RC()?.cleanupDialogHtml?.() ?? "");
     }
+    let sheetHost = document.getElementById("tt-personal-recipient-sheet-host");
+    if (!sheetHost && main) {
+      sheetHost = document.createElement("div");
+      sheetHost.id = "tt-personal-recipient-sheet-host";
+      main.appendChild(sheetHost);
+    }
+    if (sheetHost) sheetHost.innerHTML = personalRecipientSheetHtml();
     RC()?.afterRenderContent?.();
     paintQrHosts();
     paintCodeCells();
@@ -5109,6 +5274,7 @@
         stagingAttachmentIds: state.attachStaging
           .map((s) => s.serverStagingId)
           .filter(Boolean),
+        finalRecipientPersonalName: (f.recipientPersonalName || "").trim() || undefined,
       };
       const editingId = state.editDraftOrderId;
       if (editingId) {
@@ -5273,6 +5439,7 @@
         state.form.finalRecipientId = pid;
         state.form.recipientId = pid;
         state.form.recipientStep = "confirmed";
+        state.form.recipientPersonalName = "";
       }
       if (isInternalCreateWizardView()) queueCreateWizardNav({
         type: "reveal",
@@ -5299,6 +5466,34 @@
     if (action === "edit-draft" && o?.canEditDraft) {
       beginEditDraft(o);
       renderTracker();
+      return;
+    }
+    if (action === "personal-recipient-edit") {
+      const partyId = b.getAttribute("data-party-id");
+      const order = orders.find((x) => x.id === state.orderId);
+      if (!order || !partyId || !canEditPersonalRecipientLabels()) return;
+      const view = personalRecipientView(order, partyId);
+      state.personalRecipientEdit = {
+        orderId: order.id,
+        partyId,
+        value: view?.personalName || canonicalRecipientName(order, partyId),
+        saving: false,
+        error: "",
+      };
+      renderTracker();
+      return;
+    }
+    if (action === "personal-recipient-close") {
+      state.personalRecipientEdit = null;
+      renderTracker();
+      return;
+    }
+    if (action === "personal-recipient-save") {
+      savePersonalRecipientLabel({ reset: false });
+      return;
+    }
+    if (action === "personal-recipient-reset") {
+      savePersonalRecipientLabel({ reset: true });
       return;
     }
     if (action === "create" || action === "create-fab") {

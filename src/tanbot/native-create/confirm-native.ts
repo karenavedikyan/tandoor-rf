@@ -16,6 +16,7 @@ import { tanTrackerCanWrite } from "../../tan-tracker/guards";
 import type { NativeCreateDraftPayload } from "./draft-scope";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 import { resolveNativeExternalPendingPartyByPhone } from "./native-external-recipient-by-phone";
+import { maybeSavePersonalRecipientLabelOnCreate } from "../../tan-tracker/personal-recipient-label";
 
 async function stageDraftFilesForStaff(
   client: PoolClient,
@@ -131,6 +132,11 @@ export async function confirmNativeStaffDraft(
         finalRecipientExternal,
         stagingAttachmentIds: stagingIds,
         auditDetail: { source: "native_bot" },
+        finalRecipientPersonalName:
+          input.payload.recipientNameManual &&
+          (input.payload.recipientDisplayName?.trim() || input.payload.recipientExternal?.name?.trim())
+            ? input.payload.recipientDisplayName?.trim() || input.payload.recipientExternal?.name?.trim()
+            : undefined,
       },
     );
 
@@ -336,6 +342,22 @@ export async function confirmNativeExternalToExternalDraft(
       }),
     ],
   );
+  if (name) {
+    const personRow = (
+      await client.query<{ display_name: string }>(
+        `SELECT display_name FROM tt_external_persons WHERE id = $1::uuid`,
+        [input.personId],
+      )
+    ).rows[0];
+    await maybeSavePersonalRecipientLabelOnCreate(client, {
+      transferId: publicCode,
+      ownerPartyId: input.externalPartyId,
+      actorUserId: null,
+      actorDisplayName: personRow?.display_name?.trim() || "Внешний участник",
+      recipientPartyId,
+      personalNameRaw: name,
+    });
+  }
   const files = await client.query<{ storage_key: string; file_name: string; mime_type: string; byte_size: string }>(
     `SELECT storage_key, file_name, mime_type, byte_size::text FROM tt_external_request_draft_files WHERE draft_id = $1::uuid ORDER BY sort_order`,
     [input.draftId],

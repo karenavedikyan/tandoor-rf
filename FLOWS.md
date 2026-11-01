@@ -1,5 +1,13 @@
 # QA flows (не public/dist)
 
+## Личное имя получателя в конкретном треке (2026-11-01)
+
+- **Видимость:** только участник, сохранивший подпись (`acting_party_id` = его party), в рамках одной передачи и одного `recipientPartyId`. Не меняет `users.full_name`, `tt_parties.display_name`, телефоны и не попадает в приглашения/QR/public/shared timeline.
+- **Хранение:** append-only `tt_audit_log` — actions `personal_recipient_label_set` / `personal_recipient_label_reset`; последняя запись по `created_at DESC, id DESC`; автор и время только серверные.
+- **UI:** мастер «Имя для меня» при выборе получателя; карточка передачи — «Изменить имя для себя» (modal sheet, не alert). Копирование/приглашения — каноническое имя.
+- **API:** `POST /api/tan-tracker/transfers/:id/personal-recipient-label` (LK), `POST /api/tan-tracker/public/external/transfers/:id/personal-recipient-label` (cap/est). Preview read-only и чужие UUID — отказ.
+- **QA:** `test/unit/tan-tracker-personal-recipient-label.test.ts`; integration `test/integration/tan-tracker-personal-recipient-label.test.ts` (два actor, изоляция по transfer, reset, preview deny). Бот: личное имя при native create с `recipientNameManual` / `externalRecipientDisplayName` без изменения invitation SQL.
+
 ## Native bot: внешний отправитель по телефону (2026-11-01)
 
 - **Кто:** верифицированный внешний участник в личном чате Telegram/MAX (native create, `actor=external`).

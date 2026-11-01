@@ -87,6 +87,20 @@
     logoutAll: function () {
       return json("/api/tan-tracker/public/external/logout-all", { method: "POST", body: {} });
     },
+    savePersonalRecipientLabel: function (transferId, body) {
+      return json(
+        "/api/tan-tracker/public/external/transfers/" + encodeURIComponent(transferId) + "/personal-recipient-label",
+        { method: "POST", body: body },
+      ).then(function (result) {
+        if (result.response.status !== 200 || !result.data || !result.data.bootstrap) {
+          var msg =
+            (result.data && result.data.error && result.data.error.message) || "Не удалось сохранить имя.";
+          throw new Error(msg);
+        }
+        window.TanTrackerPrototype.hydrateFromServer(result.data.bootstrap);
+        return true;
+      });
+    },
     registryCleanup: function (payload) {
       return json("/api/tan-tracker/public/external/registry/cleanup", { method: "POST", body: payload }).then(
         function (result) {
