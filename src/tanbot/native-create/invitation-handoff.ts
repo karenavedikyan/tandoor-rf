@@ -36,6 +36,7 @@ export async function buildExternalPendingInviteMessage(
     pendingPartyId: string;
     handoffVersion: number;
     channel: "telegram" | "max";
+    allowUserParty?: boolean;
   },
 ): Promise<string | null> {
   const context = await client.query<{
@@ -54,6 +55,7 @@ export async function buildExternalPendingInviteMessage(
     transferId: input.transferId,
     pendingPartyId: input.pendingPartyId,
     handoffVersion: input.handoffVersion,
+    allowUserParty: input.allowUserParty,
   });
   if (!minted) return null;
   const origin = getAppOrigin() ?? "";

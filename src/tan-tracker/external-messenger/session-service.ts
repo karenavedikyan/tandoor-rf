@@ -43,14 +43,24 @@ export async function supersedeActiveSessionsForTransfer(
 
 export async function mintExternalMessengerSession(
   client: PoolClient,
-  input: { transferId: string; pendingPartyId: string; handoffVersion: number },
+  input: {
+    transferId: string;
+    pendingPartyId: string;
+    handoffVersion: number;
+    /** Native universal invitation: staff user party with phone. Default external-only. */
+    allowUserParty?: boolean;
+  },
 ): Promise<{ startToken: string; sessionId: string } | null> {
   if (!isExternalMessengerFeatureEnabled()) return null;
   const party = await client.query<{ kind: string; phone_e164: string | null }>(
     `SELECT kind, phone_e164 FROM tt_parties WHERE id = $1::uuid`,
     [input.pendingPartyId],
   );
-  if (party.rows[0]?.kind !== "external" || !party.rows[0].phone_e164) return null;
+  const row = party.rows[0];
+  if (!row?.phone_e164) return null;
+  const kindOk =
+    row.kind === "external" || (input.allowUserParty === true && row.kind === "user");
+  if (!kindOk) return null;
 
   await supersedeActiveSessionsForTransfer(client, input.transferId, input.handoffVersion);
   const startToken = generateExternalMessengerStartToken();

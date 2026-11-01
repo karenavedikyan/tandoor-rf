@@ -10,17 +10,12 @@ import {
   MAX_OPEN_EXTERNAL_REQUESTS,
 } from "../../tan-tracker/external-request/intake";
 import { externalRequestDueAtFromMode } from "../../tan-tracker/external-request/due-at-msk";
-import { resolveExternalRecipientPartyIdForExternalActor } from "../../tan-tracker/party-eligibility";
 import { nextPublicTransferCode } from "../../tan-tracker/repository";
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
-import {
-  EmployeePhoneCollisionError,
-  PhonePartyConflictError,
-} from "../../tan-tracker/phone-party-resolver";
 import { tanTrackerCanWrite } from "../../tan-tracker/guards";
 import type { NativeCreateDraftPayload } from "./draft-scope";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
-import { externalUnavailableMessage } from "./recipient-unified";
+import { resolveNativeExternalPendingPartyByPhone } from "./native-external-recipient-by-phone";
 
 async function stageDraftFilesForStaff(
   client: PoolClient,
@@ -281,43 +276,17 @@ export async function confirmNativeExternalToExternalDraft(
   const item = String(payload.item ?? "").trim();
   const phoneRaw = payload.externalRecipientPhone?.trim() ?? "";
   const name = payload.externalRecipientDisplayName?.trim() ?? "";
-  if (!item || !phoneRaw || !name) {
+  if (!item || !phoneRaw) {
     throw Object.assign(new Error("Заполните все шаги заявки."), { http: 409 });
   }
-  const phoneE164 = normalizeRuPhoneE164(phoneRaw);
-  if (!phoneE164) {
-    throw Object.assign(new Error("Введите телефон: 10 цифр после +7."), { http: 400 });
-  }
-
-  const senderPhone = (
-    await client.query<{ phone_e164: string | null }>(
-      `SELECT phone_e164 FROM tt_parties WHERE id = $1::uuid LIMIT 1`,
-      [input.externalPartyId],
-    )
-  ).rows[0]?.phone_e164;
-  const senderPhoneNorm = senderPhone ? normalizeRuPhoneE164(senderPhone) : null;
-  if (senderPhoneNorm && senderPhoneNorm === phoneE164) {
-    throw Object.assign(new Error("Нельзя назначить себя получателем."), { http: 400 });
-  }
-
-  let recipientPartyId: string;
-  try {
-    recipientPartyId = await resolveExternalRecipientPartyIdForExternalActor(client, {
-      name,
-      phone: phoneE164,
-    });
-  } catch (err) {
-    if (err instanceof EmployeePhoneCollisionError) {
-      throw Object.assign(new Error(externalUnavailableMessage()), { http: 403 });
-    }
-    if (err instanceof PhonePartyConflictError) {
-      throw Object.assign(err, { http: err.http });
-    }
-    throw err;
-  }
-  if (recipientPartyId === input.externalPartyId) {
-    throw Object.assign(new Error("Нельзя назначить себя получателем."), { http: 400 });
-  }
+  const { pendingPartyId: recipientPartyId, recipientKind } = await resolveNativeExternalPendingPartyByPhone(
+    client,
+    {
+      senderExternalPartyId: input.externalPartyId,
+      phoneE164: phoneRaw,
+      externalRecipient: name ? { name, phone: phoneRaw } : undefined,
+    },
+  );
 
   const publicCode = await nextPublicTransferCode(client);
   const dueAt = externalRequestDueAtFromMode(
@@ -341,7 +310,12 @@ export async function confirmNativeExternalToExternalDraft(
   await client.query(
     `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note)
      VALUES ($1,$2,$3,$4)`,
-    [publicCode, input.externalPartyId, recipientPartyId, "Создана передача · внешнему получателю"],
+    [
+      publicCode,
+      input.externalPartyId,
+      recipientPartyId,
+      recipientKind === "staff" ? "Создана передача · сотруднику" : "Создана передача · внешнему получателю",
+    ],
   );
   await client.query(
     `INSERT INTO tt_transfer_invitations (transfer_id, handoff_version, holder_party_id, pending_party_id, item_snapshot)
@@ -354,7 +328,12 @@ export async function confirmNativeExternalToExternalDraft(
     [
       publicCode,
       input.externalPartyId,
-      JSON.stringify({ item, source: "native_bot", externalToExternal: true }),
+      JSON.stringify({
+        item,
+        source: "native_bot",
+        externalPhoneCreate: true,
+        recipientKind,
+      }),
     ],
   );
   const files = await client.query<{ storage_key: string; file_name: string; mime_type: string; byte_size: string }>(
@@ -374,6 +353,7 @@ export async function confirmNativeExternalToExternalDraft(
     pendingPartyId: recipientPartyId,
     handoffVersion: 1,
     channel: input.channel,
+    allowUserParty: true,
   });
   if (!forwardInvitationText) {
     throw Object.assign(new Error("Не удалось подготовить приглашение."), { http: 503 });

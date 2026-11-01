@@ -2,9 +2,9 @@ import type { Pool, PoolClient } from "pg";
 import { isUuid } from "./phone-normalize";
 import {
   resolveExternalRecipientPartyId,
-  resolveExternalRecipientPartyIdForExternalActor,
   type ExternalRecipientInput,
 } from "./party-eligibility";
+import { resolvePublicHolderPendingPartyByPhoneForExternalActor } from "../tanbot/native-create/native-external-recipient-by-phone";
 
 type Db = Pool | PoolClient;
 
@@ -80,7 +80,7 @@ export async function assertPublicHolderPendingEligible(
   throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
 }
 
-/** After phone resolver for external creator (no staff user): pending must be a new/canonical external party. */
+/** After phone resolver for external creator (no staff user): pending from scoped phone match only. */
 export async function assertNullCreatorPhoneResolvedPending(
   client: Db,
   holderPartyId: string,
@@ -98,7 +98,7 @@ export async function assertNullCreatorPhoneResolvedPending(
       [pendingPartyId],
     )
   ).rows[0];
-  if (row?.kind !== "external") {
+  if (row?.kind !== "external" && row?.kind !== "user") {
     throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
   }
 }
@@ -114,7 +114,11 @@ export async function resolvePublicHolderPendingPartyId(
     const creatorUserId = await loadPublicHolderCreatorUserId(client, transferId);
     const id = creatorUserId
       ? await resolveExternalRecipientPartyId(client, creatorUserId, external)
-      : await resolveExternalRecipientPartyIdForExternalActor(client, external);
+      : await resolvePublicHolderPendingPartyByPhoneForExternalActor(client, {
+          holderPartyId,
+          phoneE164: external.phone,
+          externalRecipient: external,
+        });
     if (creatorUserId) {
       await assertPublicHolderPendingEligible(client, transferId, holderPartyId, id);
     } else {

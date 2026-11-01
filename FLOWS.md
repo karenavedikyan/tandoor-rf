@@ -1,13 +1,13 @@
 # QA flows (не public/dist)
 
-## Native bot: внешний отправитель → внешний получатель (2026-11-01)
+## Native bot: внешний отправитель по телефону (2026-11-01)
 
 - **Кто:** верифицированный внешний участник в личном чате Telegram/MAX (native create, `actor=external`).
-- **Получатель:** любой другой телефон (+7); если номер совпадает с сотрудником с `accepts_external_tt_intake` и связью с отправителем — сохраняется прежняя ветка **заявки сотруднику** (без регрессий).
-- **Иначе:** на «Создать передачу» создаётся передача `from_external`, `creator_party_id` = party отправителя, `created_by_user_id` у party получателя **NULL**, holder = отправитель, pending/final = канонический external по телефону (reuse без переименования). Вложения черновика → `tt_transfer_attachments` с `uploaded_by_user_id` NULL.
-- **Handoff:** одно пересылаемое приглашение с одной ссылкой `mst`; код только адресату после проверки телефона; отправитель вводит код — custody меняется только после verify. До verify holder = отправитель.
-- **Отказы (savepoint, черновик сохраняется):** свой номер, коллизия с сотрудником (нейтрально), неоднозначный телефон, лимит открытых заявок, незаполненные шаги. Нет утечки внутреннего справочника.
-- **После получения:** держатель-external с `creator_user_id` NULL может назначить следующего **внешнего** получателя по телефону (public holder eligibility); staff-получатели по-прежнему только при staff-creator.
+- **Получатель:** только введённый телефon (+7), без произвольного UUID из черновика. Однозначное совпадение с **активным** сотрудником → canonical `kind=user` pending (без `accepts_external_tt_intake`, без web intake и без shadow external party); иначе канонический external по телефону (reuse без переименования). Имя из бота не переименовывает сотрудника.
+- **Передача:** `from_external`, `creator_party_id` = party отправителя; holder = отправитель до verify. Вложения черновика → `tt_transfer_attachments` с `uploaded_by_user_id` NULL.
+- **Handoff:** одно пересылаемое приглашение с одной ссылкой `mst` (mint с `allowUserParty` только на этом пути); код только адресату после проверки своего телефона; audit acting party = staff party при приёме.
+- **Отказы (savepoint, черновик сохраняется):** свой номер, неактивный/неоднозначный staff phone (нейтрально), неоднозначный external телефон, лимит открытых заявок, незаполненные шаги. Web intake и checkbox без изменений.
+- **После получения:** внешний держатель с `creator_user_id` NULL может назначить следующего получателя по телефону (external или staff) через scoped phone resolver.
 - **QA:** `test/integration/tandoor-independent-native-external-to-external.test.ts`, обновлённый `tandoor-independent-unified-recipient.test.ts` (unknown phone → create). Staff intake: `tandoor-independent-native-bot-create.test.ts`.
 
 ## MAX: «Главное меню» под основными сообщениями (2026-11-01)

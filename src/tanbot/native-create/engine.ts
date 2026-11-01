@@ -20,7 +20,6 @@ import {
   type ParsedNativeCreateCallback,
 } from "./callback-codec";
 import {
-  confirmNativeExternalDraft,
   confirmNativeExternalToExternalDraftWithSavepoint,
   confirmNativeStaffDraft,
 } from "./confirm-native";
@@ -48,7 +47,6 @@ import {
   handleExternalRecipientPhoneText,
   handleStaffRecipientSearchText,
   hitsToEligibleRecipients,
-  resolveExternalIntakeStaffUserId,
   recipientStepPrompt,
   revalidateStaffRecipientPick,
   searchStaffRecipientHits,
@@ -885,25 +883,6 @@ export async function handleNativeCreateCallback(
         const phone = payload.externalRecipientPhone?.trim();
         if (!phone) {
           return navError("Укажите телефон получателя.", ctx.channel);
-        }
-        const staffUserId = await resolveExternalIntakeStaffUserId(client, partyId, phone);
-        if (staffUserId) {
-          await bumpDraftRevision(client, id, "summary", {
-            ...payload,
-            recipientUserId: staffUserId,
-          });
-          const created = await confirmNativeExternalDraft(client, {
-            personId: ctx.personId,
-            externalPartyId: partyId,
-            draftId: id,
-          });
-          const { nativeCompletionMenuReply } = await import("./main-menu");
-          const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
-          return appendReceiptEntryChoices(client, ctx, await nativeCompletionMenuReply(
-            client,
-            ctx,
-            `Заявка отправлена: ${created.publicCode}.\n\n${formatNotificationTransferState(await buildNotificationTransferState(client, created.publicCode))}\n\nСотрудник получит уведомление.`,
-          ), created.publicCode);
         }
         const recipientName = payload.externalRecipientDisplayName?.trim();
         if (!recipientName) {

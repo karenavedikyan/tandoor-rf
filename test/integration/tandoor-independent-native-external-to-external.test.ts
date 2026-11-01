@@ -84,7 +84,13 @@ async function send(actor: ExtActor, input: { text?: string; callback?: string; 
           mid: `e2e-${id}`,
           attachments: [{
             type: "file",
-            payload: { token: `max-file-${id}`, file_name: "doc.pdf", mime_type: "application/pdf", file_size: pdfBytes.length },
+            payload: {
+              token: `max-file-${id}`,
+              url: "https://synthetic.oneme.ru/files/doc.pdf",
+              file_name: "doc.pdf",
+              mime_type: "application/pdf",
+              file_size: pdfBytes.length,
+            },
           }],
         }
       : { mid: `e2e-${id}`, text: input.text ?? "" };
@@ -180,29 +186,29 @@ async function bizSnapshot(draftId?: string) {
   return { ...base, draftConfirmed: draft?.confirmed_transfer_id ?? null, draftFiles: draft?.draft_files ?? 0 };
 }
 
+const nativeAttachmentFetchStub = async (input: RequestInfo | URL) => {
+  const url = new URL(String(input));
+  if (url.hostname === "api.telegram.org" && url.pathname.endsWith("/getFile")) {
+    const fileId = url.searchParams.get("file_id") ?? "tg-doc";
+    return new Response(JSON.stringify({ ok: true, result: { file_path: `documents/${fileId}.pdf` } }));
+  }
+  if (url.hostname === "synthetic.oneme.ru" || (url.hostname === "api.telegram.org" && url.pathname.includes("/file/bot"))) {
+    return new Response(pdfBytes, { headers: { "content-type": "application/pdf" } });
+  }
+  throw new Error(`unexpected fetch ${url.href}`);
+};
+
 async function wizardToSummary(actor: ExtActor, recipientPhone: string, name: string, withDoc = false) {
   let r = await send(actor, { text: "Создать передачу" });
   r = await send(actor, { text: `E2E item ${actor.id}` });
   if (withDoc) {
-    originalFetch = globalThis.fetch;
-    globalThis.fetch = async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("api.telegram.org") && url.includes("/getFile")) {
-        return new Response(JSON.stringify({ ok: true, result: { file_path: "documents/doc.pdf" } }));
-      }
-      if (url.includes("api.telegram.org") && url.includes("/file/bot")) {
-        return new Response(pdfBytes, { headers: { "content-type": "application/pdf" } });
-      }
-      if (url.includes("synthetic.oneme.ru")) {
-        return new Response(pdfBytes, { headers: { "content-type": "application/pdf" } });
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    };
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = nativeAttachmentFetchStub;
     try {
       r = await send(actor, { document: true });
       r = await send(actor, { callback: button(r, /далее|пропустить/iu) });
     } finally {
-      globalThis.fetch = async () => { throw new Error("No network in ext2ext test"); };
+      globalThis.fetch = prevFetch;
     }
   } else {
     r = await send(actor, { callback: button(r, /пропустить/iu) });
@@ -250,7 +256,7 @@ async function issueRecipientCode(
       },
     });
     const code = contact.reply?.copyOnlyCode;
-    assert.ok(code && /^\d{6}$/.test(code), `expected copyOnlyCode, got ${JSON.stringify(contact.reply)}`);
+    assert.ok(code && /^\d{6}$/.test(code), `expected copyOnlyCode, got ${code ?? "none"}`);
     return code;
   }
   const cfg = loadTanbotMaxStage2Config(); assert.ok(cfg.ok);
@@ -277,7 +283,7 @@ async function issueRecipientCode(
     },
   });
   const code = contact.reply?.copyOnlyCode;
-  assert.ok(code && /^\d{6}$/.test(code), `expected copyOnlyCode, got ${JSON.stringify(contact.reply)}`);
+  assert.ok(code && /^\d{6}$/.test(code), `expected copyOnlyCode, got ${code ?? "none"}`);
   return code;
 }
 
@@ -333,6 +339,52 @@ after(async () => {
 
 describe("native external sender to external recipient (both channels)", { concurrency: false }, () => {
   for (const channel of ["telegram", "max"] as const) {
+    it(`${channel}: active admin staff by phone with intake=false gets invitation`, async () => {
+      const staffPhone = `+7920${String(++seq).padStart(7, "0")}`;
+      const admin = await createTestUser({
+        databaseUrl: db, email: `ext2ext-admin-${seq}@test.local`, password: "StrongPass123!",
+        fullName: "Canonical Admin Staff", role: "admin",
+      });
+      await getPool()!.query(
+        `UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`,
+        [admin.id, staffPhone],
+      );
+      const staffParty = await ensurePartyForUserOnWrite(getPool()!, admin.id, "Canonical Admin Staff", staffPhone);
+      const sender = await externalActor(channel);
+      const summary = await wizardToSummary(sender, staffPhone, "Fake Rename Attempt");
+      const created = await confirmSummary(sender, summary);
+      const row = (await getPool()!.query(
+        `SELECT t.id,t.public_code,t.pending_party_id::text,t.holder_party_id::text
+         FROM tt_transfers t WHERE t.creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`,
+        [sender.partyId],
+      )).rows[0];
+      assert.equal(row.pending_party_id, staffParty.id);
+      assert.equal(
+        (await getPool()!.query(`SELECT display_name FROM tt_parties WHERE id=$1`, [staffParty.id])).rows[0].display_name,
+        "Canonical Admin Staff",
+      );
+      assert.equal(
+        (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_persons WHERE party_id=$1`, [staffParty.id])).rows[0].n,
+        0,
+      );
+      const inviteText = (created.messages ?? [created]).map(m => m.text).join("\n");
+      const urls = inviteText.match(/https?:\/\/[^\s)]+/g) ?? [];
+      assert.equal(urls.length, 1, inviteText);
+      const mst = parseMst(inviteText);
+      const code = await issueRecipientCode(channel, mst, staffPhone, ++seq);
+      await senderVerifyViaBot(sender, created, row.public_code, code);
+      const after = (await getPool()!.query(
+        `SELECT holder_party_id::text,pending_party_id FROM tt_transfers WHERE id=$1`, [row.id],
+      )).rows[0];
+      assert.equal(after.holder_party_id, staffParty.id);
+      assert.equal(after.pending_party_id, null);
+      const audit = await getPool()!.query(
+        `SELECT acting_party_id::text, detail FROM tt_audit_log WHERE transfer_id=$1 AND action='code_verify_ok' ORDER BY created_at DESC LIMIT 1`,
+        [row.id],
+      );
+      assert.equal(audit.rows[0]?.acting_party_id, staffParty.id);
+    });
+
     it(`${channel}: invitation, copyOnlyCode, native webhook receipt`, async () => {
       const sender = await externalActor(channel);
       const recipientPhone = `+7904${String(++seq).padStart(7, "0")}`;
@@ -419,13 +471,14 @@ describe("native external sender to external recipient (both channels)", { concu
     assert.deepEqual(await bizSnapshot(draft.id), before);
   });
 
-  it("max: employee phone collision is neutral for external actor", async () => {
+  it("max: inactive employee phone is neutral for external actor", async () => {
     const sender = await externalActor("max");
     const empPhone = `+7906${String(++seq).padStart(7, "0")}`;
     const emp = await createTestUser({
-      databaseUrl: db, email: `ext2ext-emp-${seq}@test.local`, password: "StrongPass123!",
+      databaseUrl: db, email: `ext2ext-inactive-${seq}@test.local`, password: "StrongPass123!",
       fullName: "Hidden Employee Oracle", role: "manager",
     });
+    await getPool()!.query(`UPDATE users SET phone=$2, status='disabled' WHERE id=$1`, [emp.id, empPhone]);
     await ensurePartyForUserOnWrite(getPool()!, emp.id, "Hidden Employee Oracle", empPhone);
     const summary = await wizardToSummary(sender, empPhone, "Should Fail");
     const draft = await draftRow(sender);
@@ -560,6 +613,27 @@ describe("native external sender to external recipient (both channels)", { concu
       .set("Origin", origin)
       .send({ holderAccessToken: holderHat, external: { name: "Next Hop", phone: nextPhone } });
     assert.equal(change.status, 200, change.text);
+    const staffPhone = `+7913${String(++seq).padStart(7, "0")}`;
+    const staff = await createTestUser({
+      databaseUrl: db, email: `ext2ext-holder-staff-${seq}@test.local`, password: "StrongPass123!",
+      fullName: "Holder Forward Staff", role: "manager",
+    });
+    await getPool()!.query(`UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id, staffPhone]);
+    const staffParty = await ensurePartyForUserOnWrite(getPool()!, staff.id, "Holder Forward Staff", staffPhone);
+    const holderHat2 = signHolderAccess({
+      transferId: row.id,
+      partyId: after.holder_party_id,
+      hv: after.handoff_version,
+      exp: Date.now() + holderAccessTtlMs(),
+    });
+    const staffChange = await request(app).post("/api/tan-tracker/public/holder/pending/change")
+      .set("Origin", origin)
+      .send({ holderAccessToken: holderHat2, external: { name: "Ignored Label", phone: staffPhone } });
+    assert.equal(staffChange.status, 200, staffChange.text);
+    assert.equal(
+      (await getPool()!.query(`SELECT pending_party_id::text FROM tt_transfers WHERE id=$1`, [row.id])).rows[0].pending_party_id,
+      staffParty.id,
+    );
     const stray = (await getPool()!.query(
       `INSERT INTO tt_parties(kind,display_name,phone_e164) VALUES('external','Stranger','+79139999999') RETURNING id`,
     )).rows[0].id;
