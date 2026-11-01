@@ -4,6 +4,24 @@
   var statePanel = document.getElementById("tt-state-panel");
   var portalUi = { data: null, showDetails: false, listenersBound: false };
 
+  function responseError(response, data, fallback) {
+    var err = new Error((data && data.error && data.error.message) || fallback);
+    err.status = response.status;
+    return err;
+  }
+
+  function isUnavailableError(err) {
+    return err && [400, 403, 404, 409, 410].indexOf(err.status) >= 0;
+  }
+
+  function showLoadFailure(err) {
+    var root = document.getElementById("tt-root");
+    if (!root) return showError("Не удалось открыть страницу передачи.");
+    // Stop the tracker from replacing the denial with a stale form on hash changes.
+    window.__TT_MESSENGER_PORTAL_ONLY__ = true;
+    renderWelcomeInvalid(root, isUnavailableError(err));
+  }
+
   function showError(message) {
     if (!statePanel) return;
     statePanel.classList.remove("clients-hidden");
@@ -56,9 +74,7 @@
       function (response) {
         return response.json().then(function (data) {
           if (!response.ok) {
-            throw new Error(
-              (data && data.error && data.error.message) || "Приглашение недоступно.",
-            );
+            throw responseError(response, data, "Приглашение недоступно.");
           }
           return data;
         });
@@ -75,14 +91,20 @@
       function (response) {
         return response.json().then(function (data) {
           if (!response.ok) {
-            throw new Error(
-              (data && data.error && data.error.message) || "Результат получения недоступен.",
-            );
+            throw responseError(response, data, "Результат получения недоступен.");
           }
           return data;
         });
       },
     );
+  }
+
+  function loadContextOrReceipt(token) {
+    return loadPublicContext(token).catch(function (err) {
+      // A receipt is a legitimate fallback after handoff, not after a service outage.
+      if (err.status !== 404 && err.status !== 410) throw err;
+      return loadPublicReceipt(token);
+    });
   }
 
   function applyPublicRoute(inv) {
@@ -123,9 +145,7 @@
       function (response) {
         return response.json().then(function (data) {
           if (!response.ok) {
-            throw new Error(
-              (data && data.error && data.error.message) || "Передача недоступна.",
-            );
+            throw responseError(response, data, "Передача недоступна.");
           }
           return data;
         });
@@ -144,6 +164,7 @@
     if (data.orders && data.orders[0]) p.set("tt_order", data.orders[0].id);
     location.hash = "tan-tracker?" + p.toString();
     whenTanTrackerReady(function () {
+      window.__TT_MESSENGER_PORTAL_ONLY__ = false;
       window.TanTrackerPrototype.hydrateFromServer(data);
       if (window.TanTrackerPrototype.state) {
         window.TanTrackerPrototype.state.view = "detail";
@@ -188,6 +209,7 @@
         applyPublicRoute(inv);
       }
     }
+    window.__TT_MESSENGER_PORTAL_ONLY__ = false;
     window.TanTrackerPrototype.hydrateFromServer(window.__TT_LK_BOOTSTRAP__);
     if (typeof window.__ttLkRenderTracker === "function") {
       window.__ttLkRenderTracker();
@@ -234,17 +256,22 @@
     );
   }
 
-  function renderWelcomeInvalid(root, message) {
+  function renderWelcomeInvalid(root, unavailable) {
     hideErrorPanel();
-    var copy = message || "Ссылка приглашения недействительна. Попросите отправителя прислать новую ссылку.";
     root.innerHTML =
-      '<div class="tt-recipient-wrap"><article class="tt-recipient-card tt-recipient-card--welcome" data-tt="recipient-welcome-invalid">' +
+      '<div class="tt-recipient-wrap"><article class="tt-recipient-card tt-recipient-card--welcome" role="alert" data-tt="' +
+      (unavailable ? "recipient-welcome-invalid" : "recipient-load-error") + '">' +
       recipientBrandHeader() +
-      '<h1 class="tt-recipient-welcome-heading">Приглашение недоступно</h1>' +
-      '<p class="tt-recipient-welcome-lead">' +
-      escapeHtml(copy) +
-      "</p>" +
-      welcomeAboutDisclosure() +
+      '<h1 class="tt-recipient-welcome-heading">' +
+      (unavailable ? "Ссылка на передачу больше не действует" : "Не удалось загрузить передачу") +
+      "</h1>" +
+      (unavailable
+        ? '<p class="tt-recipient-welcome-lead">Продолжить получение или передачу по этой ссылке нельзя: приглашение устарело либо передача больше недоступна.</p>' +
+          '<p>Для новой отправки создайте новую передачу в личном кабинете или боте Тандор. Если вы получатель, попросите отправителя оформить её и прислать новую ссылку.</p>' +
+          '<p class="tt-muted">Если передача ещё продолжается, попросите отправителя прислать актуальное приглашение. Одна только устаревшая ссылка не означает, что нужно создавать новый трек.</p>'
+        : '<p class="tt-recipient-welcome-lead">Возможен временный сбой сервиса или соединения. Это не означает, что передача устарела. Попробуйте ещё раз.</p>' +
+          '<a class="tt-btn tt-primary tt-btn-block" href="' +
+          escapeHtml(location.pathname + location.search + location.hash) + '">Повторить загрузку</a>') +
       "</article></div>";
     syncRecipientLogos();
   }
@@ -359,9 +386,26 @@
       var btn = ev.target && ev.target.closest ? ev.target.closest('[data-tt="recipient-welcome-continue"]') : null;
       if (!btn || !portalUi.data) return;
       ev.preventDefault();
-      portalUi.showDetails = true;
-      renderMessengerPortal(root);
+      btn.disabled = true;
+      loadMessengerPortal(parseMstFromLocation())
+        .then(function (data) {
+          portalUi.data = data;
+          portalUi.showDetails = true;
+          renderMessengerPortal(root);
+        })
+        .catch(showLoadFailure);
     });
+  }
+
+  function loadMessengerPortal(mst) {
+    var url = "/api/tan-tracker/public/recipient/messenger?mst=" + encodeURIComponent(mst);
+    return fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function (response) {
+        return response.json().then(function (data) {
+          if (!response.ok) throw responseError(response, data, "Приглашение недоступно.");
+          return data;
+        });
+      });
   }
 
   function bootMessengerPortal(mst) {
@@ -376,29 +420,12 @@
     portalUi.showDetails = false;
     portalUi.data = null;
     root.innerHTML = '<p data-tt="messenger-portal-loading">Загрузка…</p>';
-    var url =
-      "/api/tan-tracker/public/recipient/messenger?mst=" + encodeURIComponent(mst);
-    fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
-      .then(function (response) {
-        return response.json().then(function (data) {
-          if (!response.ok) {
-            throw new Error(
-              (data && data.error && data.error.message) || "Приглашение недоступно.",
-            );
-          }
-          return data;
-        });
-      })
+    loadMessengerPortal(mst)
       .then(function (data) {
         portalUi.data = data;
         renderMessengerPortal(root);
       })
-      .catch(function (err) {
-        renderWelcomeInvalid(
-          root,
-          err && err.message ? err.message : "Не удалось открыть страницу получателя.",
-        );
-      });
+      .catch(showLoadFailure);
   }
 
   function boot() {
@@ -414,52 +441,36 @@
         .then(function (data) {
           finishBootHolder(data, inv);
         })
-        .catch(function (err) {
-          showError(err && err.message ? err.message : "Не удалось открыть передачу.");
-        });
+        .catch(showLoadFailure);
       return;
     }
     var screen = inv.params.get("tt_screen") || new URLSearchParams(location.search || "").get("tt_screen");
     if (inv.token && (inv.orderId || screen === "detail" || screen === "code")) {
-      void loadPublicContext(inv.token)
+      void loadContextOrReceipt(inv.token)
         .then(function (data) {
           whenTanTrackerReady(function () {
             finishBoot(data, inv);
-            if (screen === "detail" || screen === "code") {
+            if (!data.publicReceipt && (screen === "detail" || screen === "code")) {
               window.TanTrackerPrototype.state.view = screen;
               window.TanTrackerPrototype.state.orderId = inv.orderId || data.orders?.[0]?.id;
               if (typeof window.__ttLkRenderTracker === "function") window.__ttLkRenderTracker();
             }
           });
         })
-        .catch(function () {
-          return loadPublicReceipt(inv.token).then(function (data) {
-            whenTanTrackerReady(function () {
-              finishBoot(data, inv);
-            });
-          });
-        })
-        .catch(function (err) {
-          showError(err && err.message ? err.message : "Не удалось открыть приглашение.");
-        });
+        .catch(showLoadFailure);
       return;
     }
     if (!inv.token) {
-      showError("Ссылка приглашения неполная или устарела.");
+      showLoadFailure({ status: 400 });
       return;
     }
-    void loadPublicContext(inv.token)
-      .catch(function () {
-        return loadPublicReceipt(inv.token);
-      })
+    void loadContextOrReceipt(inv.token)
       .then(function (data) {
         whenTanTrackerReady(function () {
           finishBoot(data, inv);
         });
       })
-      .catch(function (err) {
-        showError(err && err.message ? err.message : "Не удалось открыть приглашение.");
-      });
+      .catch(showLoadFailure);
   }
 
   if (document.readyState === "loading") {

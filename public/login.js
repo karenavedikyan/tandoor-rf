@@ -10,6 +10,18 @@
   var statusEl = document.getElementById("status-message");
   var submitting = false;
 
+  function trackerReturnPath() {
+    var next = new URLSearchParams(window.location.search).get("next");
+    if (!next || next.charAt(0) !== "/" || next.charAt(1) === "/") return null;
+    try {
+      var target = new URL(next, window.location.origin);
+      if (target.origin !== window.location.origin || !/^\/tan-tracker\/?$/.test(target.pathname)) return null;
+      return target.pathname + target.search + target.hash;
+    } catch (_) {
+      return null;
+    }
+  }
+
   if (!form || !emailInput || !passwordInput || !loginButton || !api) {
     return;
   }
@@ -57,7 +69,8 @@
         if (result.response.status === 200 && result.data && result.data.user) {
           window.location.href = result.data.user.mustChangePassword
             ? "/change-password"
-            : window.ClientsShell && window.ClientsShell.canReadClients(result.data.user) ? "/clients" : "/profile";
+            : trackerReturnPath() ||
+              (window.ClientsShell && window.ClientsShell.canReadClients(result.data.user) ? "/clients" : "/profile");
           return;
         }
 

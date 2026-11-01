@@ -828,15 +828,20 @@
   }
 
   function ensureAuthenticated(onReady) {
+    // Preserve a tracker deep link through login so an unavailable transfer gets an
+    // explicit explanation instead of silently opening a different page.
+    var loginUrl = /^\/tan-tracker\/?$/.test(window.location.pathname)
+      ? "/login?next=" + encodeURIComponent(window.location.pathname + window.location.search + window.location.hash)
+      : "/login";
     if (!api) {
-      window.location.replace("/login");
+      window.location.replace(loginUrl);
       return Promise.resolve();
     }
     return api
       .apiRequest("/api/auth/me")
       .then(function (result) {
         if (result.response.status === 401) {
-          window.location.replace("/login");
+          window.location.replace(loginUrl);
           return;
         }
         if (result.response.status === 403) {

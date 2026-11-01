@@ -4812,12 +4812,27 @@
     return window.TtExternalUi.externalActionBarHtml();
   }
 
+  function unavailableTransferView() {
+    const createAction = isExternalShell()
+      ? (lkMutationAllowed() ? btn("Создать новую передачу", 'data-tt="ext-request-open"', "tt-primary") : "")
+      : (showCreateEntryPoints() ? btn("Создать новую передачу", 'data-tt="create"', "tt-primary") : "");
+    return `<section class="tt-panel" role="alert" data-tt="transfer-unavailable">
+      <h2>Передача недоступна</h2>
+      <p>Продолжить эту передачу по старой ссылке нельзя: она больше не действует или у вас нет доступа.</p>
+      <p>Для новой отправки создайте новую передачу. Если предмет ещё в пути, попросите отправителя проверить передачу и прислать актуальную ссылку.</p>
+      <div class="tt-actions">${createAction}${btn("Мои передачи", 'data-tt="back-list"', "tt-btn-ghost")}</div>
+    </section>`;
+  }
+
   function bodyHtml() {
     if (state.ttRoleUnsupported) return unsupportedRoleView();
     const o = state.orderId ? orders.find((x) => x.id === state.orderId) : null;
     if (state.view === "public-receipt") return publicReceiptView();
     if (state.view === "public-holder") return publicHolderView();
     if (createSavedReceiptVisible()) return createSavedReceiptView();
+    if (TT_LK && !o && state.orderId && ["detail", "code", "transfer"].includes(state.view)) {
+      return unavailableTransferView();
+    }
     if (state.view === "handoff-receipt") {
       if (!o || !handoffReceiptValid(o)) return deniedView();
       return handoffReceiptView(o);
@@ -4906,7 +4921,7 @@
       main.innerHTML =
         o && allowed
           ? `<div class="tt-work tt-work-recipient">${userTestBannerBlock()}<div class="tt-head tt-head-compact${isPublicGuestPage() ? "" : " tt-head-compact-demo"}"><span class="tt-head-compact-label">${isPublicGuestPage() ? "Получение передачи" : "Тан-трекер"}</span>${recipDemo}</div>${recipientScreen(o)}${Att() ? Att().lightboxHtml() : ""}</div>`
-          : `<div class="tt-work tt-recipient">${userTestBannerBlock()}<p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p></div>`;
+          : `<div class="tt-work tt-recipient">${userTestBannerBlock()}${TT_LK ? unavailableTransferView() : `<p class="tt-error">${o ? "Нет доступа к этой передаче." : "Передача не найдена в демо-памяти. Откройте ссылку из того же окна прототипа."}</p>`}</div>`;
       document.title = "Tandoor RF · Тан-трекер · получатель";
       lucide.createIcons();
       setupDetailOverflowMenu();

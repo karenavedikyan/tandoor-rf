@@ -22,7 +22,7 @@
 
   function parseBootstrapResponse(result) {
     if (result.response.status === 401) {
-      window.location.replace("/login?next=" + encodeURIComponent("/tan-tracker"));
+      window.location.replace("/login?next=" + encodeURIComponent(location.pathname + location.search + location.hash));
       return null;
     }
     if (result.response.status === 403) {
@@ -91,7 +91,7 @@
       return;
     }
     if (!shell || !shell.ensureAuthenticated) {
-      window.location.replace("/login?next=" + encodeURIComponent("/tan-tracker"));
+      window.location.replace("/login?next=" + encodeURIComponent(location.pathname + location.search + location.hash));
       return;
     }
     shell.mountAuthenticatedShell("tan-tracker", function (user, reason) {

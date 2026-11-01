@@ -174,7 +174,8 @@ describe("external recipient messenger holder UI + portal (browser)", { concurre
       assert.equal(await guestPage.locator('[data-tt="messenger-portal"]').count(), 0);
       assert.equal(await guestPage.locator('[data-tt="recipient-welcome-continue"]').count(), 0);
       const body = await guestPage.locator('[data-tt="recipient-welcome-invalid"]').innerText();
-      assert.match(body, /недоступно/i);
+      assert.match(body, /Ссылка на передачу больше не действует/);
+      assert.match(body, /создайте новую передачу/);
       assert.doesNotMatch(body, /Messenger holder UI box/);
     } finally {
       await guestContext.close();
