@@ -81,9 +81,9 @@ async function hasInactiveUserPhoneBlock(client: Db, phoneE164: string, national
        SELECT regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g') AS d
      ) norm
      WHERE u.status <> 'active'
-       AND (${USER_PHONE_NATIONAL10_SQL}) = $2
+       AND (${USER_PHONE_NATIONAL10_SQL}) = $1
      LIMIT 1`,
-    [phoneE164, national10],
+    [national10],
   );
   if ((byProfile.rowCount ?? 0) > 0) return true;
   const byParty = await client.query(
