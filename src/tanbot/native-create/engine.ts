@@ -889,10 +889,14 @@ export async function handleNativeCreateCallback(
         });
         const { nativeCompletionMenuReply } = await import("./main-menu");
         const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
+        const { buildForwardInvitationGuidance } = await import("./forward-invitation-guidance");
+        const resultText = created.forwardInvitationText
+          ? buildForwardInvitationGuidance(created.publicCode)
+          : created.resultText;
         return appendReceiptEntryChoices(client, ctx, {
-          ...await nativeCompletionMenuReply(client, ctx, created.resultText),
+          ...await nativeCompletionMenuReply(client, ctx, resultText),
           ...(created.forwardInvitationText ? { forwardInvitationText: created.forwardInvitationText } : {}),
-        }, created.publicCode);
+        }, created.publicCode, 0, { omitSelectionHint: Boolean(created.forwardInvitationText) });
       }
       if (payload.actor === "external" && ctx.personId) {
         const party = await client.query<{ party_id: string }>(
@@ -926,13 +930,14 @@ export async function handleNativeCreateCallback(
         const { NATIVE_SENDER_HANDOFF_GUIDANCE: SENDER_HANDOFF_GUIDANCE } = await import(
           "../../tan-tracker/sender-handoff-guidance"
         );
+        const { buildForwardInvitationGuidance } = await import("./forward-invitation-guidance");
         const resultText = created.forwardInvitationText
-          ? `Передача создана: ${created.publicCode}.\n\n${status}\n\nСледом придёт готовое приглашение. Перешлите его получателю целиком.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`
+          ? buildForwardInvitationGuidance(created.publicCode)
           : `Передача уже создана: ${created.publicCode}.\n\n${status}\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`;
         return appendReceiptEntryChoices(client, ctx, {
           ...await nativeCompletionMenuReply(client, ctx, resultText),
           ...(created.forwardInvitationText ? { forwardInvitationText: created.forwardInvitationText } : {}),
-        }, created.publicCode);
+        }, created.publicCode, 0, { omitSelectionHint: Boolean(created.forwardInvitationText) });
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Не удалось создать передачу.";

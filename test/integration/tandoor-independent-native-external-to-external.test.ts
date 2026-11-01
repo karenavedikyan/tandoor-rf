@@ -148,6 +148,13 @@ async function send(actor: ExtActor, input: { text?: string; callback?: string; 
     }, { deliveryEnabled: true });
   }
   assert.ok(out.length);
+  if (out.length === 2 && /Передача создана:/u.test(out[0].text)) {
+    assert.ok(out[0].text.startsWith("ПОЛУЧИТЕ КОД У ПОЛУЧАТЕЛЯ!"));
+    assert.ok(out[0].text.length < 300);
+    assert.doesNotMatch(out[0].text, /Для подтверждения в этом чате|Статус:|Ответственный:/u);
+    assert.match(out[1].text, /https?:\/\//u);
+    assert.doesNotMatch(out[1].text, /ПОЛУЧИТЕ КОД У ПОЛУЧАТЕЛЯ/u);
+  }
   return { ...out.at(-1)!, messages: out };
 }
 
