@@ -2271,7 +2271,7 @@
         <span class="tt-wizard-route-role">Получатель</span>
         ${wizardReviewLink("Выбрать другого получателя", "create-edit-recipient", "Выбрать другого получателя", true)}
       </div>
-      <div class="tt-wizard-route-person">${reviewPersonHtml(finContact, finSummary, f)}</div>
+      <div class="tt-wizard-route-person">${reviewPersonHtml(finContact, finSummary, f, { personalFromForm: true })}</div>
       ${!relay ? `<p class="tt-wizard-review-handoff-hint">${E(directHint)}</p>` : ""}
       ${
         !relay
@@ -2358,9 +2358,14 @@
     return `<button type="button" class="tt-wizard-review-link${longCls}" data-tt="${action}"${aria}${dis}>${E(label)}</button>`;
   }
 
-  function reviewPersonHtml(c, summaryFallback, form) {
+  function reviewPersonHtml(c, summaryFallback, form, opts = {}) {
     if (c) {
-      return `<strong class="tt-wizard-review-person-name">${E(c.name)}</strong><span class="tt-wizard-review-person-phone">${E(fmtPhone(c.phone))}</span>`;
+      let name = c.name;
+      if (opts.personalFromForm) {
+        const personal = ((form || state.form)?.recipientPersonalName || "").trim();
+        if (personal) name = personal;
+      }
+      return `<strong class="tt-wizard-review-person-name">${E(name)}</strong><span class="tt-wizard-review-person-phone">${E(fmtPhone(c.phone))}</span>`;
     }
     const f = form || state.form;
     if (f?.mode === "new" && f.newName?.trim()) {
@@ -4317,8 +4322,8 @@
   function shortRelayReminder(o, p, isHolder, mustRelay) {
     if (!isHolder || !mustRelay || o.status === "completed") return "";
     const text = o.pendingId
-      ? `Ждём подтверждения от ${p?.name || "получателя"} — вы ответственны.`
-      : `Передайте ${contactById(o.finalRecipientId)?.name || "конечному получателю"}.`;
+      ? `Ждём подтверждения от ${o.pendingId ? recipientDisplayName(o, o.pendingId) : p?.name || "получателя"} — вы ответственны.`
+      : `Передайте ${o.finalRecipientId ? recipientDisplayName(o, o.finalRecipientId) : "конечному получателю"}.`;
     return `<p class="tt-reminder tt-reminder-compact tt-holder-next" data-tt="relay-reminder">${E(text)}</p>`;
   }
 
@@ -4464,7 +4469,7 @@
     const handoffHeading = o.fromExternal ? "Передайте предмет" : "Подтвердите передачу";
     return `<section class="tt-detail-task-card tt-detail-task-card--hero" data-tt="detail-task-card">
       <h3 class="tt-detail-task-heading">${E(handoffHeading)}</h3>
-      <p class="tt-detail-task-receiver">Получатель: <strong>${E(p?.name || "—")}</strong></p>
+      <p class="tt-detail-task-receiver">Получатель: <strong>${E(o.pendingId ? recipientDisplayName(o, o.pendingId) : p?.name || "—")}</strong></p>
       <p class="tt-detail-task-instructions">Попросите получателя открыть передачу и получить код. Введите его здесь, затем отдайте предмет.</p>
       <div class="tt-handoff" data-tt="handoff-panel">
         <div class="tt-handoff-actions">
@@ -4556,9 +4561,9 @@
     if (!isHolder) {
       if (isFormerHolderAfterHandoff(o, actor) || (o.status === "delivered" && o.createdById === actor)) return formerHolderTaskCard(o);
       const wait = p
-        ? `Ожидается подтверждение от ${p.name}.`
+        ? `Ожидается подтверждение от ${recipientDisplayName(o, o.pendingId)}.`
         : fin && o.holderId !== o.finalRecipientId
-          ? `Предмет должен дойти до ${fin.name}.`
+          ? `Предмет должен дойти до ${recipientDisplayName(o, o.finalRecipientId)}.`
           : "Следите за статусом в истории.";
       return `<section class="tt-detail-task-card tt-detail-task-card--info" data-tt="detail-task-readonly">
         <h3 class="tt-detail-task-heading">Только просмотр</h3>
@@ -4579,7 +4584,7 @@
     if (mustRelay) {
       return `<section class="tt-detail-task-card" data-tt="detail-task-card">
         <h3 class="tt-detail-task-heading">Передайте дальше</h3>
-        <p class="tt-detail-task-receiver">Конечный получатель: <strong>${E(fin?.name || "—")}</strong></p>
+        <p class="tt-detail-task-receiver">Конечный получатель: <strong>${E(o.finalRecipientId ? recipientDisplayName(o, o.finalRecipientId) : fin?.name || "—")}</strong></p>
         <p class="tt-detail-task-instructions">Выберите, кому передать предмет сейчас — получатель подтвердит кодом или QR.</p>
         <div class="tt-detail-primary" data-tt="detail-primary-actions">
           ${btn("Передать конечному получателю", `data-tt="transfer-final" ${heroAttr}`, "tt-primary tt-btn-block")}
@@ -4965,6 +4970,22 @@
     if (input && typeof input.value === "string") ed.value = input.value;
   }
 
+  function closePersonalRecipientSheet() {
+    if (state.personalRecipientEdit?.saving) return;
+    const ret = state.personalRecipientEditFocusReturn;
+    state.personalRecipientEdit = null;
+    state.personalRecipientEditFocusReturn = null;
+    document.body.classList.remove("tt-personal-recipient-open");
+    renderTracker();
+    if (ret && typeof ret.focus === "function") {
+      try {
+        ret.focus({ preventScroll: true });
+      } catch {
+        ret.focus();
+      }
+    }
+  }
+
   function personalRecipientSheetHtml() {
     const ed = state.personalRecipientEdit;
     if (!ed) return "";
@@ -4976,18 +4997,19 @@
         ? `<p class="tt-personal-sheet-meta">Последнее изменение: ${E(meta.editedByDisplayName || "—")} · ${E(dt(meta.editedAt))}</p>`
         : "";
     const disabled = ed.saving ? " disabled" : "";
-    return `<div class="tt-filter-sheet tt-personal-recipient-sheet" data-tt="personal-recipient-sheet" data-open="true">
-      <div class="tt-filter-sheet-backdrop" data-tt="personal-recipient-close"${ed.saving ? "" : ""}></div>
-      <div class="tt-filter-sheet-panel tt-personal-recipient-panel" role="dialog" aria-modal="true" aria-labelledby="tt-personal-recipient-title">
+    const cancelDisabled = ed.saving ? " disabled" : "";
+    return `<div class="tt-filter-sheet tt-personal-recipient-sheet" data-tt="personal-recipient-sheet" data-open="true" role="dialog" aria-modal="true" aria-labelledby="tt-personal-recipient-title">
+      <div class="tt-filter-sheet-backdrop" data-tt="personal-recipient-close" aria-hidden="true" tabindex="-1"></div>
+      <div class="tt-filter-sheet-panel tt-personal-recipient-panel">
         <h3 id="tt-personal-recipient-title">Имя получателя для меня</h3>
         <p class="tt-personal-sheet-hint">Видно только вам в этой передаче. Приглашения и код используют имя «${E(canonical)}».</p>
         ${metaLine}
-        <label class="tt-wizard-field">Имя<input data-tt="personal-recipient-input" value="${E(ed.value || "")}" maxlength="120"${disabled}></label>
+        <label class="tt-wizard-field">Имя<input data-tt="personal-recipient-input" type="text" autocomplete="name" value="${E(ed.value || "")}" maxlength="120"${disabled}></label>
         ${ed.error ? `<p class="tt-error">${E(ed.error)}</p>` : ""}
         <div class="tt-personal-sheet-actions">
           ${btn(ed.saving ? "Сохранение…" : "Сохранить", `data-tt="personal-recipient-save"${disabled}`, "tt-primary tt-btn-block")}
           ${btn("Сбросить к исходному", `data-tt="personal-recipient-reset"${disabled}`, "tt-link tt-btn-block")}
-          ${btn("Отмена", 'data-tt="personal-recipient-close"', "tt-link tt-btn-block")}
+          ${btn("Отмена", `data-tt="personal-recipient-close"${cancelDisabled}`, "tt-link tt-btn-block")}
         </div>
       </div>
     </div>`;
@@ -4995,41 +5017,68 @@
 
   function setupPersonalRecipientSheetA11y() {
     const ed = state.personalRecipientEdit;
-    const panel = document.querySelector(".tt-personal-recipient-panel");
-    if (!ed || !panel) return;
-    const input = panel.querySelector('[data-tt="personal-recipient-input"]');
-    if (input && !ed.saving) input.focus();
-    const trap = (e) => {
-      if (!state.personalRecipientEdit) return;
-      if (e.key === "Escape" && !state.personalRecipientEdit.saving) {
-        e.preventDefault();
-        state.personalRecipientEdit = null;
-        renderTracker();
-        const ret = state.personalRecipientEditFocusReturn;
-        state.personalRecipientEditFocusReturn = null;
-        if (ret && typeof ret.focus === "function") ret.focus();
-        return;
-      }
-      if (e.key !== "Tab" || !panel.contains(document.activeElement)) return;
-      const focusable = panel.querySelectorAll(
-        'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-      );
-      if (!focusable.length) return;
-      const list = [...focusable];
-      const first = list[0];
-      const last = list[list.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
+    if (!ed) return;
+    document.body.classList.add("tt-personal-recipient-open");
+    const focusInput = () => {
+      const panel = document.querySelector(".tt-personal-recipient-panel");
+      if (!panel || !state.personalRecipientEdit) return;
+      const input = panel.querySelector('[data-tt="personal-recipient-input"]');
+      if (input && !state.personalRecipientEdit.saving && typeof input.focus === "function") {
+        try {
+          input.focus({ preventScroll: true });
+        } catch {
+          input.focus();
+        }
       }
     };
-    if (!setupPersonalRecipientSheetA11y._bound) {
-      document.addEventListener("keydown", trap);
-      setupPersonalRecipientSheetA11y._bound = trap;
+    requestAnimationFrame(() => requestAnimationFrame(focusInput));
+  }
+
+  function personalRecipientSheetKeydown(e) {
+    if (!state.personalRecipientEdit) return;
+    const panel = document.querySelector(".tt-personal-recipient-panel");
+    if (!panel) return;
+    if (e.key === "Escape" && !state.personalRecipientEdit.saving) {
+      e.preventDefault();
+      e.stopPropagation();
+      closePersonalRecipientSheet();
+      return;
     }
+    if (e.key !== "Tab") return;
+    const focusable = panel.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]):not([type="hidden"]), [href], [tabindex]:not([tabindex="-1"])'
+    );
+    if (!focusable.length) return;
+    const list = [...focusable];
+    const first = list[0];
+    const last = list[list.length - 1];
+    const active = document.activeElement;
+    if (!panel.contains(active)) {
+      e.preventDefault();
+      first.focus();
+      return;
+    }
+    if (e.shiftKey && active === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  if (!window.__TT_PERSONAL_RECIPIENT_A11Y__) {
+    window.__TT_PERSONAL_RECIPIENT_A11Y__ = true;
+    document.addEventListener("keydown", personalRecipientSheetKeydown, true);
+    document.addEventListener(
+      "input",
+      (e) => {
+        if (e.target?.getAttribute?.("data-tt") === "personal-recipient-input") {
+          syncPersonalRecipientEditFromDom();
+        }
+      },
+      true
+    );
   }
 
   function savePersonalRecipientLabel(opts = {}) {
@@ -5049,19 +5098,26 @@
       ? { recipientPartyId: ed.partyId, reset: true }
       : { recipientPartyId: ed.partyId, personalName: value };
     const apiCall =
-      isExternalShell() && window.TtExternalApi?.savePersonalRecipientLabel
-        ? window.TtExternalApi.savePersonalRecipientLabel(ed.orderId, body)
+      isExternalShell() && window.TanTrackerExternal?.savePersonalRecipientLabel
+        ? window.TanTrackerExternal.savePersonalRecipientLabel(ed.orderId, body)
         : window.TanTrackerLk?.savePersonalRecipientLabel
           ? window.TanTrackerLk.savePersonalRecipientLabel(ed.orderId, body)
           : Promise.reject(new Error("Сохранение недоступно."));
     apiCall
       .then(() => {
         const ret = state.personalRecipientEditFocusReturn;
+        state.toast = opts.reset ? "Имя сброшено к исходному." : "Имя сохранено.";
         state.personalRecipientEdit = null;
         state.personalRecipientEditFocusReturn = null;
-        state.toast = opts.reset ? "Имя сброшено к исходному." : "Имя сохранено.";
+        document.body.classList.remove("tt-personal-recipient-open");
         renderTracker();
-        if (ret && typeof ret.focus === "function") ret.focus();
+        if (ret && typeof ret.focus === "function") {
+          try {
+            ret.focus({ preventScroll: true });
+          } catch {
+            ret.focus();
+          }
+        }
       })
       .catch((err) => {
         ed.saving = false;
@@ -5254,11 +5310,15 @@
       content.innerHTML =
         externalShellChromeHtml() + bodyHtml() + (RC()?.cleanupDialogHtml?.() ?? "");
     }
-    let sheetHost = document.getElementById("tt-personal-recipient-sheet-host");
-    if (!sheetHost && main) {
+    const workRoot =
+      document.getElementById("tt-root") || main?.querySelector?.(".tt-work") || main;
+    const staleSheetHost = document.getElementById("tt-personal-recipient-sheet-host");
+    if (staleSheetHost && workRoot && !workRoot.contains(staleSheetHost)) staleSheetHost.remove();
+    let sheetHost = workRoot?.querySelector?.("#tt-personal-recipient-sheet-host") || null;
+    if (!sheetHost && workRoot) {
       sheetHost = document.createElement("div");
       sheetHost.id = "tt-personal-recipient-sheet-host";
-      main.appendChild(sheetHost);
+      workRoot.appendChild(sheetHost);
     }
     if (sheetHost) sheetHost.innerHTML = personalRecipientSheetHtml();
     if (state.personalRecipientEdit) setupPersonalRecipientSheetA11y();
@@ -5541,12 +5601,7 @@
       return;
     }
     if (action === "personal-recipient-close") {
-      if (state.personalRecipientEdit?.saving) return;
-      const ret = state.personalRecipientEditFocusReturn;
-      state.personalRecipientEdit = null;
-      state.personalRecipientEditFocusReturn = null;
-      renderTracker();
-      if (ret && typeof ret.focus === "function") ret.focus();
+      closePersonalRecipientSheet();
       return;
     }
     if (action === "personal-recipient-save") {
