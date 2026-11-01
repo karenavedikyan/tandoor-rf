@@ -231,17 +231,17 @@ describe("tanbot telegram stage2", { concurrency: false }, () => {
     const result = await processTanbotNotificationOutbox(pool, loaded.config, transport, {
       deliveryEnabled: true,
     });
-    // Existing canonical intermediate receipt emits confirmation + new-holder assignment.
-    // This is already true on production base 12a42b3; neither event should be dropped.
+    // Intermediate receipt: the new holder gets exactly one message (assignment in the
+    // "received" phase); handoff_confirmed goes to the previous holder/creator only.
     const sentEvents = (await pool.query<{ event_type: string }>(
       `SELECT event_type FROM tanbot_notification_outbox
        WHERE channel='telegram' AND user_id=$1::uuid AND status='sent'
          AND payload->>'transferId'=$2 ORDER BY event_type`,
       [recipientUser.id, transferId],
     )).rows.map(row => row.event_type);
-    assert.deepEqual(sentEvents, ["tan_tracker.assignment", "tan_tracker.handoff_confirmed"]);
-    assert.equal(result.sent, 2);
-    assert.equal(sink.calls.length, 2);
+    assert.deepEqual(sentEvents, ["tan_tracker.assignment"]);
+    assert.equal(result.sent, 1);
+    assert.equal(sink.calls.length, 1);
     for (const call of sink.calls) {
       assert.equal(String(call.body.chat_id), "777001");
       assert.match(String(call.body.text), /^Передача PUB1\nTest item/);

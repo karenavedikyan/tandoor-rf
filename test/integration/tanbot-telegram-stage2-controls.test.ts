@@ -290,7 +290,6 @@ describe("tanbot telegram stage2 independent controls", { concurrency: false }, 
     );
     assert.deepEqual(rows.rows, [
       { event_type: "tan_tracker.assignment", status: "cancelled", last_error_code: "NO_ACCESS" },
-      { event_type: "tan_tracker.handoff_confirmed", status: "cancelled", last_error_code: "NO_ACCESS" },
     ]);
     process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = "false";
   });

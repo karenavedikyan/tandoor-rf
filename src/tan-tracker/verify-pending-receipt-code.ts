@@ -15,7 +15,11 @@ export type ReceiptCodeResult = { ok: true } | { ok: false; http: number; messag
  * the enclosing transaction must commit attempt counters and audit records. */
 export async function verifyPendingReceiptCode(
   client: PoolClient,
-  input: { row: LockedReceiptTransfer; code: string; auditUserId: string | null; actingPartyId: string; pepper?: string },
+  input: {
+    row: LockedReceiptTransfer; code: string; auditUserId: string | null; actingPartyId: string; pepper?: string;
+    /** True when the code was entered in a bot whose reply already reports the outcome to the actor. */
+    botReply?: boolean;
+  },
 ): Promise<ReceiptCodeResult> {
   const { row } = input;
   if (transferWriteBlocked(row) || row.holder_party_id !== input.actingPartyId || !row.pending_party_id) {
@@ -59,7 +63,9 @@ export async function verifyPendingReceiptCode(
     return { ok: false, http: 400, message: "Неверный код. Текущий держатель не изменился." };
   }
   await client.query(`UPDATE tt_handoff_codes SET consumed_at=NOW() WHERE id=$1`, [codeRow.id]);
-  await applyPendingReceiptHandoff(client, row, input.auditUserId, input.actingPartyId, "Подтверждено одноразовым кодом");
+  await applyPendingReceiptHandoff(client, row, input.auditUserId, input.actingPartyId, "Подтверждено одноразовым кодом", {
+    botActor: input.botReply ? { staffUserId: input.auditUserId, partyId: input.actingPartyId } : null,
+  });
   await client.query(
     `INSERT INTO tt_audit_log (transfer_id,actor_user_id,acting_party_id,action,detail)
      VALUES($1,$2::uuid,$3::uuid,'code_verify_ok','{}'::jsonb)`,

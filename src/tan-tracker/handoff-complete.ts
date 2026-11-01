@@ -24,6 +24,9 @@ export async function applyPendingReceiptHandoff(
   auditUserId: string | null,
   actingPartyId: string,
   timelineNote: string,
+  /** Bot-originated confirmation: the actor already sees the outcome in the bot reply,
+   *  so the actor's own messenger notification is skipped (LK bell is kept). */
+  options: { botActor?: { staffUserId: string | null; partyId: string } | null } = {},
 ): Promise<{ transferStatus: string; routeComplete: boolean }> {
   if (!row.pending_party_id) {
     throw Object.assign(new Error("Нет ожидающего получателя."), { http: 409 });
@@ -66,6 +69,11 @@ export async function applyPendingReceiptHandoff(
     creator_party_id: string;
   }>(`SELECT public_code, item_title, creator_party_id FROM tt_transfers WHERE id = $1`, [row.id]);
   const m = meta.rows[0];
+  const botActor = options.botActor ?? null;
+  const selfServedUserId = botActor?.partyId === from ? botActor.staffUserId : null;
+  // Intermediate handoff: the new staff holder gets one assignment notification below,
+  // so they are excluded from handoff_confirmed (no two messages for one receipt).
+  const holderUserId = newStatus === "active" ? await resolveUserIdForParty(client, to) : null;
 
   if (m) {
     if (routeComplete) {
@@ -77,6 +85,7 @@ export async function applyPendingReceiptHandoff(
         holderPartyId: to,
         previousHolderPartyId: from,
         handoffVersion: newHandoffVersion,
+        selfServedUserId,
       });
     } else {
       await notifyHandoffConfirmed(client, {
@@ -87,6 +96,8 @@ export async function applyPendingReceiptHandoff(
         newHolderPartyId: to,
         creatorPartyId: m.creator_party_id,
         handoffVersion: newHandoffVersion,
+        excludeUserIds: [holderUserId],
+        selfServedUserId,
       });
     }
     const extEvent = routeComplete ? "delivered" : "after_receipt";
@@ -99,19 +110,20 @@ export async function applyPendingReceiptHandoff(
       routeFromPartyId: from,
       routeToPartyId: to,
     });
-    await notifyExternalPartyAfterHandoff(client, {
-      externalPartyId: from,
-      transferId: row.id,
-      handoffVersion: newHandoffVersion,
-      event: "after_code",
-      singleChannel: false,
-      routeFromPartyId: from,
-      routeToPartyId: to,
-    });
+    if (botActor?.partyId !== from) {
+      await notifyExternalPartyAfterHandoff(client, {
+        externalPartyId: from,
+        transferId: row.id,
+        handoffVersion: newHandoffVersion,
+        event: "after_code",
+        singleChannel: false,
+        routeFromPartyId: from,
+        routeToPartyId: to,
+      });
+    }
   }
 
   if (newStatus === "active") {
-    const holderUserId = await resolveUserIdForParty(client, to);
     if (holderUserId && m) {
       await notifyTransferAssignment(client, {
         transferId: row.id,
