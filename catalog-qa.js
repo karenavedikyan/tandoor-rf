@@ -67,9 +67,15 @@ var CATALOG_QA = await (async () => {
   ok(nIn === expIn && nIn > 50, `В наличии filter → ${nIn}`);
   const allInStock = await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => window.CatalogPrototype.total(p) > 0));
   ok(allInStock, "all filtered have stock");
-  await page.locator('.cat-filters .cat-chip[data-key="gamma"][data-val="Белые"]').click();
+  await page.locator('.cat-filters .cat-chip[data-cat="attr"][data-key="Цветовая гамма"][data-val="Белая"]').click();
   await page.waitForFunction((n) => Number(document.querySelector(".cat-summary b")?.textContent) < n, nIn);
   ok((await page.locator(".cat-active .cat-chip").count()) === 2, "two active filter chips");
+  // tags (Хит / Новинки / Акции как на сайте)
+  await page.locator('.cat-filters .cat-chip[data-cat="tag"][data-val="new"]').click();
+  await page.waitForTimeout(150);
+  ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.isNew)), "Новинки tag filter applies");
+  await page.locator('.cat-filters .cat-chip[data-cat="tag"][data-val="new"]').click();
+  await page.waitForTimeout(150);
   await page.locator('.cat-filters select[data-cat-select="sort"]').selectOption("asc");
   await page.waitForTimeout(150);
   const prices = await page.evaluate(() => window.CatalogPrototype.filtered().map((p) => p.price));
@@ -85,11 +91,67 @@ var CATALOG_QA = await (async () => {
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
   ok(true, "reset filters → 167");
 
+  // section filters mirror tandoor.ru
+  const groupsFor = async (sec) => {
+    await page.locator(`.cat-tree button[data-cat="sec"][data-sec="${sec}"]`).click();
+    await page.waitForFunction(() => document.querySelector(".cat-fgroup-attr"));
+    return page.evaluate(() => [...document.querySelectorAll(".cat-fgroup-attr > span")].map((e) => e.textContent));
+  };
+  const gi = await groupsFor("interior");
+  ok(["Дизайн", "Цветовая гамма", "Материал\\Покрытие", "Вид двери"].every((g) => gi.includes(g)), `interior filter groups: ${gi.join(", ")}`);
+  ok(await page.locator('.cat-fgroup-attr .cat-chip[data-val="Под покраску"].empty').count() === 1, "site-only option shown dimmed (Под покраску)");
+  await page.locator('.cat-fgroup-attr .cat-chip[data-key="Вид двери"][data-val="Стеклянная (ДО)"]').click();
+  await page.waitForTimeout(150);
+  ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.types.includes("ДО"))), "Вид двери ДО filter applies");
+  await page.locator('.cat-fgroup-attr .cat-chip[data-key="Вид двери"][data-val="Глухая (ДГ)"]').click();
+  await page.waitForTimeout(150);
+  ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.types.includes("ДО") || p.types.includes("ДГ"))), "multi-select within group (ДО или ДГ)");
+  const ge = await groupsFor("entry");
+  ok(["Место назначения", "Вид двери", "Толщина полотна, мм", "Толщина стали, мм", "Терморазрыв", "Ковка", "Стеклопакет", "Зеркало", "Ценовой сегмент"].every((g) => ge.includes(g)), `entry filter groups: ${ge.length}`);
+  ok(await page.evaluate(() => Object.keys(window.CatalogPrototype.state.f).length === 0), "section switch clears section filters");
+  await page.locator('.cat-fgroup-attr .cat-chip[data-key="Терморазрыв"][data-val="да"]').click();
+  await page.waitForTimeout(150);
+  ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.attrs["Терморазрыв"] === "да")), "Терморазрыв=да applies");
+  const gh = await groupsFor("hardware");
+  ok(["Бренд", "Цветовая гамма", "Вид ручки", "Основание ручки", "Тип установки", "Высота петли", "Вид замка/защёлки", "Материал язычка", "Дизайн"].every((g) => gh.includes(g)), `hardware filter groups: ${gh.length}`);
+  const gm = await groupsFor("molding");
+  ok(gm.includes("Материал") && gm.includes("Цвет"), "molding filter groups");
+  await page.locator('.cat-filters button[data-cat="reset"]').click();
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
+  await shot("desktop-filters-entry");
+
   // views
   await page.locator('.cat-seg button[data-view="site"]').click();
   await page.locator(".cat-grid.view-site").waitFor({ state: "visible" });
   ok((await page.locator(".view-site .cat-cta").count()) === 48, "site variant cards with CTA");
+  ok((await page.locator(".view-site button.cat-cta").count()) === 48, "CTA is a real button");
+  await page.locator(".view-site .cat-cta").first().hover();
+  const cardHover = await page.locator(".view-site .cat-card").first().evaluate((el) => getComputedStyle(el).transform);
+  ok(cardHover === "none" || cardHover === "matrix(1, 0, 0, 1, 0, 0)", "hovering CTA does not lift the whole card");
+  // card carousel (витрина/сайт): все фото в полный рост, стрелки, стороны входных дверей
+  ok(await page.evaluate(() => [...document.querySelectorAll(".view-site .cat-img img")].slice(0, 20).every((im) => im.naturalHeight > 0 && im.clientHeight <= im.parentElement.clientHeight && im.clientWidth <= im.parentElement.clientWidth)), "site view: photos fit the box fully (no crop)");
+  const multi = page.locator(".view-site .cat-img.has-gallery").first();
+  ok(await multi.count() === 1, "card has gallery controls when several photos");
+  const src0 = await multi.locator("img").getAttribute("src");
+  await multi.locator(".cat-arr.next").click();
+  await page.waitForTimeout(100);
+  const gid = await page.locator(".view-site .cat-img.has-gallery").first().getAttribute("data-gallery");
+  const src1 = await page.locator(`.view-site [data-gallery="${gid}"] img`).getAttribute("src");
+  ok(src0 !== src1, "card arrow switches photo");
+  ok(!(await page.locator(".cat-panel.open").count()), "card arrow does not open the panel");
   await shot("desktop-site");
+  // entry doors: outside / inside
+  await page.locator('.cat-tree button[data-cat="sec"][data-sec="entry"]').click();
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "29");
+  ok((await page.locator(".cat-sides").count()) === 29, "entry cards show Снаружи / Изнутри toggle");
+  const sidesBtn = page.locator(".cat-sides button").nth(1);
+  const sBefore = await page.locator(".cat-card .cat-img img").first().getAttribute("src");
+  await sidesBtn.click();
+  await page.waitForTimeout(100);
+  ok((await page.locator(".cat-card .cat-img img").first().getAttribute("src")) !== sBefore, "Изнутри shows the other side");
+  await shot("desktop-entry-sides");
+  await page.locator('.cat-tree button[data-cat="sec"][data-sec=""]').click();
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
   await page.locator('.cat-seg button[data-view="table"]').click();
   await page.locator(".cat-table").waitFor({ state: "visible" });
   ok((await page.locator(".cat-table tbody tr").count()) === 48, "table variant 48 rows");
@@ -117,6 +179,17 @@ var CATALOG_QA = await (async () => {
     await page.waitForTimeout(100);
     ok((await page.locator("[data-cat-reply]").textContent()) !== before, "reply updates on size change");
   }
+  // gallery in panel
+  const nThumbs = await page.locator(".cat-thumbs button").count();
+  ok(nThumbs >= 2, `panel gallery thumbnails: ${nThumbs}`);
+  const g0 = await page.locator(".cat-gallery .cat-img img").getAttribute("src");
+  const gActive = Number(await page.locator(".cat-thumbs button.active").getAttribute("data-idx"));
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(100);
+  ok((await page.locator(".cat-gallery .cat-img img").getAttribute("src")) !== g0, "ArrowRight switches panel photo");
+  await page.locator(".cat-thumbs button").nth(gActive).click();
+  await page.waitForTimeout(100);
+  ok((await page.locator(".cat-gallery .cat-img img").getAttribute("src")) === g0, "thumbnail click selects photo");
   await page.locator('.cat-gallery [data-cat="zoom"]').click();
   ok(await page.locator(".cat-gallery.zoom").count() === 1, "zoom toggles");
   await page.locator('.cat-panel .primary[data-cat="copy"]').click();
@@ -126,6 +199,29 @@ var CATALOG_QA = await (async () => {
   await page.waitForFunction(() => !document.querySelector(".cat-panel.open"));
   ok(true, "Escape closes panel");
   ok((await page.evaluate(() => document.body.style.overflow)) === "", "body scroll restored");
+
+  // full-screen mode
+  await page.locator('.cat-fullbtn[data-cat="full"]').click();
+  await page.waitForFunction(() => document.body.classList.contains("cat-fullscreen"));
+  ok(!(await page.locator(".sidebar").isVisible()) && !(await page.locator(".head").isVisible()), "full screen hides sidebar and header");
+  ok((await page.locator(".cat-secbar .cat-chip").count()) === 5, "full screen: sections as a bar");
+  const fullCols = await page.evaluate(() => getComputedStyle(document.querySelector(".cat-grid")).gridTemplateColumns.split(" ").length);
+  ok(fullCols >= 6, `full screen uses the width: ${fullCols} columns`);
+  ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), "full screen: no horizontal overflow");
+  await shot("desktop-full");
+  await page.locator('.cat-secbar .cat-chip[data-sec="hardware"]').click();
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "53");
+  ok(await page.evaluate(() => document.body.classList.contains("cat-fullscreen")), "section switch keeps full screen");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.body.classList.contains("cat-fullscreen"));
+  ok(await page.locator(".sidebar").isVisible(), "Escape leaves full screen");
+  await page.locator('.cat-fullbtn[data-cat="full"]').click();
+  await page.waitForFunction(() => document.body.classList.contains("cat-fullscreen"));
+  await page.evaluate(() => { location.hash = "#exchange?role=manager"; });
+  await page.waitForFunction(() => !document.body.classList.contains("cat-fullscreen") && document.querySelector(".sidebar"));
+  ok(true, "leaving catalog restores layout");
+  await page.goto(`${base}/?reload=1#catalog?role=manager`);
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
 
   // client view
   await page.locator(".cat-mode input").check();

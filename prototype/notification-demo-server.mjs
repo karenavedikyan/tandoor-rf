@@ -10,7 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const PORT = 34113;
-const HOST = "0.0.0.0";
+const HOST = process.env.DEMO_HOST || "0.0.0.0";
 const MAX_BODY = 256 * 1024;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, ".data");
