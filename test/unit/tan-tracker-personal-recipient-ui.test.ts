@@ -28,6 +28,14 @@ describe("tan-tracker personal recipient UI wiring", () => {
     assert.match(js, /tt-detail-task-receiver">Получатель:.*recipientDisplayName/);
   });
 
+  it("restores focus via stable edit trigger selectors after sheet close", () => {
+    const js = fs.readFileSync(jsPath, "utf8");
+    assert.match(js, /personalRecipientEditFocusTarget/);
+    assert.match(js, /focusPersonalRecipientEditTrigger/);
+    assert.match(js, /data-tt="personal-recipient-edit"[\s\S]*data-order-id=/);
+    assert.doesNotMatch(js, /personalRecipientEditFocusReturn/);
+  });
+
   it("styles personal sheet with explicit backdrop and surface fallbacks", () => {
     const css = fs.readFileSync(cssPath, "utf8");
     assert.match(css, /\.tt-personal-recipient-sheet \.tt-filter-sheet-backdrop[\s\S]*background:rgba\(20,30,20/);

@@ -555,7 +555,7 @@
     messengerInviteError: "",
     messengerInviteManualKey: null,
     personalRecipientEdit: null,
-    personalRecipientEditFocusReturn: null,
+    personalRecipientEditFocusTarget: null,
     messengerInviteManualVisible: false,
     messengerInviteActionGen: 0,
     registryPersonal: null,
@@ -4123,7 +4123,7 @@
       order &&
       canEditPersonalRecipientLabels() &&
       (variant === "pending" || variant === "final" || variant === "delivered")
-        ? `<button type="button" class="tt-route-personal-edit" data-tt="personal-recipient-edit" data-party-id="${E(partyId)}" aria-label="Изменить имя для себя">Изменить имя для себя</button>`
+        ? `<button type="button" class="tt-route-personal-edit" data-tt="personal-recipient-edit" data-party-id="${E(partyId)}" data-order-id="${E(order.id)}" aria-label="Изменить имя для себя">Изменить имя для себя</button>`
         : "";
     const phoneCore = c?.phone ? fmtPhoneCore(c.phone) : "";
     const telDigits = c?.phone ? normPhone(c.phone) : "";
@@ -4970,20 +4970,34 @@
     if (input && typeof input.value === "string") ed.value = input.value;
   }
 
+  function focusPersonalRecipientEditTrigger(target) {
+    if (!target?.partyId) return;
+    const partySel = `[data-tt="personal-recipient-edit"][data-party-id="${CSS.escape(target.partyId)}"]`;
+    const scoped =
+      target.orderId
+        ? `[data-order-id="${CSS.escape(target.orderId)}"]${partySel}`
+        : partySel;
+    const focusBtn = () => {
+      const el = document.querySelector(scoped) || document.querySelector(partySel);
+      if (el && typeof el.focus === "function") {
+        try {
+          el.focus({ preventScroll: true });
+        } catch {
+          el.focus();
+        }
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(focusBtn));
+  }
+
   function closePersonalRecipientSheet() {
     if (state.personalRecipientEdit?.saving) return;
-    const ret = state.personalRecipientEditFocusReturn;
+    const target = state.personalRecipientEditFocusTarget;
     state.personalRecipientEdit = null;
-    state.personalRecipientEditFocusReturn = null;
+    state.personalRecipientEditFocusTarget = null;
     document.body.classList.remove("tt-personal-recipient-open");
     renderTracker();
-    if (ret && typeof ret.focus === "function") {
-      try {
-        ret.focus({ preventScroll: true });
-      } catch {
-        ret.focus();
-      }
-    }
+    focusPersonalRecipientEditTrigger(target);
   }
 
   function personalRecipientSheetHtml() {
@@ -5105,19 +5119,13 @@
           : Promise.reject(new Error("Сохранение недоступно."));
     apiCall
       .then(() => {
-        const ret = state.personalRecipientEditFocusReturn;
+        const target = state.personalRecipientEditFocusTarget;
         state.toast = opts.reset ? "Имя сброшено к исходному." : "Имя сохранено.";
         state.personalRecipientEdit = null;
-        state.personalRecipientEditFocusReturn = null;
+        state.personalRecipientEditFocusTarget = null;
         document.body.classList.remove("tt-personal-recipient-open");
         renderTracker();
-        if (ret && typeof ret.focus === "function") {
-          try {
-            ret.focus({ preventScroll: true });
-          } catch {
-            ret.focus();
-          }
-        }
+        focusPersonalRecipientEditTrigger(target);
       })
       .catch((err) => {
         ed.saving = false;
@@ -5589,7 +5597,7 @@
       const order = orders.find((x) => x.id === state.orderId);
       if (!order || !partyId || !canEditPersonalRecipientLabels()) return;
       const view = personalRecipientView(order, partyId);
-      state.personalRecipientEditFocusReturn = document.activeElement;
+      state.personalRecipientEditFocusTarget = { orderId: order.id, partyId };
       state.personalRecipientEdit = {
         orderId: order.id,
         partyId,

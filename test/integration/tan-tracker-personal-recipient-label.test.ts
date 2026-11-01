@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import { randomUUID } from "node:crypto";
 import request from "supertest";
 import {
   createTestUser,
@@ -10,6 +11,8 @@ import {
 import { closePool, getPool, resetPoolForTests } from "../../src/db/pool";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
 import { TT_PERSONAL_RECIPIENT_LABEL_SET } from "../../src/tan-tracker/personal-recipient-label";
+import { createPersonBrowserSession } from "../../src/tan-tracker/external-person/person-service";
+import { withTransaction } from "../../src/access/db";
 
 const ORIGIN = "http://127.0.0.1:3000";
 const PASSWORD = "StrongPass123!";
@@ -53,6 +56,7 @@ describe("tan-tracker personal recipient labels", { concurrency: false }, () => 
   let adminBCookie = "";
   let managerCookie = "";
   let foreignCookie = "";
+  let managerUserId = "";
 
   before(async () => {
     setIntegrationEnv(databaseUrl, ORIGIN);
@@ -78,6 +82,7 @@ describe("tan-tracker personal recipient labels", { concurrency: false }, () => 
       fullName: "Manager Owner",
       role: "manager",
     });
+    managerUserId = mgr.id;
     await createTestUser({
       databaseUrl,
       email: "tt-prl-foreign@test.local",
@@ -220,5 +225,158 @@ describe("tan-tracker personal recipient labels", { concurrency: false }, () => 
     const after = bootOwner.body.orders.find((o: { id: string }) => o.id === transferId);
     assert.equal(after.holderId, recipientPartyId);
     assert.equal(after.personalRecipientViews[recipientPartyId].personalName, "После получения ярлык");
+  });
+
+  it("external shell POST uses est session (no staff cookie) and returns bootstrap views", async () => {
+    const app = await loadApp();
+    const pool = getPool();
+    assert.ok(pool);
+    const staff = await ensurePartyForUserOnWrite(pool, managerUserId, "Manager Owner", "+79991112201");
+    const extPartyId = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO tt_parties (kind, display_name, phone_e164) VALUES ('external', 'Ext Shell Creator', '+79997770001') RETURNING id::text`,
+      )
+    ).rows[0]!.id;
+    const personId = randomUUID();
+    await pool.query(
+      `INSERT INTO tt_external_persons (id, party_id, display_name, phone_e164, access_epoch)
+       VALUES ($1::uuid, $2::uuid, 'Ext Shell Creator', '+79997770001', 1)`,
+      [personId, extPartyId],
+    );
+    const publicCode = `TT-PRL-EXT-${randomUUID().slice(0, 8)}`;
+    await pool.query(
+      `INSERT INTO tt_transfers (
+         id, public_code, item_title, status, from_external,
+         creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id, handoff_version
+       ) VALUES ($1,$2,'Ext shell personal','waiting',TRUE,$3,$3,$4,$4,1)`,
+      [publicCode, publicCode, extPartyId, staff.id],
+    );
+    const est = await withTransaction((client) => createPersonBrowserSession(client, personId, "telegram"));
+    const saved = await request(app)
+      .post(`/api/tan-tracker/public/external/transfers/${encodeURIComponent(publicCode)}/personal-recipient-label`)
+      .set(headers(undefined, { "x-tt-external-est": est }))
+      .send({ recipientPartyId: staff.id, personalName: "Staff alias from ext shell" });
+    assert.equal(saved.status, 200, saved.text);
+    assert.equal(saved.body.bootstrap.externalPerson, true);
+    const order = saved.body.bootstrap.orders.find((o: { id: string }) => o.id === publicCode);
+    assert.equal(order.personalRecipientViews[staff.id].personalName, "Staff alias from ext shell");
+    const staffAttempt = await request(app)
+      .post(`/api/tan-tracker/public/external/transfers/${encodeURIComponent(publicCode)}/personal-recipient-label`)
+      .set(headers(managerCookie))
+      .send({ recipientPartyId: staff.id, personalName: "Wrong path" });
+    assert.equal(staffAttempt.status, 403, staffAttempt.text);
+  });
+
+  it("denies personal label POST in read-only employee preview", async () => {
+    const app = await loadApp();
+    const create = await createTransferWithExternalRecipient(app, managerCookie, "+79997776660");
+    assert.equal(create.status, 201);
+    const transferId = create.body.publicCode as string;
+    const pending = create.body.bootstrap.orders.find((o: { id: string }) => o.id === transferId).pendingId;
+    const start = await request(app)
+      .post("/api/admin/access/preview/start")
+      .set(headers(adminACookie))
+      .send({ userId: managerUserId });
+    assert.equal(start.status, 200, start.text);
+    const previewCookies =
+      start.headers["set-cookie"]?.map((c) => c.split(";")[0]).join("; ") ?? adminACookie;
+    const denied = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/personal-recipient-label`)
+      .set(headers(previewCookies))
+      .send({ recipientPartyId: pending, personalName: "Preview blocked" });
+    assert.equal(denied.status, 403, denied.text);
+    await request(app).post("/api/admin/access/preview/stop").set(headers(previewCookies)).send({});
+  });
+
+  it("stores server editor display name; ignores spoofed client metadata", async () => {
+    const app = await loadApp();
+    const create = await createTransferWithExternalRecipient(app, managerCookie, "+79997776661");
+    assert.equal(create.status, 201);
+    const transferId = create.body.publicCode as string;
+    const pending = create.body.bootstrap.orders.find((o: { id: string }) => o.id === transferId).pendingId;
+    const set = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/personal-recipient-label`)
+      .set(headers(adminACookie))
+      .send({
+        recipientPartyId: pending,
+        personalName: "Audit name check",
+        editorDisplayName: "Evil Spoof Name",
+        editorUserId: "00000000-0000-0000-0000-000000000099",
+      });
+    assert.equal(set.status, 200, set.text);
+    const pool = getPool();
+    assert.ok(pool);
+    const adminParty = (
+      await pool.query<{ id: string }>(
+        `SELECT id::text FROM tt_parties WHERE user_id = (SELECT id FROM users WHERE email = 'tt-prl-admin-a@test.local')`,
+      )
+    ).rows[0]!.id;
+    const audit = await pool.query<{ detail: { editorDisplayName?: string; editorUserId?: string } }>(
+      `SELECT detail FROM tt_audit_log
+       WHERE transfer_id = $1 AND action = $2 AND acting_party_id = $3::uuid
+       ORDER BY created_at DESC LIMIT 1`,
+      [transferId, TT_PERSONAL_RECIPIENT_LABEL_SET, adminParty],
+    );
+    assert.equal(audit.rowCount, 1);
+    assert.equal(audit.rows[0].detail.editorDisplayName, "Admin A");
+    assert.notEqual(audit.rows[0].detail.editorUserId, "00000000-0000-0000-0000-000000000099");
+  });
+
+  it("concurrent label writes resolve to a single latest audit row per owner", async () => {
+    const app = await loadApp();
+    const create = await createTransferWithExternalRecipient(app, managerCookie, "+79997776662");
+    assert.equal(create.status, 201);
+    const transferId = create.body.publicCode as string;
+    const pending = create.body.bootstrap.orders.find((o: { id: string }) => o.id === transferId).pendingId;
+    await Promise.all([
+      request(app)
+        .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/personal-recipient-label`)
+        .set(headers(adminACookie))
+        .send({ recipientPartyId: pending, personalName: "Concurrent A" }),
+      request(app)
+        .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/personal-recipient-label`)
+        .set(headers(adminACookie))
+        .send({ recipientPartyId: pending, personalName: "Concurrent B" }),
+    ]);
+    const pool = getPool();
+    assert.ok(pool);
+    const adminParty = (
+      await pool.query(
+        `SELECT p.id::text FROM tt_parties p JOIN users u ON u.id = p.user_id WHERE u.email = 'tt-prl-admin-a@test.local'`,
+      )
+    ).rows[0]?.id;
+    const rows = await pool.query<{ detail: { personalName: string } }>(
+      `SELECT detail FROM tt_audit_log
+       WHERE transfer_id = $1 AND action = $2 AND acting_party_id = $3::uuid
+       ORDER BY created_at DESC, id DESC LIMIT 2`,
+      [transferId, TT_PERSONAL_RECIPIENT_LABEL_SET, adminParty],
+    );
+    assert.equal(rows.rowCount, 2);
+    const boot = await request(app).get("/api/tan-tracker/bootstrap").set(headers(adminACookie));
+    const view = boot.body.orders.find((o: { id: string }) => o.id === transferId).personalRecipientViews[pending]
+      .personalName;
+    assert.ok(view === "Concurrent A" || view === "Concurrent B");
+    assert.equal(view, rows.rows[0].detail.personalName);
+  });
+
+  it("public recipient messenger payload omits private personal labels", async () => {
+    const app = await loadApp();
+    const privateName = "Secret bootstrap alias";
+    const create = await createTransferWithExternalRecipient(app, managerCookie, "+79997776663", privateName);
+    assert.equal(create.status, 201, create.text);
+    const transferId = create.body.publicCode as string;
+    process.env.TT_EXTERNAL_MESSENGER_ENABLED = "true";
+    const invite = await request(app)
+      .post(`/api/tan-tracker/transfers/${encodeURIComponent(transferId)}/messenger-invite`)
+      .set(headers(managerCookie))
+      .send({});
+    assert.equal(invite.status, 201, invite.text);
+    const pub = await request(app)
+      .get("/api/tan-tracker/public/recipient/messenger")
+      .query({ mst: invite.body.startToken });
+    assert.equal(pub.status, 200, pub.text);
+    const serialized = JSON.stringify(pub.body);
+    assert.doesNotMatch(serialized, new RegExp(privateName));
+    assert.match(serialized, /Canonical External Name/);
   });
 });
