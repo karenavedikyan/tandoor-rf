@@ -5,6 +5,7 @@ import { SENDER_HANDOFF_GUIDANCE } from "./sender-handoff-guidance";
 import { formatNotificationTransferState, type NotificationTransferState } from "./notification-transfer-state";
 
 export type StaffTransferEventType =
+  | "tan_tracker.admin_created"
   | "tan_tracker.assignment"
   | "tan_tracker.external_created"
   | "tan_tracker.external_declined"
@@ -25,10 +26,13 @@ export type StaffNotificationPayload = {
   routeFromDisplayName?: string;
   routeToDisplayName?: string;
   notificationState?: NotificationTransferState;
+  creatorKind?: "staff" | "external";
 };
 
 function eventActionLine(eventType: StaffTransferEventType, payload: StaffNotificationPayload): string {
   switch (eventType) {
+    case "tan_tracker.admin_created":
+      return `Создан новый трек. Автор: ${payload.creatorKind === "external" ? "внешний пользователь" : "сотрудник"}.`;
     case "tan_tracker.assignment":
       return payload.notificationState?.phase === "received"
         ? "Вы получили предмет. Теперь вы отвечаете за дальнейшие действия с передачей."
@@ -78,6 +82,8 @@ export function staffNotificationLkCopy(
   const ctx = staffNotificationContextBlock(payload);
   const action = eventActionLine(eventType, payload);
   switch (eventType) {
+    case "tan_tracker.admin_created":
+      return { title: "Новый трек · для администратора", body: `${ctx}\n\n${action}` };
     case "tan_tracker.assignment":
       return { title: "Вам назначена передача", body: `${ctx}\n\n${action}` };
     case "tan_tracker.external_created":
@@ -109,7 +115,7 @@ export function staffNotificationMessengerText(
   appOrigin: string,
 ): string {
   const lk = staffNotificationLkCopy(eventType, payload);
-  const url = eventType === "tan_tracker.code_obtained"
+  const url = eventType === "tan_tracker.code_obtained" || eventType === "tan_tracker.admin_created"
     ? staffTransferLkDetailUrl(appOrigin, payload.publicCode)
     : `${appOrigin.replace(/\/$/, "")}/tan-tracker`;
   return `${lk.body}\n\nОткрыть: ${url}`;

@@ -14,6 +14,7 @@ export function buildTanTrackerStaffOutboxMessage(
   appOrigin: string,
 ): string {
   const normalized: StaffNotificationPayload = {
+    creatorKind: payload.creatorKind === "external" ? "external" : "staff",
     transferId: String(payload.transferId ?? ""),
     publicCode: String(payload.publicCode ?? ""),
     itemTitle: String(payload.itemTitle ?? "Передача"),

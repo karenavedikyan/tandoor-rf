@@ -6,6 +6,7 @@ import { ensurePartyForUserOnWrite, nextPublicTransferCode } from "./repository"
 import { resolveRecipientPartyId, type ExternalRecipientInput } from "./party-eligibility";
 import { linkStagedAttachmentsToTransfer } from "./attachments";
 import { tanTrackerCanWrite } from "./guards";
+import { notifyAdminsOfNewTrack } from "./admin-overview";
 
 export type CreateTransferInput = {
   item: string;
@@ -123,5 +124,6 @@ export async function createTransferInTransaction(
   if (stagingRaw.length) {
     await linkStagedAttachmentsToTransfer(client, user.id, publicCode, stagingRaw);
   }
+  await notifyAdminsOfNewTrack(client, publicCode);
   return publicCode;
 }

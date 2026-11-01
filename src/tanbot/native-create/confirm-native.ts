@@ -16,6 +16,7 @@ import { tanTrackerCanWrite } from "../../tan-tracker/guards";
 import type { NativeCreateDraftPayload } from "./draft-scope";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 import { resolveNativeExternalPendingPartyByPhone } from "./native-external-recipient-by-phone";
+import { notifyAdminsOfNewTrack } from "../../tan-tracker/admin-overview";
 
 async function stageDraftFilesForStaff(
   client: PoolClient,
@@ -365,6 +366,7 @@ export async function confirmNativeExternalToExternalDraft(
      WHERE id = $1::uuid`,
     [input.draftId, idempotencyKey, publicCode, input.personId],
   );
+  await notifyAdminsOfNewTrack(client, publicCode);
   return { publicCode, forwardInvitationText };
 }
 
