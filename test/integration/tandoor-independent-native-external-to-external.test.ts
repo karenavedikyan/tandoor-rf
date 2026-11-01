@@ -735,6 +735,29 @@ describe("native external sender to external recipient (both channels)", { concu
       assert.deepEqual(await bizSnapshot(draft.id), before);
     });
 
+    it(`${channel}: active staff resolved via user party phone when profile phone empty`, async () => {
+      const national = `5${String(++seq).padStart(9, "0")}`.slice(0, 10);
+      const e164 = `+7${national}`;
+      const staff = await createTestUser({
+        databaseUrl: db, email: `ext2ext-partyonly-${seq}@test.local`, password: "StrongPass123!",
+        fullName: "Party Only Staff", role: "manager",
+      });
+      await getPool()!.query(`UPDATE users SET phone=NULL, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id]);
+      const party = await ensurePartyForUserOnWrite(getPool()!, staff.id, "Party Only Staff", e164);
+      const sender = await externalActor(channel);
+      const summary = await wizardToSummary(sender, e164, "No Shadow");
+      await confirmSummary(sender, summary);
+      const pending = (await getPool()!.query(
+        `SELECT pending_party_id::text FROM tt_transfers WHERE creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`,
+        [sender.partyId],
+      )).rows[0].pending_party_id;
+      assert.equal(pending, party.id);
+      assert.equal(
+        (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_parties WHERE kind='external' AND phone_e164=$1`, [e164])).rows[0].n,
+        0,
+      );
+    });
+
     it(`${channel}: stale party phone alias neutral rollback without leaking current phone`, async () => {
       const oldNational = `7${String(++seq).padStart(9, "0")}`.slice(0, 10);
       const newNational = `6${String(++seq).padStart(9, "0")}`.slice(0, 10);
@@ -797,6 +820,108 @@ describe("native external sender to external recipient (both channels)", { concu
         `SELECT step FROM tt_external_request_drafts WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`,
         [draftKey],
       )).rows[0]?.step, "photo");
+    });
+
+    it(`${channel}: third-party recipient contact keeps wizard; invitation stays unverified`, async () => {
+      const staffPhone = `+7923${String(++seq).padStart(7, "0")}`;
+      const thirdPhone = `+7933${String(++seq).padStart(7, "0")}`;
+      const messengerId = ++seq;
+      const thirdUserId = ++seq;
+      const chatId = channel === "max" ? messengerId + 400000 : messengerId;
+      const staff = await createTestUser({
+        databaseUrl: db, email: `ext2ext-third-${seq}@test.local`, password: "StrongPass123!",
+        fullName: "Wizard Staff", role: "admin",
+      });
+      await getPool()!.query(`UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id, staffPhone]);
+      await ensurePartyForUserOnWrite(getPool()!, staff.id, "Wizard Staff", staffPhone);
+      await getPool()!.query(
+        `INSERT INTO tanbot_${channel}_accounts(user_id,${channel}_user_id,${channel}_chat_id,notifications_enabled)
+         VALUES($1,$2,$3,TRUE)`,
+        [staff.id, String(messengerId), String(chatId)],
+      );
+      const sender = await externalActor(channel);
+      const summary = await wizardToSummary(sender, staffPhone, "Invite Open");
+      const created = await confirmSummary(sender, summary);
+      const transfer = (await getPool()!.query(
+        `SELECT id::text FROM tt_transfers WHERE creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`, [sender.partyId],
+      )).rows[0].id;
+      const mst = parseMst((created.messages ?? [created]).map(m => m.text).join("\n"));
+      if (channel === "telegram") {
+        const cfg = loadTanbotTelegramStage2Config(); assert.ok(cfg.ok);
+        await handleTanbotTelegramUpdate(getPool()!, cfg.config, {
+          update_id: ++seq,
+          message: {
+            message_id: 1, chat: { id: chatId, type: "private" },
+            from: { id: messengerId, is_bot: false }, text: `/start ${mst}`,
+          },
+        });
+      } else {
+        const cfg = loadTanbotMaxStage2Config(); assert.ok(cfg.ok);
+        await handleTanbotMaxUpdate(getPool()!, cfg.config, {
+          update_type: "bot_started", timestamp: ++seq, chat_id: chatId,
+          user: { user_id: messengerId, is_bot: false, first_name: "W" }, payload: mst,
+        });
+      }
+      const staffActor: ExtActor = { channel, id: messengerId, chatId, partyId: "", personId: "", phone: staffPhone };
+      let r = await send(staffActor, { text: "Создать передачу" });
+      r = await send(staffActor, { text: "Item with open invite" });
+      r = await send(staffActor, { callback: button(r, /пропустить/iu) });
+      const draftKey = `native:staff:${channel}:${chatId}`;
+      assert.equal((await getPool()!.query(
+        `SELECT step FROM tt_external_request_drafts WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [draftKey],
+      )).rows[0]?.step, "recipient");
+      if (channel === "telegram") {
+        const cfg = loadTanbotTelegramStage2Config(); assert.ok(cfg.ok);
+        const contact = await handleTanbotTelegramUpdate(getPool()!, cfg.config, {
+          update_id: ++seq,
+          message: {
+            message_id: 2, chat: { id: chatId, type: "private" },
+            from: { id: messengerId, is_bot: false },
+            contact: { phone_number: thirdPhone, user_id: thirdUserId, first_name: "Other" },
+          },
+        });
+        assert.ok(contact.reply?.text);
+        assert.doesNotMatch(contact.reply?.text ?? "", /^\d{6}$/);
+      } else {
+        const cfg = loadTanbotMaxStage2Config(); assert.ok(cfg.ok);
+        const vcfRaw =
+          `BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:Other\\r\\nTEL;TYPE=CELL:${thirdPhone}\\r\\nEND:VCARD`;
+        const hash = createHmac("sha256", process.env.TANBOT_MAX_BOT_TOKEN!)
+          .update(decodeVcfInfoForHmac(vcfRaw), "utf8").digest("hex");
+        const contact = await handleTanbotMaxUpdate(getPool()!, cfg.config, {
+          update_type: "message_created", timestamp: ++seq,
+          message: {
+            sender: { user_id: messengerId, is_bot: false, first_name: "W" },
+            recipient: { chat_id: chatId, chat_type: "dialog" },
+            body: {
+              mid: `third-${seq}`,
+              attachments: [{
+                type: "contact",
+                payload: {
+                  vcf_info: vcfRaw, hash,
+                  max_info: { user_id: thirdUserId, first_name: "Other" },
+                },
+              }],
+            },
+          },
+        });
+        assert.ok(contact.reply?.text);
+        assert.equal(contact.reply?.copyOnlyCode, undefined);
+      }
+      assert.equal((await getPool()!.query(
+        `SELECT step FROM tt_external_request_drafts WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [draftKey],
+      )).rows[0]?.step, "recipient");
+      const session = (await getPool()!.query(
+        `SELECT phone_verified_at, code_issued_at FROM tt_external_messenger_sessions
+         WHERE transfer_id=$1 ORDER BY created_at DESC LIMIT 1`, [transfer],
+      )).rows[0];
+      assert.equal(session?.phone_verified_at, null);
+      assert.equal(session?.code_issued_at, null);
+      assert.equal(
+        (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_handoff_codes WHERE transfer_id=$1`, [transfer])).rows[0].n,
+        0,
+      );
+      void r;
     });
   }
 });

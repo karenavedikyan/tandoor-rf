@@ -26,6 +26,11 @@ function neutralRecipientUnavailable(): Error {
 
 type StaffUserRow = { id: string; full_name: string; phone: string | null };
 
+function profileNational10(phone: string | null | undefined): string | null {
+  if (!phone?.trim()) return null;
+  return ruPhoneNational10(phone);
+}
+
 async function loadActiveUsersByNational10(client: Db, national10: string): Promise<StaffUserRow[]> {
   const res = await client.query<StaffUserRow>(
     `SELECT u.id::text, u.full_name, u.phone
@@ -40,19 +45,56 @@ async function loadActiveUsersByNational10(client: Db, national10: string): Prom
   return res.rows;
 }
 
-async function loadInactiveUsersByNational10(client: Db, national10: string): Promise<boolean> {
-  const res = await client.query(
+async function loadActiveUsersByPartyPhoneE164(client: Db, phoneE164: string): Promise<StaffUserRow[]> {
+  const res = await client.query<StaffUserRow>(
+    `SELECT u.id::text, u.full_name, u.phone
+     FROM users u
+     JOIN tt_parties p ON p.user_id = u.id AND p.kind = 'user'
+     WHERE u.status = 'active' AND p.phone_e164 = $1`,
+    [phoneE164],
+  );
+  return res.rows;
+}
+
+async function mergeActiveStaffCandidates(
+  client: Db,
+  phoneE164: string,
+  national10: string,
+): Promise<StaffUserRow[]> {
+  const byId = new Map<string, StaffUserRow>();
+  for (const row of await loadActiveUsersByNational10(client, national10)) {
+    byId.set(row.id, row);
+  }
+  for (const row of await loadActiveUsersByPartyPhoneE164(client, phoneE164)) {
+    const profNat = profileNational10(row.phone);
+    if (profNat != null && profNat !== national10) continue;
+    if (!byId.has(row.id)) byId.set(row.id, row);
+  }
+  return [...byId.values()];
+}
+
+async function hasInactiveUserPhoneBlock(client: Db, phoneE164: string, national10: string): Promise<boolean> {
+  const byProfile = await client.query(
     `SELECT 1
      FROM users u
      CROSS JOIN LATERAL (
        SELECT regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g') AS d
      ) norm
      WHERE u.status <> 'active'
-       AND (${USER_PHONE_NATIONAL10_SQL}) = $1
+       AND (${USER_PHONE_NATIONAL10_SQL}) = $2
      LIMIT 1`,
-    [national10],
+    [phoneE164, national10],
   );
-  return (res.rowCount ?? 0) > 0;
+  if ((byProfile.rowCount ?? 0) > 0) return true;
+  const byParty = await client.query(
+    `SELECT 1
+     FROM users u
+     JOIN tt_parties p ON p.user_id = u.id AND p.kind = 'user'
+     WHERE u.status <> 'active' AND p.phone_e164 = $1
+     LIMIT 1`,
+    [phoneE164],
+  );
+  return (byParty.rowCount ?? 0) > 0;
 }
 
 /** Stale user party phone_e164 matches input but users.phone is a different valid number. */
@@ -113,21 +155,21 @@ export async function resolveNativeExternalPendingPartyByPhone(
     throw neutralRecipientUnavailable();
   }
 
-  const activeUsers = await loadActiveUsersByNational10(client, national10);
+  const activeUsers = await mergeActiveStaffCandidates(client, phoneE164, national10);
   if (activeUsers.length > 1) {
     throw neutralRecipientUnavailable();
   }
   if (activeUsers.length === 1) {
     const user = activeUsers[0]!;
-    const userPhoneNorm = user.phone?.trim() ? normalizeRuPhoneE164(user.phone) : null;
-    if (userPhoneNorm && userPhoneNorm !== phoneE164) {
+    const userPhoneNorm = profileNational10(user.phone);
+    if (userPhoneNorm != null && userPhoneNorm !== national10) {
       throw neutralRecipientUnavailable();
     }
     const party = await ensurePartyForUserOnWrite(
       client,
       user.id,
       user.full_name,
-      userPhoneNorm ?? phoneE164,
+      userPhoneNorm != null ? normalizeRuPhoneE164(user.phone!) : phoneE164,
     );
     if (party.id === input.senderExternalPartyId) {
       throw Object.assign(new Error("Нельзя назначить себя получателем."), { http: 400 });
@@ -135,7 +177,7 @@ export async function resolveNativeExternalPendingPartyByPhone(
     return { pendingPartyId: party.id, recipientKind: "staff" };
   }
 
-  if (await loadInactiveUsersByNational10(client, national10)) {
+  if (await hasInactiveUserPhoneBlock(client, phoneE164, national10)) {
     throw neutralRecipientUnavailable();
   }
 

@@ -111,13 +111,18 @@ async function processUpdateInTransaction(
       const linkedStaff = await findAccountByMaxUserId(client, update.maxUserId);
       const person = linkedStaff ? null : await findPersonByMessenger(client, "max", update.maxUserId);
       const canNativeRecipient = (linkedStaff || person) && recipientChatType === "dialog" && !isForwarded;
-      let ext =
-        (await handleExternalRecipientMaxContact(client, {
-          maxChatId: update.chatId,
-          maxUserId: update.maxUserId,
-          contact,
-          isForwarded,
-        })) ?? null;
+      const ownMaxContact =
+        !isForwarded && contact.contactUserId === Number(update.maxUserId);
+      let ext: Awaited<ReturnType<typeof handleExternalRecipientMaxContact>> | null = null;
+      if (ownMaxContact) {
+        ext =
+          (await handleExternalRecipientMaxContact(client, {
+            maxChatId: update.chatId,
+            maxUserId: update.maxUserId,
+            contact,
+            isForwarded,
+          })) ?? null;
+      }
       if (ext) {
         reply = {
           userId: update.maxUserId,

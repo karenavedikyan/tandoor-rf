@@ -65,14 +65,19 @@ async function processParsedUpdate(
     try {
       const account = await findAccountByTelegramUserId(client, update.telegramUserId);
       const person = account ? null : await findPersonByMessenger(client, "telegram", update.telegramUserId);
-      let ext =
-        (await handleExternalRecipientTelegramContact(client, {
-          telegramChatId: update.chatId,
-          telegramUserId: update.telegramUserId,
-          contactUserId: update.contactUserId,
-          phoneRaw: update.phoneNumber,
-          isForwarded: update.isForwarded,
-        })) ?? null;
+      const ownContact =
+        !update.isForwarded &&
+        update.contactUserId != null &&
+        BigInt(update.contactUserId) === update.telegramUserId;
+      let ext = ownContact
+        ? ((await handleExternalRecipientTelegramContact(client, {
+            telegramChatId: update.chatId,
+            telegramUserId: update.telegramUserId,
+            contactUserId: update.contactUserId,
+            phoneRaw: update.phoneNumber,
+            isForwarded: update.isForwarded,
+          })) ?? null)
+        : null;
       if (!ext && (account || person)) {
         const adapters = await import("../tanbot/native-create/adapters");
         const native = await adapters.tryNativeCreateTelegramContact(client, {
