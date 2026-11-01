@@ -197,6 +197,7 @@ export async function handleReceiptEntryText(
   }
   const result = await verifyPendingReceiptCode(client, {
     row, code: parsed.code, actingPartyId: partyId, auditUserId: ctx.isLinkedStaff ? ctx.staffUserId : null,
+    botReply: true,
   });
   if (!result.ok) return withCancel(ctx, row, `${contextText(row)}\n\n${result.message}\nПередача не подтверждена.`);
   await clearReceiptEntry(client, ctx);

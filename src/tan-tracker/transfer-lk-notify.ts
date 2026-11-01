@@ -74,16 +74,22 @@ export async function notifyHandoffConfirmed(
     newHolderPartyId: string;
     creatorPartyId: string;
     handoffVersion: number;
+    /** Staff users who get a separate assignment notification for the same handoff. */
+    excludeUserIds?: ReadonlyArray<string | null | undefined>;
+    /** Staff user who confirmed the code in a bot and already saw the outcome in the reply. */
+    selfServedUserId?: string | null;
   },
 ): Promise<void> {
-  const userIds = await uniqueStaffUserIdsFromParties(client, [
+  const excluded = new Set((input.excludeUserIds ?? []).filter(Boolean));
+  const userIds = (await uniqueStaffUserIdsFromParties(client, [
     input.previousHolderPartyId,
     input.newHolderPartyId,
     input.creatorPartyId,
-  ]);
+  ])).filter((id) => !excluded.has(id));
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.handoff_confirmed",
     recipientUserIds: userIds,
+    skipMessengerUserIds: [input.selfServedUserId],
     payload: await payloadWithRoute(client, input, {
       fromPartyId: input.previousHolderPartyId,
       toPartyId: input.newHolderPartyId,
@@ -102,6 +108,8 @@ export async function notifyTransferDelivered(
     holderPartyId: string;
     previousHolderPartyId: string;
     handoffVersion: number;
+    /** Staff user who confirmed the code in a bot and already saw the outcome in the reply. */
+    selfServedUserId?: string | null;
   },
 ): Promise<void> {
   const userIds = await uniqueStaffUserIdsFromParties(client, [
@@ -112,6 +120,7 @@ export async function notifyTransferDelivered(
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.delivered",
     recipientUserIds: userIds,
+    skipMessengerUserIds: [input.selfServedUserId],
     payload: await payloadWithRoute(client, input, {
       fromPartyId: input.previousHolderPartyId,
       toPartyId: input.holderPartyId,

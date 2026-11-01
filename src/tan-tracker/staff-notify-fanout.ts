@@ -39,10 +39,13 @@ export async function fanoutStaffTransferNotification(
     recipientUserIds: string[];
     payload: StaffNotificationPayload;
     lkIdempotencySuffix?: string;
+    /** Users who already saw this outcome in a bot reply: LK bell only, no telegram/max message. */
+    skipMessengerUserIds?: ReadonlyArray<string | null | undefined>;
   },
 ): Promise<void> {
   const deduped = [...new Set(input.recipientUserIds.filter(Boolean))];
   if (!deduped.length) return;
+  const skipMessenger = new Set((input.skipMessengerUserIds ?? []).filter((id): id is string => Boolean(id)));
   const lkCopy = staffNotificationLkCopy(input.eventType, input.payload);
   const payloadJson = {
     transferId: input.payload.transferId,
@@ -68,6 +71,7 @@ export async function fanoutStaffTransferNotification(
       body: lkCopy.body,
       idempotencyKey: lkKey,
     });
+    if (skipMessenger.has(userId)) continue;
     for (const channel of CHANNELS) {
       await enqueueNotificationOutbox(client, {
         idempotencyKey: idempotencyKey(

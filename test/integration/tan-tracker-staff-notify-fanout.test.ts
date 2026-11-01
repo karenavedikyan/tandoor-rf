@@ -333,4 +333,128 @@ describe("tan-tracker staff notify fanout (PostgreSQL)", { concurrency: false },
     );
     assert.equal(maxAfter.rows[0]!.status, "cancelled");
   });
+
+  it("bot code confirmation: actor keeps LK bell but gets no messenger message about own action", async () => {
+    await resetPoolForTests();
+    const pool = getPool();
+    assert.ok(pool);
+    const sender = await createTestUser({
+      databaseUrl, email: "staff-fanout-bot-sender@test.local", password: PASSWORD, fullName: "Bot Sender", role: "manager",
+    });
+    const recipient = await createTestUser({
+      databaseUrl, email: "staff-fanout-bot-recipient@test.local", password: PASSWORD, fullName: "Bot Recipient", role: "manager",
+    });
+    const client = await pool.connect();
+    const transferId = "TT-FANOUT-BOT-1";
+    try {
+      await client.query("BEGIN");
+      const sParty = await ensurePartyForUserOnWrite(client, sender.id, "Bot Sender", "+79991110031");
+      const rParty = await ensurePartyForUserOnWrite(client, recipient.id, "Bot Recipient", "+79991110032");
+      await client.query(
+        `INSERT INTO tt_transfers (id, public_code, item_title, status, creator_party_id, holder_party_id, pending_party_id,
+                                  final_recipient_party_id, handoff_version, row_version)
+         VALUES ($1, 'FANB1', 'Bot final', 'waiting', $2, $2, $3, $3, 1, 1)`,
+        [transferId, sParty.id, rParty.id],
+      );
+      await applyPendingReceiptHandoff(
+        client,
+        { id: transferId, holder_party_id: sParty.id, pending_party_id: rParty.id, final_recipient_party_id: rParty.id, handoff_version: 1, row_version: 1 },
+        sender.id,
+        sParty.id,
+        "bot code verify",
+        { botActor: { staffUserId: sender.id, partyId: sParty.id } },
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    const lk = await pool.query(
+      `SELECT user_id::text AS user_id, COUNT(*)::int AS c FROM tt_lk_notifications
+       WHERE transfer_id = $1 AND event_type = 'tan_tracker.delivered' GROUP BY user_id`,
+      [transferId],
+    );
+    const lkByUser = Object.fromEntries(lk.rows.map((r) => [r.user_id, r.c]));
+    assert.equal(lkByUser[sender.id], 1, "actor still gets the LK bell");
+    assert.equal(lkByUser[recipient.id], 1);
+
+    const out = await pool.query(
+      `SELECT user_id::text AS user_id, channel FROM tanbot_notification_outbox
+       WHERE payload->>'transferId' = $1 ORDER BY user_id, channel`,
+      [transferId],
+    );
+    assert.deepEqual(
+      out.rows.map((r) => `${r.user_id === recipient.id ? "recipient" : "sender"}:${r.channel}`),
+      ["recipient:max", "recipient:telegram"],
+      "no telegram/max message to the actor who confirmed the code in the bot",
+    );
+  });
+
+  it("intermediate handoff: new staff holder gets one assignment, not handoff_confirmed as well", async () => {
+    await resetPoolForTests();
+    const pool = getPool();
+    assert.ok(pool);
+    const sender = await createTestUser({
+      databaseUrl, email: "staff-fanout-mid-sender@test.local", password: PASSWORD, fullName: "Mid Sender", role: "manager",
+    });
+    const holder = await createTestUser({
+      databaseUrl, email: "staff-fanout-mid-holder@test.local", password: PASSWORD, fullName: "Mid Holder", role: "manager",
+    });
+    const final = await createTestUser({
+      databaseUrl, email: "staff-fanout-mid-final@test.local", password: PASSWORD, fullName: "Mid Final", role: "manager",
+    });
+    const client = await pool.connect();
+    const transferId = "TT-FANOUT-MID-1";
+    try {
+      await client.query("BEGIN");
+      const sParty = await ensurePartyForUserOnWrite(client, sender.id, "Mid Sender", "+79991110041");
+      const hParty = await ensurePartyForUserOnWrite(client, holder.id, "Mid Holder", "+79991110042");
+      const fParty = await ensurePartyForUserOnWrite(client, final.id, "Mid Final", "+79991110043");
+      await client.query(
+        `INSERT INTO tt_transfers (id, public_code, item_title, status, creator_party_id, holder_party_id, pending_party_id,
+                                  final_recipient_party_id, handoff_version, row_version)
+         VALUES ($1, 'FANM1', 'Mid item', 'waiting', $2, $2, $3, $4, 1, 1)`,
+        [transferId, sParty.id, hParty.id, fParty.id],
+      );
+      // LK-originated confirmation (no bot actor): sender keeps own messenger notification.
+      await applyPendingReceiptHandoff(
+        client,
+        { id: transferId, holder_party_id: sParty.id, pending_party_id: hParty.id, final_recipient_party_id: fParty.id, handoff_version: 1, row_version: 1 },
+        sender.id,
+        sParty.id,
+        "lk code verify",
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    const rows = await pool.query(
+      `SELECT user_id::text AS user_id, event_type, channel FROM tanbot_notification_outbox
+       WHERE payload->>'transferId' = $1 ORDER BY user_id, event_type, channel`,
+      [transferId],
+    );
+    const who = (id: string) => (id === sender.id ? "sender" : id === holder.id ? "holder" : "other");
+    const summary = rows.rows.map((r) => `${who(r.user_id)}:${r.event_type.replace("tan_tracker.", "")}:${r.channel}`).sort();
+    assert.deepEqual(summary, [
+      "holder:assignment:max",
+      "holder:assignment:telegram",
+      "sender:handoff_confirmed:max",
+      "sender:handoff_confirmed:telegram",
+    ]);
+    const lk = await pool.query(
+      `SELECT user_id::text AS user_id, event_type FROM tt_lk_notifications WHERE transfer_id = $1 ORDER BY 1, 2`,
+      [transferId],
+    );
+    assert.deepEqual(
+      lk.rows.map((r) => `${who(r.user_id)}:${r.event_type.replace("tan_tracker.", "")}`).sort(),
+      ["holder:assignment", "sender:handoff_confirmed"],
+    );
+  });
 });

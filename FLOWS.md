@@ -1,5 +1,14 @@
 # QA flows (не public/dist)
 
+## Тан-трекер — без задвоения уведомлений о получении (2026-11-01)
+
+- **База:** `a48c14dd45e4a9902fb7ca28b22bcdf7e43cb50c` (production); ветка `computer/bot-self-notify-dedupe-20261101`.
+- **Симптом:** отправитель вводит код приёма в боте (Telegram/MAX) и получает два сообщения об одном событии: ответ бота «Код проверен…» и уведомление из outbox «Получение подтверждено» (ТТ-2026-014, 31.10).
+- **Правило 1 (действие в боте):** `verifyPendingReceiptCode({ botReply: true })` → `applyPendingReceiptHandoff(..., { botActor })`. Тому, кто сам подтвердил код в боте, сообщение в Telegram/MAX о его же действии не ставится в очередь (`skipMessengerUserIds` в `fanoutStaffTransferNotification`); колокольчик ЛК сохраняется. Внешнему отправителю, подтвердившему код в боте, не отправляется `after_code`. Подтверждение из ЛК не меняется.
+- **Правило 2 (промежуточный приём):** новый держатель-сотрудник получает только `tan_tracker.assignment` (фаза «received»), из `tan_tracker.handoff_confirmed` он исключён (`excludeUserIds`). Предыдущий держатель и создатель получают `handoff_confirmed` как раньше. Финальная доставка (`delivered`) без изменений.
+- **Не трогали:** ключи идемпотентности outbox, схему БД, webhook, воркеры, старые записи очереди; повторной отправки старых уведомлений нет.
+- **QA:** `test/integration/tan-tracker-staff-notify-fanout.test.ts` (2 новых кейса), обновлены ожидания в `tanbot-telegram-stage2*.test.ts`.
+
 ## Staff receipt code in MAX (pilot, 2026-10-31)
 
 - **База:** `a93c77ebc96b2495ecea93d693bcc12c184d91f3`; ветка `cursor/staff-receipt-code-max-20261031`.
