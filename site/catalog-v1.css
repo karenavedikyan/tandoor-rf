@@ -162,7 +162,7 @@
 .cat-active .cat-chip{background:var(--tint);color:var(--green);border-color:transparent}
 
 /* Сетка карточек */
-.cat-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(205px,1fr))}
+.cat-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
 .cat-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--cat-radius);overflow:hidden;display:flex;flex-direction:column;text-align:left;padding:0;min-height:0;position:relative;cursor:pointer;transition:box-shadow .15s,transform .15s,border-color .15s}
 .cat-card:hover{border-color:var(--green);box-shadow:0 6px 20px rgba(20,40,10,.08);transform:translateY(-1px)}
 .cat-card:focus-visible{outline:3px solid var(--green);outline-offset:2px}
@@ -243,6 +243,44 @@
 .cat-quick button{flex:1;min-height:36px;padding:6px 10px;font-size:var(--text-xs);display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .cat-quick button svg{width:14px;height:14px}
 
+/* Лупа на фото и лайтбокс (как «увеличить» на tandoor.ru) */
+.cat-zoom{position:absolute;right:8px;top:8px;width:32px;height:32px;min-height:0;border-radius:50%;border:1px solid var(--line);background:rgba(255,255,255,.92);color:var(--text);display:grid;place-items:center;padding:0;z-index:3;cursor:zoom-in;opacity:.9;transition:opacity .15s,background .15s,color .15s}
+.cat-zoom svg{width:16px;height:16px}
+.cat-zoom:hover,.cat-zoom:focus-visible{background:var(--green);color:#fff;border-color:var(--green);opacity:1}
+[data-theme=dark] .cat-zoom{background:rgba(23,32,25,.9)}
+[data-theme=dark] .cat-zoom:hover{color:#172019}
+.cat-card:has(.cat-zoom:hover){border-color:var(--line);box-shadow:none;transform:none}
+.cat-light{position:fixed;inset:0;z-index:90;display:none}
+.cat-light.open{display:block}
+.cat-light-bg{position:absolute;inset:0;background:rgba(10,14,10,.94)}
+.cat-light-fig{position:absolute;inset:0 0 76px;margin:0;display:grid;place-items:center;overflow:hidden;cursor:zoom-in}
+.cat-light-fig img{display:block;max-width:calc(100vw - 150px);max-height:calc(100vh - 110px);object-fit:contain;background:#fff;border-radius:6px;padding:8px;box-shadow:0 20px 60px rgba(0,0,0,.5);user-select:none}
+.cat-light-fig.big{display:block;overflow:auto;cursor:zoom-out;padding:16px 75px}
+.cat-light-fig.big img{max-width:none;max-height:none;height:calc(2 * (100vh - 110px));width:auto;margin:0 auto}
+.cat-light-close{position:absolute;top:14px;right:14px;width:44px;height:44px;border-radius:50%;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;display:grid;place-items:center;padding:0;cursor:pointer;z-index:2}
+.cat-light-close:hover,.cat-light-close:focus-visible{background:var(--green);border-color:var(--green)}
+.cat-light-close svg{width:20px;height:20px}
+.cat-light .cat-arr{opacity:1;width:44px;height:44px;border-color:rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;z-index:2}
+.cat-light .cat-arr.prev{left:16px}.cat-light .cat-arr.next{right:16px}
+.cat-light .cat-arr svg{width:22px;height:22px}
+.cat-light-cap{position:absolute;left:0;right:0;bottom:0;min-height:76px;padding:10px 76px;color:#fff;display:flex;gap:6px 16px;align-items:center;justify-content:center;flex-wrap:wrap;text-align:center;font-size:var(--text-sm)}
+.cat-light-cap b{font-size:var(--text-lg)}
+.cat-light-cap span{color:rgba(255,255,255,.8)}
+.cat-light-cap .cat-light-price{color:#fff;font-weight:700;font-size:var(--text-lg)}
+.cat-light-cap .cat-light-stock{padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.14);color:#fff}
+.cat-light-cap .cat-light-n{color:rgba(255,255,255,.6)}
+.cat-light-cap small{flex-basis:100%;color:rgba(255,255,255,.55);font-size:var(--text-xs)}
+@media(max-width:900px){
+ .cat-light-fig{inset:64px 0 96px}
+ .cat-light-fig img{max-width:calc(100vw - 24px);max-height:calc(100vh - 176px);padding:4px}
+ .cat-light-fig.big img{height:calc(2 * (100vh - 176px))}
+ .cat-light-fig.big{padding:12px}
+ .cat-light .cat-arr{top:auto;bottom:100px;transform:none;width:40px;height:40px}
+ .cat-light-cap{padding:8px 12px;min-height:96px;gap:4px 10px}
+ .cat-zoom{width:28px;height:28px;right:6px;top:6px}
+ .cat-zoom svg{width:14px;height:14px}
+}
+
 /* Вариант A: как на tandoor.ru — центровка, фото 2:3 на светлом поле, подпись «Розничная цена», зелёная кнопка */
 /* размеры как на tandoor.ru: карточка 420 (3 в ряд на 1300), фото-поле 360×410, название и цена 22px, кнопка 51px */
 .cat-grid.view-site{grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr));gap:20px}
@@ -251,7 +289,7 @@
 .view-site .cat-card:has(.cat-badges) .cat-head{padding-inline:52px}
 .view-site .cat-head .cat-name{font-size:22px;line-height:26px;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:52px}
 .view-site .cat-head .cat-color{margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.view-site .cat-img{width:min(100%,360px);height:440px;aspect-ratio:auto;margin:0 auto;background:transparent;--px:0px;--pt:0px;--pb:30px}
+.view-site .cat-img{width:auto;aspect-ratio:10/11.5;margin:0 12px;background:transparent;--px:0px;--pt:0px;--pb:30px}
 .view-site .cat-head .cat-color{min-height:38px;line-height:19px;font-size:var(--text-base)}
 .view-site .cat-pricerow .cat-price{font-size:22px;line-height:26px;font-weight:600}
 .view-show .cat-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -294,7 +332,7 @@
 .cat-more{display:flex;justify-content:center;padding:4px 0 8px}
 
 /* Панель товара */
-body:has(.cat-panel.open) #af-required-reminder{display:none}
+body:has(.cat-panel.open) #af-required-reminder,body:has(.cat-light.open) #af-required-reminder{display:none}
 .cat-panel{position:fixed;inset:0;z-index:30;display:none}
 .cat-panel.open{display:block}
 .cat-panel-bg{position:absolute;inset:0;background:#12201888}
@@ -317,8 +355,6 @@ body:has(.cat-panel.open) #af-required-reminder{display:none}
 .cat-thumbs button span{font-size:10px;line-height:1.1;padding:2px 0 3px;color:var(--muted)}
 .cat-thumbs button.active{border-color:var(--green)}
 .cat-thumbs button.active span{color:var(--green)}
-.cat-gallery.zoom .cat-img{aspect-ratio:auto;cursor:zoom-out;padding:12px}
-.cat-gallery.zoom .cat-img img{position:static;width:100%;height:auto;max-height:none}
 .cat-gallery small{color:var(--muted);font-size:var(--text-xs)}
 .cat-info{display:flex;flex-direction:column;gap:16px;min-width:0}
 .cat-pricebox{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -413,6 +449,6 @@ body.cat-fullscreen #catalog-root{padding:10px 14px 24px}
 .cat-secbar .cat-chip{min-height:36px;padding:6px 14px;font-size:var(--text-sm)}
 .cat-secbar .cat-chip svg{width:15px;height:15px}
 .cat-full .cat-toolbar{position:sticky;top:0;z-index:5}
-.cat-full .cat-grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+.cat-full .cat-grid{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
 .cat-full .cat-grid.view-site{grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr))}
 .cat-full .cat-filters{gap:6px 14px}

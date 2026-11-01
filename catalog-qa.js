@@ -224,6 +224,14 @@ var CATALOG_QA = await (async () => {
   const src1 = await page.locator(`.view-site [data-gallery="${gid}"] img`).getAttribute("src");
   ok(src0 !== src1, "card arrow switches photo");
   ok(!(await page.locator(".cat-panel.open").count()), "card arrow does not open the panel");
+  // лупа на карточке — лайтбокс без открытия панели
+  ok((await page.locator(".view-site .cat-zoom").count()) === 48, "every site card has a zoom button");
+  await page.locator(".view-site .cat-zoom").first().click();
+  ok(await page.locator(".cat-light.open").count() === 1, "card zoom opens lightbox");
+  ok(!(await page.locator(".cat-panel.open").count()), "card zoom does not open the panel");
+  ok(await page.evaluate(() => { const im = document.querySelector(".cat-light-fig img"); return im && im.clientHeight > innerHeight * 0.6; }), "lightbox photo is large");
+  await page.locator(".cat-light-close").click();
+  ok(await page.locator(".cat-light.open").count() === 0, "lightbox closes");
   await shot("desktop-site");
   // entry doors: outside / inside
   await goSec("entry");
@@ -276,7 +284,13 @@ var CATALOG_QA = await (async () => {
   await page.waitForTimeout(100);
   ok((await page.locator(".cat-gallery .cat-img img").getAttribute("src")) === g0, "thumbnail click selects photo");
   await page.locator('.cat-gallery [data-cat="zoom"]').click();
-  ok(await page.locator(".cat-gallery.zoom").count() === 1, "zoom toggles");
+  ok(await page.locator(".cat-light.open").count() === 1, "panel photo opens lightbox");
+  ok(await page.locator(".cat-light-cap .cat-light-price").count() === 1, "lightbox shows price");
+  await page.locator(".cat-light-fig").click();
+  ok(await page.locator(".cat-light-fig.big").count() === 1, "lightbox zooms in");
+  await page.keyboard.press("Escape");
+  ok(await page.locator(".cat-light.open").count() === 0, "Esc closes lightbox");
+  ok(await page.locator(".cat-panel.open").count() === 1, "panel stays open after lightbox");
   await page.locator('.cat-panel .primary[data-cat="copy"]').click();
   await page.locator("#notice.show").waitFor({ state: "visible" });
   ok((await page.locator("#notice").textContent()).includes("скопирован") || (await page.locator("#notice").textContent()).includes("Буфер"), "copy gives notice");
@@ -291,7 +305,7 @@ var CATALOG_QA = await (async () => {
   ok(!(await page.locator(".sidebar").isVisible()) && !(await page.locator(".head").isVisible()), "full screen hides sidebar and header");
   ok((await page.locator(".cat-secbar .cat-chip").count()) === 5, "full screen: sections as a bar");
   const fullCols = await page.evaluate(() => getComputedStyle(document.querySelector(".cat-grid")).gridTemplateColumns.split(" ").length);
-  ok(fullCols >= 6, `full screen uses the width: ${fullCols} columns`);
+  ok(fullCols >= 5, `full screen uses the width: ${fullCols} columns`);
   ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), "full screen: no horizontal overflow");
   await shot("desktop-full");
   await page.locator('.cat-secbar .cat-chip[data-sec="hardware"]').click();

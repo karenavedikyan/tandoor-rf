@@ -12,7 +12,7 @@
   const state = {
     sec: "", sub: "", grp: "", q: "", view: "show", clientView: false,
     avail: "", tags: [], f: {}, min: "", max: "", sort: "default",
-    limit: PAGE, panelId: null, zoom: false, size: null, type: null, filtersOpen: false, full: false, gIdx: 0,
+    limit: PAGE, panelId: null, zoom: false, size: null, type: null, filtersOpen: false, full: false, gIdx: 0, light: null,
   };
   const cardIdx = {}; // индекс фото на карточках (карусель)
   const imgsOf = (p) => (p.imgs && p.imgs.length ? p.imgs : [p.img]);
@@ -25,6 +25,8 @@
     const all = [p, ...sib];
     return `<div class="cat-colors" aria-label="Цвета модели">${all.slice(0, max).map((q) => `<button type="button" class="${q.id === p.id ? "active" : ""}" data-cat="open" data-id="${q.id}" title="${esc(q.color)}" aria-label="${esc(q.name)} ${esc(q.color)}"><img src="${q.img}" alt="" loading="lazy"></button>`).join("")}${all.length > max ? `<span>+${all.length - max}</span>` : ""}</div>`;
   }
+  /* Лупа на фото — как на tandoor.ru: открывает снимок во весь экран (лайтбокс), клик по снимку приближает. */
+  const zoomBtn = (p, i) => `<button type="button" class="cat-zoom" data-cat="light" data-id="${p.id}" data-idx="${i}" aria-label="Увеличить фото ${esc(p.name)}" title="Увеличить фото">${icon("zoom-in")}</button>`;
   function imgHtml(p, cls = "cat-img") {
     const imgs = imgsOf(p); const i = Math.min(cardIdx[p.id] || 0, imgs.length - 1);
     const multi = imgs.length > 1;
@@ -34,12 +36,12 @@
       return `<div class="${cls} has-gallery cat-pair" data-gallery="${p.id}">
       <img class="side back" src="${imgs[back]}" alt="${esc(p.name)} — ${esc(sideLabel(p, back))}" loading="lazy" data-cat="cimg" data-id="${p.id}" data-idx="${back}" title="${esc(sideLabel(p, back))} — показать впереди">
       <img class="side front" src="${imgs[front]}" alt="${esc(p.name)} ${esc(p.color)} — ${esc(sideLabel(p, front))}" loading="lazy">
-      ${colorsHtml(p)}
+      ${colorsHtml(p)}${zoomBtn(p, front)}
       <div class="cat-sides">${[0, 1].map((k) => `<button class="${k === front ? "active" : ""}" data-cat="cimg" data-id="${p.id}" data-idx="${k}">${esc(p.sides[k])}</button>`).join("")}${imgs.length > 2 ? `<span>+${imgs.length - 2}</span>` : ""}</div>
     </div>`;
     }
     return `<div class="${cls} ${multi ? "has-gallery" : ""}" data-gallery="${p.id}">
-      <img src="${imgs[i]}" alt="${esc(p.name)} ${esc(p.color)} — ${esc(sideLabel(p, i))}" loading="lazy">
+      <img src="${imgs[i]}" alt="${esc(p.name)} ${esc(p.color)} — ${esc(sideLabel(p, i))}" loading="lazy">${cls === "cat-img" ? zoomBtn(p, i) : ""}
       ${colorsHtml(p)}
       ${multi ? `<button class="cat-arr prev" data-cat="cimg" data-id="${p.id}" data-dir="-1" aria-label="Предыдущее фото">${icon("chevron-left")}</button>
       <button class="cat-arr next" data-cat="cimg" data-id="${p.id}" data-dir="1" aria-label="Следующее фото">${icon("chevron-right")}</button>
@@ -480,12 +482,12 @@
       <div class="cat-panel-head"><div><div class="cat-crumbs">${esc(s?.name || "")} / ${esc(p.sub)} · код ${esc(p.code)}</div><h2 id="cat-panel-title">${esc(p.name)}</h2><div class="sub">${esc([p.color, curSize, curType].filter(Boolean).join(" / "))}${p.coating ? " · " + esc(p.coating) : ""}</div></div><button class="cat-close" data-cat="close" aria-label="Закрыть">${icon("x")}</button></div>
       <div class="cat-panel-body">
         ${(() => { const imgs = imgsOf(p); const i = Math.min(state.gIdx, imgs.length - 1); return `
-        <div class="cat-gallery ${state.zoom ? "zoom" : ""}">
-          <div class="cat-img" data-cat="zoom">${badges(p)}<img src="${imgs[i]}" alt="${esc(p.name)} ${esc(p.color)} — ${esc(sideLabel(p, i))}">
+        <div class="cat-gallery">
+          <div class="cat-img" data-cat="zoom" title="Открыть фото во весь экран">${badges(p)}<img src="${imgs[i]}" alt="${esc(p.name)} ${esc(p.color)} — ${esc(sideLabel(p, i))}">
             ${imgs.length > 1 ? `<button class="cat-arr prev" data-cat="gimg" data-dir="-1" aria-label="Предыдущее фото">${icon("chevron-left")}</button><button class="cat-arr next" data-cat="gimg" data-dir="1" aria-label="Следующее фото">${icon("chevron-right")}</button><span class="cat-gcount">${i + 1} / ${imgs.length}${p.sides && p.sides[i] ? " · " + esc(p.sides[i]) : ""}</span>` : ""}
           </div>
           ${imgs.length > 1 ? `<div class="cat-thumbs" role="tablist" aria-label="Фото модели">${imgs.map((src, k) => `<button role="tab" aria-selected="${k === i}" class="${k === i ? "active" : ""}" data-cat="gimg" data-idx="${k}" title="${esc(sideLabel(p, k))}"><img src="${src}" alt="" loading="lazy">${p.sides && p.sides[k] ? `<span>${esc(p.sides[k])}</span>` : ""}</button>`).join("")}</div>` : ""}
-          <small>${state.zoom ? "Нажмите, чтобы уменьшить" : "Нажмите на фото, чтобы увеличить"} · ${imgs.length} ${imgs.length === 1 ? "фото" : "фото"}${imgs.length > 1 ? " · листайте стрелками ← →" : ""}${p.site ? ` · <a href="${esc(p.site)}" target="_blank" rel="noopener">страница на сайте</a>` : ""}</small>
+          <small>${"Нажмите на фото, чтобы увеличить"} · ${imgs.length} ${imgs.length === 1 ? "фото" : "фото"}${imgs.length > 1 ? " · листайте стрелками ← →" : ""}${p.site ? ` · <a href="${esc(p.site)}" target="_blank" rel="noopener">страница на сайте</a>` : ""}</small>
         </div>`; })()}
         <div class="cat-info">
           <div class="cat-pricebox">
@@ -546,6 +548,39 @@
   }
   function closePanel() { const had = !!state.panelId; state.panelId = null; writeUrl(); renderPanel(); if (had) document.querySelector(`[data-id="${CSS.escape(lastOpened || "")}"]`)?.focus?.({ preventScroll: true }); }
   let lastOpened = null;
+
+  /* ---------- лайтбокс: фото во весь экран, как «лупа» на tandoor.ru ---------- */
+  function lightHtml(p) {
+    const imgs = imgsOf(p); const n = imgs.length; const i = Math.min(state.light.idx, n - 1);
+    const st = stockStatus(p);
+    return `<div class="cat-light-bg" data-cat="light-close"></div>
+      <button type="button" class="cat-light-close" data-cat="light-close" aria-label="Закрыть фото">${icon("x")}</button>
+      ${n > 1 ? `<button type="button" class="cat-arr prev" data-cat="light-step" data-dir="-1" aria-label="Предыдущее фото">${icon("chevron-left")}</button><button type="button" class="cat-arr next" data-cat="light-step" data-dir="1" aria-label="Следующее фото">${icon("chevron-right")}</button>` : ""}
+      <figure class="cat-light-fig ${state.light.big ? "big" : ""}" data-cat="light-zoom"><img src="${imgs[i]}" alt="${esc(p.name)} ${esc(p.color)} — ${esc(sideLabel(p, i))}" draggable="false"></figure>
+      <div class="cat-light-cap"><b>${esc(p.name)}</b><span>${esc(p.color)}${n > 1 ? ` · ${esc(sideLabel(p, i))}` : ""}</span><span class="cat-light-price">${money(p.price)}</span>${!state.clientView ? `<span class="cat-light-stock ${st.cls}">${esc(st.label)}</span>` : ""}${n > 1 ? `<span class="cat-light-n">${i + 1} / ${n}</span>` : ""}
+      <small>${state.light.big ? "Нажмите, чтобы уменьшить" : "Нажмите на фото, чтобы приблизить"}${n > 1 ? " · стрелки — листать" : ""} · Esc — закрыть</small></div>`;
+  }
+  function renderLight(keepFocus) {
+    let el = document.querySelector(".cat-light");
+    const p = state.light && D.products.find((x) => x.id === state.light.id);
+    if (!p) { if (el) { el.classList.remove("open"); el.innerHTML = ""; } document.body.style.overflow = state.panelId ? "hidden" : ""; return; }
+    if (!el) { el = document.createElement("div"); el.className = "cat-light"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Фото модели"); document.body.appendChild(el); }
+    el.innerHTML = lightHtml(p);
+    el.classList.add("open");
+    document.body.style.overflow = "hidden";
+    lucide.createIcons();
+    if (!keepFocus) el.querySelector(".cat-light-close")?.focus({ preventScroll: true });
+  }
+  let lightOpener = null;
+  function openLight(id, idx, opener) { lightOpener = opener || document.activeElement; state.light = { id, idx: Number(idx) || 0, big: false }; renderLight(); }
+  function closeLight() { state.light = null; renderLight(); lightOpener?.focus?.({ preventScroll: true }); lightOpener = null; }
+  function stepLight(dir) { const p = D.products.find((x) => x.id === state.light.id); if (!p) return; const n = imgsOf(p).length; state.light.idx = (state.light.idx + Number(dir) + n) % n; state.light.big = false; renderLight(true); }
+  function toggleLightZoom(e) {
+    const fig = e.target.closest(".cat-light-fig"); if (!fig) return;
+    const r = fig.getBoundingClientRect(); const rx = (e.clientX - r.left) / r.width, ry = (e.clientY - r.top) / r.height;
+    state.light.big = !state.light.big; renderLight(true);
+    if (state.light.big) { const f = document.querySelector(".cat-light-fig"); if (f) { f.scrollLeft = rx * f.scrollWidth - f.clientWidth / 2; f.scrollTop = ry * f.scrollHeight - f.clientHeight / 2; } }
+  }
 
   /* ---------- рендер ---------- */
   function root() { return document.getElementById("catalog-root"); }
@@ -639,7 +674,11 @@
     if (a === "cimg") { e.preventDefault(); e.stopPropagation(); stepCardImg(b.dataset.id, b.dataset.dir, b.dataset.idx); return; }
     if (a === "gimg") { e.preventDefault(); e.stopPropagation(); stepPanelImg(b.dataset.dir, b.dataset.idx); return; }
     if (a === "full") { setFull(!state.full); return; }
-    if (a === "zoom") { state.zoom = !state.zoom; renderPanel(); return; }
+    if (a === "zoom") { openLight(state.panelId, state.gIdx, b); return; }
+    if (a === "light") { e.preventDefault(); e.stopPropagation(); openLight(b.dataset.id, b.dataset.idx, b); return; }
+    if (a === "light-close") { closeLight(); return; }
+    if (a === "light-step") { e.stopPropagation(); stepLight(b.dataset.dir); return; }
+    if (a === "light-zoom") { toggleLightZoom(e); return; }
     if (a === "size") { state.size = b.dataset.val; renderPanel(); return; }
     if (a === "type") { state.type = b.dataset.val; renderPanel(); return; }
     if (a === "copy") { e.stopPropagation(); copyReply(b.dataset.id); return; }
@@ -654,6 +693,10 @@
   });
   document.addEventListener("keydown", (e) => {
     if (current !== ROUTE) return;
+    if (state.light) {
+      if (e.key === "Escape") { e.preventDefault(); closeLight(); return; }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); stepLight(e.key === "ArrowLeft" ? -1 : 1); return; }
+    }
     if (e.key === "Escape" && nav.open) { e.preventDefault(); closeNav(); return; }
     if (e.key === "Escape" && state.panelId) { e.preventDefault(); closePanel(); return; }
     if (e.key === "Escape" && state.filtersOpen) { e.preventDefault(); setFilters(false); return; }
@@ -714,6 +757,7 @@
   render = function () {
     const onRoute = current === ROUTE;
     if (!onRoute) {
+      if (state.light) { state.light = null; renderLight(); }
       if (state.panelId) { state.panelId = null; renderPanel(); }
       if (state.full) { state.full = false; }
       nav.open = false;
@@ -722,6 +766,7 @@
       return;
     }
     readUrl();
+    if (state.light) { state.light = null; renderLight(); }
     priorRender();
     renderCatalog(true);
   };
