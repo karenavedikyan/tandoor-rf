@@ -9,6 +9,20 @@ var CATALOG_QA = await (async () => {
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
   const shot = (name) => page.screenshot({ path: `/tmp/catalog-qa-${name}.png`, fullPage: false });
+  const goSec = async (sec) => {
+    if (await page.locator(".cat-nav-side").isVisible()) {
+      while (!(await page.locator(".cat-nav-side .cat-nav-back").isDisabled())) { await page.locator(".cat-nav-side .cat-nav-back").click(); await page.waitForTimeout(80); }
+      if (sec) { await page.locator(`.cat-nav-side .cat-nav-item[data-cat="nav-sec"][data-sec="${sec}"]`).click(); await page.locator(`.cat-nav-side .cat-nav-col.c2 .cat-nav-item[data-cat="nav-pick-sec"][data-sec="${sec}"]`).click(); }
+      else await page.locator('.cat-nav-side .cat-nav-item[data-cat="nav-pick-sec"][data-sec=""]').click();
+      await page.waitForTimeout(200);
+      return;
+    }
+    await page.locator(".cat-navbtn").click();
+    await page.locator(".cat-nav.open").waitFor({ state: "visible" });
+    if (sec) { await page.locator(`.cat-nav-item[data-cat="nav-sec"][data-sec="${sec}"]`).click(); await page.locator(`.cat-nav-col.c2 .cat-nav-item[data-cat="nav-pick-sec"][data-sec="${sec}"]`).click(); }
+    else await page.locator('.cat-nav-item[data-cat="nav-pick-sec"][data-sec=""]').click();
+    await page.waitForTimeout(200);
+  };
   const countText = async () => (await page.locator(".cat-summary b").first().textContent()).trim();
 
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -46,11 +60,11 @@ var CATALOG_QA = await (async () => {
   ok((await page.locator("#cat-search").inputValue()) === "", "reset clears search");
 
   // sections
-  await page.locator('.cat-tree button[data-cat="sec"][data-sec="entry"]').click();
+  ok(await page.locator(".cat-side .cat-nav-side").isVisible(), "left column is the drill-down navigator (always at hand)");
+  ok(await page.locator(".cat-navbtn").isHidden(), "desktop: no duplicate «Разделы» button");
+  await goSec("entry");
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "29");
-  ok(true, "Входные двери → 29");
-  ok((await page.locator(".cat-tree-sub .cat-tree-item").count()) === 13, "entry tree as on tandoor.ru: 4 groups, 13 subsections");
-  ok((await page.locator(".cat-tree-ghead").count()) === 4, "entry groups: по конструкции / материалу / назначению / стоимости");
+  ok(true, "Входные двери → 29 (via navigator)");
   ok((await page.locator(".cat-tabs .cat-tab").count()) === 5, "tabs row: Все товары + 4 groups");
   ok((await page.locator(".cat-subrow").count()) === 0, "no subsection row until a group is chosen (as on site)");
   await page.locator('.cat-tab[data-grp="по материалу"]').click();
@@ -59,15 +73,15 @@ var CATALOG_QA = await (async () => {
   await page.locator('.cat-subrow .cat-chip[data-sub="Металл / металл"]').click();
   await page.waitForTimeout(150);
   ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.attrs["Вид двери"] === "Металл - металл")), "derived subsection (Металл / металл) filters by attribute");
-  await page.locator('.cat-tree-ghead[data-grp="по конструкции"]').click();
-  await page.waitForTimeout(150);
-  ok(await page.locator('.cat-tree-grp.open .cat-tree-item[data-sub="С терморазрывом"]').isVisible(), "tree group header expands its subsections");
-  await page.locator('.cat-tree-sub button[data-sub="С терморазрывом"]').click();
+  await page.locator('.cat-tab[data-grp="по конструкции"]').click();
+  await page.waitForSelector('.cat-subrow .cat-chip[data-sub="С терморазрывом"]');
+  ok((await page.locator(".cat-subrow .cat-chip").count()) === 4, "по конструкции → 4 subsections in the row");
+  await page.locator('.cat-subrow .cat-chip[data-sub="С терморазрывом"]').click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "7");
   ok(true, "С терморазрывом → 7");
   ok((await page.evaluate(() => location.hash)).includes("sec=entry") && (await page.evaluate(() => location.hash)).includes("sub="), "hash carries section/subsection");
   await shot("desktop-entry-sub");
-  await page.locator('.cat-tree button[data-cat="sec"][data-sec=""]').click();
+  await goSec("");
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
 
   // filters — панель как на сайте
@@ -114,7 +128,7 @@ var CATALOG_QA = await (async () => {
 
   // section filters mirror tandoor.ru
   const groupsFor = async (sec) => {
-    await page.locator(`.cat-tree button[data-cat="sec"][data-sec="${sec}"]`).click();
+    await goSec(sec);
     await page.waitForFunction(() => document.querySelector(".cat-fgroup-attr"));
     return page.evaluate(() => [...document.querySelectorAll(".cat-fgroup-attr summary span")].map((e) => e.textContent));
   };
@@ -139,45 +153,57 @@ var CATALOG_QA = await (async () => {
   ok(gm.includes("Материал") && gm.includes("Цвет"), "molding filter groups");
   await page.locator('.cat-filters summary:has-text("Материал")').click();
   await page.waitForTimeout(100);
-  await page.locator('.cat-tree button[data-cat="sec"][data-sec="interior"]').click();
-  await page.waitForTimeout(200);
-  await page.locator('.cat-tree button[data-cat="sec"][data-sec="molding"]').click();
-  await page.waitForTimeout(200);
+  await goSec("interior");
+  await goSec("molding");
   ok(!(await page.locator('.cat-filters details[data-fg="Материал"]').evaluate((d) => d.open)), "collapsed filter group stays collapsed after re-render");
   await shot("desktop-filters-entry");
   await page.locator(".cat-filters .cat-fapply").click();
   await page.waitForTimeout(300);
   ok(!(await page.locator(".cat-filters").isVisible()), "«Применить» closes the drawer");
-  await page.locator('.cat-tree button[data-cat="sec"][data-sec=""]').click();
+  await goSec("");
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
 
-  // навигатор «Разделы» — как меню «Каталог» на tandoor.ru
-  ok((await page.locator(".cat-nav.open").count()) === 0, "navigator closed by default");
-  await page.locator(".cat-navbtn").click();
-  await page.locator(".cat-nav.open .cat-nav-box").waitFor({ state: "visible" });
-  ok((await page.locator(".cat-nav-col.c1 .cat-nav-item").count()) === 7, "navigator: Все разделы + 4 sections + Противопожарные + Скидки");
-  ok(await page.locator('.cat-nav-col.c1 .cat-nav-item.empty:has-text("Противопожарные")').isDisabled(), "Противопожарные двери dimmed (no demo products)");
-  await page.locator('.cat-nav-item[data-cat="nav-sec"][data-sec="entry"]').hover();
-  await page.waitForSelector('.cat-nav-col.c2 .cat-nav-item[data-grp="по конструкции"]');
-  ok(true, "hover on section shows its groups in column 2");
-  await page.locator('.cat-nav-item[data-cat="nav-grp"][data-grp="по конструкции"]').hover();
-  await page.waitForSelector('.cat-nav-col.c3 .cat-nav-item[data-sub="С терморазрывом"]');
-  ok(await page.locator(".cat-nav-back").isHidden(), "desktop: no back button");
-  await page.locator('.cat-nav-col.c3 .cat-nav-item[data-sub="С терморазрывом"]').click();
+  // левая колонка — навигатор как меню «Каталог» на tandoor.ru, уровень за уровнем
+  ok((await page.locator(".cat-nav-side").getAttribute("data-level")) === "0", "sidebar starts at level 0");
+  ok((await page.locator(".cat-nav-side .cat-nav-col.c1 .cat-nav-item").count()) === 7, "sidebar: Все разделы + 4 sections + Противопожарные + Скидки");
+  ok(await page.locator('.cat-nav-side .cat-nav-item.empty:has-text("Противопожарные")').isDisabled(), "Противопожарные двери dimmed (no demo products)");
+  ok(await page.locator(".cat-nav-side .cat-nav-back").isDisabled(), "back disabled at level 0");
+  await page.locator('.cat-nav-side .cat-nav-item[data-cat="nav-sec"][data-sec="entry"]').click();
+  await page.waitForSelector('.cat-nav-side[data-level="1"]');
+  ok((await page.locator(".cat-nav-side .cat-nav-ttl b").textContent()) === "Входные двери", "level 1 title = section");
+  ok((await page.locator(".cat-nav-side .cat-nav-col.c2 .cat-nav-item").count()) === 5, "level 1: Все товары + 4 groups");
+  let subsTotal = 0;
+  for (const g of ["по конструкции", "по материалу", "по назначению", "по стоимости"]) {
+    await page.locator(`.cat-nav-side .cat-nav-item[data-cat="nav-grp"][data-grp="${g}"]`).click();
+    await page.waitForSelector('.cat-nav-side[data-level="2"]');
+    subsTotal += await page.locator('.cat-nav-side .cat-nav-col.c3 .cat-nav-item[data-cat="nav-pick-sub"]').count();
+    await page.locator(".cat-nav-side .cat-nav-back").click();
+    await page.waitForSelector('.cat-nav-side[data-level="1"]');
+  }
+  ok(subsTotal === 13, "entry: 4 groups, 13 subsections as on tandoor.ru");
+  await page.locator('.cat-nav-side .cat-nav-item[data-cat="nav-grp"][data-grp="по конструкции"]').click();
+  await page.locator('.cat-nav-side .cat-nav-col.c3 .cat-nav-item[data-sub="С терморазрывом"]').click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "7");
-  ok((await page.locator(".cat-nav.open").count()) === 0, "picking a subsection applies it and closes the navigator");
-  ok((await page.locator(".cat-navbtn span").textContent()).includes("Входные двери › С терморазрывом"), "navigator button shows the path");
+  ok((await page.locator(".cat-nav-side").getAttribute("data-level")) === "2" && (await page.locator(".cat-nav-side .cat-nav-col.c3 .cat-nav-item.cur").textContent()).includes("С терморазрывом"), "picked subsection highlighted, sidebar stays on its level");
   ok((await page.locator(".cat-path .cat-crumb").count()) === 4, "breadcrumb: Все разделы › Входные двери › по конструкции › С терморазрывом");
   await page.locator('.cat-path .cat-crumb[data-cat="sec"][data-sec="entry"]').click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "29");
-  ok(true, "breadcrumb click goes up to the section");
+  ok((await page.locator(".cat-nav-side").getAttribute("data-level")) === "1", "breadcrumb click goes up and the sidebar follows");
+  await goSec("");
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
+  // навигатор-попап в режиме «На весь экран»
+  await page.locator(".cat-fullbtn").click();
+  await page.waitForSelector("body.cat-fullscreen");
   await page.locator(".cat-navbtn").click();
-  await page.locator(".cat-nav.open").waitFor({ state: "visible" });
+  await page.locator(".cat-nav.open .cat-nav-box").waitFor({ state: "visible" });
+  await page.locator('.cat-nav.open .cat-nav-item[data-cat="nav-sec"][data-sec="interior"]').hover();
+  await page.waitForSelector('.cat-nav.open .cat-nav-col.c2 .cat-nav-item[data-grp="по цвету"]');
+  ok(true, "fullscreen: popover navigator with hover columns");
   await page.keyboard.press("Escape");
   await page.waitForTimeout(150);
-  ok((await page.locator(".cat-nav.open").count()) === 0, "Escape closes the navigator");
-  await page.locator('.cat-tree button[data-cat="sec"][data-sec=""]').click();
-  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
+  ok((await page.locator(".cat-nav.open").count()) === 0, "Escape closes the popover");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.body.classList.contains("cat-fullscreen"));
 
   // views
   await page.locator('.cat-seg button[data-view="site"]').click();
@@ -200,7 +226,7 @@ var CATALOG_QA = await (async () => {
   ok(!(await page.locator(".cat-panel.open").count()), "card arrow does not open the panel");
   await shot("desktop-site");
   // entry doors: outside / inside
-  await page.locator('.cat-tree button[data-cat="sec"][data-sec="entry"]').click();
+  await goSec("entry");
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "29");
   ok((await page.locator(".cat-sides").count()) === 29, "entry cards show Снаружи / Изнутри toggle");
   const sidesBtn = page.locator(".cat-sides button").nth(1);
@@ -209,7 +235,7 @@ var CATALOG_QA = await (async () => {
   await page.waitForTimeout(100);
   ok((await page.locator(".cat-card .cat-img img").first().getAttribute("src")) !== sBefore, "Изнутри shows the other side");
   await shot("desktop-entry-sides");
-  await page.locator('.cat-tree button[data-cat="sec"][data-sec=""]').click();
+  await goSec("");
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
   await page.locator('.cat-seg button[data-view="table"]').click();
   await page.locator(".cat-table").waitFor({ state: "visible" });
@@ -355,19 +381,19 @@ var CATALOG_QA = await (async () => {
   ok(true, "mobile: filter applies");
   await page.locator(".cat-filters .cat-fapply").click();
   await page.waitForTimeout(300);
-  ok(await page.locator(".cat-tree").isHidden(), "mobile: side tree hidden, navigator button instead");
+  ok((await page.locator(".cat-tree").count()) === 0, "mobile: no side tree, navigator button instead");
   await page.locator(".cat-navbtn").click();
   await page.locator(".cat-nav.open").waitFor({ state: "visible" });
-  ok((await page.locator(".cat-nav-col.c2").isHidden()) && (await page.locator(".cat-nav-col.c1").isVisible()), "mobile: one level at a time (drill-down as on site)");
-  await page.locator('.cat-nav-item[data-cat="nav-sec"][data-sec="interior"]').click();
-  await page.locator(".cat-nav-col.c2").waitFor({ state: "visible" });
-  ok((await page.locator(".cat-nav-head b.m").textContent()) === "Межкомнатные двери", "mobile: level title = section");
-  await page.locator('.cat-nav-item[data-cat="nav-grp"][data-grp="по цвету"]').click();
-  await page.locator(".cat-nav-col.c3").waitFor({ state: "visible" });
-  await page.locator(".cat-nav-back").click();
-  await page.locator(".cat-nav-col.c2").waitFor({ state: "visible" });
+  ok((await page.locator(".cat-nav.open .cat-nav-col.c2").isHidden()) && (await page.locator(".cat-nav.open .cat-nav-col.c1").isVisible()), "mobile: one level at a time (drill-down as on site)");
+  await page.locator('.cat-nav.open .cat-nav-item[data-cat="nav-sec"][data-sec="interior"]').click();
+  await page.locator(".cat-nav.open .cat-nav-col.c2").waitFor({ state: "visible" });
+  ok((await page.locator(".cat-nav.open .cat-nav-head b.m").textContent()) === "Межкомнатные двери", "mobile: level title = section");
+  await page.locator('.cat-nav.open .cat-nav-item[data-cat="nav-grp"][data-grp="по цвету"]').click();
+  await page.locator(".cat-nav.open .cat-nav-col.c3").waitFor({ state: "visible" });
+  await page.locator(".cat-nav.open .cat-nav-back").click();
+  await page.locator(".cat-nav.open .cat-nav-col.c2").waitFor({ state: "visible" });
   ok(true, "mobile: back returns one level");
-  await page.locator('.cat-nav-col.c2 .cat-nav-item[data-cat="nav-pick-sec"]').click();
+  await page.locator('.cat-nav.open .cat-nav-col.c2 .cat-nav-item[data-cat="nav-pick-sec"]').click();
   await page.waitForFunction(() => document.querySelector(".cat-subchips"));
   ok((await page.locator(".cat-nav.open").count()) === 0, "mobile: «Все товары» applies the section and closes");
   await page.locator(".cat-card").first().click();

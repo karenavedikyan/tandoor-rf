@@ -211,6 +211,7 @@
     const p = new URLSearchParams(location.hash.split("?")[1] || "");
     if (p.has("sec")) state.sec = sectionOf(p.get("sec")) ? p.get("sec") : "";
     if (p.has("sub")) { state.sub = p.get("sub"); state.grp = grpOf(state.sec, state.sub); }
+    nav.sec = state.sec; nav.grp = state.grp;
     if (p.has("q")) state.q = p.get("q");
     if (p.has("view") && ["site", "show", "table"].includes(p.get("view"))) state.view = p.get("view");
     if (p.has("client")) state.clientView = p.get("client") === "1";
@@ -221,20 +222,6 @@
   function sectionsBar() {
     const all = D.products.length;
     return `<div class="cat-secbar" role="tablist" aria-label="Разделы каталога"><button class="cat-chip ${!state.sec ? "active" : ""}" data-cat="sec" data-sec="">${icon("layout-grid")}Все<small>${all}</small></button>${D.sections.map((s) => `<button class="cat-chip ${state.sec === s.id ? "active" : ""}" data-cat="sec" data-sec="${s.id}">${icon(s.icon)}${esc(s.name)}<small>${countIn(s.id)}</small></button>`).join("")}</div>`;
-  }
-  function sideHtml() {
-    const all = D.products.length;
-    return `<section class="card cat-tree" data-cat-tree>
-      <button class="cat-tree-item ${!state.sec ? "active" : ""}" data-cat="sec" data-sec="">${icon("layout-grid")}Все разделы<span class="cat-count">${all}</span></button>
-      ${D.sections.map((s) => `
-        <button class="cat-tree-item ${state.sec === s.id && !state.sub ? "active" : ""}" data-cat="sec" data-sec="${s.id}">${icon(s.icon)}${esc(s.name)}<span class="cat-count">${countIn(s.id)}</span></button>
-        ${state.sec === s.id ? `<div class="cat-tree-sub">${(SITE_TREE[s.id] || []).map(([g, items]) => `<div class="cat-tree-grp ${!state.grp || state.grp === g ? "open" : ""}"><button class="cat-tree-ghead ${state.grp === g ? "active" : ""}" data-cat="grp" data-grp="${esc(g)}" aria-expanded="${!state.grp || state.grp === g}">${esc(g)}${icon("chevron-down")}</button><div class="cat-tree-items">${items.map(([u]) => treeItem(s.id, u)).join("")}</div></div>`).join("")}</div>` : ""}`).join("")}
-    </section>
-    <div class="card cat-side-note"><b>Источник данных</b>Названия, цвета, фото и розничные цены — с tandoor.ru. Остатки по складам, партнёрские цены и поступления — демо-значения; в рабочем ЛК они приходят из 1С.</div>`;
-  }
-  function treeItem(sec, u) {
-    const n = countIn(sec, u);
-    return `<button class="cat-tree-item ${state.sub === u ? "active" : ""} ${n ? "" : "empty"}" data-cat="sub" data-sub="${esc(u)}" ${n ? "" : 'disabled title="На tandoor.ru подраздел есть, в демо-данных товаров нет"'}>${esc(u)}<span class="cat-count">${n}</span></button>`;
   }
   const check = (on, attrs, label, n, dis, extra = "") => `<button class="cat-check ${on ? "on" : ""} ${dis ? "empty" : ""} ${extra}" role="checkbox" aria-checked="${on}" ${attrs} ${dis ? 'disabled title="На tandoor.ru есть такой фильтр, в демо-данных товаров нет"' : ""}><span class="box">${icon("check")}</span><span class="lbl">${label}</span>${n != null ? `<small>${n}</small>` : ""}</button>`;
   const closedGroups = new Set();
@@ -389,7 +376,7 @@
     const s = sectionOf(state.sec);
     return !s ? "Все разделы" : state.sub ? `${s.name} › ${state.sub}` : state.grp ? `${s.name} › ${state.grp}` : s.name;
   }
-  function navHtml() {
+  function navHtml(side) {
     const level = nav.grp ? 2 : nav.sec ? 1 : 0;
     const s = sectionOf(nav.sec);
     const tree = s ? SITE_TREE[s.id] || [] : [];
@@ -413,14 +400,22 @@
       ...items.map(([u]) => { const n = countIn(nav.sec, u); return row(state.sub === u ? "cur" : n ? "" : "empty", `data-cat="nav-pick-sub" data-sub="${esc(u)}" ${n ? "" : 'disabled title="На tandoor.ru подраздел есть, в демо-данных товаров нет"'}`, esc(u), n, false); }),
     ].join("") : `<p class="cat-nav-hint">${s ? "Выберите группировку" : ""}</p>`;
     const title = level === 2 ? nav.grp : level === 1 ? s?.name : "Каталог";
+    const crumb = level === 2 ? esc(s?.name || "") : level === 1 ? "Каталог" : "как в меню tandoor.ru";
+    if (side) return `<div class="cat-nav-box" aria-label="Разделы каталога">
+      <div class="cat-nav-head"><button class="cat-nav-back" data-cat="nav-back" aria-label="Назад" ${level ? "" : "disabled"}>${icon("arrow-left")}</button><div class="cat-nav-ttl"><small>${crumb}</small><b class="m">${esc(title || "Каталог")}</b></div></div>
+      <div class="cat-nav-cols"><div class="cat-nav-col c1">${col1}</div><div class="cat-nav-col c2">${col2}</div><div class="cat-nav-col c3">${col3}</div></div>
+    </div>`;
     return `<div class="cat-nav-box" role="dialog" aria-modal="true" aria-label="Разделы каталога">
       <div class="cat-nav-head"><button class="cat-nav-back" data-cat="nav-back" aria-label="Назад" ${level ? "" : "disabled"}>${icon("arrow-left")}</button><b class="m">${esc(title || "Каталог")}</b><b class="d">Разделы каталога</b><small>как в меню «Каталог» на tandoor.ru</small><button class="cat-nav-close" data-cat="nav-close" aria-label="Закрыть">${icon("x")}</button></div>
       <div class="cat-nav-cols"><div class="cat-nav-col c1">${col1}</div><div class="cat-nav-col c2">${col2}</div><div class="cat-nav-col c3">${col3}</div></div>
     </div>`;
   }
+  function sideHtml() { return `<div class="cat-nav cat-nav-side" data-cat-navside data-level="${nav.grp ? 2 : nav.sec ? 1 : 0}">${navHtml(true)}</div>`; }
   function renderNav() {
+    const side = document.querySelector("[data-cat-navside]");
+    if (side) { side.dataset.level = nav.grp ? 2 : nav.sec ? 1 : 0; side.innerHTML = navHtml(true); }
     const el = document.querySelector("[data-cat-nav]");
-    if (!el) return;
+    if (!el) { if (side) lucide.createIcons(); return; }
     el.classList.toggle("open", nav.open); el.dataset.level = nav.grp ? 2 : nav.sec ? 1 : 0;
     if (nav.open) { el.removeAttribute("aria-hidden"); el.innerHTML = navHtml(); lucide.createIcons(); } else { el.setAttribute("aria-hidden", "true"); el.innerHTML = ""; }
     document.body.classList.toggle("cat-nav-open", nav.open && current === ROUTE);
@@ -428,7 +423,7 @@
   }
   function openNav() { nav.open = true; nav.sec = state.sec || (isDesktop() && D.sections[0] ? D.sections[0].id : ""); nav.grp = state.grp || (state.sub ? grpOf(state.sec, state.sub) : ""); renderNav(); document.querySelector(".cat-nav-box .cat-nav-close")?.focus({ preventScroll: true }); }
   function closeNav() { if (!nav.open) return; nav.open = false; renderNav(); document.querySelector(".cat-navbtn")?.focus({ preventScroll: true }); }
-  function navApply(patch) { Object.assign(state, { sub: "", grp: "", f: {}, limit: PAGE }, patch); nav.open = false; writeUrl(); rerender(); }
+  function navApply(patch) { Object.assign(state, { sub: "", grp: "", f: {}, limit: PAGE }, patch); nav.open = false; nav.sec = state.sec; nav.grp = state.grp; writeUrl(); rerender(); }
   function mainHtml() {
     const list = filtered();
     const s = sectionOf(state.sec);
@@ -449,7 +444,8 @@
     <aside class="card cat-filters ${state.filtersOpen ? "open" : ""}" data-cat-filters aria-label="Фильтр" ${state.filtersOpen ? "" : 'aria-hidden="true"'}>${filtersHtml()}</aside>
     ${subChips()}
     <div class="cat-summary"><div class="cat-summary-l"><span><b>${list.length}</b> ${plural(list.length)}</span>${pathHtml()}${state.clientView ? `<span class="tag warn">режим клиента</span>` : ""}</div><div class="cat-active">${activeChips()}</div></div>
-    <div data-cat-results>${resultsHtml(list)}</div>`;
+    <div data-cat-results>${resultsHtml(list)}</div>
+    <p class="cat-foot-note"><b>Источник данных.</b> Названия, цвета, фото и розничные цены — с tandoor.ru. Остатки по складам, партнёрские цены и поступления — демо-значения; в рабочем ЛК они приходят из 1С.</p>`;
   }
   const plural = (n) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? "товар" : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? "товара" : "товаров"; };
 
@@ -626,12 +622,12 @@
     if (a === "nav-pick-grp") { navApply({ sec: nav.sec, grp: b.dataset.grp }); return; }
     if (a === "nav-pick-sub") { navApply({ sec: nav.sec, sub: b.dataset.sub, grp: grpOf(nav.sec, b.dataset.sub) }); return; }
     if (a === "nav-sale") { navApply({ sec: "", tags: state.tags.includes("sale") ? state.tags : [...state.tags, "sale"] }); return; }
-    if (a === "sec") { state.sec = b.dataset.sec; state.sub = ""; state.grp = ""; state.f = {}; state.limit = PAGE; writeUrl(); rerender(); return; }
-    if (a === "grp") { const g = b.dataset.grp; if (state.sub && grpOf(state.sec, state.sub) !== g) state.sub = ""; state.grp = b.closest(".cat-tree") && state.grp === g ? "" : g; if (!g) state.sub = ""; state.limit = PAGE; writeUrl(); rerender(); return; }
+    if (a === "sec") { state.sec = b.dataset.sec; state.sub = ""; state.grp = ""; state.f = {}; state.limit = PAGE; nav.sec = state.sec; nav.grp = ""; writeUrl(); rerender(); return; }
+    if (a === "grp") { const g = b.dataset.grp; if (state.sub && grpOf(state.sec, state.sub) !== g) state.sub = ""; state.grp = g; if (!g) state.sub = ""; state.limit = PAGE; nav.sec = state.sec; nav.grp = g; writeUrl(); rerender(); return; }
     if (a === "sort") { state.sort = b.dataset.val; state.limit = PAGE; rerender("results"); return; }
     if (a === "tag") { const v = b.dataset.val; state.tags = state.tags.includes(v) ? state.tags.filter((x) => x !== v) : [...state.tags, v]; state.limit = PAGE; rerender("results"); return; }
     if (a === "attr") { const k = b.dataset.key, v = b.dataset.val; const cur = state.f[k] || []; const next = cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]; if (next.length) state.f[k] = next; else delete state.f[k]; state.limit = PAGE; rerender("results"); return; }
-    if (a === "sub") { state.sub = state.sub === b.dataset.sub ? "" : b.dataset.sub; if (state.sub) state.grp = grpOf(state.sec, state.sub) || state.grp; state.limit = PAGE; writeUrl(); rerender(); return; }
+    if (a === "sub") { state.sub = state.sub === b.dataset.sub ? "" : b.dataset.sub; if (state.sub) state.grp = grpOf(state.sec, state.sub) || state.grp; state.limit = PAGE; nav.sec = state.sec; nav.grp = state.grp; writeUrl(); rerender(); return; }
     if (a === "view") { state.view = b.dataset.view; state.limit = PAGE; writeUrl(); rerender(); return; }
     if (a === "chip") { const k = b.dataset.key; state[k] = state[k] === (b.dataset.val || "") || !b.dataset.val ? "" : b.dataset.val; state.limit = PAGE; if (k === "q") writeUrl(); if (k === "q") rerender(); else rerender("results"); return; }
     if (a === "price-clear") { state.min = ""; state.max = ""; rerender(); return; }
@@ -652,7 +648,7 @@
   document.addEventListener("mouseover", (e) => {
     if (current !== ROUTE || !nav.open || !isDesktop()) return;
     const b = e.target.closest?.("[data-nav-hover]");
-    if (!b) return;
+    if (!b || b.closest(".cat-nav-side")) return;
     if (b.dataset.navHover === "sec" && nav.sec !== b.dataset.sec) { nav.sec = b.dataset.sec; nav.grp = ""; renderNav(); }
     else if (b.dataset.navHover === "grp" && nav.grp !== b.dataset.grp) { nav.grp = b.dataset.grp; renderNav(); }
   });
