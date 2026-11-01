@@ -19,6 +19,7 @@ import { handleTanbotMaxUpdate } from "../../src/tanbot-max/webhook-handler";
 import { holderAccessTtlMs, signHolderAccess } from "../../src/tan-tracker/holder-access";
 import { decodeVcfInfoForHmac } from "../../src/tanbot/external-recipient/max-contact-verify";
 import { externalUnavailableMessage } from "../../src/tanbot/native-create/recipient-unified";
+import { normalizeRuPhoneE164 } from "../../src/tan-tracker/phone-normalize";
 type Channel = "max" | "telegram";
 type Button = { text: string; payload?: string; callback_data?: string };
 type Reply = { text: string; buttons: Button[]; messages?: Reply[] };
@@ -169,7 +170,7 @@ async function withLegacyUsersPhoneColumn<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } finally {
     await pool.query(
-      `ALTER TABLE users ADD CONSTRAINT users_phone_format CHECK (phone IS NULL OR phone ~ '^\\+7\\d{10}$')`,
+      `ALTER TABLE users ADD CONSTRAINT users_phone_format CHECK (phone IS NULL OR phone ~ '^\\+7\\d{10}$') NOT VALID`,
     );
   }
 }
@@ -658,6 +659,13 @@ describe("native external sender to external recipient (both channels)", { concu
       hv: after.handoff_version,
       exp: Date.now() + holderAccessTtlMs(),
     });
+    const stray = (await getPool()!.query(
+      `INSERT INTO tt_parties(kind,display_name,phone_e164) VALUES('external','Stranger','+79139999999') RETURNING id`,
+    )).rows[0].id;
+    const rejectStray = await request(app).post("/api/tan-tracker/public/holder/pending/change")
+      .set("Origin", origin)
+      .send({ holderAccessToken: holderHat, pendingPartyId: stray });
+    assert.equal(rejectStray.status, 403, rejectStray.text);
     const staffPhone = `+7913${String(++seq).padStart(7, "0")}`;
     const staff = await createTestUser({
       databaseUrl: db, email: `ext2ext-holder-staff-${seq}@test.local`, password: "StrongPass123!",
@@ -687,15 +695,6 @@ describe("native external sender to external recipient (both channels)", { concu
       .set("Origin", origin)
       .send({ holderAccessToken: holderHatAfterStaff, external: { name: "Next Hop", phone: nextPhone } });
     assert.equal(blockedSecond.status, 409);
-    const stray = (await getPool()!.query(
-      `INSERT INTO tt_parties(kind,display_name,phone_e164) VALUES('external','Stranger','+79139999999') RETURNING id`,
-    )).rows[0].id;
-    const freshHolderToken = String((staffChange.body as { holderAccessToken?: string }).holderAccessToken ?? "");
-    assert.ok(freshHolderToken, JSON.stringify(staffChange.body));
-    const reject = await request(app).post("/api/tan-tracker/public/holder/pending/change")
-      .set("Origin", origin)
-      .send({ holderAccessToken: freshHolderToken, pendingPartyId: stray });
-    assert.equal(reject.status, 403);
     assert.equal(
       (await getPool()!.query(`SELECT user_id FROM tt_parties WHERE id=(SELECT creator_party_id FROM tt_transfers WHERE id=$1)`, [row.id])).rows[0].user_id,
       null,
@@ -885,9 +884,16 @@ describe("native external sender to external recipient (both channels)", { concu
       r = await send(staffActor, { text: "Item with open invite" });
       r = await send(staffActor, { callback: button(r, /пропустить/iu) });
       const draftKey = `native:staff:${channel}:${chatId}`;
-      assert.equal((await getPool()!.query(
-        `SELECT step FROM tt_external_request_drafts WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [draftKey],
-      )).rows[0]?.step, "recipient");
+      const thirdE164 = normalizeRuPhoneE164(thirdPhone);
+      assert.ok(thirdE164);
+      const beforeDraft = (await getPool()!.query(
+        `SELECT id::text, step, payload FROM tt_external_request_drafts
+         WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [draftKey],
+      )).rows[0];
+      assert.ok(beforeDraft?.id);
+      const holderBefore = (await getPool()!.query(
+        `SELECT holder_party_id::text, pending_party_id::text FROM tt_transfers WHERE id=$1`, [transfer],
+      )).rows[0];
       if (channel === "telegram") {
         const cfg = loadTanbotTelegramStage2Config(); assert.ok(cfg.ok);
         const contact = await handleTanbotTelegramUpdate(getPool()!, cfg.config, {
@@ -900,6 +906,7 @@ describe("native external sender to external recipient (both channels)", { concu
         });
         assert.ok(contact.reply?.text);
         assert.doesNotMatch(contact.reply?.text ?? "", /^\d{6}$/);
+        assert.equal(contact.reply?.copyOnlyCode, undefined);
       } else {
         const cfg = loadTanbotMaxStage2Config(); assert.ok(cfg.ok);
         const vcfRaw =
@@ -926,9 +933,20 @@ describe("native external sender to external recipient (both channels)", { concu
         assert.ok(contact.reply?.text);
         assert.equal(contact.reply?.copyOnlyCode, undefined);
       }
-      assert.equal((await getPool()!.query(
-        `SELECT step FROM tt_external_request_drafts WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [draftKey],
-      )).rows[0]?.step, "recipient");
+      const afterDraft = (await getPool()!.query(
+        `SELECT id::text, step, payload FROM tt_external_request_drafts
+         WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [draftKey],
+      )).rows[0];
+      assert.equal(afterDraft.id, beforeDraft.id);
+      assert.equal(afterDraft.step, "comment");
+      const payload = (afterDraft.payload ?? {}) as {
+        recipientExternal?: { phone?: string; name?: string };
+      };
+      assert.equal(payload.recipientExternal?.phone, thirdE164);
+      const holderAfter = (await getPool()!.query(
+        `SELECT holder_party_id::text, pending_party_id::text FROM tt_transfers WHERE id=$1`, [transfer],
+      )).rows[0];
+      assert.deepEqual(holderAfter, holderBefore);
       const session = (await getPool()!.query(
         `SELECT phone_verified_at, code_issued_at FROM tt_external_messenger_sessions
          WHERE transfer_id=$1 ORDER BY created_at DESC LIMIT 1`, [transfer],
@@ -939,7 +957,6 @@ describe("native external sender to external recipient (both channels)", { concu
         (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_handoff_codes WHERE transfer_id=$1`, [transfer])).rows[0].n,
         0,
       );
-      void r;
     });
   }
 });
