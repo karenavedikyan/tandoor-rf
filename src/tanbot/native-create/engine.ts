@@ -18,7 +18,11 @@ import {
   parseNativeCreateCallback,
   type ParsedNativeCreateCallback,
 } from "./callback-codec";
-import { confirmNativeExternalDraft, confirmNativeStaffDraft } from "./confirm-native";
+import {
+  confirmNativeExternalDraft,
+  confirmNativeExternalToExternalDraftWithSavepoint,
+  confirmNativeStaffDraft,
+} from "./confirm-native";
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
 import {
   assertDraftBoundToCaller,
@@ -882,25 +886,61 @@ export async function handleNativeCreateCallback(
           return navError("Укажите телефон получателя.", ctx.channel);
         }
         const staffUserId = await resolveExternalIntakeStaffUserId(client, partyId, phone);
-        if (!staffUserId) {
-          return navError(externalUnavailableMessage(), ctx.channel);
+        if (staffUserId) {
+          await bumpDraftRevision(client, id, "summary", {
+            ...payload,
+            recipientUserId: staffUserId,
+          });
+          const created = await confirmNativeExternalDraft(client, {
+            personId: ctx.personId,
+            externalPartyId: partyId,
+            draftId: id,
+          });
+          const { nativeCompletionMenuReply } = await import("./main-menu");
+          const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
+          return appendReceiptEntryChoices(client, ctx, await nativeCompletionMenuReply(
+            client,
+            ctx,
+            `Заявка отправлена: ${created.publicCode}.\n\n${formatNotificationTransferState(await buildNotificationTransferState(client, created.publicCode))}\n\nСотрудник получит уведомление.`,
+          ), created.publicCode);
         }
-        await bumpDraftRevision(client, id, "summary", {
-          ...payload,
-          recipientUserId: staffUserId,
-        });
-        const created = await confirmNativeExternalDraft(client, {
+        const recipientName = payload.externalRecipientDisplayName?.trim();
+        if (!recipientName) {
+          return navError("Укажите имя получателя.", ctx.channel);
+        }
+        const created = await confirmNativeExternalToExternalDraftWithSavepoint(client, {
           personId: ctx.personId,
           externalPartyId: partyId,
           draftId: id,
         });
         const { nativeCompletionMenuReply } = await import("./main-menu");
         const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
-        return appendReceiptEntryChoices(client, ctx, await nativeCompletionMenuReply(
-          client,
-          ctx,
-          `Заявка отправлена: ${created.publicCode}.\n\n${formatNotificationTransferState(await buildNotificationTransferState(client, created.publicCode))}\n\nСотрудник получит уведомление.`,
-        ), created.publicCode);
+        const { buildExternalPendingInviteMessage } = await import("./invitation-handoff");
+        const pending = await client.query<{ pending_party_id: string; handoff_version: number }>(
+          `SELECT t.pending_party_id::text, t.handoff_version
+           FROM tt_transfers t WHERE t.id = $1`,
+          [created.publicCode],
+        );
+        const pRow = pending.rows[0];
+        const status = formatNotificationTransferState(await buildNotificationTransferState(client, created.publicCode));
+        const { NATIVE_SENDER_HANDOFF_GUIDANCE: SENDER_HANDOFF_GUIDANCE } = await import(
+          "../../tan-tracker/sender-handoff-guidance"
+        );
+        let resultText = `Передача создана: ${created.publicCode}.\n\n${status}\n\nСледом придёт готовое приглашение. Перешлите его получателю целиком.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`;
+        let forwardInvitationText: string | undefined;
+        if (pRow?.pending_party_id) {
+          const invite = await buildExternalPendingInviteMessage(client, {
+            transferId: created.publicCode,
+            pendingPartyId: pRow.pending_party_id,
+            handoffVersion: pRow.handoff_version,
+            channel: ctx.channel,
+          });
+          if (invite) forwardInvitationText = invite;
+        }
+        return appendReceiptEntryChoices(client, ctx, {
+          ...await nativeCompletionMenuReply(client, ctx, resultText),
+          ...(forwardInvitationText ? { forwardInvitationText } : {}),
+        }, created.publicCode);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Не удалось создать передачу.";

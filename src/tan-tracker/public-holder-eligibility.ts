@@ -1,6 +1,10 @@
 import type { Pool, PoolClient } from "pg";
 import { isUuid } from "./phone-normalize";
-import { resolveExternalRecipientPartyId, type ExternalRecipientInput } from "./party-eligibility";
+import {
+  resolveExternalRecipientPartyId,
+  resolveExternalRecipientPartyIdForExternalActor,
+  type ExternalRecipientInput,
+} from "./party-eligibility";
 
 type Db = Pool | PoolClient;
 
@@ -61,10 +65,6 @@ export async function assertPublicHolderPendingEligible(
   }
   if (allowed.has(pendingPartyId)) return;
 
-  const creatorUserId = await loadPublicHolderCreatorUserId(client, transferId);
-  if (!creatorUserId) {
-    throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
-  }
   const ext = (
     await client.query<{ id: string }>(
       `SELECT id::text FROM tt_parties WHERE id = $1::uuid AND kind = 'external' LIMIT 1`,
@@ -72,6 +72,11 @@ export async function assertPublicHolderPendingEligible(
     )
   ).rows[0];
   if (ext) return;
+
+  const creatorUserId = await loadPublicHolderCreatorUserId(client, transferId);
+  if (!creatorUserId) {
+    throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
+  }
 
   throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
 }
@@ -85,10 +90,9 @@ export async function resolvePublicHolderPendingPartyId(
 ): Promise<string> {
   if (external && (external.name || external.phone)) {
     const creatorUserId = await loadPublicHolderCreatorUserId(client, transferId);
-    if (!creatorUserId) {
-      throw Object.assign(new Error("Не удалось добавить получателя."), { http: 503 });
-    }
-    const id = await resolveExternalRecipientPartyId(client, creatorUserId, external);
+    const id = creatorUserId
+      ? await resolveExternalRecipientPartyId(client, creatorUserId, external)
+      : await resolveExternalRecipientPartyIdForExternalActor(client, external);
     await assertPublicHolderPendingEligible(client, transferId, holderPartyId, id);
     return id;
   }

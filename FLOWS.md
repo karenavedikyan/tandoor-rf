@@ -1,5 +1,15 @@
 # QA flows (не public/dist)
 
+## Native bot: внешний отправитель → внешний получатель (2026-11-01)
+
+- **Кто:** верифицированный внешний участник в личном чате Telegram/MAX (native create, `actor=external`).
+- **Получатель:** любой другой телефон (+7); если номер совпадает с сотрудником с `accepts_external_tt_intake` и связью с отправителем — сохраняется прежняя ветка **заявки сотруднику** (без регрессий).
+- **Иначе:** на «Создать передачу» создаётся передача `from_external`, `creator_party_id` = party отправителя, `created_by_user_id` у party получателя **NULL**, holder = отправитель, pending/final = канонический external по телефону (reuse без переименования). Вложения черновика → `tt_transfer_attachments` с `uploaded_by_user_id` NULL.
+- **Handoff:** одно пересылаемое приглашение с одной ссылкой `mst`; код только адресату после проверки телефона; отправитель вводит код — custody меняется только после verify. До verify holder = отправитель.
+- **Отказы (savepoint, черновик сохраняется):** свой номер, коллизия с сотрудником (нейтрально), неоднозначный телефон, лимит открытых заявок, незаполненные шаги. Нет утечки внутреннего справочника.
+- **После получения:** держатель-external с `creator_user_id` NULL может назначить следующего **внешнего** получателя по телефону (public holder eligibility); staff-получатели по-прежнему только при staff-creator.
+- **QA:** `test/integration/tandoor-independent-native-external-to-external.test.ts`, обновлённый `tandoor-independent-unified-recipient.test.ts` (unknown phone → create). Staff intake: `tandoor-independent-native-bot-create.test.ts`.
+
 ## MAX: «Главное меню» под основными сообщениями (2026-11-01)
 
 - **Граница:** primary webhook/retry, уведомления сотрудникам и внешним участникам. Отдельные сообщения с чистым кодом, приглашением для пересылки и медиа остаются без лишних кнопок.
