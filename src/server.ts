@@ -4,6 +4,7 @@ import path from "path";
 import { loginHandler, logoutHandler, meHandler } from "./auth/handlers";
 import { JSON_BODY_LIMIT } from "./config";
 import { checkReadiness } from "./db/readiness";
+import { ensureAdminNotificationsSchema } from "./tan-tracker/admin-notifications-schema";
 import { closePool, getPool } from "./db/pool";
 import { runOneDiagnosticJob } from "./onec-diagnostics/worker";
 import { drainPendingImportJobs } from "./onec-import/worker-scheduler";
@@ -477,5 +478,23 @@ export function startServer(): ReturnType<express.Application["listen"]> {
 }
 
 if (require.main === module) {
-  startServer();
+  // Preserve the existing isolation/backend guards before any startup database
+  // mutation, including when a user-test process points at a forbidden target.
+  assertTanTrackerUserTestStartup();
+  assertTanTrackerAttachmentsProductionBackend();
+  const pool = getPool();
+  const schemaReady = pool
+    ? ensureAdminNotificationsSchema(pool).then(({ applied }) => {
+        console.log(`Admin track notifications schema ready; applied=${applied}`);
+      })
+    : Promise.resolve();
+  void schemaReady.then(() => startServer()).catch(async (error: unknown) => {
+    const code = typeof error === "object" && error !== null && "code" in error
+      && typeof error.code === "string" && /^[A-Z0-9_]{1,32}$/.test(error.code)
+      ? error.code : "SCHEMA_INIT_FAILED";
+    // No SQL text, connection strings, personal data or database error detail.
+    console.error(`Production schema initialization failed; code=${code}`);
+    await closePool().catch(() => undefined);
+    process.exitCode = 1;
+  });
 }
