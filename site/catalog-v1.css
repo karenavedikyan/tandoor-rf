@@ -244,19 +244,21 @@
 .cat-quick button svg{width:14px;height:14px}
 
 /* Вариант A: как на tandoor.ru — центровка, фото 2:3 на светлом поле, подпись «Розничная цена», зелёная кнопка */
-.cat-grid.view-site{grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
+/* размеры как на tandoor.ru: карточка 420 (3 в ряд на 1300), фото-поле 360×410, название и цена 22px, кнопка 51px */
+.cat-grid.view-site{grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr));gap:20px}
 .view-site .cat-card{align-items:stretch}
 .view-site .cat-head{padding:16px 16px 6px;text-align:center}
 .view-site .cat-card:has(.cat-badges) .cat-head{padding-inline:52px}
-.view-site .cat-head .cat-name{font-size:var(--text-lg);line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:calc(2em * 1.25)}
+.view-site .cat-head .cat-name{font-size:22px;line-height:26px;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:52px}
 .view-site .cat-head .cat-color{margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.view-site .cat-img{aspect-ratio:36/41;background:transparent;--px:6px;--pt:6px;--pb:30px}
-.view-site .cat-head .cat-color{min-height:calc(2em * 1.35);line-height:1.35}
+.view-site .cat-img{width:min(100%,360px);height:440px;aspect-ratio:auto;margin:0 auto;background:transparent;--px:0px;--pt:0px;--pb:30px}
+.view-site .cat-head .cat-color{min-height:38px;line-height:19px;font-size:var(--text-base)}
+.view-site .cat-pricerow .cat-price{font-size:22px;line-height:26px;font-weight:600}
 .view-show .cat-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .view-site .cat-body{padding-top:6px}
 .view-site .cat-pricerow{justify-content:space-between;border-top:1px solid var(--line);padding-top:10px}
-.view-site .cat-pricerow .cat-label{color:var(--muted);font-size:var(--text-xs)}
-.view-site .cat-cta{display:inline-flex;align-items:center;justify-content:center;gap:6px;margin:0 14px 14px;background:transparent;color:var(--green);border:1.5px solid var(--green);border-radius:8px;text-align:center;font-weight:600;font-size:var(--text-sm);min-height:42px;cursor:pointer;transition:background .15s,color .15s,box-shadow .15s}
+.view-site .cat-pricerow .cat-label{color:var(--muted);font-size:var(--text-base)}
+.view-site .cat-cta{display:inline-flex;align-items:center;justify-content:center;gap:6px;margin:0 14px 14px;background:transparent;color:var(--green);border:1.5px solid var(--green);border-radius:8px;text-align:center;font-weight:600;font-size:var(--text-sm);min-height:51px;cursor:pointer;transition:background .15s,color .15s,box-shadow .15s}
 .view-site .cat-cta svg{width:16px;height:16px}
 .view-site .cat-cta:hover{background:var(--green);color:#fff;box-shadow:0 4px 12px rgba(20,40,10,.18)}
 .view-site .cat-cta:focus-visible{outline:3px solid var(--green);outline-offset:2px}
@@ -368,7 +370,11 @@ body:has(.cat-panel.open) #af-required-reminder{display:none}
  .cat-filterbtn{padding:0 12px}
  .cat-filters{width:100vw;border-left:0}
  .cat-grid,.cat-grid.view-site{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
- .view-site .cat-img{aspect-ratio:36/41}
+ .view-site .cat-img{width:auto;height:auto;aspect-ratio:36/41;margin:0;--px:6px;--pt:6px;--pb:6px}
+ .view-site .cat-head .cat-name{font-size:var(--text-base);line-height:1.25;min-height:calc(2em*1.25)}
+ .view-site .cat-head .cat-color{font-size:var(--text-xs);min-height:calc(2em*1.35);line-height:1.35}
+ .view-site .cat-pricerow .cat-price{font-size:var(--text-base);line-height:1.2}
+ .view-site .cat-pricerow .cat-label{font-size:var(--text-xs)}
  .cat-body{padding:10px 12px 12px}
  .cat-name{font-size:var(--text-sm)}
  .cat-price{font-size:var(--text-base)}
@@ -408,5 +414,5 @@ body.cat-fullscreen #catalog-root{padding:10px 14px 24px}
 .cat-secbar .cat-chip svg{width:15px;height:15px}
 .cat-full .cat-toolbar{position:sticky;top:0;z-index:5}
 .cat-full .cat-grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
-.cat-full .cat-grid.view-site{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+.cat-full .cat-grid.view-site{grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr))}
 .cat-full .cat-filters{gap:6px 14px}
