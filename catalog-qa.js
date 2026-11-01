@@ -49,8 +49,19 @@ var CATALOG_QA = await (async () => {
   await page.locator('.cat-tree button[data-cat="sec"][data-sec="entry"]').click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "29");
   ok(true, "Входные двери → 29");
-  ok((await page.locator(".cat-tree-sub .cat-tree-item").count()) === 5, "5 entry subsections in tree");
-  ok((await page.locator(".cat-subchips .cat-chip").count()) === 6, "subsection chips shown (Все + 5)");
+  ok((await page.locator(".cat-tree-sub .cat-tree-item").count()) === 13, "entry tree as on tandoor.ru: 4 groups, 13 subsections");
+  ok((await page.locator(".cat-tree-ghead").count()) === 4, "entry groups: по конструкции / материалу / назначению / стоимости");
+  ok((await page.locator(".cat-tabs .cat-tab").count()) === 5, "tabs row: Все товары + 4 groups");
+  ok((await page.locator(".cat-subrow").count()) === 0, "no subsection row until a group is chosen (as on site)");
+  await page.locator('.cat-tab[data-grp="по материалу"]').click();
+  await page.waitForSelector(".cat-subrow .cat-chip");
+  ok((await page.locator(".cat-subrow .cat-chip").count()) === 3, "по материалу → 3 subsections");
+  await page.locator('.cat-subrow .cat-chip[data-sub="Металл / металл"]').click();
+  await page.waitForTimeout(150);
+  ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.attrs["Вид двери"] === "Металл - металл")), "derived subsection (Металл / металл) filters by attribute");
+  await page.locator('.cat-tree-ghead[data-grp="по конструкции"]').click();
+  await page.waitForTimeout(150);
+  ok(await page.locator('.cat-tree-grp.open .cat-tree-item[data-sub="С терморазрывом"]').isVisible(), "tree group header expands its subsections");
   await page.locator('.cat-tree-sub button[data-sub="С терморазрывом"]').click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "7");
   ok(true, "С терморазрывом → 7");
@@ -59,24 +70,29 @@ var CATALOG_QA = await (async () => {
   await page.locator('.cat-tree button[data-cat="sec"][data-sec=""]').click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
 
-  // filters
-  await page.locator('.cat-filters .cat-chip[data-key="avail"][data-val="in"]').click();
+  // filters — панель как на сайте
+  ok(!(await page.locator(".cat-filters").isVisible()), "filter drawer closed by default");
+  await page.locator(".cat-filterbtn").click();
+  await page.locator(".cat-filters.open").waitFor({ state: "visible" });
+  ok(true, "«Подобрать по фильтрам» opens the drawer");
+  ok((await page.locator(".cat-filters .cat-range input[type=range]").count()) === 2, "price slider with two handles");
+  await page.locator('.cat-filters .cat-check[data-key="avail"][data-val="in"]').first().click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent !== "167");
   const nIn = Number(await countText());
   const expIn = await page.evaluate(() => window.CatalogPrototype.filtered().length);
   ok(nIn === expIn && nIn > 50, `В наличии filter → ${nIn}`);
   const allInStock = await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => window.CatalogPrototype.total(p) > 0));
   ok(allInStock, "all filtered have stock");
-  await page.locator('.cat-filters .cat-chip[data-cat="attr"][data-key="Цветовая гамма"][data-val="Белая"]').click();
+  await page.locator('.cat-filters .cat-check[data-cat="attr"][data-key="Цветовая гамма"][data-val="Белая"]').click();
   await page.waitForFunction((n) => Number(document.querySelector(".cat-summary b")?.textContent) < n, nIn);
   ok((await page.locator(".cat-active .cat-chip").count()) === 2, "two active filter chips");
   // tags (Хит / Новинки / Акции как на сайте)
-  await page.locator('.cat-filters .cat-chip[data-cat="tag"][data-val="new"]').click();
+  await page.locator('.cat-filters .cat-check[data-cat="tag"][data-val="new"]').click();
   await page.waitForTimeout(150);
   ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.isNew)), "Новинки tag filter applies");
-  await page.locator('.cat-filters .cat-chip[data-cat="tag"][data-val="new"]').click();
+  await page.locator('.cat-filters .cat-check[data-cat="tag"][data-val="new"]').click();
   await page.waitForTimeout(150);
-  await page.locator('.cat-filters select[data-cat-select="sort"]').selectOption("asc");
+  await page.locator('.cat-filters .cat-check[data-cat="sort"][data-val="asc"]').click();
   await page.waitForTimeout(150);
   const prices = await page.evaluate(() => window.CatalogPrototype.filtered().map((p) => p.price));
   ok(prices.every((v, i) => i === 0 || prices[i - 1] <= v), "sorted ascending");
@@ -87,38 +103,53 @@ var CATALOG_QA = await (async () => {
   await page.locator(".cat-active .cat-chip").first().click(); // remove avail chip
   await page.waitForTimeout(150);
   ok((await page.locator(".cat-active .cat-chip").count()) === 2, "removing active chip works (gamma + price remain)");
+  await page.locator('.cat-range input[data-cat-range="max"]').fill("15000");
+  await page.waitForTimeout(350);
+  ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.price <= 15000)), "slider handle sets max price");
+  ok((await page.locator('input[data-cat-input="max"]').inputValue()) === "15000", "slider syncs the max input");
   await page.locator('.cat-filters button[data-cat="reset"]').click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
   ok(true, "reset filters → 167");
+  ok((await page.locator(".cat-filterbtn b").count()) === 0, "filter button badge cleared");
 
   // section filters mirror tandoor.ru
   const groupsFor = async (sec) => {
     await page.locator(`.cat-tree button[data-cat="sec"][data-sec="${sec}"]`).click();
     await page.waitForFunction(() => document.querySelector(".cat-fgroup-attr"));
-    return page.evaluate(() => [...document.querySelectorAll(".cat-fgroup-attr > span")].map((e) => e.textContent));
+    return page.evaluate(() => [...document.querySelectorAll(".cat-fgroup-attr summary span")].map((e) => e.textContent));
   };
   const gi = await groupsFor("interior");
   ok(["Дизайн", "Цветовая гамма", "Материал\\Покрытие", "Вид двери"].every((g) => gi.includes(g)), `interior filter groups: ${gi.join(", ")}`);
-  ok(await page.locator('.cat-fgroup-attr .cat-chip[data-val="Под покраску"].empty').count() === 1, "site-only option shown dimmed (Под покраску)");
-  await page.locator('.cat-fgroup-attr .cat-chip[data-key="Вид двери"][data-val="Стеклянная (ДО)"]').click();
+  ok(await page.locator('.cat-fgroup-attr .cat-check[data-val="Под покраску"].empty').count() === 1, "site-only option shown dimmed (Под покраску)");
+  await page.locator('.cat-fgroup-attr .cat-check[data-key="Вид двери"][data-val="Стеклянная (ДО)"]').click();
   await page.waitForTimeout(150);
   ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.types.includes("ДО"))), "Вид двери ДО filter applies");
-  await page.locator('.cat-fgroup-attr .cat-chip[data-key="Вид двери"][data-val="Глухая (ДГ)"]').click();
+  await page.locator('.cat-fgroup-attr .cat-check[data-key="Вид двери"][data-val="Глухая (ДГ)"]').click();
   await page.waitForTimeout(150);
   ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.types.includes("ДО") || p.types.includes("ДГ"))), "multi-select within group (ДО или ДГ)");
   const ge = await groupsFor("entry");
   ok(["Место назначения", "Вид двери", "Толщина полотна, мм", "Толщина стали, мм", "Терморазрыв", "Ковка", "Стеклопакет", "Зеркало", "Ценовой сегмент"].every((g) => ge.includes(g)), `entry filter groups: ${ge.length}`);
   ok(await page.evaluate(() => Object.keys(window.CatalogPrototype.state.f).length === 0), "section switch clears section filters");
-  await page.locator('.cat-fgroup-attr .cat-chip[data-key="Терморазрыв"][data-val="да"]').click();
+  await page.locator('.cat-fgroup-attr .cat-check[data-key="Терморазрыв"][data-val="да"]').click();
   await page.waitForTimeout(150);
   ok(await page.evaluate(() => window.CatalogPrototype.filtered().every((p) => p.attrs["Терморазрыв"] === "да")), "Терморазрыв=да applies");
   const gh = await groupsFor("hardware");
   ok(["Бренд", "Цветовая гамма", "Вид ручки", "Основание ручки", "Тип установки", "Высота петли", "Вид замка/защёлки", "Материал язычка", "Дизайн"].every((g) => gh.includes(g)), `hardware filter groups: ${gh.length}`);
   const gm = await groupsFor("molding");
   ok(gm.includes("Материал") && gm.includes("Цвет"), "molding filter groups");
-  await page.locator('.cat-filters button[data-cat="reset"]').click();
-  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
+  await page.locator('.cat-filters summary:has-text("Материал")').click();
+  await page.waitForTimeout(100);
+  await page.locator('.cat-tree button[data-cat="sec"][data-sec="interior"]').click();
+  await page.waitForTimeout(200);
+  await page.locator('.cat-tree button[data-cat="sec"][data-sec="molding"]').click();
+  await page.waitForTimeout(200);
+  ok(!(await page.locator('.cat-filters details[data-fg="Материал"]').evaluate((d) => d.open)), "collapsed filter group stays collapsed after re-render");
   await shot("desktop-filters-entry");
+  await page.locator(".cat-filters .cat-fapply").click();
+  await page.waitForTimeout(300);
+  ok(!(await page.locator(".cat-filters").isVisible()), "«Применить» closes the drawer");
+  await page.locator('.cat-tree button[data-cat="sec"][data-sec=""]').click();
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
 
   // views
   await page.locator('.cat-seg button[data-view="site"]').click();
@@ -129,7 +160,7 @@ var CATALOG_QA = await (async () => {
   const cardHover = await page.locator(".view-site .cat-card").first().evaluate((el) => getComputedStyle(el).transform);
   ok(cardHover === "none" || cardHover === "matrix(1, 0, 0, 1, 0, 0)", "hovering CTA does not lift the whole card");
   // card carousel (витрина/сайт): все фото в полный рост, стрелки, стороны входных дверей
-  ok(await page.evaluate(() => [...document.querySelectorAll(".view-site .cat-img > img")].slice(0, 20).every((im) => im.naturalHeight > 0 && im.clientHeight <= im.parentElement.clientHeight && im.clientWidth <= im.parentElement.clientWidth)), "site view: photos fit the box fully (no crop)");
+  ok(await page.evaluate(() => [...document.querySelectorAll(".view-site .cat-img > img")].slice(0, 20).filter((im) => im.naturalHeight > 0).every((im) => im.clientHeight <= im.parentElement.clientHeight && im.clientWidth <= im.parentElement.clientWidth)), "site view: photos fit the box fully (no crop)");
   const multi = page.locator(".view-site .cat-img.has-gallery").first();
   ok(await multi.count() === 1, "card has gallery controls when several photos");
   const src0 = await multi.locator("img").getAttribute("src");
@@ -291,9 +322,11 @@ var CATALOG_QA = await (async () => {
   await page.locator(".cat-filterbtn").click();
   await page.locator(".cat-filters.open").waitFor({ state: "visible" });
   await shot("mobile-filters");
-  await page.locator('.cat-filters .cat-chip[data-key="avail"][data-val="in"]').click();
+  await page.locator('.cat-filters .cat-check[data-key="avail"][data-val="in"]').first().click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent !== "167");
   ok(true, "mobile: filter applies");
+  await page.locator(".cat-filters .cat-fapply").click();
+  await page.waitForTimeout(300);
   await page.locator('.cat-tree button[data-sec="interior"]').click();
   await page.waitForFunction(() => document.querySelector(".cat-subchips"));
   ok(true, "mobile: section chip switches and shows subsections");

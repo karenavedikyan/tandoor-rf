@@ -10,7 +10,7 @@
   const icon = (n, cls = "") => `<i data-lucide="${n}" class="${cls}"></i>`;
 
   const state = {
-    sec: "", sub: "", q: "", view: "show", clientView: false,
+    sec: "", sub: "", grp: "", q: "", view: "show", clientView: false,
     avail: "", tags: [], f: {}, min: "", max: "", sort: "default",
     limit: PAGE, panelId: null, zoom: false, size: null, type: null, filtersOpen: false, full: false, gIdx: 0,
   };
@@ -117,10 +117,40 @@
   const TAGS = [["hit", "Хит"], ["new", "Новинки"], ["sale", "Акции"]];
   const attrOf = (p, key) => (key === "Цветовая гамма" && state.sec !== "hardware" ? p.gamma : (p.attrs || {})[key]);
   const hasAttr = (p, key, v) => { const a = attrOf(p, key); return Array.isArray(a) ? a.includes(v) : a === v; };
+  /* Дерево разделов как на tandoor.ru: раздел → группировка («по покрытию», «по типу», «по цвету»…) → подраздел.
+     Подразделы, которых нет в демо-данных, показаны приглушённо, чтобы структура сайта была видна целиком. */
+  const bySub = (v) => (p) => p.sub === v;
+  const byA = (k, ...vals) => (p) => [].concat((p.attrs || {})[k] || []).some((x) => vals.includes(x));
+  const byIncl = (k, v) => (p) => String((p.attrs || {})[k] || "").includes(v);
+  const none = () => false;
+  const SITE_TREE = {
+    interior: [
+      ["по покрытию", [["Влагостойкие двери", none], ["Грунтованные двери", byA("Материал\\Покрытие", "Грунт")], ["Двери из массива", byA("Материал\\Покрытие", "Массив")], ["Ламинированные двери", byA("Материал\\Покрытие", "Ламинированное покрытие")], ["Шпонированные двери", byA("Материал\\Покрытие", "Шпон")], ["Современные покрытия", byA("Материал\\Покрытие", "Современные покрытия", "ПВХ", "ПЭТ")], ["Двери эмаль", bySub("Двери эмаль")]]],
+      ["по типу", [["Двери гармошка", none], ["Высотой 2100 и 2200", (p) => p.sizes.some((z) => /^2[12]00/.test(z))], ["Стандартные двери", bySub("Стандартные двери")], ["С алюминиевой кромкой", bySub("С алюминиевой кромкой")], ["Скрытые двери", none]]],
+      ["по цвету", [["Белые", (p) => p.gamma === "Белая"], ["Под покраску", (p) => p.gamma === "Под покраску"], ["Светлые", (p) => p.gamma === "Светлая"], ["Серые", (p) => p.gamma === "Серая"], ["Тёмные", (p) => p.gamma === "Тёмная"]]],
+    ],
+    entry: [
+      ["по конструкции", [["Нестандартный размер", bySub("Нестандартный размер")], ["С зеркалом", bySub("С зеркалом")], ["С ковкой / стеклопакетом", bySub("С ковкой / стеклопакетом")], ["С терморазрывом", bySub("С терморазрывом")]]],
+      ["по материалу", [["МДФ / МДФ", byA("Вид двери", "МДФ - МДФ")], ["Металл / МДФ", byA("Вид двери", "Металл - МДФ", "Металл - ХДФ")], ["Металл / металл", byA("Вид двери", "Металл - металл")]]],
+      ["по назначению", [["Для дачи", byIncl("Место назначения", "для дачи")], ["Для дома", byIncl("Место назначения", "для дома")], ["Для квартиры", byIncl("Место назначения", "для квартиры")]]],
+      ["по стоимости", [["Бюджет", byA("Ценовой сегмент", "бюджет")], ["Стандарт", byA("Ценовой сегмент", "стандарт")], ["Премиум", byA("Ценовой сегмент", "премиум")]]],
+    ],
+    hardware: [
+      ["Аксессуары для дверей", [["Автопороги", none], ["Доводчики", (p) => p.sub === "Доводчики и ограничители" && /доводчик/i.test(p.name)], ["Ограничители", (p) => p.sub === "Доводчики и ограничители" && /ограничител/i.test(p.name)], ["Фурнитура для дверей купе", none]]],
+      ["Замки и защёлки", [["Замки под цилиндр", byA("Вид замка/защёлки", "Замок под цилиндр")], ["Замки сантехнические", byA("Вид замка/защёлки", "Замок сантехнический")], ["Задвижки 7/45", none], ["Защёлки 6/45", none], ["Цилиндры", none]]],
+      ["Петли", [["Накладные петли бабочки", (p) => p.sub === "Петли" && byA("Тип установки", "накладные")(p)], ["Разъёмные петли", none], ["Универсальные петли", (p) => p.sub === "Петли" && byA("Тип установки", "врезные")(p)]]],
+      ["Ручки", [["Ручки купе", byA("Вид ручки", "купе", "купе/с механизмом")], ["Ручки-защёлки", byA("Вид ручки", "на розетке/ с механизмом", "на планке/ с механизмом")], ["Стандартные ручки", byA("Вид ручки", "на розетке")]]],
+    ],
+    molding: [["Плинтус напольный", [["Плинтус МДФ", bySub("Плинтус МДФ")]]], ["Погонажные изделия", [["Погонажные изделия", none]]]],
+  };
+  const nodeOf = (sec, id) => { for (const [, items] of SITE_TREE[sec] || []) for (const it of items) if (it[0] === id) return it; return null; };
+  const nodePass = (p, sec, id) => { const n = nodeOf(sec, id); return n ? n[1](p) : p.sub === id; };
+  const grpOf = (sec, id) => (SITE_TREE[sec] || []).find(([, items]) => items.some((it) => it[0] === id))?.[0] || "";
+  const inScope = (p) => (!state.sec || p.section === state.sec) && (!state.sub || nodePass(p, state.sec, state.sub));
   const hasTag = (p, t) => (t === "hit" ? !!p.hit : t === "new" ? !!p.isNew : t === "sale" ? !!p.oldPrice : true);
   function passBase(p, skipKey) {
     if (state.sec && p.section !== state.sec) return false;
-    if (state.sub && p.sub !== state.sub) return false;
+    if (state.sub && !nodePass(p, state.sec, state.sub)) return false;
     if (state.min && p.price < Number(state.min)) return false;
     if (state.max && p.price > Number(state.max)) return false;
     if (state.avail === "in" && total(p) === 0) return false;
@@ -151,7 +181,7 @@
     else if (state.sort === "name") list = list.slice().sort((a, b) => a.name.localeCompare(b.name, "ru"));
     return list;
   }
-  const countIn = (sec, sub) => D.products.filter((p) => p.section === sec && (!sub || p.sub === sub)).length;
+  const countIn = (sec, sub) => D.products.filter((p) => p.section === sec && (!sub || nodePass(p, sec, sub))).length;
   const sectionOf = (id) => D.sections.find((s) => s.id === id);
   function sizesShort(p) {
     if (!p.sizes.length) return "—";
@@ -174,7 +204,7 @@
   function readUrl() {
     const p = new URLSearchParams(location.hash.split("?")[1] || "");
     if (p.has("sec")) state.sec = sectionOf(p.get("sec")) ? p.get("sec") : "";
-    if (p.has("sub")) state.sub = p.get("sub");
+    if (p.has("sub")) { state.sub = p.get("sub"); state.grp = grpOf(state.sec, state.sub); }
     if (p.has("q")) state.q = p.get("q");
     if (p.has("view") && ["site", "show", "table"].includes(p.get("view"))) state.view = p.get("view");
     if (p.has("client")) state.clientView = p.get("client") === "1";
@@ -192,23 +222,26 @@
       <button class="cat-tree-item ${!state.sec ? "active" : ""}" data-cat="sec" data-sec="">${icon("layout-grid")}Все разделы<span class="cat-count">${all}</span></button>
       ${D.sections.map((s) => `
         <button class="cat-tree-item ${state.sec === s.id && !state.sub ? "active" : ""}" data-cat="sec" data-sec="${s.id}">${icon(s.icon)}${esc(s.name)}<span class="cat-count">${countIn(s.id)}</span></button>
-        ${state.sec === s.id ? `<div class="cat-tree-sub">${s.subs.map((u) => `<button class="cat-tree-item ${state.sub === u ? "active" : ""}" data-cat="sub" data-sub="${esc(u)}">${esc(u)}<span class="cat-count">${countIn(s.id, u)}</span></button>`).join("")}</div>` : ""}`).join("")}
+        ${state.sec === s.id ? `<div class="cat-tree-sub">${(SITE_TREE[s.id] || []).map(([g, items]) => `<div class="cat-tree-grp ${!state.grp || state.grp === g ? "open" : ""}"><button class="cat-tree-ghead ${state.grp === g ? "active" : ""}" data-cat="grp" data-grp="${esc(g)}" aria-expanded="${!state.grp || state.grp === g}">${esc(g)}${icon("chevron-down")}</button><div class="cat-tree-items">${items.map(([u]) => treeItem(s.id, u)).join("")}</div></div>`).join("")}</div>` : ""}`).join("")}
     </section>
     <div class="card cat-side-note"><b>Источник данных</b>Названия, цвета, фото и розничные цены — с tandoor.ru. Остатки по складам, партнёрские цены и поступления — демо-значения; в рабочем ЛК они приходят из 1С.</div>`;
   }
-  function chips(name, key, items) {
-    return `<div class="cat-fgroup"><span>${name}</span><div class="cat-chips">${items.map(([v, l]) => `<button class="cat-chip ${state[key] === v ? "active" : ""}" data-cat="chip" data-key="${key}" data-val="${esc(v)}">${l}</button>`).join("")}</div></div>`;
+  function treeItem(sec, u) {
+    const n = countIn(sec, u);
+    return `<button class="cat-tree-item ${state.sub === u ? "active" : ""} ${n ? "" : "empty"}" data-cat="sub" data-sub="${esc(u)}" ${n ? "" : 'disabled title="На tandoor.ru подраздел есть, в демо-данных товаров нет"'}>${esc(u)}<span class="cat-count">${n}</span></button>`;
   }
-  function tagChips() {
-    const scope = D.products.filter((p) => (!state.sec || p.section === state.sec) && (!state.sub || p.sub === state.sub));
-    return `<div class="cat-fgroup"><span>Метки</span><div class="cat-chips">${TAGS.map(([v, l]) => {
-      const n = scope.filter((p) => hasTag(p, v)).length;
-      return `<button class="cat-chip ${state.tags.includes(v) ? "active" : ""} ${n ? "" : "empty"}" data-cat="tag" data-val="${v}" ${n ? "" : "disabled"}>${l}<small>${n}</small></button>`;
-    }).join("")}</div></div>`;
+  const check = (on, attrs, label, n, dis, extra = "") => `<button class="cat-check ${on ? "on" : ""} ${dis ? "empty" : ""} ${extra}" role="checkbox" aria-checked="${on}" ${attrs} ${dis ? 'disabled title="На tandoor.ru есть такой фильтр, в демо-данных товаров нет"' : ""}><span class="box">${icon("check")}</span><span class="lbl">${label}</span>${n != null ? `<small>${n}</small>` : ""}</button>`;
+  const closedGroups = new Set();
+  const fgroup = (title, body, cls = "") => `<details class="cat-fg ${cls}" ${closedGroups.has(title) ? "" : "open"} data-fg="${esc(title)}"><summary><span>${esc(title)}</span>${icon("chevron-down")}</summary><div class="cat-fg-body">${body}</div></details>`;
+  function quickHtml() {
+    const scope = D.products.filter(inScope);
+    const row = TAGS.map(([v, l]) => { const n = scope.filter((p) => hasTag(p, v)).length; return check(state.tags.includes(v), `data-cat="tag" data-val="${v}"`, l, n, !n && !state.tags.includes(v)); });
+    row.push(check(state.avail === "in", `data-cat="chip" data-key="avail" data-val="in"`, "В наличии", scope.filter((p) => total(p) > 0).length, false));
+    return row.join("");
   }
   function attrGroups() {
     const schema = SITE_FILTERS[state.sec] || [];
-    const scope = D.products.filter((p) => (!state.sec || p.section === state.sec) && (!state.sub || p.sub === state.sub));
+    const scope = D.products.filter(inScope);
     return schema.map(([key, siteOpts]) => {
       const present = [...new Set(scope.flatMap((p) => [].concat(attrOf(p, key) || [])))];
       if (!present.length && !(state.f[key] || []).length) return "";
@@ -220,31 +253,42 @@
         const n = base.filter((p) => hasAttr(p, key, v)).length;
         const on = sel.includes(v);
         if (!n && !on && opts.length > 8) return "";
-        return `<button class="cat-chip ${on ? "active" : ""} ${n || on ? "" : "empty"}" data-cat="attr" data-key="${esc(key)}" data-val="${esc(v)}" ${n || on ? "" : "disabled"} title="${n ? "" : "На tandoor.ru есть такой фильтр, в демо-данных товаров нет"}">${esc(v)}<small>${n}</small></button>`;
+        return check(on, `data-cat="attr" data-key="${esc(key)}" data-val="${esc(v)}"`, esc(v), n, !n && !on);
       }).join("");
-      return `<div class="cat-fgroup cat-fgroup-attr"><span>${esc(key)}</span><div class="cat-chips">${items}</div></div>`;
+      return fgroup(key, items, "cat-fgroup-attr");
     }).join("");
   }
-  function priceBounds() {
-    const scope = D.products.filter((p) => (!state.sec || p.section === state.sec) && (!state.sub || p.sub === state.sub));
-    if (!scope.length) return ["от", "до"];
+  function priceNums() {
+    const scope = D.products.filter(inScope);
+    if (!scope.length) return [0, 0];
     const ps = scope.map((p) => p.price);
-    return [`от ${Math.min(...ps).toLocaleString("ru-RU")}`, `до ${Math.max(...ps).toLocaleString("ru-RU")}`];
+    return [Math.min(...ps), Math.max(...ps)];
   }
+  const fmt = (n) => Number(n).toLocaleString("ru-RU");
+  const activeCount = () => attrCount() + (state.avail ? 1 : 0) + state.tags.length + (state.min || state.max ? 1 : 0) + (state.sort !== "default" ? 1 : 0);
+  /* Панель фильтра как на tandoor.ru: выезжает справа, группы сворачиваются, внутри — чекбоксы, цена с ползунком, сортировка;
+     внизу — сброс и «Применить». Результаты обновляются сразу, «Применить» просто закрывает панель. */
   function filtersHtml() {
-    const [lo, hi] = priceBounds();
-    return `
-      ${chips("Наличие", "avail", [["in", "В наличии"], ["soon", "Ожидается"], ["order", "Под заказ"]])}
-      ${tagChips()}
-      <div class="cat-fgroup"><span>Цена, ₽</span><div class="cat-price-range"><input type="number" inputmode="numeric" placeholder="${lo}" value="${esc(state.min)}" data-cat-input="min" aria-label="Цена от"> — <input type="number" inputmode="numeric" placeholder="${hi}" value="${esc(state.max)}" data-cat-input="max" aria-label="Цена до"></div></div>
-      <div class="cat-fgroup"><span>Сортировка</span><select data-cat-select="sort" aria-label="Сортировка">
-        <option value="default" ${state.sort === "default" ? "selected" : ""}>Как в каталоге</option>
-        <option value="asc" ${state.sort === "asc" ? "selected" : ""}>Цена: по возрастанию</option>
-        <option value="desc" ${state.sort === "desc" ? "selected" : ""}>Цена: по убыванию</option>
-        <option value="stock" ${state.sort === "stock" ? "selected" : ""}>Сначала в наличии</option>
-        <option value="name" ${state.sort === "name" ? "selected" : ""}>По названию</option></select></div>
-      ${hasFilters() ? `<button class="link cat-reset" data-cat="reset">Сбросить фильтры</button>` : ""}
-      ${attrGroups() ? `<div class="cat-fsep"><span>${state.sec ? "Фильтры раздела — как на tandoor.ru" : "Выберите раздел, чтобы увидеть его фильтры как на tandoor.ru"}</span></div>${attrGroups()}` : ""}`;
+    const [lo, hi] = priceNums();
+    const s = sectionOf(state.sec);
+    const vmin = Math.min(Math.max(Number(state.min) || lo, lo), hi), vmax = Math.max(Math.min(Number(state.max) || hi, hi), lo);
+    const pct = (v) => (hi > lo ? ((v - lo) / (hi - lo)) * 100 : 0);
+    const price = `<div class="cat-price-range"><input type="number" inputmode="numeric" placeholder="от ${fmt(lo)}" value="${esc(state.min)}" data-cat-input="min" aria-label="Цена от"><i></i><input type="number" inputmode="numeric" placeholder="до ${fmt(hi)}" value="${esc(state.max)}" data-cat-input="max" aria-label="Цена до"></div>
+      <div class="cat-range" style="--a:${pct(vmin)}%;--b:${pct(vmax)}%"><input type="range" min="${lo}" max="${hi}" step="10" value="${vmin}" data-cat-range="min" aria-label="Ползунок: цена от"><input type="range" min="${lo}" max="${hi}" step="10" value="${vmax}" data-cat-range="max" aria-label="Ползунок: цена до"></div>
+      <div class="cat-range-vals"><span>${fmt(lo)} ₽</span><span>${fmt(hi)} ₽</span></div>`;
+    const sorts = [["default", "Как в каталоге"], ["asc", "По возрастанию цены"], ["desc", "По убыванию цены"], ["stock", "Сначала в наличии"], ["name", "По названию"]];
+    const sort = sorts.map(([v, l]) => check(state.sort === v, `data-cat="sort" data-val="${v}"`, l, null, false, "radio")).join("");
+    const avail = [["in", "В наличии"], ["soon", "Ожидается поступление"], ["order", "Под заказ"]].map(([v, l]) => check(state.avail === v, `data-cat="chip" data-key="avail" data-val="${v}"`, l, null, false, "radio")).join("");
+    const n = activeCount();
+    return `<div class="cat-fhead"><div><b>Фильтр</b><span>${s ? esc(s.name) : "Все разделы"}${state.sub ? " · " + esc(state.sub) : ""}</span></div><button class="cat-fclose" data-cat="toggle-filters" aria-label="Закрыть фильтр">${icon("x")}</button></div>
+      <div class="cat-fbody" data-cat-fbody>
+        ${fgroup("Цена", price)}
+        ${fgroup("Сортировка", sort)}
+        <div class="cat-fquick">${quickHtml()}</div>
+        ${fgroup("Наличие на складах", avail + `<p class="cat-fnote">Только для сотрудников: на сайте такого фильтра нет.</p>`)}
+        ${attrGroups() || `<p class="cat-fnote">Выберите раздел — появятся его фильтры как на tandoor.ru.</p>`}
+      </div>
+      <div class="cat-ffoot"><button class="cat-freset" data-cat="reset" title="Сбросить фильтры" aria-label="Сбросить фильтры" ${hasFilters() ? "" : "disabled"}>${icon("rotate-ccw")}</button><button class="primary cat-fapply" data-cat="toggle-filters">Применить${n ? ` · ${n}` : ""}</button></div>`;
   }
   const attrCount = () => Object.values(state.f).reduce((a, v) => a + v.length, 0);
   const hasFilters = () => !!(state.q || state.sec || state.avail || state.tags.length || attrCount() || state.min || state.max || state.sort !== "default");
@@ -319,14 +363,20 @@
   function subChips() {
     const s = sectionOf(state.sec);
     if (!s) return "";
-    return `<div class="cat-subchips"><button class="cat-chip ${!state.sub ? "active" : ""}" data-cat="sub" data-sub="">Все · ${countIn(s.id)}</button>${s.subs.map((u) => `<button class="cat-chip ${state.sub === u ? "active" : ""}" data-cat="sub" data-sub="${esc(u)}">${esc(u)} · ${countIn(s.id, u)}</button>`).join("")}</div>`;
+    const tree = SITE_TREE[s.id] || [];
+    const grp = state.grp || grpOf(s.id, state.sub);
+    const items = (tree.find(([g]) => g === grp) || [])[1] || [];
+    return `<div class="cat-subchips"><div class="cat-tabs" role="tablist" aria-label="Подразделы как на tandoor.ru">
+      <button class="cat-tab ${!grp && !state.sub ? "active" : ""}" data-cat="grp" data-grp="">Все товары<small>${countIn(s.id)}</small></button>
+      ${tree.map(([g]) => `<button class="cat-tab ${grp === g ? "active" : ""}" data-cat="grp" data-grp="${esc(g)}">${esc(g)}</button>`).join("")}</div>
+      ${items.length ? `<div class="cat-subrow">${items.map(([u]) => { const n = countIn(s.id, u); return `<button class="cat-chip ${state.sub === u ? "active" : ""} ${n ? "" : "empty"}" data-cat="sub" data-sub="${esc(u)}" ${n ? "" : "disabled"}>${esc(u)}<small>${n}</small></button>`; }).join("")}</div>` : ""}</div>`;
   }
   function mainHtml() {
     const list = filtered();
     const s = sectionOf(state.sec);
     return `<section class="card cat-toolbar">
       <div class="cat-search">${icon("search")}<input type="search" id="cat-search" placeholder="Модель, цвет или артикул" value="${esc(state.q)}" autocomplete="off" aria-label="Поиск по каталогу">${state.q ? `<button class="cat-clear" data-cat="chip" data-key="q" aria-label="Очистить поиск">${icon("x")}</button>` : ""}</div>
-      <button class="cat-filterbtn" data-cat="toggle-filters">${icon("sliders-horizontal")}Фильтры${hasFilters() ? " · есть" : ""}</button>
+      <button class="primary cat-filterbtn" data-cat="toggle-filters" aria-expanded="${state.filtersOpen}">${icon("sliders-horizontal")}<span>Подобрать по фильтрам</span>${activeCount() ? `<b>${activeCount()}</b>` : ""}</button>
       <div class="cat-seg" role="group" aria-label="Вид карточек">
         <button class="${state.view === "site" ? "active" : ""}" data-cat="view" data-view="site" title="Как на tandoor.ru">${icon("layout-grid")}<span>Как на сайте</span></button>
         <button class="${state.view === "show" ? "active" : ""}" data-cat="view" data-view="show" title="Витрина: фото крупно, цена и остаток рядом">${icon("rows-3")}<span>Витрина</span></button>
@@ -335,7 +385,8 @@
       <label class="cat-mode ${state.clientView ? "on" : ""}" title="Показать каталог так, как его увидит клиент в боте: без партнёрских цен и точных остатков"><input type="checkbox" data-cat-client ${state.clientView ? "checked" : ""}>${icon(state.clientView ? "eye" : "eye-off")}<span>Как видит клиент</span></label>
       <button class="cat-fullbtn ${state.full ? "on" : ""}" data-cat="full" title="${state.full ? "Вернуться в личный кабинет (Esc)" : "Каталог на весь экран: без меню и шапки"}">${icon(state.full ? "minimize-2" : "maximize-2")}<span>${state.full ? "Выйти" : "На весь экран"}</span>${state.full ? "<kbd>Esc</kbd>" : ""}</button>
     </section>
-    <section class="card cat-filters ${state.filtersOpen ? "open" : ""}" data-cat-filters>${filtersHtml()}</section>
+    <div class="cat-marks" aria-label="Быстрые отметки как на tandoor.ru">${quickHtml()}</div>
+    <aside class="card cat-filters ${state.filtersOpen ? "open" : ""}" data-cat-filters aria-label="Фильтр" ${state.filtersOpen ? "" : 'aria-hidden="true"'}>${filtersHtml()}</aside>
     ${subChips()}
     <div class="cat-summary"><div><b>${list.length}</b> ${plural(list.length)}${s ? ` · ${esc(s.name)}${state.sub ? " / " + esc(state.sub) : ""}` : ""}${state.clientView ? ` · <span class="tag warn">режим клиента</span>` : ""}</div><div class="cat-active">${activeChips()}</div></div>
     <div data-cat-results>${resultsHtml(list)}</div>`;
@@ -428,6 +479,15 @@
     rerender();
     if (state.full) document.querySelector(".cat-fullbtn")?.focus({ preventScroll: true });
   }
+  function setFilters(on) {
+    state.filtersOpen = !!on;
+    const f = document.querySelector("[data-cat-filters]");
+    if (f) { f.classList.toggle("open", state.filtersOpen); if (state.filtersOpen) f.removeAttribute("aria-hidden"); else f.setAttribute("aria-hidden", "true"); }
+    document.body.classList.toggle("cat-filters-open", state.filtersOpen && current === ROUTE);
+    document.querySelector(".cat-filterbtn")?.setAttribute("aria-expanded", String(state.filtersOpen));
+    if (state.filtersOpen) f?.querySelector(".cat-fclose")?.focus({ preventScroll: true });
+    else document.querySelector(".cat-filterbtn")?.focus({ preventScroll: true });
+  }
   function closePanel() { const had = !!state.panelId; state.panelId = null; writeUrl(); renderPanel(); if (had) document.querySelector(`[data-id="${CSS.escape(lastOpened || "")}"]`)?.focus?.({ preventScroll: true }); }
   let lastOpened = null;
 
@@ -438,6 +498,7 @@
     if (!r) return;
     document.querySelector(".screenbody .r-other-example")?.remove();
     document.body.classList.toggle("cat-fullscreen", state.full);
+    document.body.classList.toggle("cat-filters-open", state.filtersOpen);
     r.innerHTML = `<div class="cat ${state.full ? "cat-full" : ""}">${state.full ? `<div class="cat-fullhead">${sectionsBar()}</div>` : `<aside class="cat-side">${sideHtml()}</aside>`}<div class="cat-main">${mainHtml()}</div></div>`;
     lucide.createIcons();
     if (focusSearch && matchMedia("(min-width: 901px)").matches) {
@@ -459,7 +520,11 @@
         sum.innerHTML = `<div><b>${list.length}</b> ${plural(list.length)}${s ? ` · ${esc(s.name)}${state.sub ? " / " + esc(state.sub) : ""}` : ""}${state.clientView ? ` · <span class="tag warn">режим клиента</span>` : ""}</div><div class="cat-active">${activeChips()}</div>`;
       }
       const f = r.querySelector("[data-cat-filters]");
-      if (f && opts.filters !== false) f.innerHTML = filtersHtml();
+      if (f && opts.filters !== false) { const top = f.querySelector("[data-cat-fbody]")?.scrollTop || 0; f.innerHTML = filtersHtml(); const fb = f.querySelector("[data-cat-fbody]"); if (fb) fb.scrollTop = top; }
+      const qk = r.querySelector(".cat-marks");
+      if (qk) qk.innerHTML = quickHtml();
+      const fb2 = r.querySelector(".cat-filterbtn b"); const btn = r.querySelector(".cat-filterbtn");
+      if (btn) { const n = activeCount(); if (n && fb2) fb2.textContent = n; else if (n) btn.insertAdjacentHTML("beforeend", `<b>${n}</b>`); else fb2?.remove(); }
       const clr = r.querySelector(".cat-search .cat-clear");
       const search = r.querySelector(".cat-search");
       if (state.q && !clr && search) search.insertAdjacentHTML("beforeend", `<button class="cat-clear" data-cat="chip" data-key="q" aria-label="Очистить поиск">${icon("x")}</button>`);
@@ -491,16 +556,18 @@
     if (!b) return;
     const a = b.dataset.cat;
     if (e.target.closest("a")) return;
-    if (a === "sec") { state.sec = b.dataset.sec; state.sub = ""; state.f = {}; state.limit = PAGE; writeUrl(); rerender(); return; }
+    if (a === "sec") { state.sec = b.dataset.sec; state.sub = ""; state.grp = ""; state.f = {}; state.limit = PAGE; writeUrl(); rerender(); return; }
+    if (a === "grp") { const g = b.dataset.grp; if (state.sub && grpOf(state.sec, state.sub) !== g) state.sub = ""; state.grp = b.closest(".cat-tree") && state.grp === g ? "" : g; if (!g) state.sub = ""; state.limit = PAGE; writeUrl(); rerender(); return; }
+    if (a === "sort") { state.sort = b.dataset.val; state.limit = PAGE; rerender("results"); return; }
     if (a === "tag") { const v = b.dataset.val; state.tags = state.tags.includes(v) ? state.tags.filter((x) => x !== v) : [...state.tags, v]; state.limit = PAGE; rerender("results"); return; }
     if (a === "attr") { const k = b.dataset.key, v = b.dataset.val; const cur = state.f[k] || []; const next = cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]; if (next.length) state.f[k] = next; else delete state.f[k]; state.limit = PAGE; rerender("results"); return; }
-    if (a === "sub") { state.sub = b.dataset.sub; state.limit = PAGE; writeUrl(); rerender(); return; }
+    if (a === "sub") { state.sub = state.sub === b.dataset.sub ? "" : b.dataset.sub; if (state.sub) state.grp = grpOf(state.sec, state.sub) || state.grp; state.limit = PAGE; writeUrl(); rerender(); return; }
     if (a === "view") { state.view = b.dataset.view; state.limit = PAGE; writeUrl(); rerender(); return; }
     if (a === "chip") { const k = b.dataset.key; state[k] = state[k] === (b.dataset.val || "") || !b.dataset.val ? "" : b.dataset.val; state.limit = PAGE; if (k === "q") writeUrl(); if (k === "q") rerender(); else rerender("results"); return; }
     if (a === "price-clear") { state.min = ""; state.max = ""; rerender(); return; }
-    if (a === "reset") { Object.assign(state, { sec: "", sub: "", q: "", avail: "", tags: [], f: {}, min: "", max: "", sort: "default", limit: PAGE }); writeUrl(); rerender(); return; }
+    if (a === "reset") { Object.assign(state, { avail: "", tags: [], f: {}, min: "", max: "", sort: "default", limit: PAGE }); if (!b.closest(".cat-filters")) Object.assign(state, { sec: "", sub: "", grp: "", q: "" }); writeUrl(); rerender(); return; }
     if (a === "more") { state.limit += PAGE; rerender("results"); return; }
-    if (a === "toggle-filters") { state.filtersOpen = !state.filtersOpen; document.querySelector("[data-cat-filters]")?.classList.toggle("open", state.filtersOpen); return; }
+    if (a === "toggle-filters") { setFilters(!state.filtersOpen); return; }
     if (a === "open") { lastOpened = b.dataset.id; openPanel(b.dataset.id); return; }
     if (a === "close") { closePanel(); return; }
     if (a === "cimg") { e.preventDefault(); e.stopPropagation(); stepCardImg(b.dataset.id, b.dataset.dir, b.dataset.idx); return; }
@@ -515,6 +582,7 @@
   document.addEventListener("keydown", (e) => {
     if (current !== ROUTE) return;
     if (e.key === "Escape" && state.panelId) { e.preventDefault(); closePanel(); return; }
+    if (e.key === "Escape" && state.filtersOpen) { e.preventDefault(); setFilters(false); return; }
     if (e.key === "Escape" && state.full) { e.preventDefault(); setFull(false); return; }
     if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && state.panelId && !e.target.matches?.("input,select,textarea")) { e.preventDefault(); stepPanelImg(e.key === "ArrowLeft" ? -1 : 1); return; }
     if (e.key === "Enter" && e.target.matches?.('[data-cat="open"]')) { e.preventDefault(); lastOpened = e.target.dataset.id; openPanel(e.target.dataset.id); }
@@ -526,11 +594,28 @@
       clearTimeout(debounce);
       debounce = setTimeout(() => { state.q = e.target.value; state.limit = PAGE; writeUrl(); rerender("results"); }, 120);
     }
+    if (e.target.dataset.catRange) {
+      const wrap = e.target.closest(".cat-range"); const [a, b] = wrap.querySelectorAll("input");
+      let lo = Number(a.value), hi = Number(b.value);
+      if (lo > hi) { if (e.target === a) { hi = lo; b.value = hi; } else { lo = hi; a.value = lo; } }
+      const min = Number(a.min), max = Number(a.max), pct = (v) => (max > min ? ((v - min) / (max - min)) * 100 : 0);
+      wrap.style.setProperty("--a", pct(lo) + "%"); wrap.style.setProperty("--b", pct(hi) + "%");
+      const box = wrap.parentElement; const [imin, imax] = box.querySelectorAll("[data-cat-input]");
+      state.min = lo > min ? String(lo) : ""; state.max = hi < max ? String(hi) : "";
+      if (imin) imin.value = state.min; if (imax) imax.value = state.max;
+      clearTimeout(debounce);
+      debounce = setTimeout(() => { state.limit = PAGE; rerender("results", { filters: false }); }, 150);
+      return;
+    }
     if (e.target.dataset.catInput) {
       clearTimeout(debounce);
       debounce = setTimeout(() => { state[e.target.dataset.catInput] = e.target.value; state.limit = PAGE; rerender("results", { filters: false }); }, 200);
     }
   });
+  document.addEventListener("toggle", (e) => {
+    const d = e.target; if (!(d instanceof HTMLDetailsElement) || !d.dataset.fg) return;
+    if (d.open) closedGroups.delete(d.dataset.fg); else closedGroups.add(d.dataset.fg);
+  }, true);
   document.addEventListener("change", (e) => {
     if (current !== ROUTE) return;
     if (e.target.dataset.catSelect) { state[e.target.dataset.catSelect] = e.target.value; state.limit = PAGE; rerender("results"); }
@@ -557,7 +642,7 @@
     if (!onRoute) {
       if (state.panelId) { state.panelId = null; renderPanel(); }
       if (state.full) { state.full = false; }
-      document.body.classList.remove("cat-fullscreen");
+      document.body.classList.remove("cat-fullscreen", "cat-filters-open");
       priorRender();
       return;
     }
