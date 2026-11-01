@@ -9,6 +9,7 @@ import {
   discardNativeBotDraft,
   ensureNativeBotDraft,
   loadNativeBotDraft,
+  nativeBotDraftChatKey,
   stripTransientRecipientDraftFields,
   type NativeCreateDraftPayload,
 } from "./draft-scope";
@@ -18,7 +19,10 @@ import {
   parseNativeCreateCallback,
   type ParsedNativeCreateCallback,
 } from "./callback-codec";
-import { confirmNativeExternalDraft, confirmNativeStaffDraft } from "./confirm-native";
+import {
+  confirmNativeExternalToExternalDraftWithSavepoint,
+  confirmNativeStaffDraft,
+} from "./confirm-native";
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
 import {
   assertDraftBoundToCaller,
@@ -43,7 +47,6 @@ import {
   handleExternalRecipientPhoneText,
   handleStaffRecipientSearchText,
   hitsToEligibleRecipients,
-  resolveExternalIntakeStaffUserId,
   recipientStepPrompt,
   revalidateStaffRecipientPick,
   searchStaffRecipientHits,
@@ -881,26 +884,34 @@ export async function handleNativeCreateCallback(
         if (!phone) {
           return navError("Укажите телефон получателя.", ctx.channel);
         }
-        const staffUserId = await resolveExternalIntakeStaffUserId(client, partyId, phone);
-        if (!staffUserId) {
-          return navError(externalUnavailableMessage(), ctx.channel);
+        const recipientName = payload.externalRecipientDisplayName?.trim();
+        if (!recipientName) {
+          return navError("Укажите имя получателя.", ctx.channel);
         }
-        await bumpDraftRevision(client, id, "summary", {
-          ...payload,
-          recipientUserId: staffUserId,
-        });
-        const created = await confirmNativeExternalDraft(client, {
+        const created = await confirmNativeExternalToExternalDraftWithSavepoint(client, {
           personId: ctx.personId,
           externalPartyId: partyId,
           draftId: id,
+          channel: ctx.channel,
+          messengerChatKey: nativeBotDraftChatKey({
+            channel: ctx.channel,
+            messengerChatId: ctx.messengerChatId,
+            actor: "external",
+          }),
         });
         const { nativeCompletionMenuReply } = await import("./main-menu");
         const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
-        return appendReceiptEntryChoices(client, ctx, await nativeCompletionMenuReply(
-          client,
-          ctx,
-          `Заявка отправлена: ${created.publicCode}.\n\n${formatNotificationTransferState(await buildNotificationTransferState(client, created.publicCode))}\n\nСотрудник получит уведомление.`,
-        ), created.publicCode);
+        const status = formatNotificationTransferState(await buildNotificationTransferState(client, created.publicCode));
+        const { NATIVE_SENDER_HANDOFF_GUIDANCE: SENDER_HANDOFF_GUIDANCE } = await import(
+          "../../tan-tracker/sender-handoff-guidance"
+        );
+        const resultText = created.forwardInvitationText
+          ? `Передача создана: ${created.publicCode}.\n\n${status}\n\nСледом придёт готовое приглашение. Перешлите его получателю целиком.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`
+          : `Передача уже создана: ${created.publicCode}.\n\n${status}\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`;
+        return appendReceiptEntryChoices(client, ctx, {
+          ...await nativeCompletionMenuReply(client, ctx, resultText),
+          ...(created.forwardInvitationText ? { forwardInvitationText: created.forwardInvitationText } : {}),
+        }, created.publicCode);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Не удалось создать передачу.";

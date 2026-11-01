@@ -111,7 +111,27 @@ async function processUpdateInTransaction(
       const linkedStaff = await findAccountByMaxUserId(client, update.maxUserId);
       const person = linkedStaff ? null : await findPersonByMessenger(client, "max", update.maxUserId);
       const canNativeRecipient = (linkedStaff || person) && recipientChatType === "dialog" && !isForwarded;
-      if (canNativeRecipient) {
+      const ownMaxContact =
+        !isForwarded && contact.contactUserId === Number(update.maxUserId);
+      let ext: Awaited<ReturnType<typeof handleExternalRecipientMaxContact>> | null = null;
+      if (ownMaxContact) {
+        ext =
+          (await handleExternalRecipientMaxContact(client, {
+            maxChatId: update.chatId,
+            maxUserId: update.maxUserId,
+            contact,
+            isForwarded,
+          })) ?? null;
+      }
+      if (ext) {
+        reply = {
+          userId: update.maxUserId,
+          chatId: update.chatId,
+          text: ext.text,
+          copyOnlyCode: ext.copyOnlyCode,
+          inlineButtons: ext.clearContactKeyboard ? undefined : ext.requestContact ? [[{ text: "Отправить мой номер", type: "request_contact" }]] : undefined,
+        };
+      } else if (canNativeRecipient) {
         const { tryNativeCreateMaxRecipientContact } = await import("../tanbot/native-create/adapters");
         const native = await tryNativeCreateMaxRecipientContact(client, {
           chatId: update.chatId,
@@ -129,14 +149,6 @@ async function processUpdateInTransaction(
           };
         }
       }
-      let ext = reply
-        ? null
-        : ((await handleExternalRecipientMaxContact(client, {
-            maxChatId: update.chatId,
-            maxUserId: update.maxUserId,
-            contact,
-            isForwarded,
-          })) ?? null);
       if (!reply && !ext && isExternalMessengerFeatureEnabled()) {
         const maxCfg = loadTanbotMaxStage2Config();
         const token = maxCfg.ok ? maxCfg.config.botToken : "";
@@ -158,17 +170,19 @@ async function processUpdateInTransaction(
           });
         }
       }
-      if (!reply) reply = ext
-        ? {
-            userId: update.maxUserId,
-            chatId: update.chatId,
-            text: ext.text,
-            copyOnlyCode: ext.copyOnlyCode,
-            inlineButtons: ext.requestContact
-              ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
-              : undefined,
-          }
-        : { userId: update.maxUserId, chatId: update.chatId, text: "Контакт не принят." };
+      if (!reply) {
+        reply = ext
+          ? {
+              userId: update.maxUserId,
+              chatId: update.chatId,
+              text: ext.text,
+              copyOnlyCode: ext.copyOnlyCode,
+              inlineButtons: ext.requestContact
+                ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
+                : undefined,
+            }
+          : { userId: update.maxUserId, chatId: update.chatId, text: "Контакт не принят." };
+      }
     } else if (update.updateType === "bot_stopped" || commandText?.split(/\s+/)[0]?.toLowerCase() === "/stop") {
       const { handleStaffOrExternalMessengerStop } = await import("../tanbot/messenger-stop-handler");
       const stopText = await handleStaffOrExternalMessengerStop(client, {

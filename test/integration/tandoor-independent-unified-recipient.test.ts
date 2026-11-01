@@ -308,19 +308,29 @@ for (const channel of ["max", "telegram"] as const) {
     const id = await create(known, r, "Указанное мной имя");
     assert.equal((await getPool()!.query("SELECT pending_party_id FROM tt_transfers WHERE id=$1", [id])).rows[0].pending_party_id, targetPartyId);
   });
-  it(`${channel}: external unknown recipient is refused only at explicit Create with no business writes`, async () => {
+  it(`${channel}: external unknown phone creates transfer to new external recipient at explicit Create`, async () => {
     const a = await actor(channel, false);
-    await start(a); const before = await counts();
-    let r = await send(a, { text: absentPhone });
+    await start(a);
+    const unknownPhone = `+7998${String(++seq).padStart(7, "0")}`;
+    const partiesBefore = (await counts()).parties;
+    let r = await send(a, { text: unknownPhone });
     r = await send(a, { text: "Имя из моей записи" });
     r = await advanceToDue(a, r);
-    r = await send(a, { callback: button(r, /без срока/iu) });
-    assert.ok(r.text.includes("Имя из моей записи"));
-    r = await send(a, { callback: button(r, /^Создать передачу$/u) });
-    assert.match(r.text, /недоступен|проверьте|получател/iu);
+    const id = await create(a, r, "Имя из моей записи");
+    const transfer = (await getPool()!.query(
+      `SELECT t.holder_party_id::text,t.pending_party_id::text,t.creator_party_id::text,
+              p.display_name,p.phone_e164,p.created_by_user_id::text
+       FROM tt_transfers t JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.id=$1`, [id])).rows[0];
+    const senderParty = (await getPool()!.query(`SELECT ep.party_id::text FROM tt_external_persons ep
+      JOIN tt_external_person_verifications v ON v.person_id=ep.id
+      WHERE v.messenger_user_id=$1 AND v.channel=$2`, [String(a.id), channel])).rows[0].party_id;
+    assert.equal(transfer.holder_party_id, senderParty);
+    assert.equal(transfer.creator_party_id, senderParty);
+    assert.equal(transfer.display_name, "Имя из моей записи");
+    assert.equal(transfer.phone_e164, unknownPhone);
+    assert.equal(transfer.created_by_user_id, null);
+    assert.equal((await counts()).parties, partiesBefore + 1, "one canonical external party at confirm only");
     assert.doesNotMatch(JSON.stringify(r), /Иван Петров|Поиск Тестовый|Без Карточки/u);
-    assert.equal((await draft(a)).confirmed_transfer_id, null);
-    assert.deepEqual(await counts(), before, "unknown external recipient cannot create an arbitrary party or partial transfer");
   });
   it(`${channel}: legacy external summary never renders a cached private staff display name`, async () => {
     const a = await actor(channel, false);

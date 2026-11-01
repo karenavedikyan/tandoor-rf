@@ -76,7 +76,7 @@ export async function pickGlobalExternalPartyForPhone(
  */
 export async function resolveOrCreateGlobalExternalPartyByPhone(
   client: Db,
-  input: { phoneE164: string; displayName: string; createdByUserId: string },
+  input: { phoneE164: string; displayName: string; createdByUserId: string | null },
 ): Promise<string> {
   const name = input.displayName.trim();
   if (!name) {

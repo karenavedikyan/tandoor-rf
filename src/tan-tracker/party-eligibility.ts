@@ -109,11 +109,7 @@ export async function assertPartyEligibleAsRecipient(
 
 export type ExternalRecipientInput = { name: string; phone: string };
 
-export async function resolveExternalRecipientPartyId(
-  client: Db,
-  userId: string,
-  input: ExternalRecipientInput,
-): Promise<string> {
+function normalizeExternalRecipientInput(input: ExternalRecipientInput): { name: string; phoneE164: string } {
   const name = input.name.trim();
   if (!name) {
     throw Object.assign(new Error("Введите имя получателя."), { http: 400 });
@@ -122,11 +118,40 @@ export async function resolveExternalRecipientPartyId(
   if (!phoneE164) {
     throw Object.assign(new Error("Введите телефон: 10 цифр после +7."), { http: 400 });
   }
+  return { name, phoneE164 };
+}
+
+export async function resolveExternalRecipientPartyId(
+  client: Db,
+  userId: string,
+  input: ExternalRecipientInput,
+): Promise<string> {
+  const { name, phoneE164 } = normalizeExternalRecipientInput(input);
   try {
     return await resolveOrCreateGlobalExternalPartyByPhone(client, {
       phoneE164,
       displayName: name,
       createdByUserId: userId,
+    });
+  } catch (err) {
+    if (err instanceof PhonePartyConflictError || err instanceof EmployeePhoneCollisionError) {
+      throw Object.assign(err, { http: err.http });
+    }
+    throw err;
+  }
+}
+
+/** Native external actor: global phone party without staff provenance (no rename on reuse). */
+export async function resolveExternalRecipientPartyIdForExternalActor(
+  client: Db,
+  input: ExternalRecipientInput,
+): Promise<string> {
+  const { name, phoneE164 } = normalizeExternalRecipientInput(input);
+  try {
+    return await resolveOrCreateGlobalExternalPartyByPhone(client, {
+      phoneE164,
+      displayName: name,
+      createdByUserId: null,
     });
   } catch (err) {
     if (err instanceof PhonePartyConflictError || err instanceof EmployeePhoneCollisionError) {

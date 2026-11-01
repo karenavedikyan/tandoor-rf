@@ -84,7 +84,8 @@ test("independent: real external draft → MAX intended recipient callback → s
     assert.match(sends[0].text, /Кому:\s*Synthetic Receiving Staff/);
     assert.equal(sends[0].userId, 885501n, "address the verified user, never a different chat id");
     const buttons = sends[0].inlineButtons?.flat() ?? [];
-    assert.equal(buttons.length, 1);
+    assert.equal(buttons.length, 2);
+    assert.equal(buttons[1].text, "Главное меню");
     assert.equal(buttons[0].text, "Получить код приёма");
     assert.equal(buttons[0].type, "callback");
     if (buttons[0].type !== "callback") throw new Error("receipt action must be a callback");

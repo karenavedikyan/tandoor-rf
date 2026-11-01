@@ -111,6 +111,8 @@ describe("external person MAX rich notice presentation (PostgreSQL)", { concurre
     assert.match(maxCalls[0]!.text, /Rich notice parcel/);
     assert.equal(maxCalls[0]!.shareUrl, holderUrl);
     assert.equal(maxCalls[0]!.inlineButtons?.[0]?.[0]?.type, "link");
+    assert.equal(maxCalls[0]!.inlineButtons?.at(-1)?.[0]?.text, "Главное меню");
+    assert.equal(maxCalls[0]!.inlineButtons?.flat().filter(b => b.text === "Главное меню").length, 1);
 
     const row = await pool.query(`SELECT status FROM tt_external_person_message_outbox WHERE id = $1::uuid`, [
       outboxId,

@@ -1,6 +1,10 @@
 import type { Pool, PoolClient } from "pg";
 import { isUuid } from "./phone-normalize";
-import { resolveExternalRecipientPartyId, type ExternalRecipientInput } from "./party-eligibility";
+import {
+  resolveExternalRecipientPartyId,
+  type ExternalRecipientInput,
+} from "./party-eligibility";
+import { resolvePublicHolderPendingPartyByPhoneForExternalActor } from "../tanbot/native-create/native-external-recipient-by-phone";
 
 type Db = Pool | PoolClient;
 
@@ -76,6 +80,29 @@ export async function assertPublicHolderPendingEligible(
   throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
 }
 
+/** After phone resolver for external creator (no staff user): pending from scoped phone match only. */
+export async function assertNullCreatorPhoneResolvedPending(
+  client: Db,
+  holderPartyId: string,
+  pendingPartyId: string,
+): Promise<void> {
+  if (!isUuid(pendingPartyId)) {
+    throw Object.assign(new Error("Некорректный получатель."), { http: 400 });
+  }
+  if (pendingPartyId === holderPartyId) {
+    throw Object.assign(new Error("Нельзя передать самому себе."), { http: 400 });
+  }
+  const row = (
+    await client.query<{ kind: string }>(
+      `SELECT kind FROM tt_parties WHERE id = $1::uuid LIMIT 1`,
+      [pendingPartyId],
+    )
+  ).rows[0];
+  if (row?.kind !== "external" && row?.kind !== "user") {
+    throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
+  }
+}
+
 export async function resolvePublicHolderPendingPartyId(
   client: Db,
   transferId: string,
@@ -85,11 +112,18 @@ export async function resolvePublicHolderPendingPartyId(
 ): Promise<string> {
   if (external && (external.name || external.phone)) {
     const creatorUserId = await loadPublicHolderCreatorUserId(client, transferId);
-    if (!creatorUserId) {
-      throw Object.assign(new Error("Не удалось добавить получателя."), { http: 503 });
+    const id = creatorUserId
+      ? await resolveExternalRecipientPartyId(client, creatorUserId, external)
+      : await resolvePublicHolderPendingPartyByPhoneForExternalActor(client, {
+          holderPartyId,
+          phoneE164: external.phone,
+          externalRecipient: external,
+        });
+    if (creatorUserId) {
+      await assertPublicHolderPendingEligible(client, transferId, holderPartyId, id);
+    } else {
+      await assertNullCreatorPhoneResolvedPending(client, holderPartyId, id);
     }
-    const id = await resolveExternalRecipientPartyId(client, creatorUserId, external);
-    await assertPublicHolderPendingEligible(client, transferId, holderPartyId, id);
     return id;
   }
   const resolved = String(pendingPartyId ?? "").trim();

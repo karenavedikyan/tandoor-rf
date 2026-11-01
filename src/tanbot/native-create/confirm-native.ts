@@ -5,10 +5,17 @@ import { NATIVE_SENDER_HANDOFF_GUIDANCE as SENDER_HANDOFF_GUIDANCE } from "../..
 import { loadAccessContext } from "../../access/context";
 import { createTransferInTransaction } from "../../tan-tracker/create-transfer-service";
 import { confirmExternalRequestDraft } from "../../tan-tracker/external-request/confirm";
+import {
+  countOpenExternalRequests,
+  MAX_OPEN_EXTERNAL_REQUESTS,
+} from "../../tan-tracker/external-request/intake";
 import { externalRequestDueAtFromMode } from "../../tan-tracker/external-request/due-at-msk";
+import { nextPublicTransferCode } from "../../tan-tracker/repository";
+import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
 import { tanTrackerCanWrite } from "../../tan-tracker/guards";
 import type { NativeCreateDraftPayload } from "./draft-scope";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
+import { resolveNativeExternalPendingPartyByPhone } from "./native-external-recipient-by-phone";
 
 async function stageDraftFilesForStaff(
   client: PoolClient,
@@ -186,9 +193,198 @@ export async function confirmNativeExternalDraft(
       idempotencyKey: `native-ext:${input.draftId}`,
     });
     await client.query("RELEASE SAVEPOINT native_ext_confirm");
-    return result;
+    return { publicCode: result.publicCode };
   } catch (err) {
     await client.query("ROLLBACK TO SAVEPOINT native_ext_confirm");
+    throw err;
+  }
+}
+
+export type NativeExternalToExternalConfirmResult = {
+  publicCode: string;
+  forwardInvitationText?: string;
+};
+
+export async function confirmNativeExternalToExternalDraft(
+  client: PoolClient,
+  input: {
+    personId: string;
+    externalPartyId: string;
+    draftId: string;
+    channel: "telegram" | "max";
+    messengerChatKey: string;
+  },
+): Promise<NativeExternalToExternalConfirmResult> {
+  const idempotencyKey = `native-ext2ext:${input.draftId}`;
+
+  const person = (
+    await client.query<{ party_id: string }>(
+      `SELECT party_id::text FROM tt_external_persons WHERE id = $1::uuid FOR UPDATE`,
+      [input.personId],
+    )
+  ).rows[0];
+  if (!person || person.party_id !== input.externalPartyId) {
+    throw Object.assign(new Error("Профиль недоступен."), { http: 403 });
+  }
+
+  const draft = (
+    await client.query<{
+      payload: NativeCreateDraftPayload;
+      idempotency_key: string | null;
+      confirmed_transfer_id: string | null;
+      person_id: string | null;
+      channel: string;
+      messenger_chat_id: string;
+      step: string;
+    }>(
+      `SELECT payload, idempotency_key, confirmed_transfer_id, person_id::text, channel, messenger_chat_id, step
+       FROM tt_external_request_drafts WHERE id = $1::uuid FOR UPDATE`,
+      [input.draftId],
+    )
+  ).rows[0];
+  if (!draft) throw Object.assign(new Error("Черновик не найден."), { http: 404 });
+  if (!draft.person_id || draft.person_id !== input.personId) {
+    throw Object.assign(new Error("Черновик принадлежит другой сессии."), { http: 403 });
+  }
+  if (draft.channel !== input.channel || draft.messenger_chat_id !== input.messengerChatKey) {
+    throw Object.assign(new Error("Черновик недоступен в этом чате."), { http: 403 });
+  }
+  const payload = (draft.payload ?? {}) as NativeCreateDraftPayload;
+  if (payload.draftOrigin !== "native_bot" || payload.actor !== "external") {
+    throw Object.assign(new Error("Черновик недоступен."), { http: 403 });
+  }
+
+  if (draft.confirmed_transfer_id) {
+    const existing = await client.query<{ public_code: string }>(
+      `SELECT public_code FROM tt_transfers WHERE id = $1 LIMIT 1`,
+      [draft.confirmed_transfer_id],
+    );
+    if (existing.rows[0]) {
+      return { publicCode: existing.rows[0].public_code };
+    }
+  }
+
+  if (draft.step !== "summary") {
+    throw Object.assign(new Error("Заполните все шаги заявки."), { http: 409 });
+  }
+
+  const open = await countOpenExternalRequests(client, input.externalPartyId);
+  if (open >= MAX_OPEN_EXTERNAL_REQUESTS) {
+    throw Object.assign(new Error("Достигнут лимит открытых заявок (5)."), { http: 409 });
+  }
+
+  const item = String(payload.item ?? "").trim();
+  const phoneRaw = payload.externalRecipientPhone?.trim() ?? "";
+  const name = payload.externalRecipientDisplayName?.trim() ?? "";
+  if (!item || !phoneRaw) {
+    throw Object.assign(new Error("Заполните все шаги заявки."), { http: 409 });
+  }
+  const { pendingPartyId: recipientPartyId, recipientKind } = await resolveNativeExternalPendingPartyByPhone(
+    client,
+    {
+      senderExternalPartyId: input.externalPartyId,
+      phoneE164: phoneRaw,
+      externalRecipient: name ? { name, phone: phoneRaw } : undefined,
+    },
+  );
+
+  const publicCode = await nextPublicTransferCode(client);
+  const dueAt = externalRequestDueAtFromMode(
+    payload.dueMode === "none" ? undefined : payload.dueMode,
+  );
+  await client.query(
+    `INSERT INTO tt_transfers (
+       id, public_code, item_title, comment_text, status, from_external,
+       creator_party_id, holder_party_id, pending_party_id, final_recipient_party_id,
+       due_at, handoff_version
+     ) VALUES ($1,$1,$2,$3,'waiting',TRUE,$4,$4,$5,$5,$6,1)`,
+    [
+      publicCode,
+      item,
+      payload.comment?.trim()?.slice(0, 2000) || null,
+      input.externalPartyId,
+      recipientPartyId,
+      dueAt,
+    ],
+  );
+  await client.query(
+    `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note)
+     VALUES ($1,$2,$3,$4)`,
+    [
+      publicCode,
+      input.externalPartyId,
+      recipientPartyId,
+      recipientKind === "staff" ? "Создана передача · сотруднику" : "Создана передача · внешнему получателю",
+    ],
+  );
+  await client.query(
+    `INSERT INTO tt_transfer_invitations (transfer_id, handoff_version, holder_party_id, pending_party_id, item_snapshot)
+     VALUES ($1,1,$2,$3,$4)`,
+    [publicCode, input.externalPartyId, recipientPartyId, item],
+  );
+  await client.query(
+    `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
+     VALUES ($1,NULL,$2::uuid,'create',$3::jsonb)`,
+    [
+      publicCode,
+      input.externalPartyId,
+      JSON.stringify({
+        item,
+        source: "native_bot",
+        externalPhoneCreate: true,
+        recipientKind,
+      }),
+    ],
+  );
+  const files = await client.query<{ storage_key: string; file_name: string; mime_type: string; byte_size: string }>(
+    `SELECT storage_key, file_name, mime_type, byte_size::text FROM tt_external_request_draft_files WHERE draft_id = $1::uuid ORDER BY sort_order`,
+    [input.draftId],
+  );
+  for (const f of files.rows) {
+    await client.query(
+      `INSERT INTO tt_transfer_attachments (transfer_id, storage_key, original_name, mime_type, byte_size, uploaded_by_user_id)
+       VALUES ($1,$2,$3,$4,$5::bigint,NULL)`,
+      [publicCode, f.storage_key, f.file_name, f.mime_type, f.byte_size],
+    );
+  }
+
+  const forwardInvitationText = await buildExternalPendingInviteMessage(client, {
+    transferId: publicCode,
+    pendingPartyId: recipientPartyId,
+    handoffVersion: 1,
+    channel: input.channel,
+    allowUserParty: true,
+  });
+  if (!forwardInvitationText) {
+    throw Object.assign(new Error("Не удалось подготовить приглашение."), { http: 503 });
+  }
+
+  await client.query(
+    `UPDATE tt_external_request_drafts
+     SET idempotency_key = $2, confirmed_transfer_id = $3, step = 'done', person_id = $4::uuid, updated_at = NOW()
+     WHERE id = $1::uuid`,
+    [input.draftId, idempotencyKey, publicCode, input.personId],
+  );
+  return { publicCode, forwardInvitationText };
+}
+
+export async function confirmNativeExternalToExternalDraftWithSavepoint(
+  client: PoolClient,
+  input: {
+    personId: string;
+    externalPartyId: string;
+    draftId: string;
+    channel: "telegram" | "max";
+    messengerChatKey: string;
+  },
+): Promise<NativeExternalToExternalConfirmResult> {
+  await client.query("SAVEPOINT native_ext2ext_confirm");
+  try {
+    const result = await confirmNativeExternalToExternalDraft(client, input);
+    await client.query("RELEASE SAVEPOINT native_ext2ext_confirm");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK TO SAVEPOINT native_ext2ext_confirm");
     throw err;
   }
 }
