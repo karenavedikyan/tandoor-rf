@@ -1,6 +1,8 @@
 import { getPool } from "./pool";
 
-const REQUIRED_TABLES = ["users", "sessions", "login_rate_limits"] as const;
+const REQUIRED_TABLES = [
+  "users", "sessions", "login_rate_limits", "tt_admin_track_notification_preferences",
+] as const;
 
 export type ReadinessResult =
   | { ready: true }
