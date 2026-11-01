@@ -7,6 +7,7 @@ import { transferStillExists } from "../tan-tracker/registry-cleanup/cancel-tran
 import { isTanTrackerStaffOutboxEvent } from "../tan-tracker/tan-tracker-outbox-messages";
 import { buildTanTrackerStaffMaxOutboxDelivery } from "../tan-tracker/staff-max-outbox-presentation";
 import { isStaffExternalIntakeOutboxStillPending } from "../tan-tracker/staff-outbox-shared";
+import { withMaxMainMenuButton } from "./main-menu-button";
 
 const MAX_ATTEMPTS = 8;
 
@@ -135,7 +136,7 @@ export async function processTanbotMaxNotificationOutbox(
         token: config.botToken,
         userId: BigInt(account.max_user_id),
         text: delivery.text,
-        inlineButtons: delivery.inlineButtons,
+        inlineButtons: withMaxMainMenuButton(delivery.inlineButtons),
         shareUrl: delivery.shareUrl,
         timeoutMs: config.requestTimeoutMs,
         maxResponseBytes: config.maxResponseBytes,

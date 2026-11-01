@@ -12,6 +12,7 @@ import {
 } from "../tanbot/webhook-reply-pair-delivery";
 import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
 import { deliverMaxNativeMediaFromExtra } from "../tanbot/native-create/media-delivery";
+import { withMaxMainMenuButton } from "./main-menu-button";
 
 async function deliverMaxWebhookReplyUnderLock(
   client: import("pg").PoolClient,
@@ -44,7 +45,7 @@ async function deliverMaxWebhookReplyUnderLock(
         text: primaryText,
         timeoutMs: config.requestTimeoutMs,
         maxResponseBytes: config.maxResponseBytes,
-        inlineButtons: extra.inlineButtons ?? reply.inlineButtons,
+        inlineButtons: withMaxMainMenuButton(extra.inlineButtons ?? reply.inlineButtons),
       });
       if (!lastResult.ok) return lastResult;
       await mergeMaxReplyDeliveryProgress(client, dedupKey, "primary");

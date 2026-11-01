@@ -139,7 +139,15 @@ async function send(a: Actor, input: Input): Promise<Reply> {
   const replies = await drain(a);
   if (input.optional && !replies.length) return { text: "", buttons: [] };
   assert.equal(replies.length, input.expectCode ? 2 : 1, "only explicit code issuance sends a copy-only follow-up");
-  if (input.expectCode) assert.match(replies[1]!.text, /^\d{6}$/u);
+  if (input.expectCode) {
+    assert.match(replies[1]!.text, /^\d{6}$/u);
+    assert.equal(replies[1]!.buttons.length, 0, "copy-only code must remain free of navigation");
+  }
+  if (a.channel === "max") {
+    assert.equal(replies[0]!.buttons.filter(b => b.text === "Главное меню").length, 1);
+    assert.equal(replies[0]!.buttons.at(-1)?.text, "Главное меню", "one navigation footer in primary delivery");
+    assert.ok(!replies[0]!.buttons.some(b => b.text === "Меню"), "no duplicate legacy menu button");
+  }
   for (const b of replies[0]!.buttons) {
     const callback = b.callback_data ?? b.payload;
     if (callback) assert.ok(Buffer.byteLength(callback, "utf8") <= 64);
@@ -218,7 +226,7 @@ for (const channel of ["max", "telegram"] as const) {
       assert.equal((await preference(a)).notifications_enabled, true);
       assert.deepEqual(await snapshot(a), frozen);
       assert.deepEqual(await counts(), beforeCounts, "preferences never generate OTPs, sessions or business state");
-      r = await click(a, r, /^Меню$/u); main(a, r, true);
+      r = await click(a, r, /^(?:Главное меню|Меню)$/u); main(a, r, true);
     });
     it(`${channel} ${role}: incoming list is private, explicit version-bound code comes in two messages`, async () => {
       const a = await actor(channel, role), other = await actor(channel, role);
@@ -316,7 +324,7 @@ for (const channel of ["max", "telegram"] as const) {
       }
       const frozen = await snapshot(a), beforeCounts = await counts();
       for (const input of [{ text: "Меню" }, { text: "Продолжить оформление" },
-        { callback: button(r, /^Меню$/u).payload ?? button(r, /^Меню$/u).callback_data }]) {
+        { callback: button(r, /^(?:Главное меню|Меню)$/u).payload ?? button(r, /^(?:Главное меню|Меню)$/u).callback_data }]) {
         const reply = await send(a, { ...input, optional: true });
         assert.ok(!reply.buttons.some(b => /^Продолжить оформление$/u.test(b.text)));
         assert.doesNotMatch(reply.text, /Приватный предмет потерявшего доступ владельца/u);
@@ -330,9 +338,9 @@ for (const channel of ["max", "telegram"] as const) {
       assert.equal((await draft(a))?.step, "item");
       r = await send(a, { text: "Не потерять документы меню" });
       r = await send(a, { file: true }); assert.equal((await snapshot(a)).files.length, 1);
-      const oldWizardMenu = button(r, /^Меню$/u);
+      const oldWizardMenu = button(r, /^(?:Главное меню|Меню)$/u);
       const frozen = await snapshot(a), beforeCounts = await counts();
-      r = await click(a, r, /^Меню$/u); main(a, r, true);
+      r = await click(a, r, /^(?:Главное меню|Меню)$/u); main(a, r, true);
       assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
       r = await send(a, { start: true }); main(a, r, true);
       assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
@@ -365,7 +373,7 @@ for (const channel of ["max", "telegram"] as const) {
       r = await click(a, r, /^Мои передачи$/u);
       assert.deepEqual(await snapshot(a), recipient);
       assert.deepEqual(await counts(false), nonSessionCounts);
-      r = await click(a, r, /^Меню$/u); main(a, r, true);
+      r = await click(a, r, /^(?:Главное меню|Меню)$/u); main(a, r, true);
       r = await click(a, r, /^Продолжить оформление$/u);
       r = await click(a, r, /^Отмена$/u); main(a, r, false);
       assert.equal(await draft(a), undefined);
@@ -386,13 +394,13 @@ for (const channel of ["max", "telegram"] as const) {
       assert.equal((await draft(a))?.step, "summary");
       button(r, /^Создать передачу$/u);
       const frozen = await snapshot(a), beforeCounts = await counts();
-      r = await click(a, r, /^Меню$/u); main(a, r, true);
+      r = await click(a, r, /^(?:Главное меню|Меню)$/u); main(a, r, true);
       assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
       r = await click(a, r, /^Продолжить оформление$/u);
       r = await click(a, r, /^Создать передачу$/u);
       if (a.staffId) assert.ok(r.text.includes(SENDER_HANDOFF_GUIDANCE), "creator is told to ask recipient for code and enter it before physical handoff");
       assert.equal(await draft(a), undefined);
-      r = await click(a, r, /^Меню$/u); main(a, r, false);
+      r = await click(a, r, /^(?:Главное меню|Меню)$/u); main(a, r, false);
       const confirmedCounts = await counts();
       r = await send(a, { start: true }); main(a, r, false);
       assert.deepEqual(await counts(), confirmedCounts);
