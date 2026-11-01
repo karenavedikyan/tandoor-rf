@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import { ensurePartyForUserOnWrite } from "../../tan-tracker/repository";
 import { resolveExternalRecipientPartyIdForExternalActor, type ExternalRecipientInput } from "../../tan-tracker/party-eligibility";
 import { lockPhonePartyResolution, PhonePartyConflictError } from "../../tan-tracker/phone-party-resolver";
-import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
+import { normalizeRuPhoneE164, ruPhoneNational10 } from "../../tan-tracker/phone-normalize";
 import { externalUnavailableMessage } from "./recipient-unified";
 
 type Db = Pool | PoolClient;
@@ -12,44 +12,65 @@ export type NativeExternalPhonePendingResolution = {
   recipientKind: "staff" | "external";
 };
 
+/** SQL: normalize users.phone to 10 national digits (7/8/10-digit RU forms). */
+const USER_PHONE_NATIONAL10_SQL = `
+  CASE
+    WHEN length(d) = 11 AND left(d, 1) IN ('7', '8') THEN right(d, 10)
+    WHEN length(d) = 10 THEN d
+    ELSE NULL
+  END`;
+
 function neutralRecipientUnavailable(): Error {
   return Object.assign(new Error(externalUnavailableMessage()), { http: 403 });
 }
 
-/** Active users whose normalized phone matches (users.phone or linked user party). */
-async function loadActiveUsersByPhoneE164(
-  client: Db,
-  phoneE164: string,
-): Promise<Array<{ id: string; full_name: string; phone: string | null }>> {
-  const res = await client.query<{ id: string; full_name: string; phone: string | null }>(
+type StaffUserRow = { id: string; full_name: string; phone: string | null };
+
+async function loadActiveUsersByNational10(client: Db, national10: string): Promise<StaffUserRow[]> {
+  const res = await client.query<StaffUserRow>(
     `SELECT u.id::text, u.full_name, u.phone
      FROM users u
+     CROSS JOIN LATERAL (
+       SELECT regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g') AS d
+     ) norm
      WHERE u.status = 'active'
-       AND (
-         regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g') = regexp_replace($1, '\\D', '', 'g')
-         OR EXISTS (
-           SELECT 1 FROM tt_parties p
-           WHERE p.user_id = u.id AND p.kind = 'user' AND p.phone_e164 = $1
-         )
-       )`,
-    [phoneE164],
+       AND (${USER_PHONE_NATIONAL10_SQL}) = $1`,
+    [national10],
   );
   return res.rows;
 }
 
-async function hasInactiveUserPhoneCollision(client: Db, phoneE164: string): Promise<boolean> {
+async function loadInactiveUsersByNational10(client: Db, national10: string): Promise<boolean> {
   const res = await client.query(
-    `SELECT 1 FROM users u
+    `SELECT 1
+     FROM users u
+     CROSS JOIN LATERAL (
+       SELECT regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g') AS d
+     ) norm
      WHERE u.status <> 'active'
-       AND (
-         regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g') = regexp_replace($1, '\\D', '', 'g')
-         OR EXISTS (
-           SELECT 1 FROM tt_parties p
-           WHERE p.user_id = u.id AND p.kind = 'user' AND p.phone_e164 = $1
-         )
-       )
+       AND (${USER_PHONE_NATIONAL10_SQL}) = $1
      LIMIT 1`,
-    [phoneE164],
+    [national10],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+/** Stale user party phone_e164 matches input but users.phone is a different valid number. */
+async function hasStaleStaffPartyPhoneAlias(client: Db, phoneE164: string, national10: string): Promise<boolean> {
+  const res = await client.query(
+    `SELECT 1
+     FROM tt_parties p
+     JOIN users u ON u.id = p.user_id
+     CROSS JOIN LATERAL (
+       SELECT regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g') AS d
+     ) norm
+     WHERE p.kind = 'user'
+       AND p.phone_e164 = $1
+       AND u.phone IS NOT NULL
+       AND trim(u.phone) <> ''
+       AND (${USER_PHONE_NATIONAL10_SQL}) IS DISTINCT FROM $2
+     LIMIT 1`,
+    [phoneE164, national10],
   );
   return (res.rowCount ?? 0) > 0;
 }
@@ -70,6 +91,10 @@ export async function resolveNativeExternalPendingPartyByPhone(
   if (!phoneE164) {
     throw Object.assign(new Error("Введите телефон: 10 цифр после +7."), { http: 400 });
   }
+  const national10 = ruPhoneNational10(phoneE164);
+  if (!national10) {
+    throw Object.assign(new Error("Введите телефон: 10 цифр после +7."), { http: 400 });
+  }
 
   const senderPhone = (
     await client.query<{ phone_e164: string | null }>(
@@ -84,21 +109,33 @@ export async function resolveNativeExternalPendingPartyByPhone(
 
   await lockPhonePartyResolution(client, phoneE164);
 
-  const activeUsers = await loadActiveUsersByPhoneE164(client, phoneE164);
+  if (await hasStaleStaffPartyPhoneAlias(client, phoneE164, national10)) {
+    throw neutralRecipientUnavailable();
+  }
+
+  const activeUsers = await loadActiveUsersByNational10(client, national10);
   if (activeUsers.length > 1) {
     throw neutralRecipientUnavailable();
   }
   if (activeUsers.length === 1) {
     const user = activeUsers[0]!;
-    const userPhone = user.phone?.trim() ? normalizeRuPhoneE164(user.phone) : phoneE164;
-    const party = await ensurePartyForUserOnWrite(client, user.id, user.full_name, userPhone ?? phoneE164);
+    const userPhoneNorm = user.phone?.trim() ? normalizeRuPhoneE164(user.phone) : null;
+    if (userPhoneNorm && userPhoneNorm !== phoneE164) {
+      throw neutralRecipientUnavailable();
+    }
+    const party = await ensurePartyForUserOnWrite(
+      client,
+      user.id,
+      user.full_name,
+      userPhoneNorm ?? phoneE164,
+    );
     if (party.id === input.senderExternalPartyId) {
       throw Object.assign(new Error("Нельзя назначить себя получателем."), { http: 400 });
     }
     return { pendingPartyId: party.id, recipientKind: "staff" };
   }
 
-  if (await hasInactiveUserPhoneCollision(client, phoneE164)) {
+  if (await loadInactiveUsersByNational10(client, national10)) {
     throw neutralRecipientUnavailable();
   }
 

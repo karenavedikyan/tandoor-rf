@@ -17,7 +17,11 @@ type Actor = { channel: Channel; id: number; chatId: number; staffId?: string };
 type Button = { text: string; payload?: string; callback_data?: string; request_contact?: boolean };
 type Reply = { text: string; buttons: Button[]; markup?: Record<string, unknown>; copyCode?: string };
 type Input = { text?: string; callback?: string; start?: boolean; file?: boolean; optional?: boolean; group?: boolean;
-  contact?: { phone_number: string; first_name: string; user_id: number }; expectCode?: boolean };
+  contact?: { phone_number: string; first_name: string; user_id: number };
+  expectCode?: boolean;
+  /** External native create: primary + forwardable invitation (not OTP). */
+  expectInvitation?: boolean;
+};
 const databaseUrl = getIntegrationDatabaseUrl();
 let app: ReturnType<typeof import("../../src/server").createApp>;
 let seq = 6700000;
@@ -138,10 +142,26 @@ async function send(a: Actor, input: Input): Promise<Reply> {
   }
   const replies = await drain(a);
   if (input.optional && !replies.length) return { text: "", buttons: [] };
-  assert.equal(replies.length, input.expectCode ? 2 : 1, "only explicit code issuance sends a copy-only follow-up");
+  assert.ok(!(input.expectCode && input.expectInvitation), "code follow-up and invitation are distinct second messages");
+  const expectedReplies = input.expectCode || input.expectInvitation ? 2 : 1;
+  assert.equal(
+    replies.length,
+    expectedReplies,
+    input.expectInvitation
+      ? "external create sends primary then clean invitation"
+      : "only explicit code issuance sends a copy-only follow-up",
+  );
   if (input.expectCode) {
     assert.match(replies[1]!.text, /^\d{6}$/u);
     assert.equal(replies[1]!.buttons.length, 0, "copy-only code must remain free of navigation");
+  }
+  if (input.expectInvitation) {
+    const invite = replies[1]!;
+    assert.match(invite.text, /Посмотреть передачу/u);
+    const urls = invite.text.match(/https?:\/\/[^\s)]+/g) ?? [];
+    assert.equal(urls.length, 1, invite.text);
+    assert.doesNotMatch(invite.text, /^\d{6}$/m);
+    assert.equal(invite.buttons.length, 0, "forwardable invitation must not carry navigation buttons");
   }
   if (a.channel === "max") {
     assert.equal(replies[0]!.buttons.filter(b => b.text === "Главное меню").length, 1);
@@ -397,8 +417,13 @@ for (const channel of ["max", "telegram"] as const) {
       r = await click(a, r, /^(?:Главное меню|Меню)$/u); main(a, r, true);
       assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
       r = await click(a, r, /^Продолжить оформление$/u);
-      r = await click(a, r, /^Создать передачу$/u);
-      if (a.staffId) assert.ok(r.text.includes(SENDER_HANDOFF_GUIDANCE), "creator is told to ask recipient for code and enter it before physical handoff");
+      if (a.staffId) {
+        r = await click(a, r, /^Создать передачу$/u);
+        assert.ok(r.text.includes(SENDER_HANDOFF_GUIDANCE), "creator is told to ask recipient for code and enter it before physical handoff");
+      } else {
+        const createBtn = button(r, /^Создать передачу$/u);
+        r = await send(a, { callback: createBtn.callback_data ?? createBtn.payload, expectInvitation: true });
+      }
       assert.equal(await draft(a), undefined);
       r = await click(a, r, /^(?:Главное меню|Меню)$/u); main(a, r, false);
       const confirmedCounts = await counts();

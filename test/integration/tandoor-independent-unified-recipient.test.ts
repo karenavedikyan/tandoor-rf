@@ -311,8 +311,9 @@ for (const channel of ["max", "telegram"] as const) {
   it(`${channel}: external unknown phone creates transfer to new external recipient at explicit Create`, async () => {
     const a = await actor(channel, false);
     await start(a);
+    const unknownPhone = `+7998${String(++seq).padStart(7, "0")}`;
     const partiesBefore = (await counts()).parties;
-    let r = await send(a, { text: absentPhone });
+    let r = await send(a, { text: unknownPhone });
     r = await send(a, { text: "Имя из моей записи" });
     r = await advanceToDue(a, r);
     const id = await create(a, r, "Имя из моей записи");
@@ -326,7 +327,7 @@ for (const channel of ["max", "telegram"] as const) {
     assert.equal(transfer.holder_party_id, senderParty);
     assert.equal(transfer.creator_party_id, senderParty);
     assert.equal(transfer.display_name, "Имя из моей записи");
-    assert.equal(transfer.phone_e164, absentPhone);
+    assert.equal(transfer.phone_e164, unknownPhone);
     assert.equal(transfer.created_by_user_id, null);
     assert.equal((await counts()).parties, partiesBefore + 1, "one canonical external party at confirm only");
     assert.doesNotMatch(JSON.stringify(r), /Иван Петров|Поиск Тестовый|Без Карточки/u);

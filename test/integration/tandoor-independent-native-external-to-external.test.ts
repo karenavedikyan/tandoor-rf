@@ -339,7 +339,7 @@ after(async () => {
 
 describe("native external sender to external recipient (both channels)", { concurrency: false }, () => {
   for (const channel of ["telegram", "max"] as const) {
-    it(`${channel}: active admin staff by phone with intake=false gets invitation`, async () => {
+    it(`${channel}: active admin staff unlinked bot gets invitation and code`, async () => {
       const staffPhone = `+7920${String(++seq).padStart(7, "0")}`;
       const admin = await createTestUser({
         databaseUrl: db, email: `ext2ext-admin-${seq}@test.local`, password: "StrongPass123!",
@@ -378,11 +378,49 @@ describe("native external sender to external recipient (both channels)", { concu
       )).rows[0];
       assert.equal(after.holder_party_id, staffParty.id);
       assert.equal(after.pending_party_id, null);
-      const audit = await getPool()!.query(
-        `SELECT acting_party_id::text, detail FROM tt_audit_log WHERE transfer_id=$1 AND action='code_verify_ok' ORDER BY created_at DESC LIMIT 1`,
+      const verifyAudit = await getPool()!.query(
+        `SELECT acting_party_id::text FROM tt_audit_log WHERE transfer_id=$1 AND action='code_verify_ok' ORDER BY created_at DESC LIMIT 1`,
         [row.id],
       );
-      assert.equal(audit.rows[0]?.acting_party_id, staffParty.id);
+      assert.equal(verifyAudit.rows[0]?.acting_party_id, sender.partyId);
+      const genAudit = await getPool()!.query(
+        `SELECT acting_party_id::text FROM tt_audit_log WHERE transfer_id=$1 AND action=$2 ORDER BY created_at DESC LIMIT 1`,
+        [row.id, channel === "telegram" ? "external_messenger_code_telegram" : "external_messenger_code_max"],
+      );
+      assert.equal(genAudit.rows[0]?.acting_party_id, staffParty.id);
+    });
+
+    it(`${channel}: active staff with linked bot account proves own phone for code`, async () => {
+      const staffPhone = `+7921${String(++seq).padStart(7, "0")}`;
+      const messengerId = ++seq;
+      const staff = await createTestUser({
+        databaseUrl: db, email: `ext2ext-linked-${seq}@test.local`, password: "StrongPass123!",
+        fullName: "Linked Staff Recipient", role: "manager",
+      });
+      await getPool()!.query(
+        `UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`,
+        [staff.id, staffPhone],
+      );
+      const staffParty = await ensurePartyForUserOnWrite(getPool()!, staff.id, "Linked Staff Recipient", staffPhone);
+      await getPool()!.query(
+        `INSERT INTO tanbot_${channel}_accounts(user_id,${channel}_user_id,${channel}_chat_id,notifications_enabled)
+         VALUES($1,$2,$3,TRUE)`,
+        [staff.id, String(messengerId), String(messengerId)],
+      );
+      const sender = await externalActor(channel);
+      const summary = await wizardToSummary(sender, staffPhone, "Ignored Name");
+      const created = await confirmSummary(sender, summary);
+      const row = (await getPool()!.query(
+        `SELECT public_code FROM tt_transfers WHERE creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`,
+        [sender.partyId],
+      )).rows[0];
+      const mst = parseMst((created.messages ?? [created]).map(m => m.text).join("\n"));
+      const code = await issueRecipientCode(channel, mst, staffPhone, messengerId);
+      assert.match(code, /^\d{6}$/);
+      assert.equal(
+        (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_persons WHERE party_id=$1`, [staffParty.id])).rows[0].n,
+        0,
+      );
     });
 
     it(`${channel}: invitation, copyOnlyCode, native webhook receipt`, async () => {
@@ -608,11 +646,6 @@ describe("native external sender to external recipient (both channels)", { concu
       hv: after.handoff_version,
       exp: Date.now() + holderAccessTtlMs(),
     });
-    const nextPhone = `+7912${String(++seq).padStart(7, "0")}`;
-    const change = await request(app).post("/api/tan-tracker/public/holder/pending/change")
-      .set("Origin", origin)
-      .send({ holderAccessToken: holderHat, external: { name: "Next Hop", phone: nextPhone } });
-    assert.equal(change.status, 200, change.text);
     const staffPhone = `+7913${String(++seq).padStart(7, "0")}`;
     const staff = await createTestUser({
       databaseUrl: db, email: `ext2ext-holder-staff-${seq}@test.local`, password: "StrongPass123!",
@@ -620,20 +653,28 @@ describe("native external sender to external recipient (both channels)", { concu
     });
     await getPool()!.query(`UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id, staffPhone]);
     const staffParty = await ensurePartyForUserOnWrite(getPool()!, staff.id, "Holder Forward Staff", staffPhone);
-    const holderHat2 = signHolderAccess({
-      transferId: row.id,
-      partyId: after.holder_party_id,
-      hv: after.handoff_version,
-      exp: Date.now() + holderAccessTtlMs(),
-    });
     const staffChange = await request(app).post("/api/tan-tracker/public/holder/pending/change")
       .set("Origin", origin)
-      .send({ holderAccessToken: holderHat2, external: { name: "Ignored Label", phone: staffPhone } });
+      .send({ holderAccessToken: holderHat, external: { name: "Ignored Label", phone: staffPhone } });
     assert.equal(staffChange.status, 200, staffChange.text);
     assert.equal(
       (await getPool()!.query(`SELECT pending_party_id::text FROM tt_transfers WHERE id=$1`, [row.id])).rows[0].pending_party_id,
       staffParty.id,
     );
+    const afterStaffAssign = (await getPool()!.query(
+      `SELECT holder_party_id::text, handoff_version FROM tt_transfers WHERE id=$1`, [row.id],
+    )).rows[0];
+    const holderHatAfterStaff = signHolderAccess({
+      transferId: row.id,
+      partyId: afterStaffAssign.holder_party_id,
+      hv: afterStaffAssign.handoff_version,
+      exp: Date.now() + holderAccessTtlMs(),
+    });
+    const nextPhone = `+7912${String(++seq).padStart(7, "0")}`;
+    const blockedSecond = await request(app).post("/api/tan-tracker/public/holder/pending/change")
+      .set("Origin", origin)
+      .send({ holderAccessToken: holderHatAfterStaff, external: { name: "Next Hop", phone: nextPhone } });
+    assert.equal(blockedSecond.status, 409);
     const stray = (await getPool()!.query(
       `INSERT INTO tt_parties(kind,display_name,phone_e164) VALUES('external','Stranger','+79139999999') RETURNING id`,
     )).rows[0].id;
@@ -646,4 +687,116 @@ describe("native external sender to external recipient (both channels)", { concu
       null,
     );
   });
+
+  for (const channel of ["telegram", "max"] as const) {
+    it(`${channel}: users.phone raw 8-prefix matches canonical +7 input without external shadow`, async () => {
+      const national = `9${String(++seq).padStart(9, "0")}`.slice(0, 10);
+      const e164 = `+7${national}`;
+      const raw8 = `8 (${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6, 8)}-${national.slice(8)}`;
+      const staff = await createTestUser({
+        databaseUrl: db, email: `ext2ext-raw8-${seq}@test.local`, password: "StrongPass123!",
+        fullName: "Raw Eight Staff", role: "manager",
+      });
+      await getPool()!.query(`UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id, raw8]);
+      await getPool()!.query(`DELETE FROM tt_parties WHERE user_id=$1`, [staff.id]);
+      const before = await bizSnapshot();
+      const sender = await externalActor(channel);
+      const summary = await wizardToSummary(sender, e164, "Shadow Attempt");
+      await confirmSummary(sender, summary);
+      const party = (await getPool()!.query(
+        `SELECT p.id::text, p.kind FROM tt_parties p
+         JOIN tt_transfers t ON t.pending_party_id=p.id
+         WHERE t.creator_party_id=$1::uuid ORDER BY t.created_at DESC LIMIT 1`, [sender.partyId],
+      )).rows[0];
+      assert.equal(party.kind, "user");
+      assert.equal(
+        (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_persons ep JOIN tt_parties p ON p.id=ep.party_id WHERE p.kind='external' AND p.phone_e164=$1`, [e164])).rows[0].n,
+        0,
+      );
+      assert.equal((await bizSnapshot()).parties, before.parties + 1);
+    });
+
+    it(`${channel}: inactive user with raw 8-prefix phone neutral rollback`, async () => {
+      const national = `9${String(++seq).padStart(9, "0")}`.slice(0, 10);
+      const e164 = `+7${national}`;
+      const raw8 = `8${national}`;
+      const staff = await createTestUser({
+        databaseUrl: db, email: `ext2ext-inact8-${seq}@test.local`, password: "StrongPass123!",
+        fullName: "Inactive Raw8", role: "manager",
+      });
+      await getPool()!.query(`UPDATE users SET phone=$2, status='disabled' WHERE id=$1`, [staff.id, raw8]);
+      const sender = await externalActor(channel);
+      const summary = await wizardToSummary(sender, e164, "Fail Name");
+      const draft = await draftRow(sender);
+      const before = await bizSnapshot(draft.id);
+      const r = await confirmSummary(sender, summary);
+      assert.match(r.text, /Получатель недоступен/u);
+      assert.equal((await draftRow(sender)).confirmed_transfer_id, null);
+      assert.deepEqual(await bizSnapshot(draft.id), before);
+    });
+
+    it(`${channel}: stale party phone alias neutral rollback without leaking current phone`, async () => {
+      const oldNational = `7${String(++seq).padStart(9, "0")}`.slice(0, 10);
+      const newNational = `6${String(++seq).padStart(9, "0")}`.slice(0, 10);
+      const oldE164 = `+7${oldNational}`;
+      const newE164 = `+7${newNational}`;
+      const staff = await createTestUser({
+        databaseUrl: db, email: `ext2ext-stale-${seq}@test.local`, password: "StrongPass123!",
+        fullName: "Stale Party Staff", role: "manager",
+      });
+      await getPool()!.query(`UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id, newE164]);
+      const party = await ensurePartyForUserOnWrite(getPool()!, staff.id, "Stale Party Staff", oldE164);
+      await getPool()!.query(`UPDATE tt_parties SET phone_e164=$2 WHERE id=$1`, [party.id, oldE164]);
+      const sender = await externalActor(channel);
+      const summary = await wizardToSummary(sender, oldE164, "Old Alias");
+      const draft = await draftRow(sender);
+      const before = await bizSnapshot(draft.id);
+      const r = await confirmSummary(sender, summary);
+      assert.match(r.text, /Получатель недоступен/u);
+      assert.doesNotMatch(r.text, new RegExp(newNational));
+      assert.equal((await draftRow(sender)).confirmed_transfer_id, null);
+      assert.deepEqual(await bizSnapshot(draft.id), before);
+      assert.equal(
+        (await getPool()!.query(`SELECT phone_e164 FROM tt_parties WHERE id=$1`, [party.id])).rows[0].phone_e164,
+        oldE164,
+      );
+    });
+  }
+
+  for (const channel of ["telegram", "max"] as const) {
+    it(`${channel}: open invitation session wins over in-progress native create on own contact`, async () => {
+      const staffPhone = `+7922${String(++seq).padStart(7, "0")}`;
+      const messengerId = ++seq;
+      const chatId = channel === "max" ? messengerId + 300000 : messengerId;
+      const staff = await createTestUser({
+        databaseUrl: db, email: `ext2ext-priority-${seq}@test.local`, password: "StrongPass123!",
+        fullName: "Priority Staff", role: "admin",
+      });
+      await getPool()!.query(`UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id, staffPhone]);
+      await ensurePartyForUserOnWrite(getPool()!, staff.id, "Priority Staff", staffPhone);
+      await getPool()!.query(
+        `INSERT INTO tanbot_${channel}_accounts(user_id,${channel}_user_id,${channel}_chat_id,notifications_enabled)
+         VALUES($1,$2,$3,TRUE)`,
+        [staff.id, String(messengerId), String(chatId)],
+      );
+      const sender = await externalActor(channel);
+      const summary = await wizardToSummary(sender, staffPhone, "Invite Target");
+      const created = await confirmSummary(sender, summary);
+      const mst = parseMst((created.messages ?? [created]).map(m => m.text).join("\n"));
+      const staffActor: ExtActor = { channel, id: messengerId, chatId, partyId: "", personId: "", phone: staffPhone };
+      await send(staffActor, { text: "Создать передачу" });
+      await send(staffActor, { text: "Draft item while invite open" });
+      const draftKey = `native:staff:${channel}:${chatId}`;
+      assert.equal((await getPool()!.query(
+        `SELECT step FROM tt_external_request_drafts WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`,
+        [draftKey],
+      )).rows[0]?.step, "photo");
+      const code = await issueRecipientCode(channel, mst, staffPhone, messengerId);
+      assert.match(code, /^\d{6}$/);
+      assert.equal((await getPool()!.query(
+        `SELECT step FROM tt_external_request_drafts WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`,
+        [draftKey],
+      )).rows[0]?.step, "photo");
+    });
+  }
 });
