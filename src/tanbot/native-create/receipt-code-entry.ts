@@ -66,6 +66,7 @@ async function loadTransfer(client: PoolClient, id: string, partyId: string): Pr
 /** Explicit current-holder choices only, never another user's list or an inferred "last transfer". */
 export async function appendReceiptEntryChoices(
   client: PoolClient, ctx: NativeCreateContext, reply: NativeCreateReply, onlyPublicCode?: string, page = 0,
+  options: { omitSelectionHint?: boolean } = {},
 ): Promise<NativeCreateReply> {
   const partyId = await currentParty(client, ctx);
   if (!partyId) return reply;
@@ -87,7 +88,9 @@ export async function appendReceiptEntryChoices(
     text: "Следующие передачи",
     data: buildReceiptEntryCallback("list", String(page + 1), 1)!,
   });
-  const text = `${reply.text}\n\nДля подтверждения в этом чате выберите передачу кнопкой «Ввести код».`;
+  const text = options.omitSelectionHint
+    ? reply.text
+    : `${reply.text}\n\nДля подтверждения в этом чате выберите передачу кнопкой «Ввести код».`;
   if (ctx.channel === "telegram") {
     // Telegram cannot attach both reply and inline keyboards in one message.
     // Keep the complete navigation inline when adding receipt buttons, not just the new action.
