@@ -162,6 +162,18 @@ function draftKey(actor: ExtActor): string {
   return `native:ext:${actor.channel}:${actor.chatId}`;
 }
 
+async function withLegacyUsersPhoneColumn<T>(fn: () => Promise<T>): Promise<T> {
+  const pool = getPool()!;
+  await pool.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_phone_format`);
+  try {
+    return await fn();
+  } finally {
+    await pool.query(
+      `ALTER TABLE users ADD CONSTRAINT users_phone_format CHECK (phone IS NULL OR phone ~ '^\\+7\\d{10}$')`,
+    );
+  }
+}
+
 async function draftRow(actor: ExtActor) {
   return (await getPool()!.query(
     `SELECT id,step,payload,confirmed_transfer_id FROM tt_external_request_drafts
@@ -678,9 +690,11 @@ describe("native external sender to external recipient (both channels)", { concu
     const stray = (await getPool()!.query(
       `INSERT INTO tt_parties(kind,display_name,phone_e164) VALUES('external','Stranger','+79139999999') RETURNING id`,
     )).rows[0].id;
+    const freshHolderToken = String((staffChange.body as { holderAccessToken?: string }).holderAccessToken ?? "");
+    assert.ok(freshHolderToken, JSON.stringify(staffChange.body));
     const reject = await request(app).post("/api/tan-tracker/public/holder/pending/change")
       .set("Origin", origin)
-      .send({ holderAccessToken: holderHat, pendingPartyId: stray });
+      .send({ holderAccessToken: freshHolderToken, pendingPartyId: stray });
     assert.equal(reject.status, 403);
     assert.equal(
       (await getPool()!.query(`SELECT user_id FROM tt_parties WHERE id=(SELECT creator_party_id FROM tt_transfers WHERE id=$1)`, [row.id])).rows[0].user_id,
@@ -690,49 +704,53 @@ describe("native external sender to external recipient (both channels)", { concu
 
   for (const channel of ["telegram", "max"] as const) {
     it(`${channel}: users.phone raw 8-prefix matches canonical +7 input without external shadow`, async () => {
-      const national = `9${String(++seq).padStart(9, "0")}`.slice(0, 10);
-      const e164 = `+7${national}`;
-      const raw8 = `8 (${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6, 8)}-${national.slice(8)}`;
-      const staff = await createTestUser({
-        databaseUrl: db, email: `ext2ext-raw8-${seq}@test.local`, password: "StrongPass123!",
-        fullName: "Raw Eight Staff", role: "manager",
+      await withLegacyUsersPhoneColumn(async () => {
+        const national = `9${String(++seq).padStart(9, "0")}`.slice(0, 10);
+        const e164 = `+7${national}`;
+        const raw8 = `8 (${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6, 8)}-${national.slice(8)}`;
+        const staff = await createTestUser({
+          databaseUrl: db, email: `ext2ext-raw8-${seq}@test.local`, password: "StrongPass123!",
+          fullName: "Raw Eight Staff", role: "manager",
+        });
+        await getPool()!.query(`UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id, raw8]);
+        await getPool()!.query(`DELETE FROM tt_parties WHERE user_id=$1`, [staff.id]);
+        const before = await bizSnapshot();
+        const sender = await externalActor(channel);
+        const summary = await wizardToSummary(sender, e164, "Shadow Attempt");
+        await confirmSummary(sender, summary);
+        const party = (await getPool()!.query(
+          `SELECT p.id::text, p.kind FROM tt_parties p
+           JOIN tt_transfers t ON t.pending_party_id=p.id
+           WHERE t.creator_party_id=$1::uuid ORDER BY t.created_at DESC LIMIT 1`, [sender.partyId],
+        )).rows[0];
+        assert.equal(party.kind, "user");
+        assert.equal(
+          (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_persons ep JOIN tt_parties p ON p.id=ep.party_id WHERE p.kind='external' AND p.phone_e164=$1`, [e164])).rows[0].n,
+          0,
+        );
+        assert.equal((await bizSnapshot()).parties, before.parties + 1);
       });
-      await getPool()!.query(`UPDATE users SET phone=$2, accepts_external_tt_intake=FALSE WHERE id=$1`, [staff.id, raw8]);
-      await getPool()!.query(`DELETE FROM tt_parties WHERE user_id=$1`, [staff.id]);
-      const before = await bizSnapshot();
-      const sender = await externalActor(channel);
-      const summary = await wizardToSummary(sender, e164, "Shadow Attempt");
-      await confirmSummary(sender, summary);
-      const party = (await getPool()!.query(
-        `SELECT p.id::text, p.kind FROM tt_parties p
-         JOIN tt_transfers t ON t.pending_party_id=p.id
-         WHERE t.creator_party_id=$1::uuid ORDER BY t.created_at DESC LIMIT 1`, [sender.partyId],
-      )).rows[0];
-      assert.equal(party.kind, "user");
-      assert.equal(
-        (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_persons ep JOIN tt_parties p ON p.id=ep.party_id WHERE p.kind='external' AND p.phone_e164=$1`, [e164])).rows[0].n,
-        0,
-      );
-      assert.equal((await bizSnapshot()).parties, before.parties + 1);
     });
 
     it(`${channel}: inactive user with raw 8-prefix phone neutral rollback`, async () => {
-      const national = `9${String(++seq).padStart(9, "0")}`.slice(0, 10);
-      const e164 = `+7${national}`;
-      const raw8 = `8${national}`;
-      const staff = await createTestUser({
-        databaseUrl: db, email: `ext2ext-inact8-${seq}@test.local`, password: "StrongPass123!",
-        fullName: "Inactive Raw8", role: "manager",
+      await withLegacyUsersPhoneColumn(async () => {
+        const national = `9${String(++seq).padStart(9, "0")}`.slice(0, 10);
+        const e164 = `+7${national}`;
+        const raw8 = `8${national}`;
+        const staff = await createTestUser({
+          databaseUrl: db, email: `ext2ext-inact8-${seq}@test.local`, password: "StrongPass123!",
+          fullName: "Inactive Raw8", role: "manager",
+        });
+        await getPool()!.query(`UPDATE users SET phone=$2, status='disabled' WHERE id=$1`, [staff.id, raw8]);
+        const sender = await externalActor(channel);
+        const summary = await wizardToSummary(sender, e164, "Fail Name");
+        const draft = await draftRow(sender);
+        const before = await bizSnapshot(draft.id);
+        const r = await confirmSummary(sender, summary);
+        assert.match(r.text, /Получатель недоступен/u);
+        assert.equal((await draftRow(sender)).confirmed_transfer_id, null);
+        assert.deepEqual(await bizSnapshot(draft.id), before);
       });
-      await getPool()!.query(`UPDATE users SET phone=$2, status='disabled' WHERE id=$1`, [staff.id, raw8]);
-      const sender = await externalActor(channel);
-      const summary = await wizardToSummary(sender, e164, "Fail Name");
-      const draft = await draftRow(sender);
-      const before = await bizSnapshot(draft.id);
-      const r = await confirmSummary(sender, summary);
-      assert.match(r.text, /Получатель недоступен/u);
-      assert.equal((await draftRow(sender)).confirmed_transfer_id, null);
-      assert.deepEqual(await bizSnapshot(draft.id), before);
     });
 
     it(`${channel}: active staff resolved via user party phone when profile phone empty`, async () => {
