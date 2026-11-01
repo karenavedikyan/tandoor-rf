@@ -18,15 +18,32 @@
   const imgsOf = (p) => (p.imgs && p.imgs.length ? p.imgs : [p.img]);
   const sideLabel = (p, i) => (p.sides && p.sides[i] ? p.sides[i] : `Фото ${i + 1}`);
   /* Фото на карточке: все снимки в полный рост, стрелки и точки — карусель; у входных дверей подписи «Снаружи / Изнутри». */
+  /* Другие цвета той же модели (как палитра на карточке tandoor.ru) — клик открывает карточку соседнего цвета. */
+  const siblingsOf = (p) => D.products.filter((q) => q.section === p.section && q.name === p.name && q.id !== p.id);
+  function colorsHtml(p, max = 4) {
+    const sib = siblingsOf(p); if (!sib.length) return "";
+    const all = [p, ...sib];
+    return `<div class="cat-colors" aria-label="Цвета модели">${all.slice(0, max).map((q) => `<button type="button" class="${q.id === p.id ? "active" : ""}" data-cat="open" data-id="${q.id}" title="${esc(q.color)}" aria-label="${esc(q.name)} ${esc(q.color)}"><img src="${q.img}" alt="" loading="lazy"></button>`).join("")}${all.length > max ? `<span>+${all.length - max}</span>` : ""}</div>`;
+  }
   function imgHtml(p, cls = "cat-img") {
     const imgs = imgsOf(p); const i = Math.min(cardIdx[p.id] || 0, imgs.length - 1);
     const multi = imgs.length > 1;
+    /* Входные двери: как на tandoor.ru — обе стороны сразу, снаружи впереди, изнутри чуть позади; клик по задней выводит её вперёд. */
+    if (p.sides && imgs.length >= 2 && cls === "cat-img") {
+      const front = i < 2 ? i : 0, back = front === 0 ? 1 : 0;
+      return `<div class="${cls} has-gallery cat-pair" data-gallery="${p.id}">
+      <img class="side back" src="${imgs[back]}" alt="${esc(p.name)} — ${esc(sideLabel(p, back))}" loading="lazy" data-cat="cimg" data-id="${p.id}" data-idx="${back}" title="${esc(sideLabel(p, back))} — показать впереди">
+      <img class="side front" src="${imgs[front]}" alt="${esc(p.name)} ${esc(p.color)} — ${esc(sideLabel(p, front))}" loading="lazy">
+      ${colorsHtml(p)}
+      <div class="cat-sides">${[0, 1].map((k) => `<button class="${k === front ? "active" : ""}" data-cat="cimg" data-id="${p.id}" data-idx="${k}">${esc(p.sides[k])}</button>`).join("")}${imgs.length > 2 ? `<span>+${imgs.length - 2}</span>` : ""}</div>
+    </div>`;
+    }
     return `<div class="${cls} ${multi ? "has-gallery" : ""}" data-gallery="${p.id}">
       <img src="${imgs[i]}" alt="${esc(p.name)} ${esc(p.color)} — ${esc(sideLabel(p, i))}" loading="lazy">
+      ${colorsHtml(p)}
       ${multi ? `<button class="cat-arr prev" data-cat="cimg" data-id="${p.id}" data-dir="-1" aria-label="Предыдущее фото">${icon("chevron-left")}</button>
       <button class="cat-arr next" data-cat="cimg" data-id="${p.id}" data-dir="1" aria-label="Следующее фото">${icon("chevron-right")}</button>
-      ${p.sides ? `<div class="cat-sides">${imgs.slice(0, 2).map((_, k) => `<button class="${k === i ? "active" : ""}" data-cat="cimg" data-id="${p.id}" data-idx="${k}">${esc(p.sides[k])}</button>`).join("")}${imgs.length > 2 ? `<span>+${imgs.length - 2}</span>` : ""}</div>`
-        : `<div class="cat-dots" aria-hidden="true">${imgs.slice(0, 8).map((_, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("")}${imgs.length > 8 ? `<b>${imgs.length}</b>` : ""}</div>`}` : ""}
+      <div class="cat-dots" aria-hidden="true">${imgs.slice(0, 8).map((_, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("")}${imgs.length > 8 ? `<b>${imgs.length}</b>` : ""}</div>` : ""}
     </div>`;
   }
   function stepCardImg(id, dir, idx) {
@@ -328,23 +345,32 @@
   /* ---------- панель товара ---------- */
   function replyText(p) {
     const size = state.size || p.sizes[0] || "";
-    const type = state.type || p.types[0] || "";
+    const type = state.type || optTypes(p)[0] || "";
     const t = total(p);
     const what = p.section === "interior" ? "Межкомнатная дверь" : p.section === "entry" ? "Входная дверь" : "";
-    const lines = [`${what ? what + " " : ""}${p.name}, ${p.color}${size ? ", " + size : ""}${type ? " (" + type + ")" : ""}.`];
+    const lines = [`${what ? what + " " : ""}${p.name}, ${p.color}${size ? ", " + size : ""}${type ? (p.types.length ? " (" + type + ")" : ", открывание " + type.toLowerCase()) : ""}.`];
     lines.push(`Розничная цена: ${money(p.price)}${p.oldPrice ? ` (до акции ${money(p.oldPrice)})` : ""}.`);
     if (t > 0) lines.push(`В наличии${p.stock.krd ? " на складе в Краснодаре" : p.stock.rnd ? " на складе в Ростове" : " в шоуруме"}, можем отгрузить в ближайшие дни.`);
     else if (p.incoming) lines.push(`Сейчас нет на складе, ожидаем поступление ${p.incoming.date}.`);
     else lines.push(`Позиция под заказ, срок уточним при оформлении.`);
     return lines.join("\n");
   }
+  /* Варианты выбора в карточке: у межкомнатных — вид двери (ДГ/ДО/ДЧ), у входных — сторона открывания (на сайте «Тип L / R»). */
+  const optTypes = (p) => p.types.length ? p.types : (p.section === "entry" && /\//.test(p.specs?.["Открывание"] || "") ? ["Левое", "Правое"] : []);
+  const optLabel = (p) => p.types.length ? "Тип" : "Открывание";
   function panelHtml(p) {
     const s = sectionOf(p.section);
+    const types = optTypes(p);
+    const curSize = state.size || p.sizes[0] || "", curType = state.type || types[0] || "";
+    const sib = siblingsOf(p);
+    const outdoorNote = p.section === "entry" && /^нет/i.test(p.specs?.["Терморазрыв"] || "");
+    const derived = { "Модель": p.name, "Цвет": p.color, ...(curSize ? { "Размер": curSize } : {}), ...(curType ? { [p.types.length ? "Вид двери" : "Открывание"]: curType } : {}) };
+    const specRows = Object.entries({ ...derived, ...Object.fromEntries(Object.entries(p.specs || {}).filter(([k]) => !(k in derived))) });
     const st = stockStatus(p);
     const cl = clientStatus(p);
     const t = total(p);
     return `<div class="cat-panel-bg" data-cat="close"></div><div class="cat-panel-box" role="dialog" aria-modal="true" aria-labelledby="cat-panel-title">
-      <div class="cat-panel-head"><div><div class="cat-crumbs">${esc(s?.name || "")} / ${esc(p.sub)} · код ${esc(p.code)}</div><h2 id="cat-panel-title">${esc(p.name)}</h2><div class="sub">${esc(p.color)}${p.coating ? " · " + esc(p.coating) : ""}</div></div><button class="cat-close" data-cat="close" aria-label="Закрыть">${icon("x")}</button></div>
+      <div class="cat-panel-head"><div><div class="cat-crumbs">${esc(s?.name || "")} / ${esc(p.sub)} · код ${esc(p.code)}</div><h2 id="cat-panel-title">${esc(p.name)}</h2><div class="sub">${esc([p.color, curSize, curType].filter(Boolean).join(" / "))}${p.coating ? " · " + esc(p.coating) : ""}</div></div><button class="cat-close" data-cat="close" aria-label="Закрыть">${icon("x")}</button></div>
       <div class="cat-panel-body">
         ${(() => { const imgs = imgsOf(p); const i = Math.min(state.gIdx, imgs.length - 1); return `
         <div class="cat-gallery ${state.zoom ? "zoom" : ""}">
@@ -359,15 +385,17 @@
             <div class="tile"><div class="small">Розничная цена${p.section === "interior" ? " · за полотно" : ""}</div><span class="cat-price">${money(p.price)}</span>${p.oldPrice ? ` <span class="cat-old">${money(p.oldPrice)}</span>` : ""}</div>
             ${!state.clientView ? `<div class="tile"><div class="small">Цена партнёра · демо</div><span class="cat-price">${money(p.partner)}</span></div>` : `<div class="tile"><div class="small">Наличие</div><span class="cat-stock ${cl.cls}">${cl.label}</span></div>`}
           </div>
-          ${p.sizes.length || p.types.length ? `<div class="cat-options">
-            ${p.types.length ? `<div class="row"><span>Тип</span>${p.types.map((x) => `<button class="cat-opt ${(state.type || p.types[0]) === x ? "active" : ""}" data-cat="type" data-val="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}
-            ${p.sizes.length ? `<div class="row"><span>Размер</span>${p.sizes.map((x) => `<button class="cat-opt ${(state.size || p.sizes[0]) === x ? "active" : ""}" data-cat="size" data-val="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}
+          ${p.sizes.length || types.length || sib.length ? `<div class="cat-options">
+            ${types.length ? `<div class="row"><span>${optLabel(p)}</span>${types.map((x) => `<button class="cat-opt ${curType === x ? "active" : ""}" data-cat="type" data-val="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}
+            ${p.sizes.length ? `<div class="row"><span>Размер</span>${p.sizes.map((x) => `<button class="cat-opt ${curSize === x ? "active" : ""}" data-cat="size" data-val="${esc(x)}">${esc(x)}</button>`).join("")}${p.section === "entry" ? `<span class="cat-nonstd" title="На сайте — «Рассчитать нестандарт»; в ЛК расчёт по запросу">нестандарт — по запросу</span>` : ""}</div>` : ""}
+            ${sib.length ? `<div class="row"><span>Цвет</span><div class="cat-colors big">${[p, ...sib].map((q) => `<button type="button" class="${q.id === p.id ? "active" : ""}" data-cat="open" data-id="${q.id}" title="${esc(q.color)}"><img src="${q.img}" alt="" loading="lazy"><em>${esc(q.color)}</em></button>`).join("")}</div></div>` : ""}
           </div>` : ""}
+          ${outdoorNote ? `<p class="cat-note">${icon("info")}Без терморазрыва: Tandoor не рекомендует устанавливать эту дверь на улицу.</p>` : ""}
           ${!state.clientView ? `<div><h3 style="margin-bottom:8px">Остатки по складам <span class="tag warn">демо</span></h3><div class="cat-stocktable">
             ${D.warehouses.map((w) => `<div class="item"><span>${esc(w.name)}</span><b>${p.stock[w.id] ? p.stock[w.id] + " шт" : "—"}</b></div>`).join("")}
             ${p.incoming ? `<div class="item"><span>Ожидается поступление</span><b>${p.incoming.qty} шт · ${esc(p.incoming.date)}</b></div>` : ""}
             <div class="item total"><span>Итого · ${esc(p.kind)} позиция</span><span class="cat-stock ${st.cls}">${t > 0 ? t + " шт" : st.label}</span></div></div></div>` : ""}
-          <div><h3 style="margin-bottom:4px">Характеристики</h3><div class="cat-specs">${Object.entries(p.specs || {}).map(([k, v]) => `<div class="field"><div class="small">${esc(k)}</div><div>${esc(v)}</div></div>`).join("")}</div></div>
+          <div><h3 style="margin-bottom:4px">Характеристики</h3><div class="cat-specs">${specRows.map(([k, v]) => `<div class="field"><div class="small">${esc(k)}</div><div>${esc(v)}</div></div>`).join("")}</div></div>
           ${!state.clientView ? `<div><div class="cat-reply-label"><span>Готовый ответ клиенту</span><span>обновляется по типу и размеру</span></div><div class="cat-reply" data-cat-reply>${esc(replyText(p))}</div></div>` : ""}
           <div class="cat-actions">
             ${!state.clientView ? `<button class="primary" data-cat="copy" data-id="${p.id}">${icon("copy")}Скопировать ответ</button><button data-cat="send" data-id="${p.id}">${icon("send")}Отправить в чат клиенту</button>` : ""}

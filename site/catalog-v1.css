@@ -96,6 +96,30 @@
 [data-theme=dark] .cat-sides button.active{color:#172019}
 .cat-sides span{font-size:10px;color:var(--muted);padding:0 4px}
 .view-site .cat-sides{left:8px;right:8px;bottom:8px}
+/* Входные двери «как на сайте»: обе стороны в одной рамке — снаружи впереди, изнутри позади со сдвигом */
+.cat-grid .cat-pair img.side{position:absolute;top:var(--pt);bottom:var(--pb);height:calc(100% - var(--pt) - var(--pb));width:58%;left:auto;right:auto;max-width:none;max-height:none;object-fit:contain;transition:transform .25s,left .25s,filter .25s}
+.cat-grid .cat-pair img.front{left:10%;z-index:3}
+.cat-grid .cat-pair img.back{left:40%;z-index:2;transform:scale(.94);transform-origin:bottom center;filter:brightness(.93);cursor:pointer}
+.cat-grid .cat-pair img.back:hover{z-index:4;transform:scale(1);filter:none}
+.cat-card:has(.cat-pair img.back:hover){border-color:var(--line);box-shadow:none;transform:none}
+/* Палитра цветов модели — слева от фото, как на tandoor.ru; клик открывает модель в другом цвете */
+.cat-colors{position:absolute;left:8px;top:auto;bottom:calc(var(--pb) + 8px);z-index:3;display:flex;flex-direction:column;gap:4px;align-items:center}
+.cat-colors button{position:relative;width:22px;height:22px;min-height:0;line-height:0;flex:0 0 auto;padding:0;border:2px solid var(--surface);border-radius:50%;overflow:hidden;background:var(--cat-img-bg);box-shadow:0 0 0 1px var(--line);cursor:pointer}
+.cat-grid .cat-img .cat-colors button img,.cat-colors button img{position:absolute;left:50%;top:45%;right:auto;bottom:auto;width:260%;height:260%;max-width:none;max-height:none;transform:translate(-50%,-50%);object-fit:cover;mix-blend-mode:normal;padding:0;border-radius:0}
+.cat-colors button.active{box-shadow:0 0 0 2px var(--green)}
+.cat-colors button:hover{transform:scale(1.15)}
+.cat-colors span{font-size:10px;color:var(--muted)}
+.cat-card:has(.cat-colors button:hover){border-color:var(--line);box-shadow:none;transform:none}
+.cat-colors.big{position:static;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:flex-start}
+.cat-colors.big button{width:58px;height:auto;min-height:0;line-height:normal;border-radius:8px;border:2px solid var(--line);box-shadow:none;display:flex;flex-direction:column;background:var(--cat-img-bg)}
+.cat-colors.big button img{position:static;transform:none;width:54px;height:56px;object-fit:contain;object-position:center;padding:2px}
+.cat-colors.big button em{font-style:normal;font-size:10px;line-height:1.1;color:var(--muted);padding:2px 2px 3px;max-width:56px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cat-colors.big button.active{border-color:var(--green)}
+.cat-colors.big button.active em{color:var(--green)}
+.cat-colors.big button:hover{transform:none}
+.cat-nonstd{font-size:var(--text-xs);color:var(--muted);align-self:center;padding-left:4px;border-left:1px solid var(--line);margin-left:4px}
+.cat-note{display:flex;gap:8px;align-items:flex-start;font-size:var(--text-xs);color:var(--muted);background:var(--warm);border-radius:8px;padding:8px 10px;margin:0}
+.cat-note i,.cat-note svg{width:14px;height:14px;flex:0 0 auto;margin-top:1px}
 @media (hover:none){.cat-arr{opacity:1}}
 .cat-body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}
 .cat-name{font-weight:650;font-size:var(--text-base);line-height:1.2;letter-spacing:-.2px}
@@ -121,13 +145,13 @@
 .cat-quick button svg{width:14px;height:14px}
 
 /* Вариант A: как на tandoor.ru — центровка, фото 2:3 на светлом поле, подпись «Розничная цена», зелёная кнопка */
-.cat-grid.view-site{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+.cat-grid.view-site{grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
 .view-site .cat-card{align-items:stretch}
 .view-site .cat-head{padding:16px 16px 6px;text-align:center}
 .view-site .cat-card:has(.cat-badges) .cat-head{padding-inline:52px}
 .view-site .cat-head .cat-name{font-size:var(--text-lg)}
 .view-site .cat-head .cat-color{margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.view-site .cat-img{height:300px;background:transparent;--px:6px;--pt:6px;--pb:30px}
+.view-site .cat-img{aspect-ratio:36/41;background:transparent;--px:6px;--pt:6px;--pb:30px}
 .view-site .cat-head .cat-color{min-height:calc(2em * 1.35)}
 .view-site .cat-body{padding-top:6px}
 .view-site .cat-pricerow{justify-content:space-between;border-top:1px solid var(--line);padding-top:10px}
@@ -180,13 +204,13 @@ body:has(.cat-panel.open) #af-required-reminder{display:none}
 .cat-panel-head .cat-close svg{width:18px;height:18px}
 .cat-panel-body{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:20px;padding:20px}
 .cat-gallery{display:flex;flex-direction:column;gap:8px}
-.cat-gallery .cat-img{aspect-ratio:3/4;border-radius:8px;padding:0;cursor:zoom-in}
+.cat-gallery .cat-img{aspect-ratio:53/64;border-radius:8px;padding:0;cursor:zoom-in}
 .cat-gallery .cat-img img{position:absolute;left:12px;top:12px;width:calc(100% - 24px);height:calc(100% - 24px);max-width:none;max-height:none;object-fit:contain}
 .cat-gallery .cat-arr{width:34px;height:34px;opacity:.9}
 .cat-gcount{position:absolute;right:10px;bottom:8px;font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:2px 8px}
 .cat-thumbs{display:flex;gap:6px;margin-top:8px;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin}
-.cat-thumbs button{flex:0 0 auto;width:56px;border:2px solid var(--line);border-radius:6px;background:var(--cat-img-bg);padding:0;cursor:pointer;display:flex;flex-direction:column;align-items:center;overflow:hidden}
-.cat-thumbs button img{width:100%;height:64px;object-fit:contain;mix-blend-mode:multiply;display:block;padding:2px}
+.cat-thumbs button{flex:0 0 auto;width:72px;border:2px solid var(--line);border-radius:6px;background:var(--cat-img-bg);padding:0;cursor:pointer;display:flex;flex-direction:column;align-items:center;overflow:hidden}
+.cat-thumbs button img{width:100%;height:84px;object-fit:contain;mix-blend-mode:multiply;display:block;padding:2px}
 [data-theme=dark] .cat-thumbs button img{mix-blend-mode:normal;background:#eef0ec}
 .cat-thumbs button span{font-size:10px;line-height:1.1;padding:2px 0 3px;color:var(--muted)}
 .cat-thumbs button.active{border-color:var(--green)}
@@ -240,7 +264,7 @@ body:has(.cat-panel.open) #af-required-reminder{display:none}
  .cat-filters.open .cat-fgroup .cat-chips{display:flex;gap:6px;flex-wrap:wrap}
  .cat-filters .cat-reset{margin-left:0}
  .cat-grid,.cat-grid.view-site{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
- .view-site .cat-img{height:190px}
+ .view-site .cat-img{aspect-ratio:36/41}
  .cat-body{padding:10px 12px 12px}
  .cat-name{font-size:var(--text-sm)}
  .cat-price{font-size:var(--text-base)}

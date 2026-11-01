@@ -129,7 +129,7 @@ var CATALOG_QA = await (async () => {
   const cardHover = await page.locator(".view-site .cat-card").first().evaluate((el) => getComputedStyle(el).transform);
   ok(cardHover === "none" || cardHover === "matrix(1, 0, 0, 1, 0, 0)", "hovering CTA does not lift the whole card");
   // card carousel (витрина/сайт): все фото в полный рост, стрелки, стороны входных дверей
-  ok(await page.evaluate(() => [...document.querySelectorAll(".view-site .cat-img img")].slice(0, 20).every((im) => im.naturalHeight > 0 && im.clientHeight <= im.parentElement.clientHeight && im.clientWidth <= im.parentElement.clientWidth)), "site view: photos fit the box fully (no crop)");
+  ok(await page.evaluate(() => [...document.querySelectorAll(".view-site .cat-img > img")].slice(0, 20).every((im) => im.naturalHeight > 0 && im.clientHeight <= im.parentElement.clientHeight && im.clientWidth <= im.parentElement.clientWidth)), "site view: photos fit the box fully (no crop)");
   const multi = page.locator(".view-site .cat-img.has-gallery").first();
   ok(await multi.count() === 1, "card has gallery controls when several photos");
   const src0 = await multi.locator("img").getAttribute("src");
@@ -305,6 +305,34 @@ var CATALOG_QA = await (async () => {
   await page.locator(".cat-panel .cat-close").click();
   await page.waitForFunction(() => !document.querySelector(".cat-panel.open"));
   await page.setViewportSize({ width: 1440, height: 900 });
+
+  // как на tandoor.ru: входные двери — обе стороны в одной рамке; палитра цветов модели; сторона открывания в карточке
+  await page.goto(`${base}/?r=2#catalog?role=manager&sec=entry&view=site`);
+  await page.locator(".cat-grid.view-site").waitFor({ state: "visible" });
+  ok((await page.locator(".view-site .cat-pair").count()) === 29, "entry doors: both sides shown in one frame (pair)");
+  const frontAlt0 = await page.locator(".view-site .cat-pair img.front").first().getAttribute("alt");
+  await page.locator(".view-site .cat-pair img.back").first().click({ force: true });
+  await page.waitForTimeout(100);
+  ok((await page.locator(".view-site .cat-pair img.front").first().getAttribute("alt")) !== frontAlt0, "clicking the back side brings it forward");
+  ok(!(await page.locator(".cat-panel.open").count()), "clicking the back side does not open the panel");
+  ok((await page.locator(".view-site .cat-colors").count()) > 0, "colour swatches of the same model shown on cards");
+  await page.locator(".view-site .cat-card .cat-cta").first().click();
+  await page.locator(".cat-panel.open").waitFor({ state: "visible" });
+  ok((await page.locator(".cat-panel .cat-options .row>span").first().textContent()) === "Открывание", "entry panel: side of opening selector");
+  await page.locator('.cat-panel .cat-opt[data-val="Правое"]').click();
+  await page.waitForTimeout(100);
+  ok(/открывание правое/.test(await page.locator("[data-cat-reply]").textContent()), "reply text reflects side of opening");
+  ok((await page.locator(".cat-panel-head .sub").textContent()).includes(" / Правое"), "panel subtitle: цвет / размер / сторона");
+  await page.locator(".cat-panel .cat-close").click();
+  await page.waitForFunction(() => !document.querySelector(".cat-panel.open"));
+  await page.goto(`${base}/?r=3#catalog?role=manager&sec=interior&q=522&view=site`);
+  await page.locator(".cat-grid.view-site").waitFor({ state: "visible" });
+  await page.locator(".view-site .cat-colors button:not(.active)").first().click();
+  await page.locator(".cat-panel.open").waitFor({ state: "visible" });
+  ok((await page.locator(".cat-panel-head .sub").textContent()).startsWith("Белый"), "swatch opens the model in the other colour");
+  ok((await page.locator(".cat-panel .cat-colors.big button").count()) === 2, "panel lists all colours of the model");
+  await page.locator(".cat-panel .cat-close").click();
+  await page.waitForFunction(() => !document.querySelector(".cat-panel.open"));
 
   ok(errors.length === 0, "no page errors: " + errors.join(" | "));
   console.log(`Catalog QA PASS ${checks.length} checks`);
