@@ -291,6 +291,14 @@ var CATALOG_QA = await (async () => {
   await page.keyboard.press("Escape");
   ok(await page.locator(".cat-light.open").count() === 0, "Esc closes lightbox");
   ok(await page.locator(".cat-panel.open").count() === 1, "panel stays open after lightbox");
+  ok((await page.locator('.cat-panel [data-cat="copy-text"][data-kind="specs"]').count()) === 1, "panel: copy specs button");
+  ok((await page.locator('.cat-panel [data-cat="copy-text"][data-kind="stock"]').count()) === 1, "panel: copy stock button");
+  ok((await page.locator('.cat-panel [data-cat="copy-text"][data-kind="card"]').count()) === 1, "panel: copy whole card button");
+  await page.locator('.cat-panel [data-cat="copy-text"][data-kind="specs"]').click();
+  await page.locator("#notice.show").waitFor({ state: "visible" });
+  ok(/Характеристики|Буфер/.test(await page.locator("#notice").textContent()), "copy specs gives notice");
+  ok(await page.locator(".cat-panel.open").count() === 1, "copy specs keeps panel open");
+  await page.waitForTimeout(2800);
   await page.locator('.cat-panel .primary[data-cat="copy"]').click();
   await page.locator("#notice.show").waitFor({ state: "visible" });
   ok((await page.locator("#notice").textContent()).includes("скопирован") || (await page.locator("#notice").textContent()).includes("Буфер"), "copy gives notice");
