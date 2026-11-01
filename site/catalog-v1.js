@@ -148,6 +148,12 @@
   const grpOf = (sec, id) => (SITE_TREE[sec] || []).find(([, items]) => items.some((it) => it[0] === id))?.[0] || "";
   const inScope = (p) => (!state.sec || p.section === state.sec) && (!state.sub || nodePass(p, state.sec, state.sub));
   const hasTag = (p, t) => (t === "hit" ? !!p.hit : t === "new" ? !!p.isNew : t === "sale" ? !!p.oldPrice : true);
+  /* Навигатор «Разделы» — как меню «Каталог» на tandoor.ru: раздел → группировка → подраздел.
+     На компьютере три колонки с наведением, на телефоне — уровни «вглубь» с кнопкой «назад» и «Все товары» на каждом шаге. */
+  const nav = { open: false, sec: "", grp: "" };
+  const NAV_EXTRA = [["fire", "Противопожарные двери", "flame"], ["sale", "Скидки", "percent"]];
+  const countGrp = (sec, g) => { const items = ((SITE_TREE[sec] || []).find(([x]) => x === g) || [])[1] || []; return D.products.filter((p) => p.section === sec && items.some((it) => it[1](p))).length; };
+  const isDesktop = () => matchMedia("(min-width: 901px)").matches;
   function passBase(p, skipKey) {
     if (state.sec && p.section !== state.sec) return false;
     if (state.sub && !nodePass(p, state.sec, state.sub)) return false;
@@ -324,7 +330,7 @@
   }
   function cardSite(p) {
     return `<article class="cat-card" data-cat="open" data-id="${p.id}" tabindex="0" role="button" aria-label="${esc(p.name)} ${esc(p.color)}">${badges(p)}
-      <div class="cat-head"><div class="cat-name">${esc(p.name)}</div><div class="cat-color">${esc(p.color)}<br>${esc(p.sub)}</div></div>
+      <div class="cat-head"><div class="cat-name" title="${esc(p.name)}">${esc(p.name)}</div><div class="cat-color">${esc(p.color)}<br>${esc(p.sub)}</div></div>
       ${imgHtml(p)}
       <div class="cat-body">${stockHtml(p, true)}<div class="cat-pricerow"><span class="cat-label">Розничная цена</span><span class="cat-price">${money(p.price)}</span></div>
       ${!state.clientView ? `<div class="cat-partner">Партнёр: <b>${money(p.partner)}</b></div>` : ""}</div>
@@ -335,7 +341,7 @@
     const meta = [coatShort[p.coating] ?? p.coating, p.sizes.length ? (p.section === "interior" ? p.sizes.map((s) => s.split("×")[1]).join("/") : p.sizes.join(", ")) : "", p.types.length ? p.types.join("/") : ""].filter(Boolean);
     return `<article class="cat-card" data-cat="open" data-id="${p.id}" tabindex="0" role="button" aria-label="${esc(p.name)} ${esc(p.color)}">${badges(p)}
       ${imgHtml(p)}
-      <div class="cat-body"><div class="cat-name">${esc(p.name)}</div><div class="cat-color">${esc(p.color)} · ${esc(p.sub)}</div>
+      <div class="cat-body"><div class="cat-name" title="${esc(p.name)}">${esc(p.name)}</div><div class="cat-color">${esc(p.color)} · ${esc(p.sub)}</div>
       ${meta.length ? `<div class="cat-meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</div>` : ""}
       ${priceHtml(p)}${stockHtml(p)}</div>
       ${!state.clientView ? `<div class="cat-quick"><button data-cat="copy" data-id="${p.id}">${icon("copy")}Ответ клиенту</button></div>` : ""}</article>`;
@@ -344,7 +350,7 @@
     const emp = !state.clientView;
     return `<div class="card tablewrap"><table class="cat-table"><thead><tr><th></th><th>Модель</th><th class="cat-hide-m">Раздел</th><th class="cat-hide-m cat-hide-l">Размеры</th><th class="num">Розница</th>${emp ? `<th class="num cat-hide-m">Партнёр</th>` : ""}<th>Наличие</th>${emp ? D.warehouses.map((w) => `<th class="num cat-hide-m">${esc(w.short)}</th>`).join("") + "<th></th>" : ""}</tr></thead><tbody>
       ${list.map((p) => `<tr data-cat="open" data-id="${p.id}" tabindex="0"><td><div class="cat-thumb"><img src="${p.img}" alt="" loading="lazy">${imgsOf(p).length > 1 ? `<span class="cat-thumb-n">${imgsOf(p).length}</span>` : ""}</div></td>
-        <td><div class="cat-name">${esc(p.name)}</div><span class="small">${esc(p.color)}</span></td>
+        <td><div class="cat-name" title="${esc(p.name)}">${esc(p.name)}</div><span class="small">${esc(p.color)}</span></td>
         <td class="cat-hide-m"><span class="small">${esc(p.sub)}</span></td>
         <td class="cat-hide-m cat-hide-l"><span class="small">${esc(sizesShort(p))}${p.types.length ? " · " + esc(p.types.join("/")) : ""}</span></td>
         <td class="num"><strong>${money(p.price)}</strong>${p.oldPrice ? `<span class="small cat-old">${money(p.oldPrice)}</span>` : ""}</td>
@@ -371,10 +377,64 @@
       ${tree.map(([g]) => `<button class="cat-tab ${grp === g ? "active" : ""}" data-cat="grp" data-grp="${esc(g)}">${esc(g)}</button>`).join("")}</div>
       ${items.length ? `<div class="cat-subrow">${items.map(([u]) => { const n = countIn(s.id, u); return `<button class="cat-chip ${state.sub === u ? "active" : ""} ${n ? "" : "empty"}" data-cat="sub" data-sub="${esc(u)}" ${n ? "" : "disabled"}>${esc(u)}<small>${n}</small></button>`; }).join("")}</div>` : ""}</div>`;
   }
+  function pathHtml() {
+    const s = sectionOf(state.sec);
+    const crumbs = [`<button class="cat-crumb ${!s ? "cur" : ""}" data-cat="sec" data-sec="">Все разделы</button>`];
+    if (s) crumbs.push(`<button class="cat-crumb ${!state.grp && !state.sub ? "cur" : ""}" data-cat="sec" data-sec="${s.id}">${esc(s.name)}</button>`);
+    if (s && state.grp) crumbs.push(`<button class="cat-crumb ${!state.sub ? "cur" : ""}" data-cat="grp" data-grp="${esc(state.grp)}">${esc(state.grp)}</button>`);
+    if (s && state.sub) crumbs.push(`<span class="cat-crumb cur">${esc(state.sub)}</span>`);
+    return `<nav class="cat-path" aria-label="Путь по каталогу">${crumbs.join(icon("chevron-right"))}</nav>`;
+  }
+  function navLabel() {
+    const s = sectionOf(state.sec);
+    return !s ? "Все разделы" : state.sub ? `${s.name} › ${state.sub}` : state.grp ? `${s.name} › ${state.grp}` : s.name;
+  }
+  function navHtml() {
+    const level = nav.grp ? 2 : nav.sec ? 1 : 0;
+    const s = sectionOf(nav.sec);
+    const tree = s ? SITE_TREE[s.id] || [] : [];
+    const items = ((tree.find(([g]) => g === nav.grp) || [])[1]) || [];
+    const row = (cls, attrs, label, n, more, ic = "") => `<button class="cat-nav-item ${cls}" ${attrs}>${ic}<span>${label}</span>${n != null ? `<small>${n}</small>` : ""}${more ? icon("chevron-right") : ""}</button>`;
+    const col1 = [
+      row(!state.sec ? "cur" : "", `data-cat="nav-pick-sec" data-sec=""`, "Все разделы", D.products.length, false, icon("layout-grid")),
+      ...D.sections.map((x) => row(`${state.sec === x.id ? "cur" : ""} ${nav.sec === x.id ? "hover" : ""}`, `data-cat="nav-sec" data-sec="${x.id}" data-nav-hover="sec"`, esc(x.name), countIn(x.id), true, icon(x.icon))),
+      ...NAV_EXTRA.map(([id, name, ic]) => id === "fire"
+        ? row("empty", `disabled title="На tandoor.ru это отдельная страница, в демо-данных товаров нет"`, esc(name), 0, false, icon(ic))
+        : row(state.tags.includes("sale") && !state.sec ? "cur" : "", `data-cat="nav-sale"`, esc(name), D.products.filter((p) => p.oldPrice).length, false, icon(ic))),
+    ].join("");
+    const col2 = s ? [
+      `<header>${esc(s.name)}</header>`,
+      row(state.sec === s.id && !state.grp && !state.sub ? "cur" : "", `data-cat="nav-pick-sec" data-sec="${s.id}"`, "Все товары", countIn(s.id), false),
+      ...tree.map(([g]) => row(`${state.grp === g && state.sec === s.id ? "cur" : ""} ${nav.grp === g ? "hover" : ""}`, `data-cat="nav-grp" data-grp="${esc(g)}" data-nav-hover="grp"`, esc(g), countGrp(s.id, g), true)),
+    ].join("") : `<p class="cat-nav-hint">Наведите на раздел слева</p>`;
+    const col3 = nav.grp ? [
+      `<header>${esc(nav.grp)}</header>`,
+      row(state.grp === nav.grp && !state.sub ? "cur" : "", `data-cat="nav-pick-grp" data-grp="${esc(nav.grp)}"`, "Все товары", countGrp(nav.sec, nav.grp), false),
+      ...items.map(([u]) => { const n = countIn(nav.sec, u); return row(state.sub === u ? "cur" : n ? "" : "empty", `data-cat="nav-pick-sub" data-sub="${esc(u)}" ${n ? "" : 'disabled title="На tandoor.ru подраздел есть, в демо-данных товаров нет"'}`, esc(u), n, false); }),
+    ].join("") : `<p class="cat-nav-hint">${s ? "Выберите группировку" : ""}</p>`;
+    const title = level === 2 ? nav.grp : level === 1 ? s?.name : "Каталог";
+    return `<div class="cat-nav-box" role="dialog" aria-modal="true" aria-label="Разделы каталога">
+      <div class="cat-nav-head"><button class="cat-nav-back" data-cat="nav-back" aria-label="Назад" ${level ? "" : "disabled"}>${icon("arrow-left")}</button><b class="m">${esc(title || "Каталог")}</b><b class="d">Разделы каталога</b><small>как в меню «Каталог» на tandoor.ru</small><button class="cat-nav-close" data-cat="nav-close" aria-label="Закрыть">${icon("x")}</button></div>
+      <div class="cat-nav-cols"><div class="cat-nav-col c1">${col1}</div><div class="cat-nav-col c2">${col2}</div><div class="cat-nav-col c3">${col3}</div></div>
+    </div>`;
+  }
+  function renderNav() {
+    const el = document.querySelector("[data-cat-nav]");
+    if (!el) return;
+    el.classList.toggle("open", nav.open); el.dataset.level = nav.grp ? 2 : nav.sec ? 1 : 0;
+    if (nav.open) { el.removeAttribute("aria-hidden"); el.innerHTML = navHtml(); lucide.createIcons(); } else { el.setAttribute("aria-hidden", "true"); el.innerHTML = ""; }
+    document.body.classList.toggle("cat-nav-open", nav.open && current === ROUTE);
+    document.querySelector(".cat-navbtn")?.setAttribute("aria-expanded", String(nav.open));
+  }
+  function openNav() { nav.open = true; nav.sec = state.sec || (isDesktop() && D.sections[0] ? D.sections[0].id : ""); nav.grp = state.grp || (state.sub ? grpOf(state.sec, state.sub) : ""); renderNav(); document.querySelector(".cat-nav-box .cat-nav-close")?.focus({ preventScroll: true }); }
+  function closeNav() { if (!nav.open) return; nav.open = false; renderNav(); document.querySelector(".cat-navbtn")?.focus({ preventScroll: true }); }
+  function navApply(patch) { Object.assign(state, { sub: "", grp: "", f: {}, limit: PAGE }, patch); nav.open = false; writeUrl(); rerender(); }
   function mainHtml() {
     const list = filtered();
     const s = sectionOf(state.sec);
     return `<section class="card cat-toolbar">
+      <button class="cat-navbtn ${nav.open ? "on" : ""}" data-cat="nav-open" aria-expanded="${nav.open}" aria-haspopup="dialog" title="Разделы каталога: как меню «Каталог» на tandoor.ru">${icon("menu")}<span>${esc(navLabel())}</span>${icon("chevron-down")}</button>
+      <div class="cat-nav ${nav.open ? "open" : ""}" data-cat-nav data-level="0" ${nav.open ? "" : 'aria-hidden="true"'}>${nav.open ? navHtml() : ""}</div>
       <div class="cat-search">${icon("search")}<input type="search" id="cat-search" placeholder="Модель, цвет или артикул" value="${esc(state.q)}" autocomplete="off" aria-label="Поиск по каталогу">${state.q ? `<button class="cat-clear" data-cat="chip" data-key="q" aria-label="Очистить поиск">${icon("x")}</button>` : ""}</div>
       <button class="primary cat-filterbtn" data-cat="toggle-filters" aria-expanded="${state.filtersOpen}">${icon("sliders-horizontal")}<span>Подобрать по фильтрам</span>${activeCount() ? `<b>${activeCount()}</b>` : ""}</button>
       <div class="cat-seg" role="group" aria-label="Вид карточек">
@@ -388,7 +448,7 @@
     <div class="cat-marks" aria-label="Быстрые отметки как на tandoor.ru">${quickHtml()}</div>
     <aside class="card cat-filters ${state.filtersOpen ? "open" : ""}" data-cat-filters aria-label="Фильтр" ${state.filtersOpen ? "" : 'aria-hidden="true"'}>${filtersHtml()}</aside>
     ${subChips()}
-    <div class="cat-summary"><div><b>${list.length}</b> ${plural(list.length)}${s ? ` · ${esc(s.name)}${state.sub ? " / " + esc(state.sub) : ""}` : ""}${state.clientView ? ` · <span class="tag warn">режим клиента</span>` : ""}</div><div class="cat-active">${activeChips()}</div></div>
+    <div class="cat-summary"><div class="cat-summary-l"><span><b>${list.length}</b> ${plural(list.length)}</span>${pathHtml()}${state.clientView ? `<span class="tag warn">режим клиента</span>` : ""}</div><div class="cat-active">${activeChips()}</div></div>
     <div data-cat-results>${resultsHtml(list)}</div>`;
   }
   const plural = (n) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? "товар" : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? "товара" : "товаров"; };
@@ -517,7 +577,7 @@
       const sum = r.querySelector(".cat-summary");
       if (sum) {
         const s = sectionOf(state.sec);
-        sum.innerHTML = `<div><b>${list.length}</b> ${plural(list.length)}${s ? ` · ${esc(s.name)}${state.sub ? " / " + esc(state.sub) : ""}` : ""}${state.clientView ? ` · <span class="tag warn">режим клиента</span>` : ""}</div><div class="cat-active">${activeChips()}</div>`;
+        sum.innerHTML = `<div class="cat-summary-l"><span><b>${list.length}</b> ${plural(list.length)}</span>${pathHtml()}${state.clientView ? `<span class="tag warn">режим клиента</span>` : ""}</div><div class="cat-active">${activeChips()}</div>`;
       }
       const f = r.querySelector("[data-cat-filters]");
       if (f && opts.filters !== false) { const top = f.querySelector("[data-cat-fbody]")?.scrollTop || 0; f.innerHTML = filtersHtml(); const fb = f.querySelector("[data-cat-fbody]"); if (fb) fb.scrollTop = top; }
@@ -552,10 +612,20 @@
   /* ---------- события ---------- */
   document.addEventListener("click", (e) => {
     if (current !== ROUTE) return;
+    if (nav.open && !e.target.closest(".cat-nav-box, .cat-navbtn")) closeNav();
     const b = e.target.closest("[data-cat]");
     if (!b) return;
     const a = b.dataset.cat;
     if (e.target.closest("a")) return;
+    if (a === "nav-open") { if (nav.open) closeNav(); else openNav(); return; }
+    if (a === "nav-close") { closeNav(); return; }
+    if (a === "nav-back") { if (nav.grp) nav.grp = ""; else nav.sec = ""; renderNav(); return; }
+    if (a === "nav-sec") { nav.sec = b.dataset.sec; nav.grp = ""; renderNav(); return; }
+    if (a === "nav-grp") { nav.grp = b.dataset.grp; renderNav(); return; }
+    if (a === "nav-pick-sec") { navApply({ sec: b.dataset.sec }); return; }
+    if (a === "nav-pick-grp") { navApply({ sec: nav.sec, grp: b.dataset.grp }); return; }
+    if (a === "nav-pick-sub") { navApply({ sec: nav.sec, sub: b.dataset.sub, grp: grpOf(nav.sec, b.dataset.sub) }); return; }
+    if (a === "nav-sale") { navApply({ sec: "", tags: state.tags.includes("sale") ? state.tags : [...state.tags, "sale"] }); return; }
     if (a === "sec") { state.sec = b.dataset.sec; state.sub = ""; state.grp = ""; state.f = {}; state.limit = PAGE; writeUrl(); rerender(); return; }
     if (a === "grp") { const g = b.dataset.grp; if (state.sub && grpOf(state.sec, state.sub) !== g) state.sub = ""; state.grp = b.closest(".cat-tree") && state.grp === g ? "" : g; if (!g) state.sub = ""; state.limit = PAGE; writeUrl(); rerender(); return; }
     if (a === "sort") { state.sort = b.dataset.val; state.limit = PAGE; rerender("results"); return; }
@@ -579,8 +649,16 @@
     if (a === "copy") { e.stopPropagation(); copyReply(b.dataset.id); return; }
     if (a === "send") { notice("Демо: в рабочем ЛК ответ уйдёт клиенту через MAX или Telegram. Сейчас ничего не отправлено."); return; }
   }, true);
+  document.addEventListener("mouseover", (e) => {
+    if (current !== ROUTE || !nav.open || !isDesktop()) return;
+    const b = e.target.closest?.("[data-nav-hover]");
+    if (!b) return;
+    if (b.dataset.navHover === "sec" && nav.sec !== b.dataset.sec) { nav.sec = b.dataset.sec; nav.grp = ""; renderNav(); }
+    else if (b.dataset.navHover === "grp" && nav.grp !== b.dataset.grp) { nav.grp = b.dataset.grp; renderNav(); }
+  });
   document.addEventListener("keydown", (e) => {
     if (current !== ROUTE) return;
+    if (e.key === "Escape" && nav.open) { e.preventDefault(); closeNav(); return; }
     if (e.key === "Escape" && state.panelId) { e.preventDefault(); closePanel(); return; }
     if (e.key === "Escape" && state.filtersOpen) { e.preventDefault(); setFilters(false); return; }
     if (e.key === "Escape" && state.full) { e.preventDefault(); setFull(false); return; }
@@ -642,7 +720,8 @@
     if (!onRoute) {
       if (state.panelId) { state.panelId = null; renderPanel(); }
       if (state.full) { state.full = false; }
-      document.body.classList.remove("cat-fullscreen", "cat-filters-open");
+      nav.open = false;
+      document.body.classList.remove("cat-fullscreen", "cat-filters-open", "cat-nav-open");
       priorRender();
       return;
     }

@@ -151,6 +151,34 @@ var CATALOG_QA = await (async () => {
   await page.locator('.cat-tree button[data-cat="sec"][data-sec=""]').click();
   await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
 
+  // навигатор «Разделы» — как меню «Каталог» на tandoor.ru
+  ok((await page.locator(".cat-nav.open").count()) === 0, "navigator closed by default");
+  await page.locator(".cat-navbtn").click();
+  await page.locator(".cat-nav.open .cat-nav-box").waitFor({ state: "visible" });
+  ok((await page.locator(".cat-nav-col.c1 .cat-nav-item").count()) === 7, "navigator: Все разделы + 4 sections + Противопожарные + Скидки");
+  ok(await page.locator('.cat-nav-col.c1 .cat-nav-item.empty:has-text("Противопожарные")').isDisabled(), "Противопожарные двери dimmed (no demo products)");
+  await page.locator('.cat-nav-item[data-cat="nav-sec"][data-sec="entry"]').hover();
+  await page.waitForSelector('.cat-nav-col.c2 .cat-nav-item[data-grp="по конструкции"]');
+  ok(true, "hover on section shows its groups in column 2");
+  await page.locator('.cat-nav-item[data-cat="nav-grp"][data-grp="по конструкции"]').hover();
+  await page.waitForSelector('.cat-nav-col.c3 .cat-nav-item[data-sub="С терморазрывом"]');
+  ok(await page.locator(".cat-nav-back").isHidden(), "desktop: no back button");
+  await page.locator('.cat-nav-col.c3 .cat-nav-item[data-sub="С терморазрывом"]').click();
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "7");
+  ok((await page.locator(".cat-nav.open").count()) === 0, "picking a subsection applies it and closes the navigator");
+  ok((await page.locator(".cat-navbtn span").textContent()).includes("Входные двери › С терморазрывом"), "navigator button shows the path");
+  ok((await page.locator(".cat-path .cat-crumb").count()) === 4, "breadcrumb: Все разделы › Входные двери › по конструкции › С терморазрывом");
+  await page.locator('.cat-path .cat-crumb[data-cat="sec"][data-sec="entry"]').click();
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "29");
+  ok(true, "breadcrumb click goes up to the section");
+  await page.locator(".cat-navbtn").click();
+  await page.locator(".cat-nav.open").waitFor({ state: "visible" });
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(150);
+  ok((await page.locator(".cat-nav.open").count()) === 0, "Escape closes the navigator");
+  await page.locator('.cat-tree button[data-cat="sec"][data-sec=""]').click();
+  await page.waitForFunction(() => document.querySelector(".cat-summary b")?.textContent === "167");
+
   // views
   await page.locator('.cat-seg button[data-view="site"]').click();
   await page.locator(".cat-grid.view-site").waitFor({ state: "visible" });
@@ -327,9 +355,21 @@ var CATALOG_QA = await (async () => {
   ok(true, "mobile: filter applies");
   await page.locator(".cat-filters .cat-fapply").click();
   await page.waitForTimeout(300);
-  await page.locator('.cat-tree button[data-sec="interior"]').click();
+  ok(await page.locator(".cat-tree").isHidden(), "mobile: side tree hidden, navigator button instead");
+  await page.locator(".cat-navbtn").click();
+  await page.locator(".cat-nav.open").waitFor({ state: "visible" });
+  ok((await page.locator(".cat-nav-col.c2").isHidden()) && (await page.locator(".cat-nav-col.c1").isVisible()), "mobile: one level at a time (drill-down as on site)");
+  await page.locator('.cat-nav-item[data-cat="nav-sec"][data-sec="interior"]').click();
+  await page.locator(".cat-nav-col.c2").waitFor({ state: "visible" });
+  ok((await page.locator(".cat-nav-head b.m").textContent()) === "Межкомнатные двери", "mobile: level title = section");
+  await page.locator('.cat-nav-item[data-cat="nav-grp"][data-grp="по цвету"]').click();
+  await page.locator(".cat-nav-col.c3").waitFor({ state: "visible" });
+  await page.locator(".cat-nav-back").click();
+  await page.locator(".cat-nav-col.c2").waitFor({ state: "visible" });
+  ok(true, "mobile: back returns one level");
+  await page.locator('.cat-nav-col.c2 .cat-nav-item[data-cat="nav-pick-sec"]').click();
   await page.waitForFunction(() => document.querySelector(".cat-subchips"));
-  ok(true, "mobile: section chip switches and shows subsections");
+  ok((await page.locator(".cat-nav.open").count()) === 0, "mobile: «Все товары» applies the section and closes");
   await page.locator(".cat-card").first().click();
   await page.locator(".cat-panel.open").waitFor({ state: "visible" });
   const pw = await page.locator(".cat-panel-box").evaluate((el) => el.getBoundingClientRect().width);
