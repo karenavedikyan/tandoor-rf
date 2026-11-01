@@ -4408,7 +4408,7 @@
       <h3 class="tt-detail-task-heading">Передача завершена</h3>
       ${body}
       <div class="tt-detail-monitor tt-detail-monitor--terminal" data-tt="detail-terminal-monitor">
-        <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">У кого сейчас предмет</span><span class="tt-detail-monitor-value"><strong>${E(custodian?.name || "—")}</strong></span></div>
+        <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">У кого сейчас предмет</span><span class="tt-detail-monitor-value"><strong>${E(o.holderId ? recipientDisplayName(o, o.holderId) : custodian?.name || "—")}</strong></span></div>
         ${confirmLine}
       </div>
       <div class="tt-detail-primary" data-tt="detail-terminal-nav">${btn("Вернуться к передачам", 'data-tt="terminal-back-list"', "tt-primary tt-btn-block")}</div>
@@ -4420,7 +4420,7 @@
     const fin = deliveryTargetContact(o);
     const last = lastConfirmedHandoffEntry(o);
     const finLine = fin
-      ? `<div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Куда доставляют</span><span class="tt-detail-monitor-value">${E(fin.name)}</span></div>`
+      ? `<div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Куда доставляют</span><span class="tt-detail-monitor-value">${E(o.finalRecipientId ? recipientDisplayName(o, o.finalRecipientId) : fin.name)}</span></div>`
       : "";
     const lastLine = last
       ? `<div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Последнее подтверждение</span><span class="tt-detail-monitor-value">${E(dt(last.at))}</span></div>`
@@ -4428,9 +4428,9 @@
     return `<section class="tt-detail-task-card tt-detail-task-card--former" data-tt="detail-task-former">
       <h3 class="tt-detail-task-heading">Вы передали предмет</h3>
       <p class="tt-detail-task-instructions">Ваш этап завершён. От вас больше не требуется действий.</p>
-      <p class="tt-detail-task-follow">Далее за передачу отвечает <strong>${E(h?.name || "—")}</strong>.</p>
+      <p class="tt-detail-task-follow">Далее за передачу отвечает <strong>${E(o.holderId ? recipientDisplayName(o, o.holderId) : h?.name || "—")}</strong>.</p>
       <div class="tt-detail-monitor" data-tt="detail-monitor">
-        <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">У кого сейчас предмет</span><span class="tt-detail-monitor-value"><strong>${E(h?.name || "—")}</strong></span></div>
+        <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">У кого сейчас предмет</span><span class="tt-detail-monitor-value"><strong>${E(o.holderId ? recipientDisplayName(o, o.holderId) : h?.name || "—")}</strong></span></div>
         <div class="tt-detail-monitor-row"><span class="tt-detail-monitor-label">Статус</span><span class="tt-detail-monitor-value tt-detail-monitor-status">${statusBadge(o)}</span></div>
         ${finLine}
         ${lastLine}
@@ -4567,7 +4567,7 @@
           : "Следите за статусом в истории.";
       return `<section class="tt-detail-task-card tt-detail-task-card--info" data-tt="detail-task-readonly">
         <h3 class="tt-detail-task-heading">Только просмотр</h3>
-        <p class="tt-detail-readonly">Сейчас ответственный: <strong>${E(h?.name || "—")}</strong>. ${E(wait)} Действия доступны держателю.</p>
+        <p class="tt-detail-readonly">Сейчас ответственный: <strong>${E(responsibleHolderName(o, actor))}</strong>. ${E(wait)} Действия доступны держателю.</p>
       </section>`;
     }
     if (o.pendingId) return pendingHandoffPanel(o, p);
