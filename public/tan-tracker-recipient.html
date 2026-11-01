@@ -56,11 +56,9 @@
     </div>
     <script>
       (function () {
-        try {
-          var params = new URLSearchParams(window.location.search || "");
-          var mst = params.get("mst");
-          if (mst && String(mst).trim()) window.__TT_MESSENGER_PORTAL_ONLY__ = true;
-        } catch (e) {}
+        // The boot script must validate every public link before the tracker can
+        // replace #tt-root with a form (including old QR and holder links).
+        window.__TT_MESSENGER_PORTAL_ONLY__ = true;
       })();
     </script>
     <script src="/common.js" defer></script>
@@ -69,8 +67,8 @@
     <script src="/tan-tracker/assets/qrcode-generator.js" defer></script>
     <script src="/tan-tracker/tan-tracker-scope.js" defer></script>
     <script src="/tan-tracker/tan-tracker-attachments.js" defer></script>
-    <script src="/tan-tracker/tan-tracker.js?v=20261030-inv-welcome" defer></script>
+    <script src="/tan-tracker/tan-tracker.js?v=20261101-stale-links" defer></script>
     <script src="/tan-tracker-lk-api.js" defer></script>
-    <script src="/tan-tracker-recipient-boot.js" defer></script>
+    <script src="/tan-tracker-recipient-boot.js?v=20261101-stale-links" defer></script>
   </body>
 </html>

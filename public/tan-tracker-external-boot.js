@@ -14,7 +14,11 @@
     var q = est ? "est=" + encodeURIComponent(est) : "cap=" + encodeURIComponent(cap);
     return fetch("/api/tan-tracker/public/external/bootstrap?" + q, { credentials: "same-origin" }).then(function (r) {
       return r.json().then(function (data) {
-        if (!r.ok) throw new Error((data && data.error && data.error.message) || "Сессия недоступна.");
+        if (!r.ok) {
+          var err = new Error((data && data.error && data.error.message) || "Сессия недоступна.");
+          err.status = r.status;
+          throw err;
+        }
         return data;
       });
     });
@@ -43,7 +47,12 @@
         var panel = document.getElementById("tt-state-panel");
         if (panel) {
           panel.classList.remove("clients-hidden");
-          panel.textContent = (err && err.message) || "Не удалось открыть «Мои передачи».";
+          panel.setAttribute("role", "alert");
+          panel.textContent = err && [401, 403, 404, 410].indexOf(err.status) >= 0
+            ? "Ссылка для входа больше не действует. Продолжить передачу по ней нельзя. " +
+              "Откройте актуальную ссылку из бота Тандор или попросите её у отправителя. " +
+              "Для новой отправки создайте новую передачу."
+            : (err && err.message) || "Не удалось открыть «Мои передачи».";
         }
       });
   }
