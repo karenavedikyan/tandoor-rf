@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { tanTrackerNavAllowed } from "../tan-tracker/scope";
+import { ADMIN_CREATED_EVENT, canDeliverAdminCreated } from "../tan-tracker/admin-overview";
 
 /** Delivery-time check: active LK user, still holder at handoff version, canonical TT access. */
 export async function canDeliverAssignmentNotification(
@@ -44,6 +45,9 @@ export async function canDeliverTanTrackerOutboxNotification(
   handoffVersion: number,
   eventType: string,
 ): Promise<boolean> {
+  if (eventType === ADMIN_CREATED_EVENT) {
+    return canDeliverAdminCreated(client, userId, transferId);
+  }
   if (eventType === "tan_tracker.assignment" || eventType === "tan_tracker.code_obtained") {
     return canDeliverAssignmentNotification(client, userId, transferId, handoffVersion);
   }

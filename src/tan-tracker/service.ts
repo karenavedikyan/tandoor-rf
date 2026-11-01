@@ -33,6 +33,7 @@ import {
 import { isExternalMessengerFeatureEnabled } from "./external-messenger/config";
 import { loadPersonalRegistryLists } from "./registry-cleanup/personal-flags";
 import type { TanTrackerRegistryPersonalBootstrap } from "./types";
+import { loadAdminOverview } from "./admin-overview";
 
 function mapRoleToPrototype(role: string): string {
   if (role === "regional_manager") return "regional";
@@ -86,6 +87,7 @@ export async function buildTanTrackerBootstrap(
   externalMessengerEnabled: boolean;
   userTestEnvironmentBanner: string | null;
   registryPersonal: TanTrackerRegistryPersonalBootstrap | null;
+  adminOverview?: Awaited<ReturnType<typeof loadAdminOverview>> & { readOnly: boolean };
 }> {
   const pool = getPool();
   if (!pool) {
@@ -226,6 +228,9 @@ export async function buildTanTrackerBootstrap(
     capabilities: { canWrite: tanTrackerCanWrite(user, access) },
     externalMessengerEnabled: isExternalMessengerFeatureEnabled(),
     registryPersonal,
+    ...(user.role === "admin" ? {
+      adminOverview: { ...await loadAdminOverview(pool, user.id), readOnly: !!access.preview?.active },
+    } : {}),
     ...tanTrackerUserTestBannerForApi(),
   };
 }

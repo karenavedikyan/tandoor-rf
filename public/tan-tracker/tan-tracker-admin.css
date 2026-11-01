@@ -1,0 +1,28 @@
+.tt-admin-overview{margin:0 0 24px;padding:20px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--text)}
+.tt-admin-heading{display:flex;align-items:flex-start;gap:16px;justify-content:space-between}
+.tt-admin-heading h2{margin:0 0 8px;font-size:20px;line-height:1.3}
+.tt-admin-overview p{margin:8px 0 14px;line-height:1.5}
+.tt-admin-overview button,.tt-admin-overview select{min-height:44px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--text);font:inherit;padding:9px 12px}
+.tt-admin-overview button{cursor:pointer}
+.tt-admin-overview button:disabled{cursor:default;opacity:.65}
+.tt-admin-overview :focus-visible{outline:2px solid var(--accent,#5b842c);outline-offset:3px}
+.tt-admin-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+.tt-admin-tabs [aria-pressed=true]{border-color:var(--accent,#5b842c);font-weight:700;box-shadow:inset 0 -3px var(--accent,#5b842c)}
+.tt-admin-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}
+.tt-admin-metrics div{display:flex;flex-direction:column;gap:6px;border-left:3px solid var(--accent,#5b842c);padding-left:12px}
+.tt-admin-metrics strong{font-size:26px;line-height:1.2}
+.tt-admin-metrics span,.tt-admin-note{font-size:13px;line-height:1.5}
+.tt-admin-overview summary{min-height:44px;padding:12px 0;font-weight:600;cursor:pointer}
+.tt-admin-table-wrap{overflow:auto;max-height:320px}
+.tt-admin-table-wrap table{width:100%;border-collapse:collapse;font-size:13px}
+.tt-admin-table-wrap th,.tt-admin-table-wrap td{padding:9px 6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+.tt-admin-table-wrap caption{text-align:left;padding:8px 0}
+.tt-admin-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}
+.tt-admin-overview label{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;min-width:0}
+.tt-admin-overview select{width:100%;min-width:0}
+.tt-admin-settings{border-top:1px solid var(--line);margin-top:16px}
+.tt-admin-settings label{max-width:420px;margin:12px 0}
+.tt-admin-feedback:empty{display:none}
+.tt-admin-order-meta{display:block;margin-top:6px;font-size:12px;line-height:1.5;font-weight:400;color:var(--text);white-space:normal}
+@media(max-width:767px){.tt-registry:has(.tt-admin-settings[open]) [data-tt="create-fab"]{display:none}}
+@media(max-width:767px){.tt-admin-overview{padding:14px}.tt-admin-heading{flex-wrap:wrap}.tt-admin-heading h2{font-size:18px}.tt-admin-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.tt-admin-filters{grid-template-columns:minmax(0,1fr)}}

@@ -44,6 +44,7 @@ import {
 } from "./external-person/web-draft-handlers";
 import { declineExternalRequestHandler } from "./external-request/decline-mutation";
 import { listLkNotificationsHandler, markLkNotificationsReadHandler } from "./lk-notifications-handlers";
+import { updateAdminTrackNotifications } from "./admin-overview-handlers";
 import { adminRefreshPhoneDedupeHandler, adminSetPhoneCanonicalHandler } from "./admin-phone-dedupe-handlers";
 import {
   listExternalIntakeRecipientsPublicHandler,
@@ -127,6 +128,10 @@ export function createTanTrackerRouter(): express.Router {
 
   router.get("/notifications", ...readChain, (req, res, next) => {
     void listLkNotificationsHandler(req, res).catch(next);
+  });
+
+  router.patch("/admin/track-notifications", csrfProtection, ...writeChain, (req, res, next) => {
+    void updateAdminTrackNotifications(req, res).catch(next);
   });
 
   router.post("/notifications/read", csrfProtection, ...writeChain, (req, res, next) => {

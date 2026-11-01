@@ -48,6 +48,7 @@ export async function fanoutStaffTransferNotification(
   const skipMessenger = new Set((input.skipMessengerUserIds ?? []).filter((id): id is string => Boolean(id)));
   const lkCopy = staffNotificationLkCopy(input.eventType, input.payload);
   const payloadJson = {
+    ...(input.payload.creatorKind ? { creatorKind: input.payload.creatorKind } : {}),
     transferId: input.payload.transferId,
     publicCode: input.payload.publicCode,
     itemTitle: input.payload.itemTitle,

@@ -9,6 +9,7 @@ import {
 } from "./intake";
 import { notifyExternalCreatedStaff, notifyTransferAssignment } from "../transfer-lk-notify";
 import { externalRequestDueAtFromMode } from "./due-at-msk";
+import { notifyAdminsOfNewTrack } from "../admin-overview";
 
 export type ExternalDraftPayload = {
   item?: string;
@@ -163,5 +164,6 @@ export async function confirmExternalRequestDraft(
     fromPartyId: input.externalPartyId,
     handoffVersion: 1,
   });
+  await notifyAdminsOfNewTrack(client, publicCode);
   return { transferId: publicCode, publicCode };
 }

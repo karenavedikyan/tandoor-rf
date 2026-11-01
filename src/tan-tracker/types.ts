@@ -31,6 +31,7 @@ export type TanTrackerTransferRow = {
   from_external?: boolean;
   general_archived_at?: Date | null;
   deleted_at?: Date | null;
+  created_at?: Date;
 };
 
 export type TanTrackerTimelineRow = {
@@ -92,6 +93,7 @@ export type TanTrackerOrderDto = {
   canEditDraft?: boolean;
   rowVersion?: number;
   fromExternal?: boolean;
+  createdAt?: number;
   generalArchived?: boolean;
   /** Server hint for registry delete before first confirmed receipt (authoritative for UI). */
   canDeleteBeforeReceipt?: boolean;

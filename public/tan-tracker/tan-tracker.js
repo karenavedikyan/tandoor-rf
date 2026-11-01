@@ -1814,6 +1814,7 @@
       ${registryRouteLine(o, { actor })}
       <div class="tt-card-v2-foot">${statusBadge(o, actor, { compact: true })}<span class="tt-card-v2-due-inline ${due.overdue ? "tt-due-human--over" : ""}">${E(registryCardDuePrimary(o))}</span></div>
       <p class="tt-card-v2-meta">${registryCardMeta(o)}</p>
+      ${window.TanTrackerAdmin?.orderMeta(o) ?? ""}
     </button>`;
     if (!check) return cardInner;
     return `<div class="tt-selectable-card${selected ? " tt-is-selected" : ""}">${check}${cardInner}</div>`;
@@ -1876,7 +1877,7 @@
           RC()?.cleanupPreviewReadOnly?.() ? "" : `<td class="tt-selection-cell">${RC().registryCheckbox(o)}</td>`;
         return `<tr data-tt-open="${E(o.id)}" class="${overdue ? "tt-row--overdue" : ""}${selected ? " tt-is-selected" : ""}">
           ${checkCol}
-          <td><strong>${E(o.item)}</strong><small>${E(o.id)}${o.qty ? ` · ${E(o.qty)}` : ""}</small></td>
+          <td><strong>${E(o.item)}</strong><small>${E(o.id)}${o.qty ? ` · ${E(o.qty)}` : ""}</small>${window.TanTrackerAdmin?.orderMeta(o) ?? ""}</td>
           <td>${registryRouteLine(o, { actor })}</td>
           <td>${statusBadge(o, actor)}</td>
           <td class="tt-table-due">${humanDueTableCell(o)}</td>
@@ -3416,6 +3417,7 @@
   function visibleOrders() {
     const actor = actorContactId();
     let list = orders.filter((o) => orderVisible(o));
+    list = window.TanTrackerAdmin?.filter(list, actor) ?? list;
     const narrowByActing =
       state.actingContactId &&
       (!TT_LK ||
@@ -3449,8 +3451,10 @@
       }
       return true;
     });
-    list = RC()?.filterGeneralArchiveView?.(list) ?? list;
-    list = RC()?.applyRegistryPersonalView?.(list, actor) ?? list;
+    if (!window.TanTrackerAdmin?.isGeneral()) {
+      list = RC()?.filterGeneralArchiveView?.(list) ?? list;
+      list = RC()?.applyRegistryPersonalView?.(list, actor) ?? list;
+    }
     return list;
   }
 
@@ -3801,7 +3805,7 @@
       </div>
       <button type="button" class="tt-filter-trigger" data-tt="registry-filter-open" data-active="${filtActive}" aria-label="Фильтр статуса"><i data-lucide="sliders-horizontal"></i>${badge ? `<span class="tt-filter-badge" data-tt="filter-badge">${badge}</span>` : ""}</button>
     </div>
-    ${RC()?.registryPersonalToolbar?.() ?? ""}
+    ${window.TanTrackerAdmin?.isGeneral() ? "" : RC()?.registryPersonalToolbar?.() ?? ""}
     ${registryDesktopStatusChips()}
     <div class="tt-toolbar tt-toolbar--legacy">
       <div class="tt-mine-filters tt-mine-filters--legacy" role="group" aria-label="Мои передачи">
@@ -3848,6 +3852,7 @@
     RC()?.syncRegistrySelection?.(rows);
     const selectionCol = RC()?.cleanupPreviewReadOnly?.() ? "" : '<th class="tt-selection-cell"><span class="tt-sr-only">Выбор</span></th>';
     return `<div class="tt-registry tt-view-enter" data-tt="registry-shell">
+      ${window.TanTrackerAdmin?.html() ?? ""}
       ${registryStatTiles()}
       ${RC()?.registrySelectionToolbar?.() ?? ""}
       ${state.toast ? `<p class="tt-success" data-tt="cleanup-result" role="status">${E(state.toast)}</p>` : ""}
@@ -5996,6 +6001,7 @@
       return;
     }
     if (action === "reset-filters") {
+      window.TanTrackerAdmin?.resetFilters();
       state.query = "";
       state.statusFilter = "all";
       renderTracker();
@@ -6308,6 +6314,7 @@
   }
 
   function hydrateFromServer(data, opts) {
+    window.TanTrackerAdmin?.hydrate(data);
     if (!data) return;
     const skipUrlRead = !!opts?.skipUrlRead;
     const skipRender = !!opts?.skipRender;
@@ -6430,6 +6437,14 @@
     if (!skipRender) renderTracker();
   }
 
+  window.TanTrackerAdmin?.attach({
+    getOrders: () => orders, getContacts: () => contacts, getActor: () => actorContactId(),
+    render: () => renderTracker(),
+    resetPersonalFilters: () => {
+      state.mineFilter = "all"; state.statusFilter = "all"; state.query = "";
+      state.registryPersonalView = "main";
+    },
+  });
   window.TanTrackerPrototype = {
     orders: () => orders,
     contacts: () => contacts,
