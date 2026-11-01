@@ -124,10 +124,11 @@
 .cat-grid.view-site{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
 .view-site .cat-card{align-items:stretch}
 .view-site .cat-head{padding:16px 16px 6px;text-align:center}
+.view-site .cat-card:has(.cat-badges) .cat-head{padding-inline:52px}
 .view-site .cat-head .cat-name{font-size:var(--text-lg)}
-.view-site .cat-head .cat-color{margin-top:4px}
-.view-site .cat-img{height:300px;background:transparent;--px:6px;--pt:6px;--pb:36px}
-.view-site .cat-img:not(.has-gallery){--pb:6px}
+.view-site .cat-head .cat-color{margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.view-site .cat-img{height:300px;background:transparent;--px:6px;--pt:6px;--pb:30px}
+.view-site .cat-head .cat-color{min-height:calc(2em * 1.35)}
 .view-site .cat-body{padding-top:6px}
 .view-site .cat-pricerow{justify-content:space-between;border-top:1px solid var(--line);padding-top:10px}
 .view-site .cat-pricerow .cat-label{color:var(--muted);font-size:var(--text-xs)}
@@ -140,7 +141,6 @@
 
 /* Вариант B: витрина — фото занимает верх карточки, остатки и цена в одной зоне */
 .view-show .cat-img{aspect-ratio:2/3;--pb:22px}
-.view-show .cat-img:not(.has-gallery){--pb:10px}
 .view-show .cat-img img{transition:transform .25s}
 .view-show .cat-card:hover .cat-img img{transform:scale(1.03)}
 
@@ -180,7 +180,8 @@ body:has(.cat-panel.open) #af-required-reminder{display:none}
 .cat-panel-head .cat-close svg{width:18px;height:18px}
 .cat-panel-body{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:20px;padding:20px}
 .cat-gallery{display:flex;flex-direction:column;gap:8px}
-.cat-gallery .cat-img{aspect-ratio:3/4;border-radius:8px;padding:12px;cursor:zoom-in}
+.cat-gallery .cat-img{aspect-ratio:3/4;border-radius:8px;padding:0;cursor:zoom-in}
+.cat-gallery .cat-img img{position:absolute;left:12px;top:12px;width:calc(100% - 24px);height:calc(100% - 24px);max-width:none;max-height:none;object-fit:contain}
 .cat-gallery .cat-arr{width:34px;height:34px;opacity:.9}
 .cat-gcount{position:absolute;right:10px;bottom:8px;font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:2px 8px}
 .cat-thumbs{display:flex;gap:6px;margin-top:8px;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin}
@@ -190,8 +191,8 @@ body:has(.cat-panel.open) #af-required-reminder{display:none}
 .cat-thumbs button span{font-size:10px;line-height:1.1;padding:2px 0 3px;color:var(--muted)}
 .cat-thumbs button.active{border-color:var(--green)}
 .cat-thumbs button.active span{color:var(--green)}
-.cat-gallery.zoom .cat-img{aspect-ratio:auto;cursor:zoom-out}
-.cat-gallery.zoom .cat-img img{max-height:none}
+.cat-gallery.zoom .cat-img{aspect-ratio:auto;cursor:zoom-out;padding:12px}
+.cat-gallery.zoom .cat-img img{position:static;width:100%;height:auto;max-height:none}
 .cat-gallery small{color:var(--muted);font-size:var(--text-xs)}
 .cat-info{display:flex;flex-direction:column;gap:16px;min-width:0}
 .cat-pricebox{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -246,7 +247,7 @@ body:has(.cat-panel.open) #af-required-reminder{display:none}
  .cat-quick{display:none}
  .cat-panel-box{width:100%;border-left:0}
  .cat-panel-body{grid-template-columns:1fr;padding:16px}
- .cat-gallery .cat-img{max-height:380px}
+ .cat-gallery .cat-img{max-height:380px;margin:0 auto;width:min(100%,285px)}
  .cat-pricebox{grid-template-columns:1fr}
  .cat-specs{grid-template-columns:1fr}
  .cat-table .cat-hide-m{display:none}
