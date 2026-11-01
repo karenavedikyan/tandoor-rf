@@ -883,6 +883,7 @@ describe("native external sender to external recipient (both channels)", { concu
       let r = await send(staffActor, { text: "Создать передачу" });
       r = await send(staffActor, { text: "Item with open invite" });
       r = await send(staffActor, { callback: button(r, /пропустить/iu) });
+      r = await send(staffActor, { callback: button(r, /пропустить/iu) });
       const draftKey = `native:staff:${channel}:${chatId}`;
       const thirdE164 = normalizeRuPhoneE164(thirdPhone);
       assert.ok(thirdE164);
@@ -891,6 +892,7 @@ describe("native external sender to external recipient (both channels)", { concu
          WHERE messenger_chat_id=$1 ORDER BY created_at DESC LIMIT 1`, [draftKey],
       )).rows[0];
       assert.ok(beforeDraft?.id);
+      assert.equal(beforeDraft.step, "recipient");
       const holderBefore = (await getPool()!.query(
         `SELECT holder_party_id::text, pending_party_id::text FROM tt_transfers WHERE id=$1`, [transfer],
       )).rows[0];
