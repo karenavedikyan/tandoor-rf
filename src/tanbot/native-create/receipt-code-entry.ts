@@ -15,6 +15,7 @@ import { removeTelegramReplyKeyboard } from "./keyboards";
 import { formatReceiptConfirmation } from "../../tan-tracker/receipt-confirmation-copy";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 import { holderCompletionPermission, startNativeHolderAction, type HolderActionTransfer } from "./holder-actions";
+import { holderTransferActionButtons } from "./holder-transfer-buttons";
 
 type ReceiptTransfer = LockedReceiptTransfer & HolderActionTransfer & {
   public_code: string; item_title: string; sender_name: string; recipient_name: string;
@@ -83,12 +84,7 @@ function transferDetailUi(
   withNavigation = true,
 ): Pick<NativeCreateReply, "telegramInlineKeyboard" | "maxInlineButtons"> {
   if (!row.pending_party_id) {
-    const buttons = [{
-      text: "Передать дальше", data: buildReceiptEntryCallback("forward", row.id, row.handoff_version)!,
-    }];
-    if (holderCompletionPermission(row).ok) buttons.push({
-      text: "Завершить трек", data: buildReceiptEntryCallback("close", row.id, row.handoff_version)!,
-    });
+    const buttons = holderTransferActionButtons(row, row.holder_party_id);
     if (withNavigation) buttons.push({
       text: "К списку", data: buildReceiptEntryCallback("list", String(listPage), 1)!,
     });

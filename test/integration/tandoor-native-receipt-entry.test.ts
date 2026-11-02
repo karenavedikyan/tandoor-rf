@@ -366,6 +366,110 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.notEqual(row.pending_party_id, t.recipient);
         assert.ok(row.first_custody_at);
       });
+      it(`${channel}: ${staff ? "staff" : "external"} all track entry points share holder actions without changing business data`, async () => {
+        const a = await actor(channel, staff), t = await seedReceived(a);
+        const before = await statusBusinessSnapshot(t.id);
+        const list = await send(a, "Мои передачи");
+        const detail = await send(a, "", button(list, `${t.id} · В работе`));
+        const actionButtons = (reply: Reply) => reply.buttons.filter(b =>
+          b.text === "Передать дальше" || b.text === "Завершить трек");
+        assert.deepEqual(actionButtons(detail).map(b => b.text), ["Передать дальше", "Завершить трек"]);
+        const statuses = await send(a, "Статус трека");
+        const card = await send(a, "", button(statuses, `${t.id} · Synthetic receipt item`));
+        const search = await send(a, `Статус ${t.id}`);
+        const refreshed = await send(a, "", button(card, "Обновить статус"));
+        for (const reply of [card, search, refreshed]) {
+          assert.deepEqual(actionButtons(reply), actionButtons(detail));
+          assert.match(reply.text, /Получение подтверждено. Трек открыт/);
+          assert.ok(reply.buttons.some(b => b.text === "Обновить статус"));
+          assert.ok(reply.buttons.some(b => b.text === "К списку треков"));
+        }
+        assert.deepEqual(await statusBusinessSnapshot(t.id), before, "opening any card only reads business data");
+        const intermediate = await seedReceived(a, false);
+        const intermediateCard = await send(a, "", statusView(intermediate.id));
+        assert.deepEqual(actionButtons(intermediateCard).map(b => b.text), ["Передать дальше"]);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} status starts the canonical forward flow and keeps the same track`, async () => {
+        const a = await actor(channel, staff), t = await seedReceived(a);
+        const before = await statusBusinessSnapshot(t.id);
+        const card = await send(a, "", statusView(t.id));
+        const start = await send(a, "", button(card, "Передать дальше"));
+        const { summary } = await selectForwardRecipient(a, start);
+        const unchanged = await statusBusinessSnapshot(t.id);
+        assert.deepEqual(unchanged.transfer, before.transfer, "recipient draft is not a transfer");
+        await send(a, "", button(summary, "Передать дальше"));
+        const next = await state(t.id);
+        assert.equal(next.holder_party_id, a.party);
+        assert.ok(next.pending_party_id);
+        assert.equal(next.status, "waiting");
+        assert.equal(next.handoff_version, 2);
+        assert.equal(next.successes, 0, "forwarding does not manufacture receipt");
+        const refreshed = await send(a, "", button(card, "Обновить статус"));
+        assert.match(refreshed.text, /Ожидает подтверждения получения/);
+        assert.ok(!refreshed.buttons.some(b => /Передать дальше|Завершить трек/.test(b.text)));
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} status completion needs separate confirmation and respects cancellation`, async () => {
+        const a = await actor(channel, staff), t = await seedReceived(a);
+        const before = await pendingBusinessSnapshot(t.id);
+        const card = await send(a, "", statusView(t.id));
+        const prompt = await send(a, "", button(card, "Завершить трек"));
+        assert.deepEqual(await pendingBusinessSnapshot(t.id), before);
+        const cancelled = button(prompt, "Да, завершить трек");
+        await send(a, "", button(prompt, "Отмена"));
+        await send(a, "", cancelled);
+        assert.deepEqual(await pendingBusinessSnapshot(t.id), before);
+        const fresh = await send(a, "", button(card, "Завершить трек"));
+        await send(a, "", button(fresh, "Да, завершить трек"));
+        assert.equal((await state(t.id)).status, "completed");
+        const refreshed = await send(a, "", button(card, "Обновить статус"));
+        assert.match(refreshed.text, /Статус: Завершён/);
+        assert.ok(!refreshed.buttons.some(b => /Передать дальше|Завершить трек/.test(b.text)));
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} status never gives holder actions to observers or unavailable tracks`, async () => {
+        const a = await actor(channel, staff);
+        for (const update of [
+          "pending_party_id=final_recipient_party_id,status='waiting'",
+          "status='completed'", "status='obsolete'", "general_archived_at=NOW()", "deleted_at=NOW()",
+          "holder_party_id=creator_party_id",
+        ]) {
+          const t = await seedReceived(a);
+          await p().query(`UPDATE tt_transfers SET ${update} WHERE id=$1`, [t.id]);
+          const before = await statusBusinessSnapshot(t.id);
+          const card = await send(a, "", statusView(t.id));
+          assert.ok(!card.buttons.some(b => /Передать дальше|Завершить трек/.test(b.text)), update);
+          assert.deepEqual(await statusBusinessSnapshot(t.id), before);
+        }
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} status action callbacks recheck versions, ownership, closure and live binding`, async () => {
+        const a = await actor(channel, staff);
+        for (const update of [
+          "handoff_version=handoff_version+1", "holder_party_id=creator_party_id",
+          "pending_party_id=creator_party_id,status='waiting'",
+          "status='completed'", "status='obsolete'", "general_archived_at=NOW()", "deleted_at=NOW()",
+        ]) {
+          const t = await seedReceived(a);
+          const card = await send(a, "", statusView(t.id));
+          await p().query(`UPDATE tt_transfers SET ${update} WHERE id=$1`, [t.id]);
+          const before = await statusBusinessSnapshot(t.id);
+          for (const action of ["Передать дальше", "Завершить трек"]) {
+            await send(a, "", button(card, action));
+            assert.deepEqual(await statusBusinessSnapshot(t.id), before, `${update}: ${action} must be inert`);
+          }
+        }
+        const t = await seedReceived(a);
+        const card = await send(a, "", statusView(t.id));
+        const before = await statusBusinessSnapshot(t.id);
+        for (const action of ["Передать дальше", "Завершить трек"]) {
+          await send(a, "", button(card, action), undefined, false);
+          assert.deepEqual(await statusBusinessSnapshot(t.id), before, "group callbacks are inert");
+        }
+        if (staff) await p().query(`UPDATE tanbot_${channel}_accounts SET stopped_at=NOW() WHERE user_id=$1`, [a.user]);
+        else await p().query(`DELETE FROM tt_external_person_verifications WHERE person_id=(SELECT id FROM tt_external_persons WHERE party_id=$1)`, [a.party]);
+        for (const action of ["Передать дальше", "Завершить трек"]) {
+          await send(a, "", button(card, action));
+          assert.deepEqual(await statusBusinessSnapshot(t.id), before, "revoked bindings are inert");
+        }
+      });
       it(`${channel}: ${staff ? "staff" : "external"} status is fresh, read-only and follows the holder only after OTP`, async () => {
         const a = await actor(channel, staff), t = await seed(a);
         if (staff) await p().query("UPDATE users SET role='manager' WHERE id=$1", [a.user]);

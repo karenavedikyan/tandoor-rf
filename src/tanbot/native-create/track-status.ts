@@ -16,6 +16,7 @@ import { assertNativeCreateContext } from "./access-guard";
 import { nativeVerifiedContactRequiredReply } from "./main-menu";
 import { removeTelegramReplyKeyboard } from "./keyboards";
 import type { NativeCreateContext, NativeCreateReply } from "./engine";
+import { holderTransferActionButtons } from "./holder-transfer-buttons";
 
 type StatusActor = { partyId: string | null; access: AccessContext | null };
 const PAGE_SIZE = 5;
@@ -120,6 +121,7 @@ export async function trackStatusReply(
     if (!row) return { text: NOT_AVAILABLE, ...ui(ctx, [listButton(), menuButton()]) };
     const state = await buildNotificationTransferState(client, row.id);
     return { text: formatTrackStatus(row, state), ...ui(ctx, [
+      ...holderTransferActionButtons(row, actor.partyId),
       { text: "Обновить статус", data: buildTrackStatusCallback({ action: "view", transferId: row.id })! },
       listButton(), menuButton(),
     ]) };
