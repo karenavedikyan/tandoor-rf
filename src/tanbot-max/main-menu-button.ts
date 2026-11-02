@@ -6,9 +6,9 @@ import { NATIVE_MENU_DRAFT_HEX } from "../tanbot/native-create/menu-sentinel";
 export const MAX_MAIN_MENU_CALLBACK = buildNativeCreateCallback("menu_home", NATIVE_MENU_DRAFT_HEX, 1)!;
 
 function isMenuNavigationButton(button: MaxInlineButton): boolean {
-  if (button.type !== "callback") {
-    return button.text.trim().toLowerCase() === "меню";
-  }
+  const label = button.text.trim().toLowerCase();
+  if (label === "меню" || label === "к основным действиям") return true;
+  if (button.type !== "callback") return false;
   const parsed = parseNativeCreateCallback(button.payload ?? "");
   return parsed?.action === "menu" || parsed?.action === "menu_home";
 }

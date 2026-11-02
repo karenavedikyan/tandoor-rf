@@ -10,7 +10,14 @@ import {
 export const TELEGRAM_REPLY_DELIVERY_LOCK_NS = 847291;
 export const MAX_REPLY_DELIVERY_LOCK_NS = 847292;
 
-export type ReplyDeliveryStep = "primary" | "copyOnly" | "invitation" | "nativeMedia" | "done";
+export type ReplyDeliveryStep =
+  | "clearReplyKeyboard"
+  | "primary"
+  | "restoreReplyKeyboard"
+  | "copyOnly"
+  | "invitation"
+  | "nativeMedia"
+  | "done";
 
 export function maxDeliveryLockKeys(dedupKey: string): [number, number] {
   let h1 = 0;
@@ -94,7 +101,7 @@ export async function loadMaxReplyRowLocked(
 export async function mergeTelegramReplyDeliveryProgress(
   client: PoolClient,
   updateId: number,
-  step: "primary" | "copyOnly" | "invitation",
+  step: "clearReplyKeyboard" | "primary" | "restoreReplyKeyboard" | "copyOnly" | "invitation",
 ): Promise<void> {
   const field = step;
   await client.query(
@@ -166,7 +173,10 @@ export async function mergeMaxNativeMediaProgress(
 }
 
 function nextDeliveryStep(extra: TelegramReplyExtra | MaxReplyExtra): ReplyDeliveryStep {
+  const tg = extra as TelegramReplyExtra;
+  if (tg.replyKeyboardClear && !extra.delivery?.clearReplyKeyboard) return "clearReplyKeyboard";
   if (!extra.delivery?.primary) return "primary";
+  if (tg.replyKeyboardRestore && !extra.delivery?.restoreReplyKeyboard) return "restoreReplyKeyboard";
   if (extra.copyOnlyCode && !extra.delivery.copyOnly) return "copyOnly";
   if (extra.forwardInvitationText && !extra.delivery.invitation) return "invitation";
   const queueLen = extra.nativeMediaQueue?.length ?? 0;

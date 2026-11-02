@@ -108,7 +108,9 @@ async function resumeOwnedNativeDraft(
   const draft = await peekResumableNativeDraft(client, ctx);
   if (!draft) return null;
   const payload = draft.payload as NativeCreateDraftPayload;
-  return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload);
+  return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload, {
+    telegramClearKeyboard: ctx.channel === "telegram",
+  });
 }
 
 function stepPrompt(
@@ -124,11 +126,11 @@ function stepPrompt(
     case "photo":
       if (photoCount > 0) {
         const countLine = genericDraft ? `Файлы: ${photoCount}/5.` : `Фото: ${photoCount}/5.`;
-        return `${countLine} Пришлите ещё вложения или нажмите «Далее». «Пропустить» доступно только без вложений.`;
+        return `${countLine} Пришлите ещё вложения или нажмите «Далее».`;
       }
       return (
         "Вложения: пришлите фото или любые файлы — PDF, Word, Excel, архивы, видео (до 5 по 8 МБ каждый). " +
-        "После добавления нажмите «Далее» или «Пропустить», если вложения не нужны."
+        "Если вложения не нужны, нажмите «Без вложений»."
       );
     case "comment":
       return "Комментарий к передаче или нажмите «Пропустить».";
@@ -270,6 +272,7 @@ export async function renderDraftPrompt(
   draftId: string,
   step: string,
   payload: NativeCreateDraftPayload,
+  options: { telegramClearKeyboard?: boolean } = {},
 ): Promise<NativeCreateReply> {
   const stats = await draftAttachmentStats(client, draftId);
   const count = stats.total;
@@ -335,7 +338,8 @@ export async function renderDraftPrompt(
   }
   return {
     text,
-    replyMarkup: channel === "telegram" ? removeTelegramReplyKeyboard() : undefined,
+    replyMarkup:
+      channel === "telegram" && options.telegramClearKeyboard ? removeTelegramReplyKeyboard() : undefined,
     telegramInlineKeyboard: channel === "telegram" ? ui.telegramInlineKeyboard : undefined,
     maxInlineButtons: channel === "max" ? ui.maxInlineButtons : undefined,
   };
@@ -355,7 +359,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
     const origin = getAppOrigin() ?? "https://example.invalid";
     return appendReceiptEntryChoices(client, ctx, {
       text: `Мои передачи в личном кабинете:\n${origin}/tan-tracker/`,
-      replyMarkup: menu.replyMarkup,
+      replyMarkup: ctx.channel === "max" ? menu.replyMarkup : undefined,
       telegramInlineKeyboard: undefined,
       maxInlineButtons: undefined,
     }, undefined, receiptPage);
@@ -364,7 +368,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   const origin = getAppOrigin() ?? "https://example.invalid";
   return appendReceiptEntryChoices(client, ctx, {
     text: `Мои передачи:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
-    replyMarkup: menu.replyMarkup,
+    replyMarkup: ctx.channel === "max" ? menu.replyMarkup : undefined,
     telegramInlineKeyboard: undefined,
     maxInlineButtons: undefined,
   }, undefined, receiptPage);
@@ -394,7 +398,9 @@ async function startOrResumeCreate(client: PoolClient, ctx: NativeCreateContext)
   });
   const payload = draft.payload as NativeCreateDraftPayload;
   assertDraftBoundToCaller(payload, ctx);
-  return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload);
+  return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload, {
+    telegramClearKeyboard: ctx.channel === "telegram",
+  });
 }
 
 function callbackAllowedForStep(action: ParsedNativeCreateCallback["action"], step: string): boolean {
@@ -644,7 +650,9 @@ export async function handleNativeCreateCallback(
     const payload = draft.payload as NativeCreateDraftPayload;
     assertDraftBoundToCaller(payload, ctx);
     assertDraftPersonRow(draft, ctx);
-    return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload);
+    return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload, {
+      telegramClearKeyboard: ctx.channel === "telegram",
+    });
   }
 
   try {
@@ -1058,8 +1066,7 @@ export async function handleNativeCreateMessage(
   }
 
   if (step === "photo") {
-    const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, step, payload);
-    return { ...rendered, text: "На этом шаге отправьте вложение или нажмите «Без вложений». После загрузки появится «Далее»." };
+    return renderDraftPrompt(client, ctx.channel, draft.id, step, payload);
   }
 
   if (step === "comment") {

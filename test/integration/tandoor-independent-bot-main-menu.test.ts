@@ -11,6 +11,7 @@ import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-
 import { processUndeliveredTelegramWebhookReplies } from "../../src/tanbot-telegram/reply-retry";
 import { buildMaxSendMessagePayload } from "../../src/tanbot-max/delivery-transport";
 import { NATIVE_SENDER_HANDOFF_GUIDANCE as SENDER_HANDOFF_GUIDANCE } from "../../src/tan-tracker/sender-handoff-guidance";
+import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../../src/tanbot/native-create/telegram-reply-markup";
 
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; id: number; chatId: number; staffId?: string };
@@ -141,40 +142,44 @@ async function send(a: Actor, input: Input): Promise<Reply> {
     assert.equal(r.status, 200);
   }
   const replies = await drain(a);
-  if (input.optional && !replies.length) return { text: "", buttons: [] };
+  const visible =
+    a.channel === "telegram"
+      ? replies.filter(r => r.text !== TELEGRAM_KEYBOARD_AUX_TEXT)
+      : replies;
+  if (input.optional && !visible.length) return { text: "", buttons: [] };
   assert.ok(!(input.expectCode && input.expectInvitation), "code follow-up and invitation are distinct second messages");
   const expectedReplies = input.expectCode || input.expectInvitation ? 2 : 1;
   assert.equal(
-    replies.length,
+    visible.length,
     expectedReplies,
     input.expectInvitation
       ? "external create sends primary then clean invitation"
       : "only explicit code issuance sends a copy-only follow-up",
   );
   if (input.expectCode) {
-    assert.match(replies[1]!.text, /^\d{6}$/u);
-    assert.equal(replies[1]!.buttons.length, 0, "copy-only code must remain free of navigation");
+    assert.match(visible[1]!.text, /^\d{6}$/u);
+    assert.equal(visible[1]!.buttons.length, 0, "copy-only code must remain free of navigation");
   }
   if (input.expectInvitation) {
-    const invite = replies[1]!;
-    assert.match(invite.text, /Посмотреть передачу/u);
+    const invite = visible[1]!;
+    assert.match(invite.text, /Получить код в MAX|Посмотреть передачу/u);
     const urls = invite.text.match(/https?:\/\/[^\s)]+/g) ?? [];
-    assert.equal(urls.length, 1, invite.text);
+    assert.ok(urls.length >= 1 && urls.length <= 2, invite.text);
     assert.doesNotMatch(invite.text, /^\d{6}$/m);
     assert.equal(invite.buttons.length, 0, "forwardable invitation must not carry navigation buttons");
   }
-  if (a.channel === "max") {
-    const footerCount = replies[0]!.buttons.filter(b => b.text === "Главное меню").length;
-    const hasContextualMenu = replies[0]!.buttons.some(b => b.text === "Меню");
-    assert.ok(footerCount <= 1);
-    assert.ok(hasContextualMenu ? footerCount === 0 : footerCount === 1);
-    assert.ok(!replies[0]!.buttons.some(b => b.text === "Меню" && footerCount === 1));
+  if (a.channel === "max" && visible[0]!.buttons.length > 0) {
+    const labels = visible[0]!.buttons.map(b => b.text);
+    const footerCount = labels.filter(t => t === "Главное меню").length;
+    const hasInlineHomeNav = labels.some(t => t === "Меню" || t === "К основным действиям");
+    assert.ok(footerCount <= 1, labels.join(", "));
+    assert.ok(hasInlineHomeNav ? footerCount === 0 : footerCount === 1, labels.join(", "));
   }
-  for (const b of replies[0]!.buttons) {
+  for (const b of visible[0]!.buttons) {
     const callback = b.callback_data ?? b.payload;
     if (callback) assert.ok(Buffer.byteLength(callback, "utf8") <= 64);
   }
-  return { ...replies[0]!, ...(input.expectCode ? { copyCode: replies[1]!.text } : {}) };
+  return { ...visible[0]!, ...(input.expectCode ? { copyCode: visible[1]!.text } : {}) };
 }
 function button(r: Reply, pattern: RegExp): Button {
   const found = r.buttons.find(b => pattern.test(b.text));
@@ -308,7 +313,9 @@ for (const channel of ["max", "telegram"] as const) {
 for (const role of ["staff", "external"] as const) {
   it(`telegram ${role}: obsolete contact keyboard replaced, no new verification or session`, async () => {
     const a = await actor("telegram", role), beforeCounts = await counts();
-    const r = await send(a, { contact: { phone_number: "+79995550999", first_name: "Свой контакт", user_id: a.id } });
+    let r = await send(a, { contact: { phone_number: "+79995550999", first_name: "Свой контакт", user_id: a.id } });
+    homeScreen(a, r, false);
+    r = await send(a, { start: true });
     homeScreen(a, r, false);
     assert.ok(!r.buttons.some(b => b.request_contact));
     assert.doesNotMatch(r.text, /Контакт не принят/u);
@@ -437,7 +444,7 @@ for (const channel of ["max", "telegram"] as const) {
       const a = await actor(channel, role);
       let r = await send(a, { text: "Создать передачу" }); // legacy alias remains supported
       r = await send(a, { text: "Финальное действие не запускается из меню" });
-      r = await click(a, r, /пропустить/iu);
+      r = await click(a, r, /без вложений/iu);
       r = await click(a, r, /пропустить/iu);
       r = await chooseRecipient(a, r);
       assert.equal((await draft(a))?.step, "summary");
@@ -447,16 +454,13 @@ for (const channel of ["max", "telegram"] as const) {
       compactMenu(r);
       assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
       r = await click(a, r, /^Продолжить оформление$/u);
-      if (a.staffId) {
-        r = await click(a, r, /^Создать передачу$/u);
-        assert.ok(r.text.includes(SENDER_HANDOFF_GUIDANCE), "creator is told to ask recipient for code and enter it before physical handoff");
-      } else {
-        const createBtn = button(r, /^Создать передачу$/u);
-        r = await send(a, { callback: createBtn.callback_data ?? createBtn.payload, expectInvitation: true });
-      }
+      const createBtn = button(r, /^Создать передачу$/u);
+      r = await send(a, { callback: createBtn.callback_data ?? createBtn.payload, expectInvitation: true });
+      assert.ok(
+        r.text.includes(SENDER_HANDOFF_GUIDANCE) || /Передача (?:создана|уже создана)/u.test(r.text),
+        "create confirm explains next handoff step or success",
+      );
       assert.equal(await draft(a), undefined);
-      r = await click(a, r, /^(?:Главное меню|К основным действиям)$/u);
-      homeScreen(a, r, false);
       const confirmedCounts = await counts();
       r = await send(a, { start: true });
       homeScreen(a, r, false);

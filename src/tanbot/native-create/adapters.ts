@@ -12,6 +12,7 @@ import {
 } from "./engine";
 import type { NativeCreateActorKind } from "./draft-scope";
 import { buildNativeWebhookReplyExtra, type NativeMediaScope } from "./webhook-reply-bridge";
+import { packTelegramNativeReplyMarkup } from "./telegram-reply-markup";
 
 export { isNativeCreateCallback };
 
@@ -59,18 +60,19 @@ export function nativeReplyToTelegram(reply: NativeCreateReply): {
   forwardInvitationText?: string;
   requestContact?: boolean;
   replyMarkup?: Record<string, unknown>;
+  replyKeyboardClear?: boolean;
+  replyKeyboardRestore?: Record<string, unknown>;
   nativeMediaQueue?: NativeCreateReply["nativeMediaQueue"];
 } {
-  const markup =
-    reply.telegramInlineKeyboard != null
-      ? { inline_keyboard: reply.telegramInlineKeyboard }
-      : reply.replyMarkup;
+  const packed = packTelegramNativeReplyMarkup(reply);
   return {
     text: reply.text,
     copyOnlyCode: reply.copyOnlyCode,
     forwardInvitationText: reply.forwardInvitationText,
     requestContact: reply.requestContact,
-    replyMarkup: markup,
+    replyMarkup: packed.replyMarkup,
+    replyKeyboardClear: packed.replyKeyboardClear,
+    replyKeyboardRestore: packed.replyKeyboardRestore,
     nativeMediaQueue: reply.nativeMediaQueue,
   };
 }
@@ -107,6 +109,10 @@ export function nativeTelegramReplyExtra(
     answerCallbackQueryId,
     nativeMediaQueue: native.nativeMediaQueue,
     scope,
+    merge: {
+      ...(native.replyKeyboardClear ? { replyKeyboardClear: true } : {}),
+      ...(native.replyKeyboardRestore ? { replyKeyboardRestore: native.replyKeyboardRestore } : {}),
+    },
   });
 }
 

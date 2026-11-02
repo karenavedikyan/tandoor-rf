@@ -112,7 +112,28 @@ export async function appendReceiptEntryChoices(
        AND status IN ('waiting','active') AND deleted_at IS NULL AND general_archived_at IS NULL
        AND ($2::text IS NULL OR public_code=$2)
      ORDER BY created_at DESC,id DESC LIMIT 6 OFFSET $3`, [partyId, onlyPublicCode ?? null, page * 5])).rows;
-  if (!rows.length) return reply;
+  if (!rows.length) {
+    const text = `${reply.text}\n\nПока нет активных передач, где вы держатель с ожидаемым получателем.`;
+    const menuRow = ctx.channel === "telegram"
+      ? [menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>]
+      : [menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>];
+    if (ctx.channel === "telegram") {
+      return {
+        ...reply,
+        text,
+        replyMarkup: undefined,
+        telegramInlineKeyboard: menuRow as Array<Array<{ text: string; callback_data: string }>>,
+        maxInlineButtons: undefined,
+      };
+    }
+    return {
+      ...reply,
+      text,
+      replyMarkup: undefined,
+      telegramInlineKeyboard: undefined,
+      maxInlineButtons: menuRow as Array<Array<{ type: "callback"; text: string; payload: string }>>,
+    };
+  }
   const hasNext = rows.length > 5;
   const visible = rows.slice(0,5);
   const paging: Array<{ text: string; data: string }> = [];
@@ -142,6 +163,7 @@ export async function appendReceiptEntryChoices(
     return {
       ...reply,
       text,
+      replyMarkup: undefined,
       telegramInlineKeyboard: [...listRows, ...pagingRow, ...menuRow],
       maxInlineButtons: undefined,
     };

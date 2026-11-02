@@ -13,6 +13,7 @@ import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2
 import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-retry";
 import { processUndeliveredTelegramWebhookReplies } from "../../src/tanbot-telegram/reply-retry";
 import { buildReceiptEntryCallback, parseReceiptEntryCallback } from "../../src/tanbot/receipt-entry-callback";
+import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../../src/tanbot/native-create/telegram-reply-markup";
 import { tryNativeCreateMaxCallback, tryNativeCreateTelegramCallback } from "../../src/tanbot/native-create/adapters";
 import { mintExternalMessengerSession, bindSessionMessengerChat, type ExternalMessengerSessionRow } from "../../src/tan-tracker/external-messenger/session-service";
 
@@ -54,7 +55,22 @@ async function seed(a: Actor) {
     VALUES($1,$1,'Synthetic receipt item','waiting',$2,$2,$3,$3)`, [id, a.party, recipient]);
   await p().query(`INSERT INTO tt_handoff_codes(transfer_id,handoff_version,pending_party_id,code_hash,expires_at)
     VALUES($1,1,$2,$3,NOW()+INTERVAL '30 minutes')`, [id, recipient, hashOtp(code, requireHandoffOtpPepper())]);
-  return { id, recipient, callback: buildReceiptEntryCallback("code", id, 1)! };
+  return {
+    id,
+    recipient,
+    pick: buildReceiptEntryCallback("pick", id, 1)!,
+    callback: buildReceiptEntryCallback("code", id, 1)!,
+  };
+}
+async function pickTransferAndEnterCode(a: Actor, t: { id: string; pick: string }): Promise<Reply> {
+  const menu = await send(a, "Мои передачи");
+  assert.ok(menu.buttons.some(b => (b.payload ?? b.callback_data) === t.pick));
+  const detail = await send(a, "", t.pick);
+  assert.match(detail.text, new RegExp(t.id));
+  assert.equal((await entries(a)).length, 0, "pick must not create receipt code entry");
+  const codeBtn = detail.buttons.find(b => /Ввести код/u.test(b.text));
+  assert.ok(codeBtn, JSON.stringify(detail));
+  return send(a, "", codeBtn!.payload ?? codeBtn!.callback_data!);
 }
 async function send(a: Actor, text = "", callback?: string, fixedId?: number): Promise<Reply> {
   const id = fixedId ?? ++seq, replies: Reply[] = [];
@@ -87,7 +103,11 @@ async function send(a: Actor, text = "", callback?: string, fixedId?: number): P
       return { ok: true, result: {} };
     }, { deliveryEnabled: true });
   }
-  return { ...(replies.at(-1) ?? { text: "", buttons: [] }), messages: replies };
+  const visible =
+    a.channel === "telegram"
+      ? replies.filter(r => r.text !== TELEGRAM_KEYBOARD_AUX_TEXT)
+      : replies;
+  return { ...(visible.at(-1) ?? { text: "", buttons: [] }), messages: visible };
 }
 async function state(id: string) {
   return (await p().query(`SELECT holder_party_id,pending_party_id,handoff_version,status,
@@ -150,11 +170,9 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.equal((await p().query("SELECT COUNT(*)::int AS n FROM tt_transfers")).rows[0].n, before);
         assert.equal((await p().query("SELECT consumed_at FROM tt_handoff_codes WHERE transfer_id=$1", [t.id])).rows[0].consumed_at, null);
       });
-      it(`${channel}: ${staff ? "staff" : "verified external holder"} selects exact transfer and confirms pasted receipt once`, async () => {
+      it(`${channel}: ${staff ? "staff" : "verified external holder"} list pick code OTP confirms once`, async () => {
         const a = await actor(channel, staff), t = await seed(a);
-        const menu = await send(a, "Мои передачи");
-        assert.ok(menu.buttons.some(b => parseReceiptEntryCallback(b.payload ?? b.callback_data ?? "")?.transferId === t.id));
-        const selected = await send(a, "", t.callback);
+        const selected = await pickTransferAndEnterCode(a, t);
         assert.ok(selected.text.includes(t.id)); assert.match(selected.text, /Synthetic sender/);
         assert.match(selected.text, /Synthetic recipient/);
         assert.match(selected.text, /6 цифр|сообщение с кодом/);
@@ -191,7 +209,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
     it(`${channel}: failed attempts COMMIT, never reset by reopening and lock code at the same LK limit`, async () => {
       const a = await actor(channel), t = await seed(a);
       for (let attempt = 1; attempt <= HANDOFF_CODE_MAX_VERIFY_ATTEMPTS; attempt++) {
-        await send(a, "", t.callback);
+        await pickTransferAndEnterCode(a, t);
         const reply = await send(a, "111111");
         assert.match(reply.text, attempt === HANDOFF_CODE_MAX_VERIFY_ATTEMPTS ? /Превышено/ : /Неверный код/);
         const s = await state(t.id); assert.equal(s.attempts, attempt); assert.equal(s.holder_party_id, a.party);

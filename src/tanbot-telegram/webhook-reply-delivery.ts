@@ -13,6 +13,7 @@ import {
 } from "../tanbot/webhook-reply-pair-delivery";
 import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
 import { deliverTelegramNativeMediaFromExtra } from "../tanbot/native-create/media-delivery";
+import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../tanbot/native-create/telegram-reply-markup";
 
 export function buildTelegramSendMessagePayload(input: {
   chatId: bigint;
@@ -54,6 +55,50 @@ async function deliverTelegramWebhookReplyUnderLock(
     extra = telegramExtraFromStored(row.reply_extra);
     const step = nextTelegramDeliveryStep(extra);
     if (step === "done") break;
+
+    if (step === "clearReplyKeyboard") {
+      if (reply.answerCallbackQueryId && !answeredCallback) {
+        await transport({
+          method: "answerCallbackQuery",
+          token: config.botToken,
+          body: { callback_query_id: reply.answerCallbackQueryId },
+          timeoutMs: config.requestTimeoutMs,
+          maxResponseBytes: config.maxResponseBytes,
+        });
+        answeredCallback = true;
+      }
+      lastResult = await transport({
+        method: "sendMessage",
+        token: config.botToken,
+        body: buildTelegramSendMessagePayload({
+          chatId: reply.chatId,
+          text: TELEGRAM_KEYBOARD_AUX_TEXT,
+          replyMarkup: { remove_keyboard: true },
+        }),
+        timeoutMs: config.requestTimeoutMs,
+        maxResponseBytes: config.maxResponseBytes,
+      });
+      if (!lastResult.ok) return lastResult;
+      await mergeTelegramReplyDeliveryProgress(client, updateId, "clearReplyKeyboard");
+      continue;
+    }
+
+    if (step === "restoreReplyKeyboard" && extra.replyKeyboardRestore) {
+      lastResult = await transport({
+        method: "sendMessage",
+        token: config.botToken,
+        body: buildTelegramSendMessagePayload({
+          chatId: reply.chatId,
+          text: TELEGRAM_KEYBOARD_AUX_TEXT,
+          replyMarkup: extra.replyKeyboardRestore,
+        }),
+        timeoutMs: config.requestTimeoutMs,
+        maxResponseBytes: config.maxResponseBytes,
+      });
+      if (!lastResult.ok) return lastResult;
+      await mergeTelegramReplyDeliveryProgress(client, updateId, "restoreReplyKeyboard");
+      continue;
+    }
 
     if (step === "primary") {
       if (reply.answerCallbackQueryId && !answeredCallback) {

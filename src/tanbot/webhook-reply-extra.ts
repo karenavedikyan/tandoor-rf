@@ -10,7 +10,9 @@ import {
 import type { NativeMediaScope } from "./native-create/webhook-reply-bridge";
 
 export type ReplyDeliveryProgress = {
+  clearReplyKeyboard?: boolean;
   primary?: boolean;
+  restoreReplyKeyboard?: boolean;
   copyOnly?: boolean;
   invitation?: boolean;
 };
@@ -18,6 +20,8 @@ export type ReplyDeliveryProgress = {
 export type TelegramReplyExtra = {
   forwardInvitationText?: string;
   replyMarkup?: Record<string, unknown>;
+  replyKeyboardClear?: boolean;
+  replyKeyboardRestore?: Record<string, unknown>;
   answerCallbackQueryId?: string;
   copyOnlyCode?: string;
   delivery?: ReplyDeliveryProgress;
@@ -53,7 +57,10 @@ function nativeMediaPending(extra: {
 }
 
 export function isHandoffReplyFullyDelivered(extra: TelegramReplyExtra | MaxReplyExtra): boolean {
+  const tg = extra as TelegramReplyExtra;
+  if (tg.replyKeyboardClear && !extra.delivery?.clearReplyKeyboard) return false;
   if (!extra.delivery?.primary) return false;
+  if (tg.replyKeyboardRestore && !extra.delivery?.restoreReplyKeyboard) return false;
   if (extra.copyOnlyCode && !extra.delivery.copyOnly) return false;
   if (extra.forwardInvitationText && !extra.delivery.invitation) return false;
   if (nativeMediaPending(extra)) return false;
@@ -105,6 +112,11 @@ export function parseTelegramReplyExtra(raw: unknown): TelegramReplyExtra & Reco
   if (markup && typeof markup === "object" && !Array.isArray(markup)) {
     out.replyMarkup = markup as TelegramReplyExtra["replyMarkup"];
   }
+  if (row.replyKeyboardClear === true) out.replyKeyboardClear = true;
+  const restore = row.replyKeyboardRestore;
+  if (restore && typeof restore === "object" && !Array.isArray(restore)) {
+    out.replyKeyboardRestore = restore as TelegramReplyExtra["replyKeyboardRestore"];
+  }
   if (typeof row.answerCallbackQueryId === "string" && row.answerCallbackQueryId.trim()) {
     out.answerCallbackQueryId = row.answerCallbackQueryId;
   }
@@ -115,7 +127,9 @@ export function parseTelegramReplyExtra(raw: unknown): TelegramReplyExtra & Reco
   if (delivery && typeof delivery === "object" && !Array.isArray(delivery)) {
     const d = delivery as Record<string, unknown>;
     out.delivery = {
+      ...(d.clearReplyKeyboard === true ? { clearReplyKeyboard: true } : {}),
       ...(d.primary === true ? { primary: true } : {}),
+      ...(d.restoreReplyKeyboard === true ? { restoreReplyKeyboard: true } : {}),
       ...(d.copyOnly === true ? { copyOnly: true } : {}),
       ...(d.invitation === true ? { invitation: true } : {}),
     };
@@ -160,7 +174,9 @@ export function parseMaxReplyExtra(raw: unknown): MaxReplyExtra & Record<string,
   if (delivery && typeof delivery === "object" && !Array.isArray(delivery)) {
     const d = delivery as Record<string, unknown>;
     out.delivery = {
+      ...(d.clearReplyKeyboard === true ? { clearReplyKeyboard: true } : {}),
       ...(d.primary === true ? { primary: true } : {}),
+      ...(d.restoreReplyKeyboard === true ? { restoreReplyKeyboard: true } : {}),
       ...(d.copyOnly === true ? { copyOnly: true } : {}),
       ...(d.invitation === true ? { invitation: true } : {}),
     };
@@ -177,7 +193,9 @@ export function mergeReplyDeliveryProgress(
   patch: Partial<ReplyDeliveryProgress>,
 ): ReplyDeliveryProgress {
   return {
+    clearReplyKeyboard: !!(existing?.clearReplyKeyboard || patch.clearReplyKeyboard),
     primary: !!(existing?.primary || patch.primary),
+    restoreReplyKeyboard: !!(existing?.restoreReplyKeyboard || patch.restoreReplyKeyboard),
     copyOnly: !!(existing?.copyOnly || patch.copyOnly),
     ...(existing?.invitation || patch.invitation ? { invitation: true } : {}),
   };
