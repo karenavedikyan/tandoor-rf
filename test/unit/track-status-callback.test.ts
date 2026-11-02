@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { buildTrackStatusCallback, parseTrackStatusCallback, parseTrackStatusText } from "../../src/tanbot/track-status-callback";
-import { formatTrackStatus } from "../../src/tanbot/native-create/track-status";
+import { formatTrackStatus, formatTrackStatusListLabel } from "../../src/tanbot/native-create/track-status";
 import { isNativeCreateCallback } from "../../src/tanbot/native-create/engine";
 import { parseNativeCreateCallback, buildNativeCreateCallback } from "../../src/tanbot/native-create/callback-codec";
 import { NATIVE_MENU_DRAFT_HEX } from "../../src/tanbot/native-create/menu-sentinel";
@@ -63,6 +63,29 @@ it("completed/archive cards do not claim a new handoff or an active track", () =
   assert.match(text, /Последний держатель: Last holder/);
   assert.match(text, /в общем архиве/);
   assert.doesNotMatch(text, /Трек открыт|Следующий получатель/);
+});
+it("status list shows the holder for every open state without presenting pending receipt as custody", () => {
+  for (const status of ["waiting", "active", "delivered"] as const) {
+    assert.equal(formatTrackStatusListLabel({ public_code: "TT-2026-123", status }, "Иван Петров"),
+      "TT-2026-123 · Иван Петров");
+  }
+});
+it("status list marks completed and obsolete distinctly while retaining the last holder", () => {
+  assert.equal(formatTrackStatusListLabel({ public_code: "TT-2026-123", status: "completed" }, "Иван Петров"),
+    "TT-2026-123 · Иван Петров · Завершён");
+  assert.equal(formatTrackStatusListLabel({ public_code: "TT-2026-124", status: "obsolete" }, "Иван Петров"),
+    "TT-2026-124 · Иван Петров · Неактуален");
+});
+it("status list cleans names and substitutes missing or contact-only identities instead of exposing them", () => {
+  const row = { public_code: "TT-2026-123", status: "active" as const };
+  for (const name of [null, undefined, "", " \n\u0000 ", "+79991234567", "holder@example.test"]) {
+    assert.equal(formatTrackStatusListLabel(row, name), "TT-2026-123 · Имя не указано");
+  }
+  assert.equal(formatTrackStatusListLabel(row, "\u0000 Иван\n Петров\t"), "TT-2026-123 · Иван Петров");
+});
+it("status list bounds visible identifiers and names without truncating the terminal label", () => {
+  assert.equal(formatTrackStatusListLabel({ public_code: "T".repeat(50), status: "obsolete" }, "Я".repeat(100)),
+    `${"T".repeat(30)} · ${"Я".repeat(40)} · Неактуален`);
 });
 for (const role of ["rop", "regional_manager"] as const) {
   it(`${role} reuses the supplied connection for every team query without a nested pool acquisition`, async () => {

@@ -18,6 +18,7 @@ import { removeTelegramReplyKeyboard } from "./keyboards";
 import type { NativeCreateContext, NativeCreateReply } from "./engine";
 import { holderTransferActionButtons } from "./holder-transfer-buttons";
 import { buildReceiptEntryCallback } from "../receipt-entry-callback";
+import { resolvePartyDisplayNameForNotification, sanitizeNotificationDisplayName } from "../../tan-tracker/staff-notification-route";
 
 type StatusActor = { partyId: string | null; access: AccessContext | null };
 const PAGE_SIZE = 5;
@@ -87,6 +88,15 @@ function ui(ctx: NativeCreateContext, buttons: Array<{ text: string; data: strin
 const menuButton = () => ({ text: "Главное меню", data: buildNativeCreateCallback("menu_home", NATIVE_MENU_DRAFT_HEX, 1)! });
 const listButton = (page = 0) => ({ text: "К списку треков", data: buildTrackStatusCallback({ action: "list", page })! });
 
+/** Closed tracks show the last holder, never a pending recipient or raw contact identifier. */
+export function formatTrackStatusListLabel(
+  row: Pick<TanTrackerTransferRow, "public_code" | "status">,
+  holderName: string | null | undefined,
+): string {
+  const closed = row.status === "completed" ? " · Завершён" : row.status === "obsolete" ? " · Неактуален" : "";
+  return `${line(row.public_code, 30)} · ${line(sanitizeNotificationDisplayName(holderName) ?? "Имя не указано", 40)}${closed}`;
+}
+
 export function formatTrackStatus(
   row: Pick<TanTrackerTransferRow, "public_code" | "item_title" | "general_archived_at">,
   state: NotificationTransferState | undefined,
@@ -137,15 +147,22 @@ export async function trackStatusReply(
   const rows = await visibleRows(client, actor);
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const page = Math.min(request.page, pages - 1);
-  const buttons = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).flatMap(row => {
+  const buttons: Array<{ text: string; data: string }> = [];
+  // Resolve only authorized rows on this page, once per holder, using the card's canonical resolver.
+  const holderNames = new Map<string, string | null>();
+  for (const row of rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)) {
     const data = buildTrackStatusCallback({ action: "view", transferId: row.id });
-    return data ? [{ text: `${line(row.public_code, 30)} · ${line(row.item_title, 40)}`, data }] : [];
-  });
+    if (!data) continue;
+    if (!holderNames.has(row.holder_party_id)) {
+      holderNames.set(row.holder_party_id, await resolvePartyDisplayNameForNotification(client, row.holder_party_id));
+    }
+    buttons.push({ text: formatTrackStatusListLabel(row, holderNames.get(row.holder_party_id)), data });
+  }
   if (page > 0) buttons.push({ text: "Предыдущие", data: buildTrackStatusCallback({ action: "list", page: page - 1 })! });
   if (page + 1 < pages) buttons.push({ text: "Следующие", data: buildTrackStatusCallback({ action: "list", page: page + 1 })! });
   buttons.push(menuButton());
   return {
-    text: rows.length ? `Статус трека\nВыберите трек. Страница ${page + 1} из ${pages}.\n\nТакже можно написать: Статус TT-2026-123.`
+    text: rows.length ? `Статус трека\nНомер трека · Текущий держатель.\nУ завершённых и неактуальных указан последний держатель.\nВыберите трек. Страница ${page + 1} из ${pages}.\n\nТакже можно написать: Статус TT-2026-123.`
       : "Статус трека\nПока нет доступных треков с полным статусом.",
     ...ui(ctx, buttons),
   };

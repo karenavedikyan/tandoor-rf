@@ -481,7 +481,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
           b.text === "Передать дальше" || b.text === "Завершить трек");
         assert.deepEqual(actionButtons(detail).map(b => b.text), ["Передать дальше", "Завершить трек"]);
         const statuses = await send(a, "Статус трека");
-        const card = await send(a, "", button(statuses, `${t.id} · Synthetic receipt item`));
+        const card = await send(a, "", button(statuses, `${t.id} · Synthetic sender`));
         const search = await send(a, `Статус ${t.id}`);
         const refreshed = await send(a, "", button(card, "Обновить статус"));
         for (const reply of [card, search, refreshed]) {
@@ -619,6 +619,56 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         else await p().query(`DELETE FROM tt_external_person_verifications WHERE person_id=(SELECT id FROM tt_external_persons WHERE party_id=$1)`, [a.party]);
         const revoked = await send(a, "", statusView(bound.id));
         assert.doesNotMatch(revoked.text, /Текущий держатель|Synthetic sender/);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} status list shows the live holder, not pending recipient, and changes only after canonical OTP receipt`, async () => {
+        const a = await actor(channel, staff), t = await seed(a);
+        const before = await statusBusinessSnapshot(t.id);
+        const first = await send(a, "Статус трека");
+        assert.equal(button(first, `${t.id} · Synthetic sender`), statusView(t.id));
+        assert.ok(!first.buttons.some(b => b.text.includes(t.id) && /Synthetic recipient|Synthetic receipt item/.test(b.text)));
+        assert.match(first.text, /Номер трека · Текущий держатель/);
+        assert.deepEqual(await statusBusinessSnapshot(t.id), before, "showing holder names is read-only");
+        // A staff party may contain an old copied name; the canonical resolver uses today's users.full_name.
+        if (staff) await p().query("UPDATE users SET full_name='Current staff holder' WHERE id=$1", [a.user]);
+        else await p().query("UPDATE tt_parties SET display_name='Current external holder' WHERE id=$1", [a.party]);
+        const renamed = await send(a, "Статус трека");
+        assert.equal(button(renamed, `${t.id} · Current ${staff ? "staff" : "external"} holder`), statusView(t.id));
+        await pickTransferAndEnterCode(a, t);
+        await send(a, code);
+        const received = await state(t.id);
+        assert.equal(received.holder_party_id, t.recipient);
+        const afterReceipt = await statusBusinessSnapshot(t.id);
+        const forwarded = await send(a, "Статус трека");
+        assert.equal(button(forwarded, `${t.id} · Synthetic recipient`), statusView(t.id));
+        const card = await send(a, "", statusView(t.id));
+        assert.match(card.text, /Текущий держатель: Synthetic recipient/);
+        assert.deepEqual(await statusBusinessSnapshot(t.id), afterReceipt, "list and card must not mutate the received track");
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} status holder labels keep pagination and distinguish closed states without changing My Transfers`, async () => {
+        const a = await actor(channel, staff), expected = new Map<string, string>();
+        for (let i = 0; i < 7; i++) {
+          const closed = i % 3 === 1 ? "completed" : i % 3 === 2 ? "obsolete" : null;
+          const t = closed ? await seedClosed(a, closed) : await seed(a);
+          expected.set(statusView(t.id), `${t.id} · Synthetic sender${closed === "completed" ? " · Завершён" : closed === "obsolete" ? " · Неактуален" : ""}`);
+        }
+        const first = await send(a, "Статус трека");
+        assert.match(first.text, /У завершённых и неактуальных указан последний держатель/);
+        const second = await send(a, "", button(first, "Следующие"));
+        assert.match(second.text, /Страница 2 из/);
+        const shown = [...first.buttons, ...second.buttons].filter(b => expected.has(b.payload ?? b.callback_data!));
+        assert.equal(shown.length, 7);
+        assert.equal(new Set(shown.map(b => b.payload ?? b.callback_data)).size, 7);
+        for (const b of shown) assert.equal(b.text, expected.get(b.payload ?? b.callback_data!));
+        const previous = await send(a, "", button(second, "Предыдущие"));
+        assert.deepEqual(previous.buttons, first.buttons);
+        const own = await send(a, "Мои передачи");
+        const ownTracks = own.buttons.filter(b => /^TT-/u.test(b.text));
+        assert.equal(ownTracks.length, 3);
+        assert.ok(ownTracks.every(b => b.text.endsWith(" · Ожидает получения")));
+        const archive = await send(a, "", button(own, "Архив"));
+        const archived = archive.buttons.filter(b => /^TT-/u.test(b.text));
+        assert.equal(archived.length, 4);
+        assert.ok(archived.every(b => / · (Завершён|Неактуален)$/.test(b.text) && !b.text.includes("Synthetic sender")));
       });
       it(`${channel}: ${staff ? "staff" : "external"} status respects canonical historical-only visibility`, async () => {
         const a = await actor(channel, staff), owner = await actor(channel, false), t = await seed(owner);
