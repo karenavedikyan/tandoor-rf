@@ -370,7 +370,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   if (ctx.isLinkedStaff && ctx.staffUserId) {
     const origin = getAppOrigin() ?? "https://example.invalid";
     return appendReceiptEntryChoices(client, ctx, {
-      text: `Мои передачи\nВыберите трек ниже, чтобы передать предмет дальше или завершить трек, если это разрешено.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/`,
+      text: `Мои передачи\nСначала незавершённые треки, ниже завершённые.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/`,
       replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
       telegramInlineKeyboard: undefined,
       maxInlineButtons: undefined,
@@ -379,7 +379,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   const sessionRaw = await createPersonBrowserSession(client, ctx.personId!, ctx.channel);
   const origin = getAppOrigin() ?? "https://example.invalid";
   return appendReceiptEntryChoices(client, ctx, {
-    text: `Мои передачи\nВыберите трек ниже, чтобы передать предмет дальше или завершить трек, если это разрешено.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
+    text: `Мои передачи\nСначала незавершённые треки, ниже завершённые.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
     replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
     telegramInlineKeyboard: undefined,
     maxInlineButtons: undefined,

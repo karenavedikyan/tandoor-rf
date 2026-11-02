@@ -273,6 +273,71 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.equal((await entries(a)).length, 0);
         assert.deepEqual(await statusBusinessSnapshot(waiting.id), beforeRead, "status navigation must not attempt OTP verification");
       });
+      it(`${channel}: ${staff ? "staff" : "external"} my transfers labels active and pending tracks before read-only completed tracks`, async () => {
+        const a = await actor(channel, staff);
+        const waiting = await seed(a), received = await seedReceived(a), active = await seed(a), completed = await seedReceived(a);
+        await p().query("UPDATE tt_transfers SET status='active',pending_party_id=NULL WHERE id=$1", [active.id]);
+        await p().query("UPDATE tt_transfers SET status='completed',completed_at=NOW(),created_at=NOW()+INTERVAL '1 day' WHERE id=$1", [completed.id]);
+        const before = await statusBusinessSnapshot(completed.id);
+        const list = await send(a, "Мои передачи");
+        const choices = list.buttons.filter(b => /^TT-/u.test(b.text));
+        assert.equal(choices.length, 4);
+        assert.equal(choices.at(-1)!.text, `${completed.id} · Завершён`, "newer completed must follow every active track");
+        assert.ok(choices.some(b => b.text === `${waiting.id} · Ожидает получения`));
+        assert.ok(choices.some(b => b.text === `${received.id} · В работе`));
+        assert.ok(choices.some(b => b.text === `${active.id} · В работе`));
+        assert.equal((await state(received.id)).status, "delivered", "received must not mean completed");
+        assert.deepEqual(list.buttons.filter(b => !/^TT-/u.test(b.text)).map(b => b.text), ["Меню"], "no extra filters");
+        const detail = await send(a, "", button(list, `${completed.id} · Завершён`));
+        assert.match(detail.text, /Статус: Завершён/);
+        assert.ok(!detail.buttons.some(b => /Передать дальше|Завершить|Ввести код|Запросить код/.test(b.text)));
+        assert.deepEqual(await statusBusinessSnapshot(completed.id), before, "list and completed card must not mutate domain data");
+        const working = await send(a, "", received.pick);
+        assert.ok(working.buttons.some(b => b.text === "Передать дальше"));
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} my transfers keeps active-first ordering across a mixed page boundary`, async () => {
+        const a = await actor(channel, staff), activeIds: string[] = [], completedIds: string[] = [];
+        for (let i = 0; i < 6; i++) activeIds.push((await seed(a)).id);
+        for (let i = 0; i < 2; i++) {
+          const t = await seedReceived(a);
+          await p().query("UPDATE tt_transfers SET status='completed',completed_at=NOW(),created_at=NOW()+INTERVAL '1 day' WHERE id=$1", [t.id]);
+          completedIds.push(t.id);
+        }
+        const first = await send(a, "Мои передачи");
+        const firstChoices = first.buttons.filter(b => /^TT-/u.test(b.text));
+        assert.equal(firstChoices.length, 5);
+        assert.ok(firstChoices.every(b => b.text.endsWith(" · Ожидает получения")));
+        const second = await send(a, "", button(first, "Следующие передачи"));
+        const secondChoices = second.buttons.filter(b => /^TT-/u.test(b.text));
+        assert.equal(secondChoices.length, 3);
+        assert.ok(secondChoices[0]!.text.endsWith(" · Ожидает получения"));
+        assert.ok(secondChoices.slice(1).every(b => b.text.endsWith(" · Завершён")));
+        assert.deepEqual([...firstChoices, ...secondChoices].map(b => b.text.split(" · ")[0]).sort(),
+          [...activeIds, ...completedIds].sort(), "no skipped or repeated tracks between pages");
+        const previous = await send(a, "", button(second, "Предыдущие передачи"));
+        assert.deepEqual(previous.buttons.filter(b => /^TT-/u.test(b.text)), firstChoices);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} completed my transfers excludes foreign, historical-only, deleted and archived rows`, async () => {
+        const a = await actor(channel, staff), foreign = await actor(channel, staff);
+        const own = await seedReceived(a), other = await seedReceived(foreign), history = await seedReceived(a),
+          deleted = await seedReceived(a), archived = await seedReceived(a);
+        for (const t of [own, other, history, deleted, archived]) {
+          await p().query("UPDATE tt_transfers SET status='completed',completed_at=NOW() WHERE id=$1", [t.id]);
+        }
+        await p().query("UPDATE tt_transfers SET creator_party_id=$2,holder_party_id=$3 WHERE id=$1", [history.id, a.party, foreign.party]);
+        await p().query("UPDATE tt_transfers SET deleted_at=NOW() WHERE id=$1", [deleted.id]);
+        await p().query("UPDATE tt_transfers SET general_archived_at=NOW() WHERE id=$1", [archived.id]);
+        const before = await statusBusinessSnapshot(own.id);
+        const list = await send(a, "Мои передачи");
+        assert.deepEqual(list.buttons.filter(b => /^TT-/u.test(b.text)).map(b => b.text), [`${own.id} · Завершён`]);
+        const group = await send(a, "Мои передачи", undefined, undefined, false);
+        assert.ok(!group.buttons.some(b => /^TT-/u.test(b.text)));
+        for (const action of ["pick", "code", "retry", "forward", "close"] as const) {
+          const stale = await send(a, "", buildReceiptEntryCallback(action, own.id, 1)!);
+          assert.match(stale.text, /недоступна|устарела/);
+        }
+        assert.deepEqual(await statusBusinessSnapshot(own.id), before, "stale mutation buttons cannot reopen or change a completed track");
+      });
       it(`${channel}: ${staff ? "staff" : "external"} received track is listed, forwarded without duplication, and custody changes only by OTP`, async () => {
         const a = await actor(channel, staff), t = await seedReceived(a);
         const count = (await p().query("SELECT COUNT(*)::int AS n FROM tt_transfers")).rows[0].n;
@@ -338,7 +403,11 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.equal(audits.rowCount, 1);
         assert.equal(audits.rows[0].acting_party_id, a.party);
         assert.equal(audits.rows[0].actor_user_id, a.user ?? null);
-        assert.ok(!(await send(a, "Мои передачи")).buttons.some(b => (b.payload ?? b.callback_data) === t.pick));
+        const completedList = await send(a, "Мои передачи");
+        assert.ok(!completedList.buttons.some(b => (b.payload ?? b.callback_data) === t.pick));
+        const view = await send(a, "", button(completedList, `${t.id} · Завершён`));
+        assert.match(view.text, /Статус: Завершён/);
+        assert.ok(!view.buttons.some(b => /Передать дальше|Завершить|Ввести код|Запросить код/.test(b.text)));
       });
       it(`${channel}: ${staff ? "staff" : "external"} intermediate holder cannot close; pending/archived/deleted/stale actions are inert`, async () => {
         const a = await actor(channel, staff), intermediate = await seedReceived(a, false);
