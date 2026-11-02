@@ -32,7 +32,9 @@ export function recipientStepPrompt(payload: NativeCreateDraftPayload, actor: "s
   if (!q) return staffRecipientIntroPrompt();
   const hits = payload.eligibleRecipients?.length ?? 0;
   if (hits > 0) {
-    return "Кому передаёте? Выберите получателя кнопкой или введите его номер телефона.";
+    return hits === 1
+      ? "Получатель найден. Нажмите кнопку с его именем, чтобы подтвердить выбор."
+      : "Выберите получателя из списка.";
   }
   return `Не удалось определить получателя. Для выбора нужен его номер телефона.\n\n${staffRecipientIntroPrompt()}`;
 }

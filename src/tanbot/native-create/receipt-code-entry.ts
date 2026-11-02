@@ -63,11 +63,11 @@ function withCancel(ctx: NativeCreateContext, row: ReceiptTransfer, text: string
   const retry = buildReceiptEntryCallback("retry", row.id, row.handoff_version)!;
   return ctx.channel === "telegram"
     ? { text, telegramInlineKeyboard: [
-      [{ text: "Запросить код ещё раз", callback_data: retry }],
+      [{ text: "Запросить код повторно", callback_data: retry }],
       [{ text: "Отменить ввод кода", callback_data: callback }],
     ] }
     : { text, maxInlineButtons: [
-      [{ type: "callback", text: "Запросить код ещё раз", payload: retry }],
+      [{ type: "callback", text: "Запросить код повторно", payload: retry }],
       [{ type: "callback", text: "Отменить ввод кода", payload: callback }],
     ] };
 }
@@ -85,7 +85,7 @@ function transferDetailUi(
     return {
       telegramInlineKeyboard: [
         [{ text: "Ввести код", callback_data: codeCb }],
-        [{ text: "Получить код у получателя", callback_data: inviteCb }],
+        [{ text: "Запросить код повторно", callback_data: inviteCb }],
         ...(withNavigation ? [
           [{ text: "К списку", callback_data: listCb }],
           menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>,
@@ -96,7 +96,7 @@ function transferDetailUi(
   return {
     maxInlineButtons: [
       [{ type: "callback", text: "Ввести код", payload: codeCb }],
-      [{ type: "callback", text: "Получить код у получателя", payload: inviteCb }],
+      [{ type: "callback", text: "Запросить код повторно", payload: inviteCb }],
       ...(withNavigation ? [
         [{ type: "callback" as const, text: "К списку", payload: listCb }],
         menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>,
@@ -265,7 +265,7 @@ export async function handleReceiptEntryCallback(
       ctx.isLinkedStaff ? null : ctx.personId, partyId, row.id, row.handoff_version, row.pending_party_id],
   );
   const reply = {
-    ...withCancel(ctx, row, `Дождитесь кода от получателя.\n\n${contextText(row)}\n\nКогда получатель сообщит код, отправьте его сюда: 6 цифр или сообщение с кодом целиком.\nКод действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи. Если срок истёк, нажмите «Запросить код ещё раз» и перешлите получателю новое сообщение.\nПередача будет подтверждена только после успешной проверки.${forwardInvitationText ? "\n\nПерешлите получателю следующее сообщение, чтобы он получил новый код. Ввод кода для этой передачи остаётся открыт." : ""}`),
+    ...withCancel(ctx, row, `Дождитесь кода от получателя.\n\n${contextText(row)}\n\nКогда получатель сообщит код, отправьте его сюда: 6 цифр или сообщение с кодом целиком.\nКод действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи. Если срок истёк, нажмите «Запросить код повторно» и перешлите получателю новое сообщение.\nПередача будет подтверждена только после успешной проверки.${forwardInvitationText ? "\n\nПерешлите получателю следующее сообщение, чтобы он получил новый код. Ввод кода для этой передачи остаётся открыт." : ""}`),
     ...(forwardInvitationText ? { forwardInvitationText } : {}),
   };
   return ctx.channel === "telegram" ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;

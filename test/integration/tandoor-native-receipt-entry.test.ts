@@ -173,7 +173,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
       it(`${channel}: ${staff ? "staff" : "external"} retries expired code without leaving input or confirming custody`, async () => {
         const a = await actor(channel, staff), foreign = await actor(channel, staff), t = await seed(a);
         const first = await send(a, "", t.callback);
-        const retry = first.buttons.find(b => b.text === "Запросить код ещё раз")!;
+        const retry = first.buttons.find(b => b.text === "Запросить код повторно")!;
         const callback = retry.payload ?? retry.callback_data;
         assert.ok(callback);
         await p().query(`UPDATE tt_handoff_codes SET expires_at=NOW()-INTERVAL '1 second' WHERE transfer_id=$1`, [t.id]);
@@ -184,7 +184,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         const event = ++seq;
         const response = await send(a, "", callback, event);
         assert.match(response.messages![0].text, /^Дождитесь кода от получателя\./);
-        assert.deepEqual(response.messages![0].buttons.map(b => b.text), ["Запросить код ещё раз", "Отменить ввод кода"]);
+        assert.deepEqual(response.messages![0].buttons.map(b => b.text), ["Запросить код повторно", "Отменить ввод кода"]);
         assert.match(response.messages![0].text, /Перешлите получателю следующее сообщение/);
         assert.match(response.text, /Получить код в MAX|Получить код в Telegram/);
         assert.equal((await entries(a))[0].transfer_id, t.id, "input stays on this transfer");
@@ -208,7 +208,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.ok(selected.text.includes(t.id)); assert.match(selected.text, /Synthetic sender/);
         assert.match(selected.text, /Synthetic recipient/);
         assert.match(selected.text, /^Дождитесь кода от получателя\./);
-        assert.deepEqual(selected.buttons.map(b => b.text), ["Запросить код ещё раз", "Отменить ввод кода"]);
+        assert.deepEqual(selected.buttons.map(b => b.text), ["Запросить код повторно", "Отменить ввод кода"]);
         assert.match(selected.text, /6 цифр|сообщение с кодом/);
         assert.equal((await state(t.id)).holder_party_id, a.party);
         const waiting = (await entries(a))[0]; assert.equal(waiting.transfer_id, t.id);

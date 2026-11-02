@@ -94,7 +94,7 @@ async function processUpdateInTransaction(
   const lkUrl = `${config.appOrigin}/profile`;
 
   try {
-    if (unsignedVcfInfo) {
+    if (unsignedVcfInfo !== undefined) {
       const { tryNativeCreateMaxRecipientContact } = await import("../tanbot/native-create/adapters");
       const native = await tryNativeCreateMaxRecipientContact(client, {
         chatId: update.chatId,

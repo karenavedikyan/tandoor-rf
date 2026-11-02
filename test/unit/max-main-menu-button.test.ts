@@ -10,7 +10,7 @@ describe("MAX main-menu footer", () => {
   it("keeps exactly the code/invite pair, but not mismatched tracks or stages", () => {
     const pair = (id: string, version: number): MaxInlineButton[][] => [
       [{ type: "callback", text: "Ввести код", payload: buildReceiptEntryCallback("code", "TT-LOCAL", 1)! }],
-      [{ type: "callback", text: "Получить код у получателя", payload: buildReceiptEntryCallback("invite", id, version)! }],
+      [{ type: "callback", text: "Запросить код повторно", payload: buildReceiptEntryCallback("invite", id, version)! }],
     ];
     assert.deepEqual(withMaxMainMenuButton(pair("TT-LOCAL", 1)), pair("TT-LOCAL", 1));
     assert.equal(withMaxMainMenuButton(pair("TT-OTHER", 1)).flat().length, 3);
@@ -28,7 +28,7 @@ describe("MAX main-menu footer", () => {
 
   it("keeps retry/cancel input pair compact only for the same transfer and handoff version", () => {
     const pair = (id: string, version: number): MaxInlineButton[][] => [
-      [{ type: "callback", text: "Запросить код ещё раз", payload: buildReceiptEntryCallback("retry", "TT-LOCAL", 1)! }],
+      [{ type: "callback", text: "Запросить код повторно", payload: buildReceiptEntryCallback("retry", "TT-LOCAL", 1)! }],
       [{ type: "callback", text: "Отменить ввод кода", payload: buildReceiptEntryCallback("cancel", id, version)! }],
     ];
     assert.deepEqual(withMaxMainMenuButton(pair("TT-LOCAL", 1)), pair("TT-LOCAL", 1));

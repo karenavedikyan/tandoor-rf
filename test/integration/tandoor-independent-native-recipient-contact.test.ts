@@ -264,7 +264,7 @@ async function draftStep(staffId: string): Promise<string | undefined> {
 async function reachRecipientStep(actor: Actor): Promise<Reply> {
   let reply = await send(actor, { kind: "text", text: "Создать передачу" });
   reply = await send(actor, { kind: "text", text: `Item ${actor.messengerId}` });
-  reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
+  reply = await send(actor, { kind: "callback", data: action(reply, /без вложений/iu) });
   reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
   assert.match(reply.text, /кому передаёте/i);
   return reply;
@@ -496,7 +496,7 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
       const item = `Contact create ${channel} ${actor.messengerId}`;
       let reply = await send(actor, { kind: "text", text: "Создать передачу" });
       reply = await send(actor, { kind: "text", text: item });
-      reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
+      reply = await send(actor, { kind: "callback", data: action(reply, /без вложений/iu) });
       reply = await send(actor, { kind: "callback", data: action(reply, /пропустить/iu) });
       const phone = `+7903${String(actor.messengerId).padStart(7, "0").slice(-7)}`;
       if (channel === "telegram") {
@@ -566,7 +566,9 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
       kind: "max_unsigned_vcf",
       vcfRaw: unsignedMaxVcf("Orphan", "+79036667788"),
     });
-    assert.match(reply.text, /Выберите действие/u);
+    assert.match(reply.text, /Дополнительные действия/u);
+    assert.ok(reply.buttons.some(b => b.text === "К основным действиям"));
+    assert.doesNotMatch(reply.text, /Контакт принят|Номер подтверждён/u);
     assert.equal(
       (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_external_request_drafts WHERE payload->>'staffUserId'=$1`, [
         actor.staffId,

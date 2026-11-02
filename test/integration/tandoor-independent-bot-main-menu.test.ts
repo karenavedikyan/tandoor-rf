@@ -173,7 +173,7 @@ async function send(a: Actor, input: Input): Promise<Reply> {
     const footerCount = labels.filter(t => t === "Главное меню").length;
     const hasInlineHomeNav = labels.some(t => t === "Меню" || t === "К основным действиям");
     const isPostCreatePair = labels.length === 2 && labels[0] === "Ввести код"
-      && labels[1] === "Получить код у получателя";
+      && labels[1] === "Запросить код повторно";
     assert.ok(footerCount <= 1, labels.join(", "));
     assert.ok(hasInlineHomeNav || isPostCreatePair ? footerCount === 0 : footerCount === 1, labels.join(", "));
   }
@@ -463,7 +463,7 @@ for (const channel of ["max", "telegram"] as const) {
         "create confirm explains next handoff step or success",
       );
       assert.equal(await draft(a), undefined);
-      assert.deepEqual(r.buttons.map(b => b.text), ["Ввести код", "Получить код у получателя"],
+      assert.deepEqual(r.buttons.map(b => b.text), ["Ввести код", "Запросить код повторно"],
         "post-create has exactly the two requested actions in actual delivery");
       const confirmedCounts = await counts();
       r = await send(a, { start: true });
