@@ -199,17 +199,19 @@ export function nativeVerifiedContactRequiredReply(
   };
 }
 
-/** Post-success reply: preserve business text and attach fresh main menu (no Continue). */
+/** Post-create reply: transfer-specific actions are attached by the caller, never a full menu. */
 export async function nativeCompletionMenuReply(
   client: PoolClient,
   ctx: NativeCreateContext,
   resultText: string,
 ): Promise<NativeCreateReply> {
-  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false });
   return {
-    text: resultText,
-    replyMarkup: menu.replyMarkup,
+    text: resultText.replace(
+      "в «Моих передачах» доступно «Обновить приглашение»",
+      "нажмите «Получить код у получателя»",
+    ),
+    replyMarkup: ctx.channel === "telegram" ? { remove_keyboard: true } : undefined,
     telegramInlineKeyboard: undefined,
-    maxInlineButtons: menu.maxInlineButtons,
+    maxInlineButtons: undefined,
   };
 }

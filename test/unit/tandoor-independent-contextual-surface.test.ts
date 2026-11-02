@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PoolClient } from "pg";
-import { buildNativeCompactMenuReply } from "../../src/tanbot/native-create/main-menu";
+import { buildNativeCompactMenuReply, nativeCompletionMenuReply } from "../../src/tanbot/native-create/main-menu";
 import { nativeReplyToTelegram, nativeTelegramReplyExtra } from "../../src/tanbot/native-create/adapters";
 import { menuReplyKeyboard, buildStepUi } from "../../src/tanbot/native-create/keyboards";
 import { deliverTelegramWebhookReply } from "../../src/tanbot-telegram/webhook-reply-delivery";
@@ -10,6 +10,8 @@ import type { NativeCreateContext } from "../../src/tanbot/native-create/engine"
 import type { TanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2-config";
 import { withMaxMainMenuButton } from "../../src/tanbot-max/main-menu-button";
 import { appendReceiptEntryChoices } from "../../src/tanbot/native-create/receipt-code-entry";
+import { automaticReceiptSenderGuidance } from "../../src/tan-tracker/automatic-receipt-codes";
+import { parseReceiptEntryCallback } from "../../src/tanbot/receipt-entry-callback";
 
 const ctx: NativeCreateContext = {
   channel: "telegram", messengerUserId: 910001n, messengerChatId: "910001",
@@ -20,6 +22,32 @@ const config = {
   requestTimeoutMs: 1000, maxResponseBytes: 4096,
 } as TanbotTelegramStage2Config;
 const client = { query: async () => ({ rows: [], rowCount: 0 }) } as unknown as PoolClient;
+
+for (const channel of ["max", "telegram"] as const) {
+  test(`Computer: ${channel} post-create shows exactly two transfer-bound actions and updated guidance`, async () => {
+    const context = { ...ctx, channel, personId: "person" };
+    const db = { query: async (sql: string) => ({
+      rows: sql.includes("FROM tt_external_persons") ? [{ party_id: "25d12a69-23b4-4098-a2f9-92b4cd5e1021" }]
+        : [{ id: "TT-2026-019", public_code: "TT-2026-019", handoff_version: 3 }],
+    }) } as unknown as PoolClient;
+    const base = await nativeCompletionMenuReply(db, context, automaticReceiptSenderGuidance("TT-2026-019"));
+    const reply = await appendReceiptEntryChoices(db, context, base, "TT-2026-019");
+    const buttons = channel === "max"
+      ? withMaxMainMenuButton(reply.maxInlineButtons).flat()
+      : reply.telegramInlineKeyboard!.flat();
+    assert.deepEqual(buttons.map(b => b.text), ["Ввести код", "Получить код у получателя"]);
+    const actions = buttons.map(b => parseReceiptEntryCallback("payload" in b ? b.payload : b.callback_data));
+    assert.deepEqual(actions.map(a => a?.action), ["code", "invite"]);
+    assert.ok(actions.every(a => a?.transferId === "TT-2026-019" && a.version === 3));
+    assert.ok(reply.text.includes("нажмите «Получить код у получателя»"));
+    assert.ok(!reply.text.includes("Обновить приглашение"));
+    if (channel === "telegram") {
+      const wire = nativeReplyToTelegram(reply);
+      assert.equal(wire.replyKeyboardClear, true);
+      assert.equal(wire.replyKeyboardRestore, undefined);
+    }
+  });
+}
 
 for (const populated of [false, true]) {
   test(`Computer: Telegram ${populated ? "populated" : "empty"} list preserves keyboard removal and only contextual buttons`, async () => {

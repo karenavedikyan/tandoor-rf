@@ -68,6 +68,7 @@ function transferDetailUi(
   ctx: NativeCreateContext,
   row: { id: string; public_code: string; handoff_version: number },
   listPage = 0,
+  withNavigation = true,
 ): Pick<NativeCreateReply, "telegramInlineKeyboard" | "maxInlineButtons"> {
   const codeCb = receiptEntryCallback(row.id, row.handoff_version)!;
   const inviteCb = buildReceiptEntryCallback("invite", row.id, row.handoff_version)!;
@@ -76,18 +77,22 @@ function transferDetailUi(
     return {
       telegramInlineKeyboard: [
         [{ text: "Ввести код", callback_data: codeCb }],
-        [{ text: "Обновить приглашение", callback_data: inviteCb }],
-        [{ text: "К списку", callback_data: listCb }],
-        menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>,
+        [{ text: "Получить код у получателя", callback_data: inviteCb }],
+        ...(withNavigation ? [
+          [{ text: "К списку", callback_data: listCb }],
+          menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>,
+        ] : []),
       ],
     };
   }
   return {
     maxInlineButtons: [
       [{ type: "callback", text: "Ввести код", payload: codeCb }],
-      [{ type: "callback", text: "Обновить приглашение", payload: inviteCb }],
-      [{ type: "callback", text: "К списку", payload: listCb }],
-      menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>,
+      [{ type: "callback", text: "Получить код у получателя", payload: inviteCb }],
+      ...(withNavigation ? [
+        [{ type: "callback" as const, text: "К списку", payload: listCb }],
+        menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>,
+      ] : []),
     ],
   };
 }
@@ -148,7 +153,7 @@ export async function appendReceiptEntryChoices(
   });
   if (onlyPublicCode && visible.length === 1) {
     const picked = visible[0]!;
-    const detail = transferDetailUi(ctx, picked, page);
+    const detail = transferDetailUi(ctx, picked, page, false);
     return { ...reply, ...detail };
   }
   const text = options.omitSelectionHint
@@ -222,9 +227,9 @@ export async function handleReceiptEntryCallback(
     });
     if (!invitation) return { text: "Не удалось подготовить приглашение. Проверьте номер получателя." };
     await clearReceiptEntry(client, ctx);
-    const detail = transferDetailUi(ctx, row);
+    const detail = transferDetailUi(ctx, row, 0, false);
     return {
-      text: `Приглашение для ${row.public_code} обновлено. Перешлите следующее сообщение получателю. Старую ссылку больше не используйте.`,
+      text: `Получите код у получателя для ${row.public_code}. Перешлите ему следующее сообщение: он получит код в боте и назовёт его вам. Используйте новое сообщение вместо прежней ссылки.`,
       forwardInvitationText: invitation,
       ...(ctx.channel === "telegram"
         ? { telegramInlineKeyboard: detail.telegramInlineKeyboard }

@@ -4,8 +4,18 @@ import { withMaxMainMenuButton, MAX_MAIN_MENU_CALLBACK } from "../../src/tanbot-
 import { buildNativeCreateCallback, parseNativeCreateCallback } from "../../src/tanbot/native-create/callback-codec";
 import { NATIVE_MENU_DRAFT_HEX } from "../../src/tanbot/native-create/menu-sentinel";
 import { buildMaxSendMessagePayload, type MaxInlineButton } from "../../src/tanbot-max/delivery-transport";
+import { buildReceiptEntryCallback } from "../../src/tanbot/receipt-entry-callback";
 
 describe("MAX main-menu footer", () => {
+  it("keeps exactly the code/invite pair, but not mismatched tracks or stages", () => {
+    const pair = (id: string, version: number): MaxInlineButton[][] => [
+      [{ type: "callback", text: "Ввести код", payload: buildReceiptEntryCallback("code", "TT-LOCAL", 1)! }],
+      [{ type: "callback", text: "Получить код у получателя", payload: buildReceiptEntryCallback("invite", id, version)! }],
+    ];
+    assert.deepEqual(withMaxMainMenuButton(pair("TT-LOCAL", 1)), pair("TT-LOCAL", 1));
+    assert.equal(withMaxMainMenuButton(pair("TT-OTHER", 1)).flat().length, 3);
+    assert.equal(withMaxMainMenuButton(pair("TT-LOCAL", 2)).flat().length, 3);
+  });
   it("uses the existing navigation-only action, no transfer or draft binding", () => {
     const parsed = parseNativeCreateCallback(MAX_MAIN_MENU_CALLBACK);
     assert.equal(parsed?.action, "menu_home");
