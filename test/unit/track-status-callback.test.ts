@@ -11,7 +11,9 @@ import { loadTanTrackerTeamEmployeeGuids } from "../../src/tan-tracker/team-scop
 
 it("read callbacks roundtrip within provider limits and are routable without a draft", () => {
   for (const request of [{ action: "list", page: 0 }, { action: "list", page: 99999 },
-    { action: "view", transferId: "TT-2026-123" }, { action: "view", transferId: "74dde016-cf55-44e6-bcdc-aacdaf9fe3ab" }] as const) {
+    { action: "view", transferId: "TT-2026-123" }, { action: "view", transferId: "74dde016-cf55-44e6-bcdc-aacdaf9fe3ab" },
+    { action: "view", transferId: "TT-2026-123", archivePage: 0 },
+    { action: "view", transferId: "74dde016-cf55-44e6-bcdc-aacdaf9fe3ab", archivePage: 99999 }] as const) {
     const callback = buildTrackStatusCallback(request)!;
     assert.ok(Buffer.byteLength(callback) <= 64);
     assert.deepEqual(parseTrackStatusCallback(callback), request);
@@ -22,9 +24,20 @@ it("read callbacks roundtrip within provider limits and are routable without a d
 });
 it("rejects malformed, noncanonical or oversized callbacks", () => {
   for (const value of ["ts:l:-1", "ts:l:00", "ts:l:100000", "ts:v:", "ts:v:!!!!", "ts:v:VFE=", "ts:v:YQ==",
-    `ts:v:${"YQ".repeat(40)}`, "ts:close:1", "he:pick:VFE:1"]) assert.equal(parseTrackStatusCallback(value), null, value);
+    `ts:v:${"YQ".repeat(40)}`, "ts:close:1", "he:pick:VFE:1", "ts:a:00:VFE", "ts:a:-1:VFE", "ts:a:100000:VFE",
+    "ts:a:0:YQ==", "ts:a:0:!!!!", `ts:a:0:${"YQ".repeat(40)}`]) assert.equal(parseTrackStatusCallback(value), null, value);
   assert.equal(buildTrackStatusCallback({ action: "list", page: -1 }), null);
   assert.equal(buildTrackStatusCallback({ action: "view", transferId: "../other" }), null);
+  for (const archivePage of [-1, 100000, 1.5, NaN, Infinity]) {
+    assert.equal(buildTrackStatusCallback({ action: "view", transferId: "TT-2026-123", archivePage }), null);
+  }
+});
+it("archive view keeps a separate bounded return page without changing old status callback format", () => {
+  const regular = buildTrackStatusCallback({ action: "view", transferId: "TT-2026-123" })!;
+  assert.equal(regular, `ts:v:${Buffer.from("TT-2026-123").toString("base64url")}`);
+  const archived = buildTrackStatusCallback({ action: "view", transferId: "TT-2026-123", archivePage: 3 })!;
+  assert.notEqual(archived, regular);
+  assert.deepEqual(parseTrackStatusCallback(archived), { action: "view", transferId: "TT-2026-123", archivePage: 3 });
 });
 it("status text search is exact and never treats arbitrary draft text as navigation", () => {
   assert.deepEqual(parseTrackStatusText("Статус трека"), {});

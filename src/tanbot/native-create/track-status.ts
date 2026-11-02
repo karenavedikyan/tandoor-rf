@@ -17,6 +17,7 @@ import { nativeVerifiedContactRequiredReply } from "./main-menu";
 import { removeTelegramReplyKeyboard } from "./keyboards";
 import type { NativeCreateContext, NativeCreateReply } from "./engine";
 import { holderTransferActionButtons } from "./holder-transfer-buttons";
+import { buildReceiptEntryCallback } from "../receipt-entry-callback";
 
 type StatusActor = { partyId: string | null; access: AccessContext | null };
 const PAGE_SIZE = 5;
@@ -117,13 +118,20 @@ export async function trackStatusReply(
     return { text: "Статусы доступны только в личном диалоге с ботом при актуальном подключении профиля.", ...ui(ctx, [menuButton()]) };
   }
   if (request.action === "view") {
+    const archive = request.archivePage !== undefined;
+    const back = archive
+      ? { text: "К архиву", data: buildReceiptEntryCallback("archive", String(request.archivePage), 1)! }
+      : listButton();
     const row = (await visibleRows(client, actor, request.transferId))[0];
-    if (!row) return { text: NOT_AVAILABLE, ...ui(ctx, [listButton(), menuButton()]) };
+    if (!row || (archive && (row.holder_party_id !== actor.partyId || row.general_archived_at
+      || !["completed", "obsolete"].includes(row.status)))) {
+      return { text: NOT_AVAILABLE, ...ui(ctx, [back, menuButton()]) };
+    }
     const state = await buildNotificationTransferState(client, row.id);
     return { text: formatTrackStatus(row, state), ...ui(ctx, [
       ...holderTransferActionButtons(row, actor.partyId),
-      { text: "Обновить статус", data: buildTrackStatusCallback({ action: "view", transferId: row.id })! },
-      listButton(), menuButton(),
+      { text: "Обновить статус", data: buildTrackStatusCallback(request)! },
+      back, menuButton(),
     ]) };
   }
   const rows = await visibleRows(client, actor);
