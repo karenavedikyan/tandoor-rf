@@ -17,6 +17,7 @@ import type { NativeCreateDraftPayload } from "./draft-scope";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 import { resolveNativeExternalPendingPartyByPhone } from "./native-external-recipient-by-phone";
 import { notifyAdminsOfNewTrack } from "../../tan-tracker/admin-overview";
+import { enqueueAutomaticReceiptCode, automaticReceiptSenderGuidance } from "../../tan-tracker/automatic-receipt-codes";
 
 async function stageDraftFilesForStaff(
   client: PoolClient,
@@ -156,12 +157,16 @@ export async function confirmNativeStaffDraft(
   );
   const pRow = pending.rows[0];
   const status = formatNotificationTransferState(await buildNotificationTransferState(client, publicCode));
-  if (pRow?.kind === "external" && pRow.pending_party_id) {
+  if (await enqueueAutomaticReceiptCode(client,publicCode,input.channel)) {
+    return {publicCode,resultText:automaticReceiptSenderGuidance(publicCode)};
+  }
+  if (pRow?.pending_party_id) {
     const invite = await buildExternalPendingInviteMessage(client, {
       transferId: publicCode,
       pendingPartyId: pRow.pending_party_id,
       handoffVersion: pRow.handoff_version,
       channel: input.channel,
+      allowUserParty:true,
     });
     if (invite) {
       return {
@@ -204,6 +209,7 @@ export async function confirmNativeExternalDraft(
 export type NativeExternalToExternalConfirmResult = {
   publicCode: string;
   forwardInvitationText?: string;
+  automaticReceipt?: boolean;
 };
 
 export async function confirmNativeExternalToExternalDraft(
@@ -349,14 +355,15 @@ export async function confirmNativeExternalToExternalDraft(
     );
   }
 
-  const forwardInvitationText = await buildExternalPendingInviteMessage(client, {
+  const automaticReceipt=await enqueueAutomaticReceiptCode(client,publicCode,input.channel);
+  const forwardInvitationText = automaticReceipt ? null : await buildExternalPendingInviteMessage(client, {
     transferId: publicCode,
     pendingPartyId: recipientPartyId,
     handoffVersion: 1,
     channel: input.channel,
     allowUserParty: true,
   });
-  if (!forwardInvitationText) {
+  if (!automaticReceipt && !forwardInvitationText) {
     throw Object.assign(new Error("Не удалось подготовить приглашение."), { http: 503 });
   }
 
@@ -367,7 +374,7 @@ export async function confirmNativeExternalToExternalDraft(
     [input.draftId, idempotencyKey, publicCode, input.personId],
   );
   await notifyAdminsOfNewTrack(client, publicCode);
-  return { publicCode, forwardInvitationText };
+  return { publicCode, ...(forwardInvitationText?{forwardInvitationText}:{}), automaticReceipt };
 }
 
 export async function confirmNativeExternalToExternalDraftWithSavepoint(

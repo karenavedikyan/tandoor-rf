@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import { enqueueAutomaticReceiptCode } from "./automatic-receipt-codes";
 import { withTransaction } from "../access/db";
 import { setNoStore } from "../http/no-store";
 import type { AccessRequest } from "../access/middleware";
@@ -135,6 +136,7 @@ export async function changePendingHandler(req: AccessRequest, res: Response): P
        VALUES ($1,$2,$3,$4,$5)`,
       [row.id, nextVer, row.holder_party_id, pendingPartyId, row.item_title],
     );
+    await enqueueAutomaticReceiptCode(client,row.id);
     await client.query(
       `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
        VALUES ($1,$2,$3,$4,$5::uuid)`,

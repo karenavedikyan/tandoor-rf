@@ -2,6 +2,7 @@ import { getPool } from "./pool";
 
 const REQUIRED_TABLES = [
   "users", "sessions", "login_rate_limits", "tt_admin_track_notification_preferences",
+  "tt_automatic_receipt_codes",
 ] as const;
 
 export type ReadinessResult =

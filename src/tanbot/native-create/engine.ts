@@ -910,7 +910,8 @@ export async function handleNativeCreateCallback(
           "../../tan-tracker/sender-handoff-guidance"
         );
         const { buildForwardInvitationGuidance } = await import("./forward-invitation-guidance");
-        const resultText = created.forwardInvitationText
+        const { automaticReceiptSenderGuidance } = await import("../../tan-tracker/automatic-receipt-codes");
+        const resultText = created.automaticReceipt ? automaticReceiptSenderGuidance(created.publicCode) : created.forwardInvitationText
           ? buildForwardInvitationGuidance(created.publicCode)
           : `Передача уже создана: ${created.publicCode}.\n\n${status}\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`;
         return appendReceiptEntryChoices(client, ctx, {

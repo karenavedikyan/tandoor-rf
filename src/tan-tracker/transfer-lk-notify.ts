@@ -29,11 +29,13 @@ export async function notifyTransferAssignment(
     holderPartyId: string;
     handoffVersion: number;
     fromPartyId?: string | null;
+    skipMessenger?: boolean;
   },
 ): Promise<void> {
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.assignment",
     recipientUserIds: [input.holderUserId],
+    skipMessengerUserIds: input.skipMessenger ? [input.holderUserId] : [],
     payload: await payloadWithRoute(client, input, {
       fromPartyId: input.fromPartyId,
       toPartyId: input.holderPartyId,
@@ -239,11 +241,13 @@ export async function notifyExternalCreatedStaff(
     handoffVersion: number;
     externalPartyId: string;
     staffPartyId: string;
+    skipMessenger?: boolean;
   },
 ): Promise<void> {
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.external_created",
     recipientUserIds: [input.staffUserId],
+    skipMessengerUserIds: input.skipMessenger ? [input.staffUserId] : [],
     payload: await payloadWithRoute(client, input, {
       fromPartyId: input.externalPartyId,
       toPartyId: input.staffPartyId,

@@ -7,6 +7,7 @@ import { resolveRecipientPartyId, type ExternalRecipientInput } from "./party-el
 import { linkStagedAttachmentsToTransfer } from "./attachments";
 import { tanTrackerCanWrite } from "./guards";
 import { notifyAdminsOfNewTrack } from "./admin-overview";
+import { enqueueAutomaticReceiptCode } from "./automatic-receipt-codes";
 
 export type CreateTransferInput = {
   item: string;
@@ -124,6 +125,7 @@ export async function createTransferInTransaction(
   if (stagingRaw.length) {
     await linkStagedAttachmentsToTransfer(client, user.id, publicCode, stagingRaw);
   }
+  await enqueueAutomaticReceiptCode(client,publicCode);
   await notifyAdminsOfNewTrack(client, publicCode);
   return publicCode;
 }

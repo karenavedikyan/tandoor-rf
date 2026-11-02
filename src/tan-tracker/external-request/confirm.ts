@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { enqueueAutomaticReceiptCode } from "../automatic-receipt-codes";
 import { nextPublicTransferCode } from "../repository";
 import {
   countOpenExternalRequests,
@@ -129,6 +130,7 @@ export async function confirmExternalRequestDraft(
      VALUES ($1,1,$2,$3,$4)`,
     [publicCode, input.externalPartyId, staffParty.id, item],
   );
+  const automaticReceipt=await enqueueAutomaticReceiptCode(client,publicCode);
   const files = await client.query<{ storage_key: string; file_name: string; mime_type: string; byte_size: string }>(
     `SELECT storage_key, file_name, mime_type, byte_size::text FROM tt_external_request_draft_files WHERE draft_id = $1::uuid ORDER BY sort_order`,
     [input.draftId],
@@ -147,6 +149,7 @@ export async function confirmExternalRequestDraft(
     [input.draftId, input.idempotencyKey, publicCode, input.personId],
   );
   await notifyExternalCreatedStaff(client, {
+    skipMessenger:automaticReceipt,
     transferId: publicCode,
     staffUserId: recipientUserId,
     itemTitle: item,
@@ -156,6 +159,7 @@ export async function confirmExternalRequestDraft(
     staffPartyId: staffParty.id,
   });
   await notifyTransferAssignment(client, {
+    skipMessenger:automaticReceipt,
     transferId: publicCode,
     publicCode,
     itemTitle: item,
