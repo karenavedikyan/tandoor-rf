@@ -15,7 +15,7 @@ type Channel = "max" | "telegram";
 type Actor = { channel: Channel; userId: string; partyId: string; id: number; chatId: number };
 type Button = { text: string; callback_data?: string; payload?: string };
 type Reply = { text: string; buttons: Button[]; messages?: Array<{ text: string; buttons: Button[] }> };
-type Card = { name?: string; phone?: string; vcf?: string; signedOwn?: boolean };
+type Card = { name?: string; phone?: string; vcf?: string; signedOwn?: boolean; maxPayload?: Record<string, unknown> | null };
 const db = getIntegrationDatabaseUrl();
 let app: ReturnType<typeof import("../../src/server").createApp>;
 let seq = 910000;
@@ -43,7 +43,7 @@ before(async () => {
   await prepareDatabase(db);
   await resetPoolForTests();
   const receiver = await createTestUser({ databaseUrl: db, email: "contact-target@test.local",
-    password: "StrongPass123!", fullName: "Synthetic Contact Staff Target", role: "manager" });
+    password: "StrongPass123!", fullName: "Synthetic Contact Staff Target", role: "manager", phone: "+79995550123" });
   await ensurePartyForUserOnWrite(getPool()!, receiver.id, "Synthetic Contact Staff Target", null);
   realFetch = globalThis.fetch;
   globalThis.fetch = async () => { forbiddenFetches++; throw new Error("No real network in recipient-card QA"); };
@@ -66,7 +66,7 @@ async function actor(channel: Channel): Promise<Actor> {
 }
 
 async function send(a: Actor, input: { text?: string; callback?: string; card?: Card; updateId?: number;
-  chatType?: string | null; optionalReply?: boolean; expectedHttp?: 200 | 413 }): Promise<Reply> {
+  chatType?: string | null; forwarded?: boolean; optionalReply?: boolean; expectedHttp?: 200 | 413 }): Promise<Reply> {
   const id = input.updateId ?? ++seq;
   const replies: Reply[] = [];
   if (a.channel === "telegram") {
@@ -95,11 +95,12 @@ async function send(a: Actor, input: { text?: string; callback?: string; card?: 
       hash: createHmac("sha256", process.env.TANBOT_MAX_BOT_TOKEN!).update(cardVcf, "utf8").digest("hex"),
       max_info: { user_id: a.id },
     } : {};
+    const contactPayload = input.card && Object.prototype.hasOwnProperty.call(input.card, "maxPayload")
+      ? input.card.maxPayload : { vcf_info: cardVcf, ...proof };
     const message = { sender: { user_id: a.id, is_bot: false, first_name: "Actual Sender Name" },
+      ...(input.forwarded ? { link: { type: "forward" } } : {}),
       recipient: { chat_id: a.chatId, chat_type: input.chatType === undefined ? "dialog" : input.chatType, user_id: 999000 },
-      body: { mid: `contact-${id}`, ...(input.card ? { attachments: [{ type: "contact", payload: {
-        vcf_info: cardVcf, ...proof,
-      } }] } : { text: input.text ?? "" }) } };
+      body: { mid: `contact-${id}`, ...(input.card ? { text: "", attachments: [{ type: "contact", payload: contactPayload }] } : { text: input.text ?? "" }) } };
     const raw = input.callback ? { update_type: "message_callback", timestamp: id, message,
       callback: { callback_id: `contact-${id}`, payload: input.callback, user: { user_id: a.id, is_bot: false } } }
       : { update_type: "message_created", timestamp: id, message };
@@ -148,6 +149,26 @@ async function privacyCounts() {
 }
 
 for (const channel of ["max", "telegram"] as const) {
+  for (const inputKind of ["phone", "contact"] as const) {
+    it(`${channel}: ${inputKind} with a known phone immediately offers confirmation, not another phone prompt`, async () => {
+      const a = await actor(channel);
+      await startExternal(a);
+      const before = await privacyCounts();
+      const reply = await send(a, inputKind === "phone"
+        ? { text: "+79995550123" }
+        : { card: { phone: "+79995550123", name: "Untrusted address book name" } });
+      assert.match(reply.text, /^Получатель найден\. Нажмите кнопку с его именем, чтобы подтвердить выбор\./);
+      assert.doesNotMatch(reply.text, /введите.*номер|введите.*телефон/i);
+      assert.ok(reply.buttons.some(b => b.text.includes("Synthetic Contact Staff Target")));
+      assert.equal((await draft(a)).step, "recipient", "must not silently select a recipient");
+      assert.deepEqual(await privacyCounts(), before);
+      const selected = await send(a, { callback: button(reply, /Synthetic Contact Staff Target/) });
+      assert.equal((await draft(a)).step, "due");
+      assert.equal((await draft(a)).payload.recipientDisplayName, "Synthetic Contact Staff Target");
+      assert.match(selected.text, /Выберите срок передачи/);
+      assert.deepEqual(await privacyCounts(), before);
+    });
+  }
   it(`${channel}: recipient step requests phone and does not suggest retrying name search`, async () => {
     const a = await actor(channel);
     const first = await startExternal(a);
@@ -304,6 +325,31 @@ for (const channel of ["max", "telegram"] as const) {
     }
   });
 }
+
+it("max: cards without VCF get an explicit phone hint, preserve draft and never verify card identity", async () => {
+  const a = await actor("max");
+  await startExternal(a);
+  const before = await draft(a), identities = await privacyCounts();
+  for (const maxPayload of [
+    { max_info: { user_id: a.id, first_name: "Someone else" } },
+    { vcf_info: null, max_info: { user_id: a.id } },
+    { vcf_info: "" }, null,
+  ]) {
+    const event = ++seq;
+    const reply = await send(a, { card: { maxPayload }, updateId: event });
+    assert.match(reply.text, /В карточке контакта нет номера телефона/);
+    assert.match(reply.text, /Введите номер вручную/);
+    assert.doesNotMatch(reply.text, /Получатель найден|ГОТОВО|Номер подтверждён/i);
+    assert.deepEqual(await draft(a), before);
+    assert.deepEqual(await privacyCounts(), identities);
+    const replay = await send(a, { card: { maxPayload }, updateId: event, optionalReply: true });
+    assert.equal(replay.messages!.length, 0);
+  }
+  await send(a, { card: { maxPayload: {} }, chatType: "chat", optionalReply: true });
+  await send(a, { card: { maxPayload: {} }, forwarded: true, optionalReply: true });
+  assert.deepEqual(await draft(a), before);
+  assert.deepEqual(await privacyCounts(), identities);
+});
 
 it("max: independent folded/escaped VCF and ambiguous multiple phones never silently pick wrong number", async () => {
   const a = await actor("max");

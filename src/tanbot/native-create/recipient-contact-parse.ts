@@ -82,7 +82,7 @@ function phonesFromVcfLines(lines: string[]): string[] {
 
 export function parseRecipientContactFromVcf(vcfInfo: string): ParseRecipientContactResult {
   if (!vcfInfo || typeof vcfInfo !== "string") {
-    return { ok: false, code: "EMPTY", message: "Контакт пуст." };
+    return { ok: false, code: "EMPTY", message: "В карточке контакта нет номера телефона. Введите номер вручную или отправьте контакт с номером." };
   }
   if (Buffer.byteLength(vcfInfo, "utf8") > MAX_RECIPIENT_VCF_BYTES) {
     return { ok: false, code: "TOO_LARGE", message: "Контакт слишком большой. Отправьте другой или введите телефон вручную." };

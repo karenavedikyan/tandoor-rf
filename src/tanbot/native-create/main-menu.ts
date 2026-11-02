@@ -208,7 +208,7 @@ export async function nativeCompletionMenuReply(
   return {
     text: resultText.replace(
       "в «Моих передачах» доступно «Обновить приглашение»",
-      "нажмите «Получить код у получателя»",
+      "нажмите «Запросить код повторно»",
     ),
     replyMarkup: ctx.channel === "telegram" ? { remove_keyboard: true } : undefined,
     telegramInlineKeyboard: undefined,

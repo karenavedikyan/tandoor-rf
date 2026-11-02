@@ -31,7 +31,7 @@ describe("unified recipient prompts", () => {
     assert.doesNotMatch(externalSummaryDisplayName("+79991112233"), /Иванов/);
   });
 
-  it("short input, no match and existing match all guide to phone, not name search", () => {
+  it("short input and no match guide to phone, not name search", () => {
     const payload = {
       draftOrigin: "native_bot", actor: "staff", revision: 1, recipientSearchQuery: "Unmatched Name",
       eligibleRecipients: [],
@@ -39,10 +39,21 @@ describe("unified recipient prompts", () => {
     for (const text of [
       staffSingleCharHint(),
       recipientStepPrompt(payload, "staff"),
-      recipientStepPrompt({ ...payload, eligibleRecipients: [{ userId: "synthetic", fullName: "Target" }] }, "staff"),
     ]) {
       assert.match(text, /телефон/);
       assert.doesNotMatch(text, /Введите имя|фамили|имя от|символ.*поиск|уточните запрос/);
     }
+  });
+
+  it("after a phone match asks to confirm the recipient without asking for phone again", () => {
+    const payload = {
+      draftOrigin: "native_bot", actor: "staff", revision: 1, recipientSearchQuery: "+79991112233",
+      eligibleRecipients: [{ userId: "synthetic", fullName: "Target" }],
+    } as NativeCreateDraftPayload;
+    assert.equal(recipientStepPrompt(payload, "staff"), "Получатель найден. Нажмите кнопку с его именем, чтобы подтвердить выбор.");
+    assert.equal(recipientStepPrompt({
+      ...payload, eligibleRecipients: [...payload.eligibleRecipients!, { userId: "synthetic2", fullName: "Other" }],
+    }, "staff"), "Выберите получателя из списка.");
+    assert.doesNotMatch(recipientStepPrompt(payload, "staff"), /введите.*номер|телефон/i);
   });
 });

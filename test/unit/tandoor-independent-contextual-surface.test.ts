@@ -35,11 +35,11 @@ for (const channel of ["max", "telegram"] as const) {
     const buttons = channel === "max"
       ? withMaxMainMenuButton(reply.maxInlineButtons).flat()
       : reply.telegramInlineKeyboard!.flat();
-    assert.deepEqual(buttons.map(b => b.text), ["Ввести код", "Получить код у получателя"]);
+    assert.deepEqual(buttons.map(b => b.text), ["Ввести код", "Запросить код повторно"]);
     const actions = buttons.map(b => parseReceiptEntryCallback("payload" in b ? b.payload : b.callback_data));
     assert.deepEqual(actions.map(a => a?.action), ["code", "invite"]);
     assert.ok(actions.every(a => a?.transferId === "TT-2026-019" && a.version === 3));
-    assert.ok(reply.text.includes("нажмите «Получить код у получателя»"));
+    assert.ok(reply.text.includes("нажмите «Запросить код повторно»"));
     assert.ok(!reply.text.includes("Обновить приглашение"));
     if (channel === "telegram") {
       const wire = nativeReplyToTelegram(reply);
