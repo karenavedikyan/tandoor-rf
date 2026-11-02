@@ -5,6 +5,7 @@ import { loginHandler, logoutHandler, meHandler } from "./auth/handlers";
 import { JSON_BODY_LIMIT } from "./config";
 import { checkReadiness } from "./db/readiness";
 import { ensureAdminNotificationsSchema } from "./tan-tracker/admin-notifications-schema";
+import { ensureApprovedTechnicalWebhooks } from "./tanbot/technical-webhook-startup";
 import { closePool, getPool } from "./db/pool";
 import { runOneDiagnosticJob } from "./onec-diagnostics/worker";
 import { drainPendingImportJobs } from "./onec-import/worker-scheduler";
@@ -458,6 +459,12 @@ export function startServer(): ReturnType<express.Application["listen"]> {
   const server = app.listen(port, "0.0.0.0", () => {
     console.log(`Server listening on 0.0.0.0:${port}`);
     scheduleBackgroundIntegrationsAfterListen();
+    const pool = getPool();
+    if (pool) {
+      void ensureApprovedTechnicalWebhooks(pool).catch(() =>
+        console.error("Technical bot webhook: startup verification failed"),
+      );
+    }
   });
 
   process.on("SIGTERM", () => {
