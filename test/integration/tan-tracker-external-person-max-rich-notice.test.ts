@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { parseNativeCreateCallback } from "../../src/tanbot/native-create/callback-codec";
 import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { getPool, closePool, resetPoolForTests } from "../../src/db/pool";
@@ -45,7 +46,7 @@ describe("external person MAX rich notice presentation (PostgreSQL)", { concurre
     await closePool();
   });
 
-  it("sends share attachment and link button without raw holder URL in text", async () => {
+  it("sends share attachment and received-track actions without raw holder URL in text", async () => {
     await resetPoolForTests();
     const pool = getPool();
     assert.ok(pool);
@@ -110,7 +111,10 @@ describe("external person MAX rich notice presentation (PostgreSQL)", { concurre
     assert.ok(!maxCalls[0]!.text.includes("Открыть:"));
     assert.match(maxCalls[0]!.text, /Rich notice parcel/);
     assert.equal(maxCalls[0]!.shareUrl, holderUrl);
-    assert.equal(maxCalls[0]!.inlineButtons?.[0]?.[0]?.type, "link");
+    const action = maxCalls[0]!.inlineButtons?.[0]?.[0];
+    assert.ok(action?.type === "callback");
+    assert.equal(action.text, "Мои передачи");
+    assert.equal(parseNativeCreateCallback(action.payload)?.action, "menu_my");
     assert.equal(maxCalls[0]!.inlineButtons?.at(-1)?.[0]?.text, "Главное меню");
     assert.equal(maxCalls[0]!.inlineButtons?.flat().filter(b => b.text === "Главное меню").length, 1);
 

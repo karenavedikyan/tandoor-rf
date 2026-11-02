@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { parseNativeCreateCallback } from "../../src/tanbot/native-create/callback-codec";
 import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { getPool, closePool, resetPoolForTests } from "../../src/db/pool";
@@ -46,7 +47,7 @@ describe("external person Telegram rich notice presentation (PostgreSQL)", { con
     await closePool();
   });
 
-  it("sends inline URL button and branded preview without raw holder URL in text", async () => {
+  it("sends received-track actions and branded preview without raw holder URL in text", async () => {
     await resetPoolForTests();
     const pool = getPool();
     assert.ok(pool);
@@ -107,10 +108,12 @@ describe("external person Telegram rich notice presentation (PostgreSQL)", { con
     assert.ok(!text.includes("Открыть:"));
     assert.match(text, /Telegram rich parcel/);
     const markup = send!.body.reply_markup as {
-      inline_keyboard?: Array<Array<{ url?: string; text?: string }>>;
+      inline_keyboard?: Array<Array<{ url?: string; text?: string; callback_data?: string }>>;
     };
-    assert.equal(markup.inline_keyboard?.[0]?.[0]?.text, "Открыть передачу");
-    assert.equal(markup.inline_keyboard?.[0]?.[0]?.url, holderUrl);
+    const action = markup.inline_keyboard?.[0]?.[0];
+    assert.equal(action?.text, "Мои передачи");
+    assert.equal(action?.url, undefined);
+    assert.equal(parseNativeCreateCallback(action!.callback_data!)?.action, "menu_my");
     const preview = send!.body.link_preview_options as { url?: string; is_disabled?: boolean };
     assert.equal(preview.url, `${ORIGIN}/tan-tracker/`);
     assert.equal(preview.is_disabled, false);

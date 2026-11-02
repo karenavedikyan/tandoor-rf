@@ -62,6 +62,31 @@ async function seed(a: Actor) {
     callback: buildReceiptEntryCallback("code", id, 1)!,
   };
 }
+async function seedReceived(a: Actor, finalHolder = true) {
+  const t = await seed(a);
+  await p().query(`UPDATE tt_transfers SET creator_party_id=$2, pending_party_id=NULL,
+    final_recipient_party_id=$3, status='delivered', first_custody_at=NOW() WHERE id=$1`,
+    [t.id, t.recipient, finalHolder ? a.party : t.recipient]);
+  return t;
+}
+function button(reply: Reply, text: string): string {
+  const b = reply.buttons.find(b => b.text === text);
+  assert.ok(b, `Missing ${text}: ${JSON.stringify(reply)}`);
+  return b.payload ?? b.callback_data!;
+}
+async function selectForwardRecipient(a: Actor, initial: Reply) {
+  assert.match(initial.text, /Передать дальше/);
+  const phone = `+7988${String(++seq).padStart(7, "0")}`;
+  let reply = await send(a, phone);
+  for (let i = 0; i < 4 && !reply.buttons.some(b => b.text === "Передать дальше"); i++) {
+    const next = reply.buttons.find(b => b.text === "Далее");
+    reply = next ? await send(a, "", next.payload ?? next.callback_data)
+      : await send(a, "Synthetic next recipient");
+  }
+  assert.match(reply.text, /Продолжится этот же трек/);
+  assert.doesNotMatch(reply.text, /Создать передачу|Выберите срок/);
+  return { summary: reply, phone };
+}
 async function pickTransferAndEnterCode(a: Actor, t: { id: string; pick: string }): Promise<Reply> {
   const menu = await send(a, "Мои передачи");
   assert.ok(menu.buttons.some(b => (b.payload ?? b.callback_data) === t.pick));
@@ -140,6 +165,166 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
   after(async () => { globalThis.fetch = originalFetch; await closePool(); assert.equal(networkCalls, 0); });
   for (const channel of ["max", "telegram"] as const) {
     for (const staff of [true, false]) {
+      it(`${channel}: ${staff ? "staff" : "external"} received track is listed, forwarded without duplication, and custody changes only by OTP`, async () => {
+        const a = await actor(channel, staff), t = await seedReceived(a);
+        const count = (await p().query("SELECT COUNT(*)::int AS n FROM tt_transfers")).rows[0].n;
+        const list = await send(a, "Мои передачи");
+        assert.ok(list.buttons.some(b => (b.payload ?? b.callback_data) === t.pick));
+        const detail = await send(a, "", t.pick);
+        assert.ok(detail.buttons.some(b => b.text === "Передать дальше"));
+        assert.ok(detail.buttons.some(b => b.text === "Завершить трек"));
+        assert.ok(!detail.buttons.some(b => b.text === "Ввести код"));
+        const start = await send(a, "", button(detail, "Передать дальше"));
+        const { summary, phone } = await selectForwardRecipient(a, start);
+        assert.equal((await state(t.id)).pending_party_id, null);
+        const confirm = button(summary, "Передать дальше");
+        const attempts = await Promise.all([send(a, "", confirm), send(a, "", confirm)]);
+        const done = attempts.find(r => /назначен следующий получатель/.test(r.messages?.[0]?.text ?? r.text))!;
+        assert.ok(done, "one concurrent confirmation succeeds");
+        assert.match(done.messages?.[0]?.text ?? done.text, /назначен следующий получатель/);
+        const pending = await state(t.id);
+        assert.equal(pending.holder_party_id, a.party);
+        assert.ok(pending.pending_party_id);
+        assert.equal(pending.handoff_version, 2);
+        assert.equal(pending.status, "waiting");
+        assert.equal((await p().query("SELECT phone_e164 FROM tt_parties WHERE id=$1",
+          [pending.pending_party_id])).rows[0].phone_e164, phone);
+        assert.equal((await p().query("SELECT final_recipient_party_id FROM tt_transfers WHERE id=$1",
+          [t.id])).rows[0].final_recipient_party_id, a.party);
+        await send(a, "", confirm);
+        assert.equal((await state(t.id)).handoff_version, 2, "confirmation replay is inert");
+        assert.equal((await p().query("SELECT COUNT(*)::int AS n FROM tt_transfers")).rows[0].n, count);
+        assert.equal((await p().query("SELECT COUNT(*)::int AS n FROM tt_audit_log WHERE transfer_id=$1 AND action='holder_pending_change'",
+          [t.id])).rows[0].n, 1);
+        await p().query(`INSERT INTO tt_handoff_codes(transfer_id,handoff_version,pending_party_id,code_hash,expires_at)
+          VALUES($1,2,$2,$3,NOW()+INTERVAL '10 minutes')`, [t.id, pending.pending_party_id, hashOtp(code, requireHandoffOtpPepper())]);
+        await send(a, "", buildReceiptEntryCallback("code", t.id, 2)!);
+        await send(a, code);
+        assert.equal((await state(t.id)).holder_party_id, pending.pending_party_id);
+        assert.notEqual((await state(t.id)).status, "completed");
+        assert.match((await send(a, "", buildReceiptEntryCallback("close", t.id, 3)!)).text, /недоступна|устарела/);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} completion requires a bound confirmation, cancellation/replay are safe`, async () => {
+        const a = await actor(channel, staff), foreign = await actor(channel, staff), t = await seedReceived(a);
+        const close = buildReceiptEntryCallback("close", t.id, 1)!;
+        assert.match((await send(foreign, "", close)).text, /недоступна|устарела/);
+        let prompt = await send(a, "", close);
+        assert.match(prompt.text, /Подтвердите, что задача выполнена/);
+        assert.equal((await state(t.id)).status, "delivered", "opening prompt must not close");
+        const cancelledConfirm = button(prompt, "Да, завершить трек");
+        await send(a, "", button(prompt, "Отмена"));
+        await send(a, "", cancelledConfirm);
+        assert.equal((await state(t.id)).status, "delivered");
+        prompt = await send(a, "", close);
+        const confirm = button(prompt, "Да, завершить трек");
+        await send(foreign, "", confirm);
+        assert.equal((await state(t.id)).status, "delivered", "foreign confirmation is inert");
+        const attempts = await Promise.all([send(a, "", confirm), send(a, "", confirm)]);
+        const result = attempts.find(r => /Трек .* завершён/.test(r.text))!;
+        assert.ok(result, "one concurrent confirmation succeeds");
+        assert.match(result.text, /Трек .* завершён/);
+        assert.equal((await state(t.id)).status, "completed");
+        await send(a, "", confirm);
+        await send(a, "", close);
+        const audits = await p().query("SELECT actor_user_id,acting_party_id FROM tt_audit_log WHERE transfer_id=$1 AND action='legacy_complete'", [t.id]);
+        assert.equal(audits.rowCount, 1);
+        assert.equal(audits.rows[0].acting_party_id, a.party);
+        assert.equal(audits.rows[0].actor_user_id, a.user ?? null);
+        assert.ok(!(await send(a, "Мои передачи")).buttons.some(b => (b.payload ?? b.callback_data) === t.pick));
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} intermediate holder cannot close; pending/archived/deleted/stale actions are inert`, async () => {
+        const a = await actor(channel, staff), intermediate = await seedReceived(a, false);
+        const detail = await send(a, "", intermediate.pick);
+        assert.ok(!detail.buttons.some(b => b.text === "Завершить трек"));
+        assert.match((await send(a, "", buildReceiptEntryCallback("close", intermediate.id, 1)!)).text, /Промежуточный держатель/);
+        for (const update of [
+          "general_archived_at=NOW()", "deleted_at=NOW()", "handoff_version=2",
+          "holder_party_id=creator_party_id", "pending_party_id=creator_party_id,status='waiting'",
+          "status='completed'", "row_version=row_version+1",
+        ]) {
+          const t = await seedReceived(a);
+          const prompt = await send(a, "", buildReceiptEntryCallback("close", t.id, 1)!);
+          const confirm = button(prompt, "Да, завершить трек");
+          await p().query(`UPDATE tt_transfers SET ${update} WHERE id=$1`, [t.id]);
+          await send(a, "", confirm);
+          assert.equal((await p().query("SELECT COUNT(*)::int AS n FROM tt_audit_log WHERE transfer_id=$1 AND action='legacy_complete'", [t.id])).rows[0].n, 0);
+          await send(a, "", button(prompt, "Отмена"));
+        }
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} forwarding preserves an existing draft and rejects stale confirmation`, async () => {
+        const a = await actor(channel, staff), t = await seedReceived(a);
+        await send(a, "Создать передачу");
+        const drafts = await p().query("SELECT id,payload FROM tt_external_request_drafts WHERE confirmed_transfer_id IS NULL ORDER BY created_at DESC LIMIT 1");
+        const denied = await send(a, "", buildReceiptEntryCallback("forward", t.id, 1)!);
+        assert.match(denied.text, /незаконченный черновик/);
+        assert.deepEqual((await p().query("SELECT id,payload FROM tt_external_request_drafts WHERE id=$1", [drafts.rows[0].id])).rows, drafts.rows);
+        await p().query("DELETE FROM tt_external_request_drafts WHERE id=$1", [drafts.rows[0].id]);
+        const start = await send(a, "", buildReceiptEntryCallback("forward", t.id, 1)!);
+        const { summary } = await selectForwardRecipient(a, start);
+        await p().query("UPDATE tt_transfers SET row_version=row_version+1 WHERE id=$1", [t.id]);
+        await send(a, "", button(summary, "Передать дальше"));
+        assert.equal((await state(t.id)).pending_party_id, null);
+        assert.equal((await state(t.id)).holder_party_id, a.party);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} forward callback and confirmation cannot bypass privacy, identity or current custody`, async () => {
+        const a = await actor(channel, staff), foreign = await actor(channel, staff), t = await seedReceived(a);
+        const forward = buildReceiptEntryCallback("forward", t.id, 1)!;
+        await send(foreign, "", forward);
+        assert.equal((await p().query("SELECT COUNT(*)::int AS n FROM tt_external_request_drafts WHERE payload->'holderAction'->>'transferId'=$1", [t.id])).rows[0].n, 0);
+        const start = await send(a, "", forward);
+        const { summary } = await selectForwardRecipient(a, start);
+        await send(foreign, "", button(summary, "Передать дальше"));
+        assert.equal((await state(t.id)).pending_party_id, null);
+        await send(a, "", button(summary, "Передать дальше"), { privateDialog: false });
+        assert.equal((await state(t.id)).pending_party_id, null);
+        await send(a, "", button(summary, "Отмена"));
+        for (const update of [
+          "general_archived_at=NOW()", "deleted_at=NOW()", "handoff_version=2",
+          "holder_party_id=creator_party_id", "pending_party_id=creator_party_id,status='waiting'", "status='completed'",
+        ]) {
+          const stale = await seedReceived(a);
+          const prompt = await send(a, "", buildReceiptEntryCallback("forward", stale.id, 1)!);
+          const { summary: saved } = await selectForwardRecipient(a, prompt);
+          await p().query(`UPDATE tt_transfers SET ${update} WHERE id=$1`, [stale.id]);
+          await send(a, "", button(saved, "Передать дальше"));
+          assert.equal((await p().query("SELECT COUNT(*)::int AS n FROM tt_audit_log WHERE transfer_id=$1 AND action='holder_pending_change'", [stale.id])).rows[0].n, 0);
+          await send(a, "", button(saved, "Отмена"));
+        }
+        const bound = await seedReceived(a);
+        const { summary: saved } = await selectForwardRecipient(a,
+          await send(a, "", buildReceiptEntryCallback("forward", bound.id, 1)!));
+        if (staff) {
+          const table = channel === "max" ? "tanbot_max_accounts" : "tanbot_telegram_accounts";
+          await p().query(`UPDATE ${table} SET stopped_at=NOW() WHERE user_id=$1`, [a.user]);
+        } else {
+          await p().query(`DELETE FROM tt_external_person_verifications
+            WHERE person_id=(SELECT id FROM tt_external_persons WHERE party_id=$1)`, [a.party]);
+        }
+        await send(a, "", button(saved, "Передать дальше"));
+        assert.equal((await state(bound.id)).pending_party_id, null);
+      });
+      if (!staff) it(`${channel}: external forwards to an existing staff participant by phone without widening holder permissions`, async () => {
+        const a = await actor(channel, false), creator = await actor(channel, true), other = await actor(channel, true);
+        const t = await seedReceived(a);
+        const creatorPhone = `+7977${String(++seq).padStart(7, "0")}`;
+        const otherPhone = `+7977${String(++seq).padStart(7, "0")}`;
+        await p().query("UPDATE users SET phone=$2 WHERE id=$1", [creator.user, creatorPhone]);
+        await p().query("UPDATE users SET phone=$2 WHERE id=$1", [other.user, otherPhone]);
+        await p().query("UPDATE tt_transfers SET creator_party_id=$2 WHERE id=$1", [t.id, creator.party]);
+        let start = await send(a, "", buildReceiptEntryCallback("forward", t.id, 1)!);
+        assert.match(start.text, /Передать дальше/);
+        let reply = await send(a, otherPhone);
+        reply = await send(a, "Synthetic other");
+        await send(a, "", button(reply, "Передать дальше"));
+        assert.equal((await state(t.id)).pending_party_id, null, "unknown staff on staff-created route remains forbidden");
+        await send(a, "", button(reply, "Отмена"));
+        start = await send(a, "", buildReceiptEntryCallback("forward", t.id, 1)!);
+        reply = await send(a, creatorPhone);
+        reply = await send(a, "Synthetic creator");
+        await send(a, "", button(reply, "Передать дальше"));
+        assert.equal((await state(t.id)).pending_party_id, creator.party);
+        assert.equal((await state(t.id)).holder_party_id, a.party);
+      });
       it(`${channel}: ${staff ? "staff" : "external"} holder refreshes invitation without creating a new track; foreign and stale callbacks cannot`, async () => {
         const a = await actor(channel, staff), foreign = await actor(channel, staff), t = await seed(a);
         const other = await seed(a);

@@ -42,7 +42,7 @@ export async function runTanbotMaxOutboxWorkerOnce(
         text: presentation.text,
         timeoutMs,
         maxResponseBytes,
-        inlineButtons: withMaxMainMenuButton(presentation.mode === "rich" ? presentation.inlineButtons : undefined),
+        inlineButtons: withMaxMainMenuButton(presentation.inlineButtons),
         shareUrl: presentation.mode === "rich" ? presentation.shareUrl : undefined,
       });
       if (send.ok) return { ok: true };

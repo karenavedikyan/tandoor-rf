@@ -181,6 +181,9 @@ function formatSummary(
   payload: NativeCreateDraftPayload,
   attachmentStats: { total: number; imageCount: number; pdfCount: number; otherCount: number },
 ): string {
+  if (payload.holderAction?.kind === "complete") {
+    return `Завершить трек ${payload.holderAction.publicCode}?\n\nПредмет: ${payload.item ?? "—"}\n\nПодтвердите, что задача выполнена и дальнейшая передача не нужна. Трек получит статус «Завершён», история сохранится.\n\nСамо получение предмета не завершает трек.`;
+  }
   const photoCount = attachmentStats.total;
   const genericSummary = attachmentStats.pdfCount > 0 || attachmentStats.otherCount > 0;
   const due =
@@ -205,6 +208,9 @@ function formatSummary(
       : recipientPhone && payload.recipientPartyId == null && payload.recipientUserId == null
         ? `${recipient} (${recipientPhone})`
         : recipient;
+  if (payload.holderAction?.kind === "forward") {
+    return `Передать дальше: ${payload.holderAction.publicCode}\n\nПредмет: ${payload.item ?? "—"}\nПолучатель: ${recipientLine}\n\nПродолжится этот же трек. История, вложения и конечный получатель сохранятся. Предмет и ответственность остаются у вас до успешной проверки кода получателя.\n\nНажмите «Передать дальше», затем перешлите приглашение получателю.`;
+  }
   return (
     "Проверьте данные:\n" +
     `• Предмет: ${payload.item ?? "—"}\n` +
@@ -276,8 +282,11 @@ export async function renderDraftPrompt(
 ): Promise<NativeCreateReply> {
   const stats = await draftAttachmentStats(client, draftId);
   const count = stats.total;
-  const text = stepPrompt(step, payload, stats);
-  const wizardOpts = { wizardShowBack: step !== "item" };
+  const prompt = stepPrompt(step, payload, stats);
+  const text = payload.holderAction && step !== "summary"
+    ? `Передать дальше: ${payload.holderAction.publicCode}\n\n${prompt}` : prompt;
+  const wizardOpts = { wizardShowBack: payload.holderAction
+    ? payload.holderAction.kind === "forward" && step !== "recipient" : step !== "item" };
   let ui = buildStepUi(channel, draftId, payload.revision ?? 1, "nav", wizardOpts);
   if (step === "photo") {
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "photo", { photoSkipHidden: count > 0, ...wizardOpts });
@@ -299,6 +308,7 @@ export async function renderDraftPrompt(
   } else if (step === "summary") {
     const photos = count > 0 ? await listDraftPhotoMeta(client, draftId) : [];
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "summary", {
+      holderAction: payload.holderAction?.kind,
       photoInspectButtons: photos.map((p) => {
         const transport = readNativeAttachmentTransportKind(payload, p.sortOrder, p.mimeType);
         const label =
@@ -358,7 +368,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   if (ctx.isLinkedStaff && ctx.staffUserId) {
     const origin = getAppOrigin() ?? "https://example.invalid";
     return appendReceiptEntryChoices(client, ctx, {
-      text: `Мои передачи в личном кабинете:\n${origin}/tan-tracker/`,
+      text: `Мои передачи\nВыберите трек ниже, чтобы передать предмет дальше или завершить трек, если это разрешено.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/`,
       replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
       telegramInlineKeyboard: undefined,
       maxInlineButtons: undefined,
@@ -367,7 +377,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   const sessionRaw = await createPersonBrowserSession(client, ctx.personId!, ctx.channel);
   const origin = getAppOrigin() ?? "https://example.invalid";
   return appendReceiptEntryChoices(client, ctx, {
-    text: `Мои передачи:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
+    text: `Мои передачи\nВыберите трек ниже, чтобы передать предмет дальше или завершить трек, если это разрешено.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
     replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
     telegramInlineKeyboard: undefined,
     maxInlineButtons: undefined,
@@ -672,6 +682,13 @@ export async function handleNativeCreateCallback(
   }
 
   const { id, step, payload } = draft;
+  if (payload.holderAction) {
+    const allowed = payload.holderAction.kind === "complete"
+      ? ["confirm", "cancel", "menu"]
+      : ["confirm", "cancel", "menu", "back", "recipient", "recipient_page", "recipient_ext",
+          "recipient_ext_tel", "recipient_ext_keep", "recipient_ext_change", "recipient_ext_next"];
+    if (!allowed.includes(parsed.action)) return renderDraftPrompt(client, ctx.channel, id, step, payload);
+  }
 
   if (!callbackAllowedForStep(parsed.action, step)) {
     return renderDraftPrompt(client, ctx.channel, id, step, payload);
@@ -685,6 +702,10 @@ export async function handleNativeCreateCallback(
   }
 
   if (parsed.action === "back") {
+    if (payload.holderAction) {
+      const nextPayload = await bumpDraftRevision(client, id, "recipient", payload);
+      return renderDraftPrompt(client, ctx.channel, id, "recipient", nextPayload);
+    }
     if (parsed.arg === "summary") {
       const nextPayload = await bumpDraftRevision(client, id, "summary", payload);
       return renderDraftPrompt(client, ctx.channel, id, "summary", nextPayload);
@@ -761,8 +782,9 @@ export async function handleNativeCreateCallback(
       delete payload.recipientContactSuggestedName;
       payload.recipientNameManual = true;
       delete payload.recipientUserId;
-      const nextPayload = await bumpDraftRevision(client, id, "due", payload);
-      return renderDraftPrompt(client, ctx.channel, id, "due", nextPayload);
+      const nextStep = payload.holderAction ? "summary" : "due";
+      const nextPayload = await bumpDraftRevision(client, id, nextStep, payload);
+      return renderDraftPrompt(client, ctx.channel, id, nextStep, nextPayload);
     }
     if (!payload.recipientExtAwaitNameConfirm || !payload.recipientExternal?.phone) {
       return renderDraftPrompt(client, ctx.channel, id, step, payload);
@@ -808,8 +830,9 @@ export async function handleNativeCreateCallback(
     }
     stripTransientRecipientDraftFields(payload);
     payload.recipientDisplayName = ext.name.trim();
-    const nextPayload = await bumpDraftRevision(client, id, "due", payload);
-    return renderDraftPrompt(client, ctx.channel, id, "due", nextPayload);
+    const nextStep = payload.holderAction ? "summary" : "due";
+    const nextPayload = await bumpDraftRevision(client, id, nextStep, payload);
+    return renderDraftPrompt(client, ctx.channel, id, nextStep, nextPayload);
   }
 
   if (parsed.action === "recipient_page") {
@@ -887,6 +910,10 @@ export async function handleNativeCreateCallback(
 
   if (parsed.action === "confirm") {
     if (step !== "summary") return renderDraftPrompt(client, ctx.channel, id, step, payload);
+    if (payload.holderAction) {
+      const { confirmNativeHolderAction } = await import("./holder-actions");
+      return confirmNativeHolderAction(client, ctx, id, payload);
+    }
     try {
       if (payload.actor === "staff" && ctx.staffUserId) {
         const selectedRef = payload.recipientPartyId ?? payload.recipientUserId;
@@ -1105,8 +1132,9 @@ export async function handleNativeCreateMessage(
       delete payload.recipientExtAwaitNameConfirm;
       delete payload.recipientContactSuggestedName;
       delete payload.recipientUserId;
-      const nextPayload = await bumpDraftRevision(client, draft.id, "due", payload);
-      return renderDraftPrompt(client, ctx.channel, draft.id, "due", nextPayload);
+      const nextStep = payload.holderAction ? "summary" : "due";
+      const nextPayload = await bumpDraftRevision(client, draft.id, nextStep, payload);
+      return renderDraftPrompt(client, ctx.channel, draft.id, nextStep, nextPayload);
     }
     const phone = payload.recipientExternal?.phone ?? "";
     payload.recipientExternal = { name: trimmed.slice(0, 120), phone };
@@ -1129,8 +1157,9 @@ export async function handleNativeCreateMessage(
     payload.recipientPartyId = undefined;
     payload.recipientUserId = undefined;
     payload.recipientDisplayName = payload.recipientExternal.name;
-    const nextPayload = await bumpDraftRevision(client, draft.id, "due", payload);
-    return renderDraftPrompt(client, ctx.channel, draft.id, "due", nextPayload);
+    const nextStep = payload.holderAction ? "summary" : "due";
+    const nextPayload = await bumpDraftRevision(client, draft.id, nextStep, payload);
+    return renderDraftPrompt(client, ctx.channel, draft.id, nextStep, nextPayload);
   }
 
   if (step === "edit" || step === "due" || step === "summary") {

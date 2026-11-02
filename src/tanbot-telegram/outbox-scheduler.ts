@@ -47,6 +47,7 @@ export async function runTanbotOutboxWorkerOnce(
               chat_id: chatId,
               text: presentation.text,
               disable_web_page_preview: presentation.disableWebPagePreview,
+              ...(presentation.replyMarkup ? { reply_markup: presentation.replyMarkup } : {}),
             };
       const send = await deliveryTransport({
         method: "sendMessage",
