@@ -42,8 +42,9 @@ it("LK copy explains sender next action; receipt confirms holder transition and 
   const r = staffNotificationMessengerText("tan_tracker.handoff_confirmed", payload, origin);
   assert.ok(!r.includes(SENDER_HANDOFF_GUIDANCE));
   assert.ok(r.endsWith("/tan-tracker"));
-  assert.match(r, /Предмет принят новым держателем/u);
-  assert.match(r, /Предыдущий отправитель выполнил свой этап/u);
+  assert.match(r, /^ГОТОВО ✅\n\nПолучение «Синтетический договор» подтверждено/u);
+  assert.doesNotMatch(r, /Вам передали|Вы передали/u, "legacy payload without trusted audience stays neutral");
+  assert.match(staffNotificationLkCopy("tan_tracker.handoff_confirmed", payload).body, /Предмет принят новым держателем/u);
 });
 it("card identifiers are encoded and never become recipient capabilities", () => {
   const href = staffTransferLkDetailUrl(`${origin}/`, "TT-2026-042&mst=synthetic");

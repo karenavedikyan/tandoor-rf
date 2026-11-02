@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import { buildNotificationTransferState, formatNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
+import { buildNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
 import type { NativeCreateContext, NativeCreateReply } from "./engine";
 import { assertNativeCreateContext, lockNativeCreateMessenger } from "./access-guard";
 import { buildReceiptEntryCallback, type ReceiptEntryCallback } from "../receipt-entry-callback";
@@ -11,6 +11,7 @@ import { buildNativeMainMenuReply, parseNativeBotSlashCommand, isNativeMainMenuT
 import { buildNativeCreateCallback } from "./callback-codec";
 import { NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
 import { removeTelegramReplyKeyboard } from "./keyboards";
+import { formatReceiptConfirmation } from "../../tan-tracker/receipt-confirmation-copy";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 
 type ReceiptTransfer = LockedReceiptTransfer & {
@@ -59,9 +60,16 @@ function menuInlineRow(ctx: NativeCreateContext): Array<{ text: string; callback
 
 function withCancel(ctx: NativeCreateContext, row: ReceiptTransfer, text: string): NativeCreateReply {
   const callback = buildReceiptEntryCallback("cancel", row.id, row.handoff_version)!;
+  const retry = buildReceiptEntryCallback("retry", row.id, row.handoff_version)!;
   return ctx.channel === "telegram"
-    ? { text, telegramInlineKeyboard: [[{ text: "Отменить ввод кода", callback_data: callback }]] }
-    : { text, maxInlineButtons: [[{ type: "callback", text: "Отменить ввод кода", payload: callback }]] };
+    ? { text, telegramInlineKeyboard: [
+      [{ text: "Запросить код ещё раз", callback_data: retry }],
+      [{ text: "Отменить ввод кода", callback_data: callback }],
+    ] }
+    : { text, maxInlineButtons: [
+      [{ type: "callback", text: "Запросить код ещё раз", payload: retry }],
+      [{ type: "callback", text: "Отменить ввод кода", payload: callback }],
+    ] };
 }
 
 function transferDetailUi(
@@ -219,24 +227,29 @@ export async function handleReceiptEntryCallback(
       replyMarkup: undefined,
     };
   }
-  if (parsed.action === "invite") {
+  let forwardInvitationText: string | undefined;
+  if (parsed.action === "invite" || parsed.action === "retry") {
     if (!row.pending_party_id) return { text: "У этой передачи сейчас нет ожидаемого получателя." };
     const invitation = await buildExternalPendingInviteMessage(client, {
       transferId: row.id, pendingPartyId: row.pending_party_id, handoffVersion: row.handoff_version,
       channel: ctx.channel, allowUserParty: true,
     });
     if (!invitation) return { text: "Не удалось подготовить приглашение. Проверьте номер получателя." };
-    await clearReceiptEntry(client, ctx);
-    const detail = transferDetailUi(ctx, row, 0, false);
-    return {
-      text: `Получите код у получателя для ${row.public_code}. Перешлите ему следующее сообщение: он получит код в боте и назовёт его вам. Используйте новое сообщение вместо прежней ссылки.`,
-      forwardInvitationText: invitation,
-      ...(ctx.channel === "telegram"
-        ? { telegramInlineKeyboard: detail.telegramInlineKeyboard }
-        : { maxInlineButtons: detail.maxInlineButtons }),
-    };
+    if (parsed.action === "retry") {
+      forwardInvitationText = invitation;
+    } else {
+      await clearReceiptEntry(client, ctx);
+      const detail = transferDetailUi(ctx, row, 0, false);
+      return {
+        text: `Получите код у получателя для ${row.public_code}. Перешлите ему следующее сообщение: он получит код в боте и назовёт его вам. Используйте новое сообщение вместо прежней ссылки.`,
+        forwardInvitationText: invitation,
+        ...(ctx.channel === "telegram"
+          ? { telegramInlineKeyboard: detail.telegramInlineKeyboard }
+          : { maxInlineButtons: detail.maxInlineButtons }),
+      };
+    }
   }
-  if (parsed.action !== "code") {
+  if (parsed.action !== "code" && parsed.action !== "retry") {
     return { text: "Эта кнопка устарела. Откройте «Мои передачи» и выберите актуальную передачу." };
   }
   await client.query(
@@ -251,7 +264,10 @@ export async function handleReceiptEntryCallback(
     [ctx.channel, ctx.messengerChatId, ctx.messengerUserId.toString(), ctx.isLinkedStaff ? ctx.staffUserId : null,
       ctx.isLinkedStaff ? null : ctx.personId, partyId, row.id, row.handoff_version, row.pending_party_id],
   );
-  const reply = withCancel(ctx, row, `${contextText(row)}\n\nПопросите у получателя код приёма и отправьте его сюда: 6 цифр или сообщение с кодом целиком. Код действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи. Если он истёк, попросите получателя получить новый.\nПередача будет подтверждена только после успешной проверки.`);
+  const reply = {
+    ...withCancel(ctx, row, `Дождитесь кода от получателя.\n\n${contextText(row)}\n\nКогда получатель сообщит код, отправьте его сюда: 6 цифр или сообщение с кодом целиком.\nКод действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи. Если срок истёк, нажмите «Запросить код ещё раз» и перешлите получателю новое сообщение.\nПередача будет подтверждена только после успешной проверки.${forwardInvitationText ? "\n\nПерешлите получателю следующее сообщение, чтобы он получил новый код. Ввод кода для этой передачи остаётся открыт." : ""}`),
+    ...(forwardInvitationText ? { forwardInvitationText } : {}),
+  };
   return ctx.channel === "telegram" ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
 }
 export async function handleReceiptEntryText(
@@ -301,9 +317,13 @@ export async function handleReceiptEntryText(
   });
   if (!result.ok) return withCancel(ctx, row, `${contextText(row)}\n\n${result.message}\nПередача не подтверждена.`);
   await clearReceiptEntry(client, ctx);
-  const status = formatNotificationTransferState(await buildNotificationTransferState(client, row.id));
   return buildNativeMainMenuReply(client, ctx, {
-    prefix: `${contextText(row)}\n\n${status}\n\nКод проверен. Передача подтверждена, получатель стал текущим держателем. Теперь можно передать посылку.`,
+    prefix: formatReceiptConfirmation({
+      publicCode: row.public_code, itemTitle: row.item_title,
+      routeFromDisplayName: row.sender_name, routeToDisplayName: row.recipient_name,
+      notificationState: await buildNotificationTransferState(client, row.id),
+      audience: "sender",
+    }),
     lock: false,
   });
 }

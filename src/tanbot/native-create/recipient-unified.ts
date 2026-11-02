@@ -19,11 +19,11 @@ export const RECIPIENT_MIN_NAME_QUERY_LEN = 2;
 export type RecipientSearchHit = { ref: string; fullName: string; phone?: string | null };
 
 export function staffRecipientIntroPrompt(): string {
-  return "Кому передаёте?\nВведите имя, фамилию или телефон либо отправьте контакт.";
+  return "Кому передаёте?\nВведите номер телефона получателя в формате +7XXXXXXXXXX или отправьте контакт с номером телефона.";
 }
 
 export function externalRecipientIntroPrompt(): string {
-  return "Кому передаёте? Укажите телефон получателя или отправьте контакт.";
+  return staffRecipientIntroPrompt();
 }
 
 export function recipientStepPrompt(payload: NativeCreateDraftPayload, actor: "staff" | "external"): string {
@@ -32,9 +32,9 @@ export function recipientStepPrompt(payload: NativeCreateDraftPayload, actor: "s
   if (!q) return staffRecipientIntroPrompt();
   const hits = payload.eligibleRecipients?.length ?? 0;
   if (hits > 0) {
-    return `Кому передаёте? Совпадения по «${q.slice(0, 64)}». Выберите кнопкой или уточните запрос.`;
+    return "Кому передаёте? Выберите получателя кнопкой или введите его номер телефона.";
   }
-  return `${staffRecipientIntroPrompt()}\n\nНичего не найдено. Введите телефон или отправьте контакт.`;
+  return `Не удалось определить получателя. Для выбора нужен его номер телефона.\n\n${staffRecipientIntroPrompt()}`;
 }
 
 export function looksPhoneLike(raw: string): boolean {
@@ -286,7 +286,7 @@ export function externalSummaryDisplayName(phoneE164: string): string {
 }
 
 export function staffSingleCharHint(): string {
-  return "Введите ещё символ для поиска (имя от 2 букв) или укажите телефон.";
+  return "Для выбора получателя введите его номер телефона или отправьте контакт с номером.";
 }
 
 export function invalidPhoneHint(): string {
@@ -413,7 +413,7 @@ export async function handleExternalRecipientPhoneText(
   if (!looksPhoneLike(trimmed)) {
     return {
       kind: "hint",
-      message: `${externalRecipientIntroPrompt()}\n\nНичего не найдено. Введите телефон или отправьте контакт.`,
+      message: "Для выбора получателя введите его номер телефона или отправьте контакт с номером.",
       payload: { ...payload, recipientSearchQuery: trimmed, eligibleRecipients: [], recipientPage: 0 },
       step: "recipient",
     };

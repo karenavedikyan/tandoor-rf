@@ -1,5 +1,5 @@
 export type ReceiptEntryCallback = {
-  action: "code" | "cancel" | "list" | "receive" | "invite" | "pick";
+  action: "code" | "cancel" | "list" | "receive" | "invite" | "pick" | "retry";
   transferId: string;
   version: number;
 };
@@ -10,7 +10,7 @@ export function buildReceiptEntryCallback(action: ReceiptEntryCallback["action"]
 }
 export function parseReceiptEntryCallback(payload: string): ReceiptEntryCallback | null {
   if (Buffer.byteLength(payload, "utf8") > 64) return null;
-  const m = /^he:(code|cancel|list|receive|invite|pick):([A-Za-z0-9_-]+):([1-9]\d*)$/.exec(payload);
+  const m = /^he:(code|cancel|list|receive|invite|pick|retry):([A-Za-z0-9_-]+):([1-9]\d*)$/.exec(payload);
   if (!m) return null;
   const version = Number(m[3]);
   if (!Number.isSafeInteger(version)) return null;

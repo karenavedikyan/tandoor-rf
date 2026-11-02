@@ -1,5 +1,6 @@
 import { formatTransferContextHeader } from "../staff-notification-route";
 import { formatNotificationTransferState, type NotificationTransferState } from "../notification-transfer-state";
+import { formatReceiptConfirmation } from "../receipt-confirmation-copy";
 
 export type ExternalPersonMessengerEvent =
   | "declined"
@@ -54,6 +55,12 @@ export function buildExternalPersonMessengerBody(input: {
   const linkLine = link ? `\nОткрыть: ${link}` : "";
   const state = formatNotificationTransferState(input.notificationState);
   const ctx = [externalContextBlock(input), state].filter(Boolean).join("\n\n");
+  if ((input.event === "after_code" || input.event === "after_receipt" || input.event === "delivered")
+      && (!input.notificationState || input.notificationState.phase === "received")) {
+    return `${formatReceiptConfirmation({
+      ...input, audience: input.event === "after_code" ? "sender" : "recipient",
+    })}${linkLine}`;
+  }
   switch (input.event) {
     case "declined":
       return (

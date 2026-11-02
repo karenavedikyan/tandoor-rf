@@ -10,6 +10,16 @@ import { buildNotificationTransferState } from "./notification-transfer-state";
 
 export { uniqueStaffUserIdsFromParties as uniqueStaffUserIds };
 
+/** Freeze the recipient's relation to this leg by trusted IDs, never display-name matching. */
+async function receiptAudiences(
+  client: PoolClient, previousHolderPartyId: string, newHolderPartyId: string,
+): Promise<Record<string, "sender" | "recipient">> {
+  const result: Record<string, "sender" | "recipient"> = {};
+  for (const id of await uniqueStaffUserIdsFromParties(client, [previousHolderPartyId])) result[id] = "sender";
+  for (const id of await uniqueStaffUserIdsFromParties(client, [newHolderPartyId])) result[id] = "recipient";
+  return result;
+}
+
 async function payloadWithRoute(
   client: PoolClient,
   base: Omit<StaffNotificationPayload, "routeFromDisplayName" | "routeToDisplayName">,
@@ -90,6 +100,7 @@ export async function notifyHandoffConfirmed(
   ])).filter((id) => !excluded.has(id));
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.handoff_confirmed",
+    receiptAudienceByUserId: await receiptAudiences(client, input.previousHolderPartyId, input.newHolderPartyId),
     recipientUserIds: userIds,
     skipMessengerUserIds: [input.selfServedUserId],
     payload: await payloadWithRoute(client, input, {
@@ -121,6 +132,7 @@ export async function notifyTransferDelivered(
   ]);
   await fanoutStaffTransferNotification(client, {
     eventType: "tan_tracker.delivered",
+    receiptAudienceByUserId: await receiptAudiences(client, input.previousHolderPartyId, input.holderPartyId),
     recipientUserIds: userIds,
     skipMessengerUserIds: [input.selfServedUserId],
     payload: await payloadWithRoute(client, input, {

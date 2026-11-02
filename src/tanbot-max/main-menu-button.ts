@@ -25,6 +25,9 @@ export function withMaxMainMenuButton(buttons?: MaxInlineButton[][]): MaxInlineB
     const code = actions.find(action => action?.action === "code");
     const invite = actions.find(action => action?.action === "invite");
     if (code && invite && code.transferId === invite.transferId && code.version === invite.version) return source;
+    const retry = actions.find(action => action?.action === "retry");
+    const cancel = actions.find(action => action?.action === "cancel");
+    if (retry && cancel && retry.transferId === cancel.transferId && retry.version === cancel.version) return source;
   }
   const hasContextualMenu = source.some((row) => row.some((button) => isMenuNavigationButton(button)));
   if (hasContextualMenu) return source;

@@ -18,6 +18,7 @@ import {
   notifyRouteContinued,
   notifyTransferDelivered,
 } from "../../src/tan-tracker/transfer-lk-notify";
+import { buildTanTrackerStaffOutboxMessage } from "../../src/tan-tracker/tan-tracker-outbox-messages";
 
 const ORIGIN = "http://127.0.0.1:3000";
 const PASSWORD = "StrongPass123!";
@@ -132,6 +133,53 @@ describe("tan-tracker staff notify fanout (PostgreSQL)", { concurrency: false },
     assert.equal(sent.sent, 1);
     assert.match(String(sink.calls[0]!.body.text), /FAN1/);
     assert.doesNotMatch(String(sink.calls[0]!.body.text), /\b\d{6}\b/);
+  });
+
+  it("freezes wording by trusted party IDs for sender, recipient and observer with identical names", async () => {
+    await resetPoolForTests();
+    const pool = getPool(); assert.ok(pool);
+    const users = [];
+    for (const role of ["sender", "recipient", "creator"]) users.push(await createTestUser({
+      databaseUrl, email: `receipt-copy-${role}@test.local`, password: PASSWORD, fullName: "Same Name", role: "manager",
+    }));
+    const [sender, recipient, creator] = users;
+    const client = await pool.connect();
+    const transferId = "TT-COPY-RECEIVED";
+    try {
+      await client.query("BEGIN");
+      const parties = [];
+      for (const user of users) parties.push(await ensurePartyForUserOnWrite(client, user.id, "Same Name", null));
+      await client.query(
+        `INSERT INTO tt_transfers (id, public_code, item_title, status, creator_party_id, holder_party_id,
+         pending_party_id, final_recipient_party_id, handoff_version, row_version)
+         VALUES ($1,'COPY1','Synthetic box','waiting',$2,$3,$4,$4,1,1)`,
+        [transferId, parties[2].id, parties[0].id, parties[1].id],
+      );
+      await applyPendingReceiptHandoff(client, {
+        id: transferId, holder_party_id: parties[0].id, pending_party_id: parties[1].id,
+        final_recipient_party_id: parties[1].id, handoff_version: 1, row_version: 1,
+      }, sender.id, parties[0].id, "synthetic receipt copy");
+      await client.query(`UPDATE tt_transfers SET holder_party_id=$2 WHERE id=$1`, [transferId, parties[2].id]);
+      await client.query("COMMIT");
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+    const out = await pool.query(
+      `SELECT user_id::text, channel, payload FROM tanbot_notification_outbox
+       WHERE payload->>'transferId'=$1 AND event_type='tan_tracker.delivered'`, [transferId],
+    );
+    assert.equal(out.rowCount, 6, "same three staff recipients and two channels");
+    for (const row of out.rows) {
+      const audience = row.user_id === recipient.id ? "recipient" : row.user_id === sender.id ? "sender" : undefined;
+      assert.equal(row.payload.receiptAudience, audience);
+      const text = buildTanTrackerStaffOutboxMessage("tan_tracker.delivered", row.payload, ORIGIN);
+      assert.ok(text.startsWith("ГОТОВО ✅"));
+      assert.equal(text.includes("Вам передали"), row.user_id === recipient.id);
+      assert.equal(text.includes("Вы передали"), row.user_id === sender.id);
+      assert.match(text, /Статус: Получение подтверждено/);
+    }
+    const lk = await pool.query(`SELECT user_id FROM tt_lk_notifications WHERE transfer_id=$1`, [transferId]);
+    assert.equal(new Set(lk.rows.map(r => r.user_id)).size, 3);
+    assert.ok(creator.id);
   });
 
   it("delivered dedupes creator=holder; no handoff_confirmed duplicate on route complete", async () => {

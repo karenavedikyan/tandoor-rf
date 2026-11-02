@@ -9,6 +9,7 @@ import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2
 import { loadTanbotMaxStage2Config } from "../../src/tanbot-max/stage2-config";
 import { processUndeliveredTelegramWebhookReplies } from "../../src/tanbot-telegram/reply-retry";
 import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-retry";
+import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../../src/tanbot/native-create/telegram-reply-markup";
 
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; userId: string; partyId: string; id: number; chatId: number };
@@ -124,7 +125,7 @@ function button(r: Reply, regex: RegExp) {
 async function startExternal(a: Actor) {
   let r = await send(a, { text: "Создать передачу" });
   r = await send(a, { text: `Synthetic card item ${a.id}` });
-  r = await send(a, { callback: button(r, /Пропустить/i) });
+  r = await send(a, { callback: button(r, /Без вложений/i) });
   r = await send(a, { callback: button(r, /Пропустить/i) });
   assert.match(r.text, /кому передаёте/i);
   return r;
@@ -147,6 +148,18 @@ async function privacyCounts() {
 }
 
 for (const channel of ["max", "telegram"] as const) {
+  it(`${channel}: recipient step requests phone and does not suggest retrying name search`, async () => {
+    const a = await actor(channel);
+    const first = await startExternal(a);
+    assert.match(first.text, /Введите номер телефона получателя/);
+    assert.doesNotMatch(first.text, /Введите имя|фамили/);
+    const before = await privacyCounts();
+    const retry = await send(a, { text: "Unmatched Synthetic Recipient Name" });
+    assert.match(retry.text, /Для выбора нужен его номер телефона/);
+    assert.doesNotMatch(retry.text, /Введите имя|фамили|уточните запрос/);
+    assert.equal((await draft(a)).step, "recipient");
+    assert.deepEqual(await privacyCounts(), before);
+  });
   it(`${channel}: independent name-first card preserves manual name and canonical create target, no identity proof`, async () => {
     const a = await actor(channel);
     await startExternal(a);
@@ -170,8 +183,9 @@ for (const channel of ["max", "telegram"] as const) {
     assert.match(r.text, /Моё название получателя/);
     assert.ok(r.text.replace(/\D/g, "").includes(expectedPhone.slice(1)), "summary must display selected phone");
     const created = await send(a, { callback: button(r, /^Создать передачу$/i) });
-    assert.equal(created.messages?.length, 2, "creation acknowledgement is separate from recipient invitation");
-    assert.match(created.messages![0].text, /Передача создана/, "explicit creation is acknowledged to sender");
+    const visibleMessages = created.messages!.filter(message => message.text !== TELEGRAM_KEYBOARD_AUX_TEXT);
+    assert.equal(visibleMessages.length, 2, "creation acknowledgement is separate from recipient invitation");
+    assert.match(visibleMessages[0].text, /Передача создана/, "explicit creation is acknowledged to sender");
     assert.match(created.text, /Тандор · Вам передают предмет/u, "last message is a recipient-facing invitation");
     assert.match(created.text, /Получатель: Моё название получателя/u);
     const rows = (await getPool()!.query(`SELECT t.id,p.display_name,p.phone_e164

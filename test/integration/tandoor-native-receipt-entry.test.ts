@@ -170,18 +170,52 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.equal((await p().query("SELECT COUNT(*)::int AS n FROM tt_transfers")).rows[0].n, before);
         assert.equal((await p().query("SELECT consumed_at FROM tt_handoff_codes WHERE transfer_id=$1", [t.id])).rows[0].consumed_at, null);
       });
+      it(`${channel}: ${staff ? "staff" : "external"} retries expired code without leaving input or confirming custody`, async () => {
+        const a = await actor(channel, staff), foreign = await actor(channel, staff), t = await seed(a);
+        const first = await send(a, "", t.callback);
+        const retry = first.buttons.find(b => b.text === "Запросить код ещё раз")!;
+        const callback = retry.payload ?? retry.callback_data;
+        assert.ok(callback);
+        await p().query(`UPDATE tt_handoff_codes SET expires_at=NOW()-INTERVAL '1 second' WHERE transfer_id=$1`, [t.id]);
+        const expired = await send(a, code);
+        assert.match(expired.text, /Срок кода истёк/);
+        assert.ok(expired.buttons.some(b => (b.payload ?? b.callback_data) === callback));
+        assert.doesNotMatch(expired.text, /ГОТОВО ✅/);
+        const event = ++seq;
+        const response = await send(a, "", callback, event);
+        assert.match(response.messages![0].text, /^Дождитесь кода от получателя\./);
+        assert.deepEqual(response.messages![0].buttons.map(b => b.text), ["Запросить код ещё раз", "Отменить ввод кода"]);
+        assert.match(response.messages![0].text, /Перешлите получателю следующее сообщение/);
+        assert.match(response.text, /Получить код в MAX|Получить код в Telegram/);
+        assert.equal((await entries(a))[0].transfer_id, t.id, "input stays on this transfer");
+        const sessions = () => p().query(`SELECT id FROM tt_external_messenger_sessions WHERE transfer_id=$1`, [t.id]);
+        assert.equal((await sessions()).rowCount, 1);
+        await send(a, "", callback, event);
+        assert.equal((await sessions()).rowCount, 1, "duplicate webhook cannot mint twice");
+        assert.match((await send(foreign, "", callback)).text, /устарела|недоступна/);
+        assert.equal((await sessions()).rowCount, 1);
+        const after = await state(t.id);
+        assert.equal(after.holder_party_id, a.party);
+        assert.equal(after.successes, 0);
+        assert.equal((await p().query(`SELECT COUNT(*)::int AS n FROM tt_handoff_codes WHERE transfer_id=$1 AND consumed_at IS NULL`, [t.id])).rows[0].n, 0, "sender retry does not issue OTP");
+        await p().query(`UPDATE tt_transfers SET handoff_version=2 WHERE id=$1`, [t.id]);
+        assert.match((await send(a, "", callback)).text, /устарела/);
+        assert.equal((await sessions()).rowCount, 1);
+      });
       it(`${channel}: ${staff ? "staff" : "verified external holder"} list pick code OTP confirms once`, async () => {
         const a = await actor(channel, staff), t = await seed(a);
         const selected = await pickTransferAndEnterCode(a, t);
         assert.ok(selected.text.includes(t.id)); assert.match(selected.text, /Synthetic sender/);
         assert.match(selected.text, /Synthetic recipient/);
+        assert.match(selected.text, /^Дождитесь кода от получателя\./);
+        assert.deepEqual(selected.buttons.map(b => b.text), ["Запросить код ещё раз", "Отменить ввод кода"]);
         assert.match(selected.text, /6 цифр|сообщение с кодом/);
         assert.equal((await state(t.id)).holder_party_id, a.party);
         const waiting = (await entries(a))[0]; assert.equal(waiting.transfer_id, t.id);
         assert.ok(!JSON.stringify(waiting).includes(code), "selected state stores no raw OTP");
         const messageId = ++seq;
         const done = await send(a, `Передача ${t.id}\nКод приёма: ${code}\nОт: Synthetic sender\nКому: Synthetic recipient`, undefined, messageId);
-        assert.match(done.text, /Передача подтверждена/);
+        assert.match(done.text, /^ГОТОВО ✅\n\nВы передали/);
         assert.match(done.text, /Статус: Получение подтверждено\nОтветственный: Synthetic recipient/);
         assert.doesNotMatch(done.text, /Статус: Завершена|Ответственный: Synthetic sender/);
         const s = await state(t.id);
@@ -221,7 +255,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         [t.id])).rows[0].n, HANDOFF_CODE_MAX_VERIFY_ATTEMPTS);
       await p().query(`INSERT INTO tt_handoff_codes(transfer_id,handoff_version,pending_party_id,code_hash,expires_at)
         VALUES($1,1,$2,$3,NOW()+INTERVAL '30 minutes')`, [t.id, t.recipient, hashOtp("456789", requireHandoffOtpPepper())]);
-      assert.match((await send(a, "45-67-89")).text, /Передача подтверждена/);
+      assert.match((await send(a, "45-67-89")).text, /^ГОТОВО ✅\n\nВы передали/);
       assert.equal((await state(t.id)).successes, 1);
     });
     it(`${channel}: expiry, version, recipient, deletion, archive and status changes cannot be bypassed`, async () => {
@@ -286,7 +320,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
       assert.match((await send(a, "", cancel.payload ?? cancel.callback_data)).text, /устарела/);
       assert.equal((await entries(a))[0].transfer_id, two.id);
       const done = await send(a, code);
-      assert.match(done.text, /Передача подтверждена/);
+      assert.match(done.text, /^ГОТОВО ✅\n\nВы передали/);
       assert.equal((await state(two.id)).successes, 1);
       assert.equal((await state(one.id)).successes, 0);
       await send(a, "", one.callback);
@@ -351,7 +385,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         else process.env.TT_EXTERNAL_MESSENGER_ENABLED = previous;
       }
       const done = await send(a, code);
-      assert.match(done.text, /Передача подтверждена/);
+      assert.match(done.text, /^ГОТОВО ✅\n\nВы передали/);
       assert.equal((await state(t.id)).successes, 1);
     });
     it(`${channel}: paged holder-only code choices keep older transfers accessible without a website`, async () => {
