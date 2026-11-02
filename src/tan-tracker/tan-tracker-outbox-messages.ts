@@ -20,6 +20,8 @@ export function buildTanTrackerStaffOutboxMessage(
     itemTitle: String(payload.itemTitle ?? "Передача"),
     handoffVersion: Number(payload.handoffVersion ?? 0),
     notificationState: normalizeNotificationTransferState(payload.notificationState),
+    receiptAudience: payload.receiptAudience === "recipient" || payload.receiptAudience === "sender"
+      || payload.receiptAudience === "observer" ? payload.receiptAudience : undefined,
     reason: payload.reason != null ? String(payload.reason) : null,
     routeFromDisplayName:
       typeof payload.routeFromDisplayName === "string" && payload.routeFromDisplayName.trim()

@@ -41,6 +41,8 @@ export async function fanoutStaffTransferNotification(
     lkIdempotencySuffix?: string;
     /** Users who already saw this outcome in a bot reply: LK bell only, no telegram/max message. */
     skipMessengerUserIds?: ReadonlyArray<string | null | undefined>;
+    /** Message wording only; does not change recipients or permissions. */
+    receiptAudienceByUserId?: Readonly<Record<string, "recipient" | "sender">>;
   },
 ): Promise<void> {
   const deduped = [...new Set(input.recipientUserIds.filter(Boolean))];
@@ -85,7 +87,11 @@ export async function fanoutStaffTransferNotification(
         userId,
         channel,
         eventType: input.eventType,
-        payload: payloadJson,
+        payload: {
+          ...payloadJson,
+          ...(input.receiptAudienceByUserId?.[userId]
+            ? { receiptAudience: input.receiptAudienceByUserId[userId] } : {}),
+        },
       });
     }
   }

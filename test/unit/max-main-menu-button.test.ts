@@ -26,6 +26,16 @@ describe("MAX main-menu footer", () => {
     }]]);
   });
 
+  it("keeps retry/cancel input pair compact only for the same transfer and handoff version", () => {
+    const pair = (id: string, version: number): MaxInlineButton[][] => [
+      [{ type: "callback", text: "Запросить код ещё раз", payload: buildReceiptEntryCallback("retry", "TT-LOCAL", 1)! }],
+      [{ type: "callback", text: "Отменить ввод кода", payload: buildReceiptEntryCallback("cancel", id, version)! }],
+    ];
+    assert.deepEqual(withMaxMainMenuButton(pair("TT-LOCAL", 1)), pair("TT-LOCAL", 1));
+    assert.equal(withMaxMainMenuButton(pair("TT-OTHER", 1)).flat().length, 3);
+    assert.equal(withMaxMainMenuButton(pair("TT-LOCAL", 2)).flat().length, 3);
+  });
+
   it("skips footer when contextual Menu is present and strips duplicate menu rows", () => {
     const oldPayload = buildNativeCreateCallback("menu", "11111111-1111-4111-8111-111111111111", 5)!;
     const source: MaxInlineButton[][] = [

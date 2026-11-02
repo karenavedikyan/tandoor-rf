@@ -3,6 +3,7 @@
 import { formatTransferContextHeader, staffTransferLkDetailUrl } from "./staff-notification-route";
 import { SENDER_HANDOFF_GUIDANCE } from "./sender-handoff-guidance";
 import { formatNotificationTransferState, type NotificationTransferState } from "./notification-transfer-state";
+import { formatReceiptConfirmation, type ReceiptAudience } from "./receipt-confirmation-copy";
 
 export type StaffTransferEventType =
   | "tan_tracker.admin_created"
@@ -27,6 +28,7 @@ export type StaffNotificationPayload = {
   routeToDisplayName?: string;
   notificationState?: NotificationTransferState;
   creatorKind?: "staff" | "external";
+  receiptAudience?: ReceiptAudience;
 };
 
 function eventActionLine(eventType: StaffTransferEventType, payload: StaffNotificationPayload): string {
@@ -118,5 +120,14 @@ export function staffNotificationMessengerText(
   const url = eventType === "tan_tracker.code_obtained" || eventType === "tan_tracker.admin_created"
     ? staffTransferLkDetailUrl(appOrigin, payload.publicCode)
     : `${appOrigin.replace(/\/$/, "")}/tan-tracker`;
+  const receiptEvent = eventType === "tan_tracker.handoff_confirmed" || eventType === "tan_tracker.delivered";
+  const receivedAssignment = eventType === "tan_tracker.assignment" && payload.notificationState?.phase === "received";
+  if ((receiptEvent && (!payload.notificationState || payload.notificationState.phase === "received"))
+      || receivedAssignment) {
+    return `${formatReceiptConfirmation({
+      ...payload,
+      audience: receivedAssignment ? "recipient" : payload.receiptAudience,
+    })}\n\nОткрыть: ${url}`;
+  }
   return `${lk.body}\n\nОткрыть: ${url}`;
 }
