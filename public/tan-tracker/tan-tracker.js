@@ -659,6 +659,7 @@
 
   function applyMessengerInviteData(o, data) {
     o.messengerPortalUrl = data.portalUrl || data.portalPath || "";
+    o.messengerInvitationText = typeof data.invitationText === "string" ? data.invitationText : "";
     o.messengerStartToken = data.startToken || "";
     o.messengerPortalCacheKey = messengerPortalCacheKey(o);
   }
@@ -773,6 +774,9 @@
   }
 
   function messengerInvitationMessagePlain(o, url) {
+    if (o.messengerInvitationText && messengerPortalUrlValid(o) && (!url || url === o.messengerPortalUrl)) {
+      return o.messengerInvitationText;
+    }
     const from = contactById(o.holderId);
     const to = contactById(o.pendingId);
     const abs = absoluteHandoffUrl(url || o.messengerPortalUrl);

@@ -164,8 +164,8 @@ async function resetSessionProofForChannelSwitch(
 }
 
 /**
- * Bind chat to session. Pre-confirm switch to another channel invalidates prior proof/codes
- * (same session token) but keeps global contact/code issue counters.
+ * Bind chat to exactly the selected invitation. Channel switches reset proof, not issued
+ * codes; global contact/code issue counters are preserved. Bot starts serialize by identity.
  */
 export async function bindSessionMessengerChat(
   client: PoolClient,
@@ -175,6 +175,13 @@ export async function bindSessionMessengerChat(
   messengerUserId: bigint,
 ): Promise<void> {
   const switchingChannel = session.channel != null && session.channel !== channel;
+  const chatColumn = channel === "telegram" ? "telegram_chat_id" : "max_chat_id";
+  const userColumn = channel === "telegram" ? "bound_telegram_user_id" : "bound_max_user_id";
+  await client.query(
+    `UPDATE tt_external_messenger_sessions SET ${chatColumn}=NULL, ${userColumn}=NULL
+     WHERE ${chatColumn}=$1 AND id<>$2::uuid AND superseded_at IS NULL`,
+    [chatId.toString(), session.id],
+  );
   if (switchingChannel) {
     await resetSessionProofForChannelSwitch(client, session);
   }

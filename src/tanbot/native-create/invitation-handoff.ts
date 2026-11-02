@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { formatNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
 import { getAppOrigin } from "../../config";
 import { mintExternalMessengerSession } from "../../tan-tracker/external-messenger/session-service";
+import { recipientBotLinks, type RecipientBotLinks } from "../../tan-tracker/external-messenger/direct-invitation";
 
 export function formatForwardableRecipientInvitation(input: {
   publicCode: string;
@@ -9,6 +10,7 @@ export function formatForwardableRecipientInvitation(input: {
   recipientName: string;
   item: string;
   portalUrl: string;
+  botLinks?: RecipientBotLinks;
 }): string {
   const line = (value: string, limit = 160) => value.replace(/\s+/gu, " ").trim().slice(0, limit);
   return [
@@ -21,10 +23,16 @@ export function formatForwardableRecipientInvitation(input: {
     "",
     formatNotificationTransferState({ phase: "waiting", holderName: input.senderName, pendingName: input.recipientName }),
     "",
-    "Откройте ссылку, посмотрите детали и получите код приёма. Вход в личный кабинет не нужен.",
+    input.botLinks?.max || input.botLinks?.telegram
+      ? "Получите код прямо в удобном боте. Подтвердите свой номер кнопкой в чате. Сайт и вход в личный кабинет не нужны."
+      : "Откройте ссылку, посмотрите детали и получите код приёма. Вход в личный кабинет не нужен.",
     "Сообщите код отправителю при получении посылки. Отправитель введёт его, чтобы подтвердить передачу.",
     "",
-    `Посмотреть передачу и получить код: ${input.portalUrl}`,
+    ...(input.botLinks?.max || input.botLinks?.telegram ? [
+      ...(input.botLinks.max ? [`Получить код в MAX: ${input.botLinks.max}`] : []),
+      ...(input.botLinks.telegram ? [`Получить код в Telegram: ${input.botLinks.telegram}`] : []),
+      "", "Если ссылка не открывается, перешлите это сообщение боту Тандор.",
+    ] : [`Посмотреть передачу и получить код: ${input.portalUrl}`]),
   ].join("\n");
 }
 
@@ -67,5 +75,6 @@ export async function buildExternalPendingInviteMessage(
     recipientName: transfer.recipient_name,
     item: transfer.item_title,
     portalUrl,
+    botLinks: recipientBotLinks(minted.startToken),
   });
 }

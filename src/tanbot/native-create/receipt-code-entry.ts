@@ -10,6 +10,7 @@ import { buildNativeMainMenuReply, parseNativeBotSlashCommand, isNativeMainMenuT
   isNativeCreateMenuText, isNativeContinueDraftText, peekResumableNativeDraft } from "./main-menu";
 import { buildMainMenuInline } from "./keyboards";
 import { buildNativeCreateCallback } from "./callback-codec";
+import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 
 type ReceiptTransfer = LockedReceiptTransfer & {
   public_code: string; item_title: string; sender_name: string; recipient_name: string;
@@ -104,7 +105,10 @@ export async function appendReceiptEntryChoices(
     return {
       ...reply, text,
       telegramInlineKeyboard: [
-        ...visible.map(r => [{ text: `Ввести код · ${r.public_code}`, callback_data: receiptEntryCallback(r.id, r.handoff_version)! }]),
+        ...visible.flatMap(r => [
+          [{ text: `Ввести код · ${r.public_code}`, callback_data: receiptEntryCallback(r.id, r.handoff_version)! }],
+          [{ text: `Обновить приглашение · ${r.public_code}`, callback_data: buildReceiptEntryCallback("invite", r.id, r.handoff_version)! }],
+        ]),
         ...(paging.length ? [paging.map(p => ({ text: p.text, callback_data: p.data }))] : []),
         ...existing.map(row => row.map(b => "url" in b && typeof b.url === "string" && b.text === "Мои передачи"
           ? { ...b, text: "Открыть список в ЛК" } : b)),
@@ -116,7 +120,10 @@ export async function appendReceiptEntryChoices(
   return {
     ...reply, text,
     maxInlineButtons: [
-      ...visible.map(r => [{ type: "callback" as const, text: `Ввести код · ${r.public_code}`, payload: receiptEntryCallback(r.id, r.handoff_version)! }]),
+      ...visible.flatMap(r => [
+        [{ type: "callback" as const, text: `Ввести код · ${r.public_code}`, payload: receiptEntryCallback(r.id, r.handoff_version)! }],
+        [{ type: "callback" as const, text: `Обновить приглашение · ${r.public_code}`, payload: buildReceiptEntryCallback("invite", r.id, r.handoff_version)! }],
+      ]),
       ...(paging.length ? [paging.map(p => ({ type: "callback" as const, text: p.text, payload: p.data }))] : []),
       ...(reply.maxInlineButtons ?? []),
     ],
@@ -142,6 +149,23 @@ export async function handleReceiptEntryCallback(
     // An unsuccessful explicit switch must not leave another transfer silently selected.
     await clearReceiptEntry(client, ctx);
     return { text: "Эта кнопка устарела или передача недоступна. Откройте «Мои передачи» и выберите актуальную передачу." };
+  }
+  if (parsed.action === "invite") {
+    if (!row.pending_party_id) return { text: "У этой передачи сейчас нет ожидаемого получателя." };
+    const invitation = await buildExternalPendingInviteMessage(client, {
+      transferId: row.id, pendingPartyId: row.pending_party_id, handoffVersion: row.handoff_version,
+      channel: ctx.channel, allowUserParty: true,
+    });
+    if (!invitation) return { text: "Не удалось подготовить приглашение. Проверьте номер получателя." };
+    await clearReceiptEntry(client, ctx);
+    const codeCallback = receiptEntryCallback(row.id, row.handoff_version)!;
+    return {
+      text: `Приглашение для ${row.public_code} обновлено. Перешлите следующее сообщение получателю. Старую ссылку больше не используйте.`,
+      forwardInvitationText: invitation,
+      ...(ctx.channel === "telegram"
+        ? { telegramInlineKeyboard: [[{ text: `Ввести код · ${row.public_code}`, callback_data: codeCallback }]] }
+        : { maxInlineButtons: [[{ type: "callback" as const, text: `Ввести код · ${row.public_code}`, payload: codeCallback }]] }),
+    };
   }
   await client.query(
     `INSERT INTO tt_bot_receipt_code_entries

@@ -28,6 +28,17 @@ function inviteFixture(overrides: Record<string, unknown> = {}) {
   return { getUrl, order };
 }
 describe("holder recipient invitation and QR", () => {
+  it("copies the server's bot-only invitation only for the current cached recipient", () => {
+    const format = vm.runInNewContext(`(${functionText("messengerInvitationMessagePlain")})`, {
+      messengerPortalUrlValid: (o: { valid: boolean }) => o.valid,
+      contactById: () => ({ name: "Synthetic" }), absoluteHandoffUrl: (url: string) => url,
+    });
+    const o = { id: "TT-1", holderId: "a", pendingId: "b", item: "Item", valid: true,
+      messengerPortalUrl: "https://example.test/recipient", messengerInvitationText: "Bot-only synthetic invitation" };
+    assert.equal(format(o, o.messengerPortalUrl), o.messengerInvitationText);
+    assert.notEqual(format({ ...o, valid: false }, o.messengerPortalUrl), o.messengerInvitationText);
+    assert.notEqual(format(o, "https://example.test/different"), o.messengerInvitationText);
+  });
   it("external current holder can share the signed recipient link without cabinet write access", () => {
     const { getUrl, order } = inviteFixture();
     assert.match(getUrl(order), /tt_tok=recipient-only/);
