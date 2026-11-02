@@ -39,6 +39,7 @@ export function menuReplyKeyboard(options: { showContinue?: boolean } = {}): Rec
   const rows: Array<Array<{ text: string }>> = [
     [{ text: "Создать передачу" }],
     [{ text: "Мои передачи" }],
+    [{ text: "Статус трека" }],
   ];
   if (options.showContinue) {
     rows.push([{ text: "Продолжить оформление" }]);
@@ -110,6 +111,7 @@ export function buildMainMenuInline(
   const primary: BtnDef[] = [
     { label: "Создать передачу", action: "menu_create" },
     { label: "Мои передачи", action: "menu_my" },
+    { label: "Статус трека", action: "menu_status" },
   ];
   if (channel === "telegram") {
     const rows: BtnDef[][] = [primary, [{ label: "Меню", action: "menu" }]];

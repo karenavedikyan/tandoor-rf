@@ -4,6 +4,7 @@ import { after, before, describe, it } from "node:test";
 import request from "supertest";
 import type { Express } from "express";
 import { getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv, createTestUser } from "../helpers/test-db";
+import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { getPool, resetPoolForTests, closePool } from "../../src/db/pool";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
 import { hashOtp } from "../../src/tan-tracker/phone-verification";
@@ -13,6 +14,11 @@ import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2
 import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-retry";
 import { processUndeliveredTelegramWebhookReplies } from "../../src/tanbot-telegram/reply-retry";
 import { buildReceiptEntryCallback, parseReceiptEntryCallback } from "../../src/tanbot/receipt-entry-callback";
+import { buildTrackStatusCallback } from "../../src/tanbot/track-status-callback";
+import { buildNativeCreateCallback } from "../../src/tanbot/native-create/callback-codec";
+import { NATIVE_MENU_DRAFT_HEX } from "../../src/tanbot/native-create/menu-sentinel";
+import { trackStatusReply } from "../../src/tanbot/native-create/track-status";
+import { withTransaction } from "../../src/access/db";
 import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../../src/tanbot/native-create/telegram-reply-markup";
 import { tryNativeCreateMaxCallback, tryNativeCreateTelegramCallback } from "../../src/tanbot/native-create/adapters";
 import { mintExternalMessengerSession, bindSessionMessengerChat, type ExternalMessengerSessionRow } from "../../src/tan-tracker/external-messenger/session-service";
@@ -97,10 +103,10 @@ async function pickTransferAndEnterCode(a: Actor, t: { id: string; pick: string 
   assert.ok(codeBtn, JSON.stringify(detail));
   return send(a, "", codeBtn!.payload ?? codeBtn!.callback_data!);
 }
-async function send(a: Actor, text = "", callback?: string, fixedId?: number): Promise<Reply> {
+async function send(a: Actor, text = "", callback?: string, fixedId?: number, privateDialog = true): Promise<Reply> {
   const id = fixedId ?? ++seq, replies: Reply[] = [];
   if (a.channel === "telegram") {
-    const message = { message_id: id, chat: { id: a.chat, type: "private" } };
+    const message = { message_id: id, chat: { id: a.chat, type: privateDialog ? "private" : "group" } };
     const r = await request(app).post("/api/tanbot-telegram/webhook")
       .set("X-Telegram-Bot-Api-Secret-Token", process.env.TANBOT_TELEGRAM_WEBHOOK_SECRET!)
       .send(callback ? { update_id: id, callback_query: { id: `receipt-${id}`, from: { id: a.id, is_bot: false },
@@ -115,7 +121,7 @@ async function send(a: Actor, text = "", callback?: string, fixedId?: number): P
       return { ok: true, result: { message_id: id } };
     }, { deliveryEnabled: true });
   } else {
-    const message = { recipient: { chat_id: a.chat, chat_type: "dialog", user_id: a.id }, body: { mid: `receipt-${id}`, text } };
+    const message = { recipient: { chat_id: a.chat, chat_type: privateDialog ? "dialog" : "chat", user_id: a.id }, body: { mid: `receipt-${id}`, text } };
     const r = await request(app).post("/api/tanbot-max/webhook")
       .set("X-Max-Bot-Api-Secret", process.env.TANBOT_MAX_WEBHOOK_SECRET!)
       .send(callback ? { update_type: "message_callback", timestamp: id, message,
@@ -144,6 +150,19 @@ async function entries(a: Actor) {
   return (await p().query(`SELECT * FROM tt_bot_receipt_code_entries WHERE channel=$1 AND messenger_chat_id=$2`,
     [a.channel, String(a.chat)])).rows;
 }
+const statusView = (id: string) => buildTrackStatusCallback({ action: "view", transferId: id })!;
+async function statusBusinessSnapshot(id: string) {
+  return (await p().query(`SELECT jsonb_build_object(
+    'transfer',(SELECT to_jsonb(t) FROM tt_transfers t WHERE id=$1),
+    'codes',(SELECT count(*) FROM tt_handoff_codes WHERE transfer_id=$1),
+    'automatic',(SELECT count(*) FROM tt_automatic_receipt_codes WHERE transfer_id=$1),
+    'invitations',(SELECT count(*) FROM tt_transfer_invitations WHERE transfer_id=$1),
+    'timeline',(SELECT count(*) FROM tt_transfer_timeline WHERE transfer_id=$1),
+    'audit',(SELECT count(*) FROM tt_audit_log WHERE transfer_id=$1),
+    'drafts',(SELECT coalesce(jsonb_agg(to_jsonb(d) ORDER BY id),'[]'::jsonb) FROM tt_external_request_drafts d),
+    'externalOutbox',(SELECT count(*) FROM tt_external_person_message_outbox)
+  ) AS snapshot`, [id])).rows[0].snapshot;
+}
 describe("native receipt confirmation via actual MAX and Telegram webhooks", { concurrency: false }, () => {
   before(async () => {
     setIntegrationEnv(db, "http://127.0.0.1:3000");
@@ -165,6 +184,95 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
   after(async () => { globalThis.fetch = originalFetch; await closePool(); assert.equal(networkCalls, 0); });
   for (const channel of ["max", "telegram"] as const) {
     for (const staff of [true, false]) {
+      it(`${channel}: ${staff ? "staff" : "external"} status is fresh, read-only and follows the holder only after OTP`, async () => {
+        const a = await actor(channel, staff), t = await seed(a);
+        if (staff) await p().query("UPDATE users SET role='manager' WHERE id=$1", [a.user]);
+        const before = await statusBusinessSnapshot(t.id);
+        const list = await send(a, "", buildNativeCreateCallback("menu_status", NATIVE_MENU_DRAFT_HEX, 1)!);
+        assert.ok(list.buttons.some(b => (b.payload ?? b.callback_data) === statusView(t.id)));
+        const card = await send(a, "", statusView(t.id));
+        assert.match(card.text, /Текущий держатель: Synthetic sender/);
+        assert.match(card.text, /Следующий получатель: Synthetic recipient/);
+        assert.match(card.text, /Ожидает подтверждения получения/);
+        assert.doesNotMatch(card.text, /Телефон|\+7999|345678|tt_hat=|est=/);
+        const search = await send(a, `Статус ${t.id}`);
+        assert.match(search.text, /Текущий держатель: Synthetic sender/);
+        assert.deepEqual(await statusBusinessSnapshot(t.id), before);
+        await pickTransferAndEnterCode(a, t);
+        await send(a, code);
+        const afterOtp = await statusBusinessSnapshot(t.id);
+        const refreshed = await send(a, "", button(card, "Обновить статус"));
+        assert.match(refreshed.text, /Текущий держатель: Synthetic recipient/);
+        assert.match(refreshed.text, /Получение подтверждено. Трек открыт/);
+        assert.doesNotMatch(refreshed.text, /Следующий получатель|Статус: Завершён/);
+        assert.deepEqual(await statusBusinessSnapshot(t.id), afterOtp);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} status rechecks visibility, deletion, private chat and live profile binding`, async () => {
+        const a = await actor(channel, staff), foreign = await actor(channel, staff);
+        if (staff) await p().query("UPDATE users SET role='manager' WHERE id=ANY($1::uuid[])", [[a.user, foreign.user]]);
+        const t = await seed(a), other = await seed(foreign);
+        const absent = await send(a, "", statusView("TT-2026-999999999999"));
+        const denied = await send(a, "", statusView(other.id));
+        assert.equal(denied.text, absent.text);
+        assert.doesNotMatch(denied.text, new RegExp(other.id));
+        const group = await send(a, "", statusView(t.id), undefined, false);
+        assert.doesNotMatch(group.text, /Текущий держатель|Synthetic sender/);
+        await p().query("UPDATE tt_transfers SET creator_party_id=$2,holder_party_id=$2,pending_party_id=NULL,final_recipient_party_id=$2 WHERE id=$1", [t.id, foreign.party]);
+        assert.equal((await send(a, "", statusView(t.id))).text, absent.text);
+        const deleted = await seed(a);
+        await p().query("UPDATE tt_transfers SET deleted_at=NOW() WHERE id=$1", [deleted.id]);
+        assert.equal((await send(a, `Статус ${deleted.id}`)).text, absent.text);
+        const bound = await seed(a);
+        if (staff) await p().query(`UPDATE tanbot_${channel}_accounts SET stopped_at=NOW() WHERE user_id=$1`, [a.user]);
+        else await p().query(`DELETE FROM tt_external_person_verifications WHERE person_id=(SELECT id FROM tt_external_persons WHERE party_id=$1)`, [a.party]);
+        const revoked = await send(a, "", statusView(bound.id));
+        assert.doesNotMatch(revoked.text, /Текущий держатель|Synthetic sender/);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} status respects canonical historical-only visibility`, async () => {
+        const a = await actor(channel, staff), owner = await actor(channel, false), t = await seed(owner);
+        if (staff) await p().query("UPDATE users SET role='manager' WHERE id=$1", [a.user]);
+        await p().query(`INSERT INTO tt_transfer_timeline(transfer_id,from_party_id,to_party_id,note)
+          VALUES($1,$2,$3,'Назначен следующий получатель')`, [t.id, a.party, owner.party]);
+        const auditOnly = await send(a, "", statusView(t.id));
+        assert.match(auditOnly.text, /не найден или недоступен/);
+        await p().query(`UPDATE tt_transfer_timeline SET note='Получение подтверждено' WHERE transfer_id=$1`, [t.id]);
+        const historical = await send(a, "", statusView(t.id));
+        if (staff) assert.match(historical.text, /Текущий держатель: Synthetic sender/);
+        else assert.match(historical.text, /не найден или недоступен/);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} status handles completion/archive, pending/final access, paging, drafts and code-input navigation`, async () => {
+        const a = await actor(channel, staff), owner = await actor(channel, false);
+        if (staff) await p().query("UPDATE users SET role='manager' WHERE id=$1", [a.user]);
+        for (const column of ["pending_party_id", "final_recipient_party_id"]) {
+          const t = await seed(owner);
+          await p().query(`UPDATE tt_transfers SET ${column}=$2 WHERE id=$1`, [t.id, a.party]);
+          assert.match((await send(a, "", statusView(t.id))).text, /Текущий держатель: Synthetic sender/);
+        }
+        const t = await seed(a);
+        await p().query("UPDATE tt_transfers SET status='completed',pending_party_id=NULL,completed_at=NOW(),general_archived_at=NOW() WHERE id=$1", [t.id]);
+        const completed = await send(a, "", statusView(t.id));
+        assert.match(completed.text, /Статус: Завершён/);
+        assert.match(completed.text, /Последний держатель: Synthetic sender/);
+        assert.match(completed.text, /в общем архиве/);
+        const ready = await seed(a);
+        await p().query("UPDATE tt_transfers SET pending_party_id=NULL,status='active' WHERE id=$1", [ready.id]);
+        assert.match((await send(a, "", statusView(ready.id))).text, /Первое получение пока не подтверждено/);
+        for (let i = 0; i < 6; i++) await seed(a);
+        const first = await send(a, "Статус трека");
+        const next = await send(a, "", button(first, "Следующие"));
+        assert.match(next.text, /Страница 2 из/);
+        assert.ok(next.buttons.some(b => b.text === "Предыдущие"));
+        await send(a, "Создать передачу");
+        const before = await statusBusinessSnapshot(t.id);
+        await send(a, `Статус ${t.id}`);
+        assert.deepEqual(await statusBusinessSnapshot(t.id), before, "read must preserve a creation draft");
+        const waiting = await seed(a);
+        await send(a, "", waiting.callback);
+        const beforeRead = await statusBusinessSnapshot(waiting.id);
+        await send(a, `Статус ${waiting.id}`);
+        assert.equal((await entries(a)).length, 0);
+        assert.deepEqual(await statusBusinessSnapshot(waiting.id), beforeRead, "status navigation must not attempt OTP verification");
+      });
       it(`${channel}: ${staff ? "staff" : "external"} received track is listed, forwarded without duplication, and custody changes only by OTP`, async () => {
         const a = await actor(channel, staff), t = await seedReceived(a);
         const count = (await p().query("SELECT COUNT(*)::int AS n FROM tt_transfers")).rows[0].n;
@@ -589,6 +697,37 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
       const shown = [...choices, ...rest].map(b => parseReceiptEntryCallback(b.payload ?? b.callback_data ?? "")!.transferId);
       assert.deepEqual([...shown].sort(), ids.sort()); assert.ok(!shown.includes(foreign.id));
     });
+    for (const role of ["rop", "regional_manager"]) {
+      it(`${channel}: ${role} status uses the canonical 1C team scope and rechecks membership`, async () => {
+        const leader = await actor(channel, true), member = await actor(channel, true), outsider = await actor(channel, true);
+        await p().query("UPDATE users SET role=$2 WHERE id=$1", [leader.user, role]);
+        await p().query("UPDATE users SET role='manager' WHERE id=ANY($1::uuid[])", [[member.user, outsider.user]]);
+        const leaderGuid = randomUUID(), memberGuid = randomUUID(), teamGuid = randomUUID();
+        await p().query(`INSERT INTO onec_wholesale_employee_roster(guid_manager,name_manager,post,raw_json)
+          VALUES($1,'Synthetic leader','Manager','{}'),($2,'Synthetic member','Manager','{}')`, [leaderGuid, memberGuid]);
+        await p().query(`INSERT INTO onec_wholesale_team_groups(guid_team,name_team,guid_team_leader,name_team_leader)
+          VALUES($1,'Synthetic status team',$2,'Synthetic leader')`, [teamGuid, leaderGuid]);
+        await p().query(`INSERT INTO onec_wholesale_employee_team_memberships(guid_team,guid_manager,name_team)
+          VALUES($1,$2,'Synthetic status team')`, [teamGuid, memberGuid]);
+        await linkUserToEmployee({ databaseUrl: getIntegrationDatabaseUrl(), userId: leader.user!, employeeId: leaderGuid, confirmedByUserId: outsider.user! });
+        await linkUserToEmployee({ databaseUrl: getIntegrationDatabaseUrl(), userId: member.user!, employeeId: memberGuid, confirmedByUserId: outsider.user! });
+        const visible = await seed(member), hidden = await seed(outsider);
+        const list = await send(leader, "Статус трека");
+        assert.ok(list.buttons.some(b => (b.payload ?? b.callback_data) === statusView(visible.id)));
+        assert.ok(!list.buttons.some(b => (b.payload ?? b.callback_data) === statusView(hidden.id)));
+        assert.match((await send(leader, "", statusView(visible.id))).text, /Текущий держатель: Synthetic sender/);
+        assert.match((await send(leader, "", statusView(hidden.id))).text, /не найден или недоступен/);
+        // Pool max is five. Every reader already holds a connection; a nested acquisition could starve all readers.
+        const concurrent = await Promise.all(Array.from({ length: 6 }, () => withTransaction(client =>
+          trackStatusReply(client, {
+            channel, messengerUserId: BigInt(leader.id), messengerChatId: String(leader.chat),
+            privateDialogOk: true, isLinkedStaff: true, staffUserId: leader.user!, personId: null,
+          }, { action: "view", transferId: visible.id }))));
+        for (const reply of concurrent) assert.match(reply.text, /Текущий держатель: Synthetic sender/);
+        await p().query("DELETE FROM onec_wholesale_employee_team_memberships WHERE guid_team=$1", [teamGuid]);
+        assert.match((await send(leader, "", statusView(visible.id))).text, /не найден или недоступен/);
+      });
+    }
   }
   it("MAX selection never authorizes code input in Telegram, even for the same linked staff holder", async () => {
     const max = await actor("max");

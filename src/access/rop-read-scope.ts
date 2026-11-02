@@ -6,6 +6,7 @@ import {
 } from "../clients/org/assignment-sql";
 import { RETAIL_OUTLETS_JSON, ropTeamPortfolioClause } from "../clients/team-portfolio-sql";
 import { query } from "../db/pool";
+import type { PoolClient } from "pg";
 
 function withClientAlias(clause: string, clientAlias: string): string {
   return clause.replaceAll("onec_clients.", `${clientAlias}.`);
@@ -108,9 +109,9 @@ export function ropOutletRowAccessibleClause(
 export async function loadRopTeamEmployeeGuids(
   ropUserId: string,
   ropEmployeeId: string,
+  client?: PoolClient,
 ): Promise<Set<string>> {
-  const result = await query<{ employee_guid: string }>(
-    `
+  const sql = `
       SELECT uoel.employee_id::text AS employee_guid
       FROM rop_team_members rtm
       JOIN user_onec_employee_links uoel
@@ -120,8 +121,10 @@ export async function loadRopTeamEmployeeGuids(
         AND rtm.revoked_at IS NULL
       UNION
       SELECT $2::uuid::text AS employee_guid
-    `,
-    [ropUserId, ropEmployeeId],
-  );
+    `;
+  const params = [ropUserId, ropEmployeeId];
+  const result = client
+    ? await client.query<{ employee_guid: string }>(sql, params)
+    : await query<{ employee_guid: string }>(sql, params);
   return new Set(result.rows.map((row) => row.employee_guid.toLowerCase()));
 }

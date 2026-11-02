@@ -16,7 +16,7 @@ describe("contextual bot keyboards", () => {
   it("home reply keyboard keeps primary actions only", () => {
     const keyboard = menuReplyKeyboard({ showContinue: true }).keyboard as Array<Array<{ text: string }>>;
     const labels = keyboard.flat().map((b) => b.text);
-    assert.deepEqual(labels, ["Создать передачу", "Мои передачи", "Продолжить оформление", "Меню"]);
+    assert.deepEqual(labels, ["Создать передачу", "Мои передачи", "Статус трека", "Продолжить оформление", "Меню"]);
   });
 
   for (const channel of ["max", "telegram"] as const) {

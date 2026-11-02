@@ -17,7 +17,7 @@ export type ExternalHistoricalSummary = {
   note: string;
 };
 
-const PARTICIPANT_SQL = `t.creator_party_id = $1::uuid
+export const EXTERNAL_PERSON_PARTICIPANT_SQL = `t.creator_party_id = $1::uuid
         OR t.holder_party_id = $1::uuid
         OR t.pending_party_id = $1::uuid
         OR t.final_recipient_party_id = $1::uuid`;
@@ -29,7 +29,7 @@ export async function loadExternalPersonOrders(
 ): Promise<TanTrackerOrderDto[]> {
   const rows = await pool.query<TanTrackerTransferRow>(
     `SELECT t.* FROM tt_transfers t
-     WHERE ${PARTICIPANT_SQL}
+     WHERE ${EXTERNAL_PERSON_PARTICIPANT_SQL}
      ORDER BY t.updated_at DESC
      LIMIT 100`,
     [partyId],
