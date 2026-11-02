@@ -1,6 +1,7 @@
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
 import { buildHandoffGenCallback } from "../tanbot/handoff-code-bot-service";
 import { buildReceiptEntryCallback } from "../tanbot/receipt-entry-callback";
+import { receivedTrackStaffCallback } from "./received-track-actions";
 import { NATIVE_SENDER_HANDOFF_GUIDANCE } from "./sender-handoff-guidance";
 import { staffNotificationContextBlock } from "./staff-notification-copy";
 import {
@@ -75,8 +76,10 @@ export function buildTanTrackerStaffTelegramOutboxSendBody(
         url: staffTransferLkDetailUrl(appOrigin, p.publicCode) }]] },
     };
   }
+  const received = receivedTrackStaffCallback(eventType, payload);
   return {
     text,
     disable_web_page_preview: true,
+    ...(received ? { reply_markup: { inline_keyboard: [[{ text: "Действия с треком", callback_data: received }]] } } : {}),
   };
 }

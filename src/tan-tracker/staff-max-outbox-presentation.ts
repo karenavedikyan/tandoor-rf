@@ -2,6 +2,7 @@ import type { MaxInlineButton } from "../tanbot-max/delivery-transport";
 import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-config";
 import { buildHandoffGenCallback } from "../tanbot/handoff-code-bot-service";
 import { buildReceiptEntryCallback } from "../tanbot/receipt-entry-callback";
+import { receivedTrackStaffCallback } from "./received-track-actions";
 import { NATIVE_SENDER_HANDOFF_GUIDANCE } from "./sender-handoff-guidance";
 import { staffNotificationContextBlock } from "./staff-notification-copy";
 import {
@@ -69,7 +70,9 @@ export function buildTanTrackerStaffMaxOutboxDelivery(
     };
   }
 
+  const received = receivedTrackStaffCallback(eventType, payload);
   return {
     text: buildTanTrackerStaffOutboxMessage(eventType, payload, appOrigin),
+    ...(received ? { inlineButtons: [[{ type: "callback" as const, text: "Действия с треком", payload: received }]] } : {}),
   };
 }

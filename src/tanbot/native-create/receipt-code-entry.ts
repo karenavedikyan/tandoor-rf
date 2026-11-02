@@ -13,8 +13,9 @@ import { NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
 import { removeTelegramReplyKeyboard } from "./keyboards";
 import { formatReceiptConfirmation } from "../../tan-tracker/receipt-confirmation-copy";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
+import { holderCompletionPermission, startNativeHolderAction, type HolderActionTransfer } from "./holder-actions";
 
-type ReceiptTransfer = LockedReceiptTransfer & {
+type ReceiptTransfer = LockedReceiptTransfer & HolderActionTransfer & {
   public_code: string; item_title: string; sender_name: string; recipient_name: string;
 };
 type Entry = {
@@ -28,9 +29,11 @@ function textLine(value: string, max = 100): string {
   return value.replace(/\s+/gu, " ").trim().slice(0, max);
 }
 function contextText(row: ReceiptTransfer): string {
-  return `Передача ${row.public_code}\n${textLine(row.item_title, 200)}\nОт: ${textLine(row.sender_name)}\nКому: ${textLine(row.recipient_name)}`;
+  return row.pending_party_id
+    ? `Передача ${row.public_code}\n${textLine(row.item_title, 200)}\nОт: ${textLine(row.sender_name)}\nКому: ${textLine(row.recipient_name)}`
+    : `Трек ${row.public_code}\n${textLine(row.item_title, 200)}\nВы текущий держатель. Трек ещё не завершён.`;
 }
-async function currentParty(client: PoolClient, ctx: NativeCreateContext): Promise<string | null> {
+export async function currentParty(client: PoolClient, ctx: NativeCreateContext): Promise<string | null> {
   try { await assertNativeCreateContext(client, ctx); } catch { return null; }
   if (ctx.isLinkedStaff && ctx.staffUserId) {
     const table = ctx.channel === "telegram" ? "tanbot_telegram_accounts" : "tanbot_max_accounts";
@@ -74,10 +77,24 @@ function withCancel(ctx: NativeCreateContext, row: ReceiptTransfer, text: string
 
 function transferDetailUi(
   ctx: NativeCreateContext,
-  row: { id: string; public_code: string; handoff_version: number },
+  row: HolderActionTransfer,
   listPage = 0,
   withNavigation = true,
 ): Pick<NativeCreateReply, "telegramInlineKeyboard" | "maxInlineButtons"> {
+  if (!row.pending_party_id) {
+    const buttons = [{
+      text: "Передать дальше", data: buildReceiptEntryCallback("forward", row.id, row.handoff_version)!,
+    }];
+    if (holderCompletionPermission(row).ok) buttons.push({
+      text: "Завершить трек", data: buildReceiptEntryCallback("close", row.id, row.handoff_version)!,
+    });
+    if (withNavigation) buttons.push({
+      text: "К списку", data: buildReceiptEntryCallback("list", String(listPage), 1)!,
+    });
+    return ctx.channel === "telegram"
+      ? { telegramInlineKeyboard: buttons.map(b => [{ text: b.text, callback_data: b.data }]) }
+      : { maxInlineButtons: buttons.map(b => [{ type: "callback", text: b.text, payload: b.data }]) };
+  }
   const codeCb = receiptEntryCallback(row.id, row.handoff_version)!;
   const inviteCb = buildReceiptEntryCallback("invite", row.id, row.handoff_version)!;
   const listCb = buildReceiptEntryCallback("list", String(listPage), 1)!;
@@ -108,8 +125,8 @@ async function loadTransfer(client: PoolClient, id: string, partyId: string): Pr
   return (await client.query<ReceiptTransfer>(
     `SELECT t.*,h.display_name AS sender_name,p.display_name AS recipient_name
      FROM tt_transfers t JOIN tt_parties h ON h.id=t.holder_party_id
-     JOIN tt_parties p ON p.id=t.pending_party_id
-     WHERE t.id=$1 AND t.holder_party_id=$2::uuid AND t.status IN ('waiting','active')
+     LEFT JOIN tt_parties p ON p.id=t.pending_party_id
+     WHERE t.id=$1 AND t.holder_party_id=$2::uuid AND t.status IN ('waiting','active','delivered')
        AND t.deleted_at IS NULL AND t.general_archived_at IS NULL
      FOR UPDATE OF t`, [id, partyId])).rows[0] ?? null;
 }
@@ -120,14 +137,14 @@ export async function appendReceiptEntryChoices(
 ): Promise<NativeCreateReply> {
   const partyId = await currentParty(client, ctx);
   if (!partyId) return reply;
-  const rows = (await client.query<{ id: string; public_code: string; handoff_version: number }>(
-    `SELECT id,public_code,handoff_version FROM tt_transfers
-     WHERE holder_party_id=$1::uuid AND pending_party_id IS NOT NULL
-       AND status IN ('waiting','active') AND deleted_at IS NULL AND general_archived_at IS NULL
+  const rows = (await client.query<HolderActionTransfer>(
+    `SELECT * FROM tt_transfers
+     WHERE holder_party_id=$1::uuid
+       AND status IN ('waiting','active','delivered') AND deleted_at IS NULL AND general_archived_at IS NULL
        AND ($2::text IS NULL OR public_code=$2)
      ORDER BY created_at DESC,id DESC LIMIT 6 OFFSET $3`, [partyId, onlyPublicCode ?? null, page * 5])).rows;
   if (!rows.length) {
-    const text = `${reply.text}\n\nПока нет активных передач, где вы держатель с ожидаемым получателем.`;
+    const text = `${reply.text}\n\nПока нет активных передач, где вы текущий держатель.`;
     const menuRow = ctx.channel === "telegram"
       ? [menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>]
       : [menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>];
@@ -222,11 +239,16 @@ export async function handleReceiptEntryCallback(
     await clearReceiptEntry(client, ctx);
     const detail = transferDetailUi(ctx, row);
     return {
-      text: `${contextText(row)}\n\nВыберите действие для этой передачи.`,
+      text: `${contextText(row)}\n\nВыберите действие для этой передачи.${!row.pending_party_id && !holderCompletionPermission(row).ok ? "\nВы промежуточный держатель: для завершения передайте предмет конечному получателю." : ""}`,
       ...detail,
       replyMarkup: undefined,
     };
   }
+  if (parsed.action === "forward" || parsed.action === "close") {
+    await clearReceiptEntry(client, ctx);
+    return startNativeHolderAction(client, ctx, row, parsed.action === "forward" ? "forward" : "complete");
+  }
+  if (!row.pending_party_id) return { text: "У этой передачи сейчас нет ожидаемого получателя. Откройте её заново в «Моих передачах»." };
   let forwardInvitationText: string | undefined;
   if (parsed.action === "invite" || parsed.action === "retry") {
     if (!row.pending_party_id) return { text: "У этой передачи сейчас нет ожидаемого получателя." };

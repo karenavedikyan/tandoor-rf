@@ -28,7 +28,8 @@ for (const channel of ["max", "telegram"] as const) {
     const context = { ...ctx, channel, personId: "person" };
     const db = { query: async (sql: string) => ({
       rows: sql.includes("FROM tt_external_persons") ? [{ party_id: "25d12a69-23b4-4098-a2f9-92b4cd5e1021" }]
-        : [{ id: "TT-2026-019", public_code: "TT-2026-019", handoff_version: 3 }],
+        : [{ id: "TT-2026-019", public_code: "TT-2026-019", handoff_version: 3,
+          pending_party_id: "8a038dd1-18e1-42b4-b2d3-2800c104c336", status: "waiting" }],
     }) } as unknown as PoolClient;
     const base = await nativeCompletionMenuReply(db, context, automaticReceiptSenderGuidance("TT-2026-019"));
     const reply = await appendReceiptEntryChoices(db, context, base, "TT-2026-019");

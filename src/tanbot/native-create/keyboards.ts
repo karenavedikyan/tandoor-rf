@@ -180,6 +180,7 @@ export function buildStepUi(
     photoInspectButtons?: Array<{ label: string; arg: string }>;
     editFields?: Array<{ label: string; arg: string }>;
     wizardShowBack?: boolean;
+    holderAction?: "forward" | "complete";
   },
 ): NativeCreateUi {
   const showBack = extra?.wizardShowBack !== false;
@@ -211,6 +212,16 @@ export function buildStepUi(
       : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, nav)] };
   }
   if (kind === "summary") {
+    if (extra?.holderAction) {
+      const rows: BtnDef[][] = [
+        [{ label: extra.holderAction === "complete" ? "Да, завершить трек" : "Передать дальше", action: "confirm" }],
+        ...(extra.holderAction === "forward" ? [[{ label: "Изменить получателя", action: "back" } as BtnDef]] : []),
+        [{ label: "Отмена", action: "cancel" }, { label: "Меню", action: "menu" }],
+      ];
+      return channel === "telegram"
+        ? { telegramInlineKeyboard: rows.map(row => tgRow(draftId, revision, row)) }
+        : { maxInlineButtons: rows.map(row => maxRow(draftId, revision, row)) };
+    }
     const rows: BtnDef[][] = [[{ label: "Создать передачу", action: "confirm" }]];
     if (extra?.photoInspectButtons?.length) {
       rows.push(
