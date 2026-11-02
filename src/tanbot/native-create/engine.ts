@@ -376,7 +376,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   if (ctx.isLinkedStaff && ctx.staffUserId) {
     const origin = getAppOrigin() ?? "https://example.invalid";
     return appendReceiptEntryChoices(client, ctx, {
-      text: `Мои передачи\nСначала активные треки, ниже завершённые и неактуальные.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/`,
+      text: `Мои передачи\nАктивные треки. Завершённые и неактуальные доступны в разделе «Архив».\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/`,
       replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
       telegramInlineKeyboard: undefined,
       maxInlineButtons: undefined,
@@ -385,7 +385,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   const sessionRaw = await createPersonBrowserSession(client, ctx.personId!, ctx.channel);
   const origin = getAppOrigin() ?? "https://example.invalid";
   return appendReceiptEntryChoices(client, ctx, {
-    text: `Мои передачи\nСначала активные треки, ниже завершённые и неактуальные.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
+    text: `Мои передачи\nАктивные треки. Завершённые и неактуальные доступны в разделе «Архив».\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
     replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
     telegramInlineKeyboard: undefined,
     maxInlineButtons: undefined,
@@ -578,12 +578,20 @@ export async function handleNativeCreateCallback(
       const { receiveCodeReply } = await import("./menu-actions");
       return receiveCodeReply(client, ctx, receipt);
     }
-    if (receipt.action === "list") {
+    if (receipt.action === "list" || receipt.action === "archive") {
       if (!/^\d{1,5}$/.test(receipt.transferId)) return null;
+      if (receipt.action === "archive" && receipt.version !== 1) return null;
       try { await assertNativeCreateContext(client, ctx); }
       catch { return { text: "Передачи недоступны. Откройте главное меню и проверьте подключение профиля." }; }
       const { clearReceiptEntry } = await import("./receipt-code-entry");
       await clearReceiptEntry(client, ctx);
+      if (receipt.action === "archive") {
+        const { appendReceiptEntryChoices } = await import("./receipt-code-entry");
+        return appendReceiptEntryChoices(client, ctx, {
+          text: "Архив\nЗавершённые и неактуальные треки. Только просмотр.",
+          replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : undefined,
+        }, undefined, Number(receipt.transferId), { archive: true });
+      }
       return myTransfersReply(client, ctx, Number(receipt.transferId));
     }
     const { handleReceiptEntryCallback } = await import("./receipt-code-entry");

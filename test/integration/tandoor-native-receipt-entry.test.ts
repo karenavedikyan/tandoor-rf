@@ -14,7 +14,7 @@ import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2
 import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-retry";
 import { processUndeliveredTelegramWebhookReplies } from "../../src/tanbot-telegram/reply-retry";
 import { buildReceiptEntryCallback, parseReceiptEntryCallback } from "../../src/tanbot/receipt-entry-callback";
-import { buildTrackStatusCallback } from "../../src/tanbot/track-status-callback";
+import { buildTrackStatusCallback, parseTrackStatusCallback } from "../../src/tanbot/track-status-callback";
 import { buildNativeCreateCallback } from "../../src/tanbot/native-create/callback-codec";
 import { NATIVE_MENU_DRAFT_HEX } from "../../src/tanbot/native-create/menu-sentinel";
 import { trackStatusReply } from "../../src/tanbot/native-create/track-status";
@@ -77,6 +77,12 @@ async function seedReceived(a: Actor, finalHolder = true) {
   await p().query(`UPDATE tt_transfers SET creator_party_id=$2, pending_party_id=NULL,
     final_recipient_party_id=$3, status='delivered', first_custody_at=NOW() WHERE id=$1`,
     [t.id, t.recipient, finalHolder ? a.party : t.recipient]);
+  return t;
+}
+async function seedClosed(a: Actor, status: "completed" | "obsolete" = "completed") {
+  const t = await seedReceived(a);
+  await p().query(`UPDATE tt_transfers SET status=$2,
+    completed_at=CASE WHEN $2='completed' THEN NOW() ELSE NULL END WHERE id=$1`, [t.id, status]);
   return t;
 }
 function button(reply: Reply, text: string): string {
@@ -247,8 +253,9 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         const list = await send(a, "Мои передачи");
         const visible = list.buttons.filter(b => /^TT-/u.test(b.text));
         assert.equal(visible[0]!.text, `${active.id} · Ожидает получения`);
-        assert.equal(visible.at(-1)!.text, `${t.id} · Неактуален`);
-        const view = await send(a, "", button(list, `${t.id} · Неактуален`));
+        assert.ok(!visible.some(b => b.text.includes(t.id)));
+        const archive = await send(a, "", button(list, "Архив"));
+        const view = await send(a, "", button(archive, `${t.id} · Неактуален`));
         assert.match(view.text, /Статус: Неактуален/);
         assert.doesNotMatch(view.text, /Статус: Завершён|Получение подтверждено/);
         assert.ok(!view.buttons.some(b => /Ввести код|Закрыть|Завершить|Изменить получателя|Передать дальше/.test(b.text)));
@@ -365,6 +372,105 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.equal(row.holder_party_id, a.party);
         assert.notEqual(row.pending_party_id, t.recipient);
         assert.ok(row.first_custody_at);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} empty active and archive lists retain navigation and load fresh membership`, async () => {
+        const a = await actor(channel, staff);
+        const active = await send(a, "Мои передачи");
+        assert.match(active.text, /Пока нет активных передач/);
+        const openArchive = button(active, "Архив");
+        const empty = await send(a, "", openArchive);
+        assert.match(empty.text, /В архиве пока нет/);
+        assert.equal(empty.buttons.filter(b => /^TT-/u.test(b.text)).length, 0);
+        const back = await send(a, "", button(empty, "К активным передачам"));
+        assert.ok(back.buttons.some(b => b.text === "Архив"));
+        const closed = await seedClosed(a, "obsolete"), working = await seedReceived(a);
+        const archive = await send(a, "", openArchive);
+        assert.deepEqual(archive.buttons.filter(b => /^TT-/u.test(b.text)).map(b => b.text), [`${closed.id} · Неактуален`]);
+        const fresh = await send(a, "", button(archive, "К активным передачам"));
+        assert.deepEqual(fresh.buttons.filter(b => /^TT-/u.test(b.text)).map(b => b.text), [`${working.id} · В работе`]);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} archive paginates closed states separately and cards return to their archive page`, async () => {
+        const a = await actor(channel, staff), ids: string[] = [];
+        for (let i = 0; i < 7; i++) {
+          const t = await seedClosed(a, i % 2 ? "obsolete" : "completed");
+          await p().query("UPDATE tt_transfers SET created_at=NOW()+$2::int*INTERVAL '1 minute' WHERE id=$1", [t.id, i]);
+          ids.push(t.id);
+        }
+        const working = await seedReceived(a);
+        const before = await statusBusinessSnapshot(ids[0]!);
+        const active = await send(a, "Мои передачи");
+        assert.deepEqual(active.buttons.filter(b => /^TT-/u.test(b.text)).map(b => b.text), [`${working.id} · В работе`]);
+        const first = await send(a, "", button(active, "Архив"));
+        const firstChoices = first.buttons.filter(b => /^TT-/u.test(b.text));
+        assert.equal(firstChoices.length, 5);
+        assert.ok(!first.buttons.some(b => b.text === "Предыдущие передачи"));
+        const second = await send(a, "", button(first, "Следующие передачи"));
+        const secondChoices = second.buttons.filter(b => /^TT-/u.test(b.text));
+        assert.equal(secondChoices.length, 2);
+        assert.ok(!second.buttons.some(b => b.text === "Следующие передачи"));
+        const shown = [...firstChoices, ...secondChoices].map(b =>
+          parseTrackStatusCallback(b.payload ?? b.callback_data!)!);
+        assert.deepEqual(shown.map(b => b.action === "view" ? b.transferId : "").sort(), ids.sort());
+        assert.ok(shown.every(b => b.action === "view" && b.archivePage !== undefined));
+        const card = await send(a, "", button(second, secondChoices[0]!.text));
+        assert.deepEqual(card.buttons.map(b => b.text), ["Обновить статус", "К архиву", "Главное меню"]);
+        const refreshed = await send(a, "", button(card, "Обновить статус"));
+        const returned = await send(a, "", button(refreshed, "К архиву"));
+        assert.deepEqual(returned.buttons.filter(b => /^TT-/u.test(b.text)), secondChoices);
+        const previous = await send(a, "", button(returned, "Предыдущие передачи"));
+        assert.deepEqual(previous.buttons.filter(b => /^TT-/u.test(b.text)), firstChoices);
+        const distant = await send(a, "", buildReceiptEntryCallback("archive", "99999", 1)!);
+        assert.match(distant.text, /В архиве пока нет/);
+        assert.ok(distant.buttons.some(b => b.text === "Предыдущие передачи"));
+        assert.ok(distant.buttons.some(b => b.text === "К активным передачам"));
+        assert.deepEqual(await statusBusinessSnapshot(ids[0]!), before, "archive navigation never sets general_archived_at or changes business data");
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} archive navigation leaves OTP mode safely and preserves an existing creation draft`, async () => {
+        const a = await actor(channel, staff), waiting = await seed(a), closed = await seedClosed(a);
+        const openArchive = buildReceiptEntryCallback("archive", "0", 1)!;
+        await send(a, "", waiting.callback);
+        assert.equal((await entries(a)).length, 1);
+        const before = await statusBusinessSnapshot(waiting.id);
+        const archive = await send(a, "", openArchive);
+        assert.equal((await entries(a)).length, 0);
+        await send(a, code);
+        assert.deepEqual(await statusBusinessSnapshot(waiting.id), before, "archive must not verify, consume or invalidate the handoff code");
+        await send(a, "Создать передачу");
+        const draftBefore = await statusBusinessSnapshot(closed.id);
+        const again = await send(a, "", openArchive);
+        const card = await send(a, "", button(again, `${closed.id} · Завершён`));
+        await send(a, "", button(card, "К архиву"));
+        assert.deepEqual(await statusBusinessSnapshot(closed.id), draftBefore, "archive must not cancel or modify the creation draft");
+        assert.ok(archive.buttons.some(b => b.text === "К активным передачам"));
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} archive rechecks holder, terminal state, deletion, group chat and live binding`, async () => {
+        const a = await actor(channel, staff), other = await actor(channel, staff);
+        const openArchive = buildReceiptEntryCallback("archive", "0", 1)!;
+        for (const update of ["holder_party_id=creator_party_id", "status='active'",
+          "general_archived_at=NOW()", "deleted_at=NOW()"]) {
+          const t = await seedClosed(a);
+          const archive = await send(a, "", openArchive);
+          const oldView = button(archive, `${t.id} · Завершён`);
+          await p().query(`UPDATE tt_transfers SET ${update} WHERE id=$1`, [t.id]);
+          const before = await statusBusinessSnapshot(t.id);
+          const denied = await send(a, "", oldView);
+          assert.match(denied.text, /не найден или недоступен/, update);
+          assert.ok(denied.buttons.some(b => b.text === "К архиву"));
+          assert.ok(!denied.buttons.some(b => /Передать дальше|Завершить трек/.test(b.text)));
+          assert.deepEqual(await statusBusinessSnapshot(t.id), before);
+        }
+        const t = await seedClosed(a);
+        const forged = buildTrackStatusCallback({ action: "view", transferId: t.id, archivePage: 0 })!;
+        assert.match((await send(other, "", forged)).text, /не найден или недоступен/);
+        const group = await send(a, "", openArchive, undefined, false);
+        assert.ok(!group.buttons.some(b => /^TT-/u.test(b.text)));
+        const groupCard = await send(a, "", forged, undefined, false);
+        assert.doesNotMatch(groupCard.text, /Последний держатель|Synthetic sender/);
+        if (staff) await p().query(`UPDATE tanbot_${channel}_accounts SET stopped_at=NOW() WHERE user_id=$1`, [a.user]);
+        else await p().query(`DELETE FROM tt_external_person_verifications WHERE person_id=(SELECT id FROM tt_external_persons WHERE party_id=$1)`, [a.party]);
+        const revoked = await send(a, "", openArchive);
+        assert.ok(!revoked.buttons.some(b => /^TT-/u.test(b.text)));
+        assert.doesNotMatch((await send(a, "", forged)).text, /Последний держатель|Synthetic sender/);
       });
       it(`${channel}: ${staff ? "staff" : "external"} all track entry points share holder actions without changing business data`, async () => {
         const a = await actor(channel, staff), t = await seedReceived(a);
@@ -559,7 +665,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.equal((await entries(a)).length, 0);
         assert.deepEqual(await statusBusinessSnapshot(waiting.id), beforeRead, "status navigation must not attempt OTP verification");
       });
-      it(`${channel}: ${staff ? "staff" : "external"} my transfers labels active and pending tracks before read-only completed tracks`, async () => {
+      it(`${channel}: ${staff ? "staff" : "external"} my transfers shows active labels and moves closed tracks into a read-only archive`, async () => {
         const a = await actor(channel, staff);
         const waiting = await seed(a), received = await seedReceived(a), active = await seed(a), completed = await seedReceived(a);
         await p().query("UPDATE tt_transfers SET status='active',pending_party_id=NULL WHERE id=$1", [active.id]);
@@ -567,21 +673,23 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         const before = await statusBusinessSnapshot(completed.id);
         const list = await send(a, "Мои передачи");
         const choices = list.buttons.filter(b => /^TT-/u.test(b.text));
-        assert.equal(choices.length, 4);
-        assert.equal(choices.at(-1)!.text, `${completed.id} · Завершён`, "newer completed must follow every active track");
+        assert.equal(choices.length, 3);
+        assert.ok(!choices.some(b => b.text.includes(completed.id)));
         assert.ok(choices.some(b => b.text === `${waiting.id} · Ожидает получения`));
         assert.ok(choices.some(b => b.text === `${received.id} · В работе`));
         assert.ok(choices.some(b => b.text === `${active.id} · В работе`));
         assert.equal((await state(received.id)).status, "delivered", "received must not mean completed");
-        assert.deepEqual(list.buttons.filter(b => !/^TT-/u.test(b.text)).map(b => b.text), ["Меню"], "no extra filters");
-        const detail = await send(a, "", button(list, `${completed.id} · Завершён`));
+        assert.deepEqual(list.buttons.filter(b => !/^TT-/u.test(b.text)).map(b => b.text), ["Архив", "Меню"]);
+        const archive = await send(a, "", button(list, "Архив"));
+        assert.deepEqual(archive.buttons.filter(b => /^TT-/u.test(b.text)).map(b => b.text), [`${completed.id} · Завершён`]);
+        const detail = await send(a, "", button(archive, `${completed.id} · Завершён`));
         assert.match(detail.text, /Статус: Завершён/);
         assert.ok(!detail.buttons.some(b => /Передать дальше|Завершить|Ввести код|Запросить код/.test(b.text)));
         assert.deepEqual(await statusBusinessSnapshot(completed.id), before, "list and completed card must not mutate domain data");
         const working = await send(a, "", received.pick);
         assert.ok(working.buttons.some(b => b.text === "Передать дальше"));
       });
-      it(`${channel}: ${staff ? "staff" : "external"} my transfers keeps active-first ordering across a mixed page boundary`, async () => {
+      it(`${channel}: ${staff ? "staff" : "external"} active pagination never mixes closed tracks from archive`, async () => {
         const a = await actor(channel, staff), activeIds: string[] = [], completedIds: string[] = [];
         for (let i = 0; i < 6; i++) activeIds.push((await seed(a)).id);
         for (let i = 0; i < 2; i++) {
@@ -595,11 +703,12 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.ok(firstChoices.every(b => b.text.endsWith(" · Ожидает получения")));
         const second = await send(a, "", button(first, "Следующие передачи"));
         const secondChoices = second.buttons.filter(b => /^TT-/u.test(b.text));
-        assert.equal(secondChoices.length, 3);
+        assert.equal(secondChoices.length, 1);
         assert.ok(secondChoices[0]!.text.endsWith(" · Ожидает получения"));
-        assert.ok(secondChoices.slice(1).every(b => b.text.endsWith(" · Завершён")));
         assert.deepEqual([...firstChoices, ...secondChoices].map(b => b.text.split(" · ")[0]).sort(),
-          [...activeIds, ...completedIds].sort(), "no skipped or repeated tracks between pages");
+          activeIds.sort(), "no skipped or repeated active tracks between pages");
+        const archive = await send(a, "", button(second, "Архив"));
+        assert.deepEqual(archive.buttons.filter(b => /^TT-/u.test(b.text)).map(b => b.text.split(" · ")[0]).sort(), completedIds.sort());
         const previous = await send(a, "", button(second, "Предыдущие передачи"));
         assert.deepEqual(previous.buttons.filter(b => /^TT-/u.test(b.text)), firstChoices);
       });
@@ -615,7 +724,9 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         await p().query("UPDATE tt_transfers SET general_archived_at=NOW() WHERE id=$1", [archived.id]);
         const before = await statusBusinessSnapshot(own.id);
         const list = await send(a, "Мои передачи");
-        assert.deepEqual(list.buttons.filter(b => /^TT-/u.test(b.text)).map(b => b.text), [`${own.id} · Завершён`]);
+        assert.equal(list.buttons.filter(b => /^TT-/u.test(b.text)).length, 0);
+        const archive = await send(a, "", button(list, "Архив"));
+        assert.deepEqual(archive.buttons.filter(b => /^TT-/u.test(b.text)).map(b => b.text), [`${own.id} · Завершён`]);
         const group = await send(a, "Мои передачи", undefined, undefined, false);
         assert.ok(!group.buttons.some(b => /^TT-/u.test(b.text)));
         for (const action of ["pick", "code", "retry", "forward", "close"] as const) {
@@ -691,7 +802,8 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         assert.equal(audits.rows[0].actor_user_id, a.user ?? null);
         const completedList = await send(a, "Мои передачи");
         assert.ok(!completedList.buttons.some(b => (b.payload ?? b.callback_data) === t.pick));
-        const view = await send(a, "", button(completedList, `${t.id} · Завершён`));
+        const archive = await send(a, "", button(completedList, "Архив"));
+        const view = await send(a, "", button(archive, `${t.id} · Завершён`));
         assert.match(view.text, /Статус: Завершён/);
         assert.ok(!view.buttons.some(b => /Передать дальше|Завершить|Ввести код|Запросить код/.test(b.text)));
       });

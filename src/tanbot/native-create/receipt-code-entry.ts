@@ -137,67 +137,53 @@ async function loadTransfer(client: PoolClient, id: string, partyId: string): Pr
        AND t.deleted_at IS NULL AND t.general_archived_at IS NULL
      FOR UPDATE OF t`, [id, partyId])).rows[0] ?? null;
 }
-/** Current holder's active choices and read-only completed tracks, never another user's list. */
+/** Current holder's active choices or separate read-only closed archive, never another user's list. */
 export async function appendReceiptEntryChoices(
   client: PoolClient, ctx: NativeCreateContext, reply: NativeCreateReply, onlyPublicCode?: string, page = 0,
-  options: { omitSelectionHint?: boolean } = {},
+  options: { omitSelectionHint?: boolean; archive?: boolean } = {},
 ): Promise<NativeCreateReply> {
   const partyId = await currentParty(client, ctx);
   if (!partyId) return reply;
+  const archive = !onlyPublicCode && options.archive === true;
+  const listAction = archive ? "archive" : "list";
   const rows = (await client.query<HolderActionTransfer>(
     `SELECT * FROM tt_transfers
      WHERE holder_party_id=$1::uuid
-       AND status IN ('waiting','active','delivered','completed','obsolete') AND deleted_at IS NULL AND general_archived_at IS NULL
-       AND ($2::text IS NULL OR (public_code=$2 AND status NOT IN ('completed','obsolete')))
-     ORDER BY CASE WHEN status IN ('completed','obsolete') THEN 1 ELSE 0 END,created_at DESC,id DESC
-     LIMIT 6 OFFSET $3`, [partyId, onlyPublicCode ?? null, page * 5])).rows;
-  if (!rows.length) {
-    const text = `${reply.text}\n\nПока нет передач, где вы текущий или последний держатель.`;
-    const menuRow = ctx.channel === "telegram"
-      ? [menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>]
-      : [menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>];
-    if (ctx.channel === "telegram") {
-      return {
-        ...reply,
-        text,
-        replyMarkup: reply.replyMarkup?.remove_keyboard === true ? reply.replyMarkup : undefined,
-        telegramInlineKeyboard: menuRow as Array<Array<{ text: string; callback_data: string }>>,
-        maxInlineButtons: undefined,
-      };
-    }
-    return {
-      ...reply,
-      text,
-      replyMarkup: undefined,
-      telegramInlineKeyboard: undefined,
-      maxInlineButtons: menuRow as Array<Array<{ type: "callback"; text: string; payload: string }>>,
-    };
-  }
+       AND status=ANY($4::text[]) AND deleted_at IS NULL AND general_archived_at IS NULL
+       AND ($2::text IS NULL OR public_code=$2)
+     ORDER BY created_at DESC,id DESC
+     LIMIT 6 OFFSET $3`, [partyId, onlyPublicCode ?? null, page * 5,
+      archive ? ["completed", "obsolete"] : ["waiting", "active", "delivered"]])).rows;
   const hasNext = rows.length > 5;
   const visible = rows.slice(0,5);
   const paging: Array<{ text: string; data: string }> = [];
   if (!onlyPublicCode && page > 0) paging.push({
     text: "Предыдущие передачи",
-    data: buildReceiptEntryCallback("list", String(page - 1), 1)!,
+    data: buildReceiptEntryCallback(listAction, String(page - 1), 1)!,
   });
   if (!onlyPublicCode && hasNext && page < 99999) paging.push({
     text: "Следующие передачи",
-    data: buildReceiptEntryCallback("list", String(page + 1), 1)!,
+    data: buildReceiptEntryCallback(listAction, String(page + 1), 1)!,
   });
   if (onlyPublicCode && visible.length === 1) {
     const picked = visible[0]!;
     const detail = transferDetailUi(ctx, picked, page, false);
     return { ...reply, ...detail };
   }
-  const text = options.omitSelectionHint
-    ? reply.text
-    : `${reply.text}\n\nВыберите передачу. Для активной доступны действия; завершённую или неактуальную можно только посмотреть.`;
+  const text = !rows.length
+    ? `${reply.text}\n\n${archive ? "В архиве пока нет завершённых или неактуальных треков." : "Пока нет активных передач."}`
+    : options.omitSelectionHint ? reply.text
+    : `${reply.text}\n\n${archive ? "Выберите трек для просмотра." : "Выберите передачу."}`;
   const choices = visible.map(r => ({
     text: `${r.public_code} · ${r.status === "obsolete" ? "Неактуален" : r.status === "completed" ? "Завершён" : r.pending_party_id ? "Ожидает получения" : "В работе"}`,
-    data: r.status === "completed" || r.status === "obsolete"
-      ? buildTrackStatusCallback({ action: "view", transferId: r.id })!
+    data: archive
+      ? buildTrackStatusCallback({ action: "view", transferId: r.id, archivePage: page })!
       : buildReceiptEntryCallback("pick", r.id, r.handoff_version)!,
   }));
+  const navigation = onlyPublicCode ? [] : [{
+    text: archive ? "К активным передачам" : "Архив",
+    data: buildReceiptEntryCallback(archive ? "list" : "archive", "0", 1)!,
+  }];
   if (ctx.channel === "telegram") {
     const listRows = choices.map(r => [{ text: r.text, callback_data: r.data }]);
     const pagingRow = paging.length ? [paging.map((p) => ({ text: p.text, callback_data: p.data }))] : [];
@@ -206,7 +192,7 @@ export async function appendReceiptEntryChoices(
       ...reply,
       text,
       replyMarkup: reply.replyMarkup?.remove_keyboard === true ? reply.replyMarkup : undefined,
-      telegramInlineKeyboard: [...listRows, ...pagingRow, ...menuRow],
+      telegramInlineKeyboard: [...listRows, ...pagingRow, ...navigation.map(b => [{ text: b.text, callback_data: b.data }]), ...menuRow],
       maxInlineButtons: undefined,
     };
   }
@@ -218,7 +204,7 @@ export async function appendReceiptEntryChoices(
   return {
     ...reply,
     text,
-    maxInlineButtons: [...listRows, ...pagingRow, ...menuRow],
+    maxInlineButtons: [...listRows, ...pagingRow, ...navigation.map(b => [{ type: "callback" as const, text: b.text, payload: b.data }]), ...menuRow],
     telegramInlineKeyboard: undefined,
   };
 }
