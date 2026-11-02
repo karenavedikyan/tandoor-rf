@@ -5,6 +5,7 @@ import { after, before, describe, it } from "node:test";
 import { checkReadiness } from "../../src/db/readiness";
 import { closePool, getPool, resetPoolForTests } from "../../src/db/pool";
 import { ensureAdminNotificationsSchema } from "../../src/tan-tracker/admin-notifications-schema";
+import { ensureAutomaticReceiptSchema } from "../../src/tan-tracker/automatic-receipt-schema";
 import { loadAdminOverview } from "../../src/tan-tracker/admin-overview";
 import { createTransferInTransaction } from "../../src/tan-tracker/create-transfer-service";
 import { ensurePartyForUserOnWrite } from "../../src/tan-tracker/repository";
@@ -67,6 +68,7 @@ describe("production upgrade from the deployed pre-078 schema", { concurrency: f
     // Disposable guarded TEST_DATABASE_URL only. Simulate the old deployed schema;
     // retain the receipt to verify recovery also handles a stale migration marker.
     await db().query("DROP TABLE tt_admin_track_notification_preferences");
+    await db().query("DROP TABLE tt_automatic_receipt_codes");
     await db().query("DELETE FROM schema_migrations WHERE filename='077_internal_catalog.sql'");
   });
   after(async () => { await stop(); await closePool(); });
@@ -91,6 +93,7 @@ describe("production upgrade from the deployed pre-078 schema", { concurrency: f
     assert.match(run.output(), /schema ready; applied=true/);
     assert.ok(run.output().indexOf("schema ready") < run.output().indexOf("Server listening"));
     assert.deepEqual((await db().query("SELECT * FROM tt_transfers ORDER BY id")).rows, beforeTrack);
+    assert.equal((await db().query("SELECT COUNT(*)::int AS n FROM tt_automatic_receipt_codes")).rows[0].n,0);
     const login = await fetch(`${ORIGIN}/api/auth/login`, {
       method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" },
       body: JSON.stringify({ email: "upgrade-admin@test.local", password: PASSWORD }),
@@ -161,6 +164,26 @@ describe("production upgrade from the deployed pre-078 schema", { concurrency: f
     } finally {
       child = undefined;
       await db().query("ALTER TABLE tt_admin_track_notification_preferences RENAME COLUMN broken_mode TO mode");
+    }
+  });
+
+  it("079 initialization is concurrent/idempotent and does not backfill existing transfers",async()=>{
+    await db().query("DROP TABLE tt_automatic_receipt_codes");
+    await Promise.all([ensureAutomaticReceiptSchema(db()),ensureAutomaticReceiptSchema(db())]);
+    await ensureAutomaticReceiptSchema(db());
+    assert.equal((await db().query("SELECT COUNT(*)::int AS n FROM tt_automatic_receipt_codes")).rows[0].n,0);
+    assert.equal((await db().query("SELECT COUNT(*)::int AS n FROM tt_transfers")).rows[0].n,2);
+    assert.equal((await db().query("SELECT COUNT(*)::int AS n FROM schema_migrations WHERE filename='077_internal_catalog.sql'")).rows[0].n,0);
+  });
+  it("079 bad contract fails closed before HTTP listen",async()=>{
+    await db().query("ALTER TABLE tt_automatic_receipt_codes RENAME COLUMN encrypted_code TO broken_code");
+    try {
+      const run=start();const [code]=await once(run.process,"exit");
+      assert.equal(code,1);assert.match(run.output(),/schema initialization failed; code=42703/);
+      assert.doesNotMatch(run.output(),/Server listening/);
+    }finally{
+      child=undefined;
+      await db().query("ALTER TABLE tt_automatic_receipt_codes RENAME COLUMN broken_code TO encrypted_code");
     }
   });
 });

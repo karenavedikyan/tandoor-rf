@@ -812,13 +812,24 @@
     const manual = portalUrl ? messengerInviteManualFallbackHtml(o, portalUrl) : "";
     const actionLabel = busy ? "Подготовка…" : messengerInvitePrimaryLabel();
     const actionAttr = busy ? 'data-tt="messenger-invite-action" disabled' : 'data-tt="messenger-invite-action"';
-    return `<div class="tt-messenger-invite" data-tt="messenger-invite-block">
+    const block = `<div class="tt-messenger-invite" data-tt="messenger-invite-block">
       <p class="tt-muted">Отправьте внешнему получателю приглашение в мессенджере (Telegram / MAX).</p>
       <div class="tt-messenger-invite-actions">
         ${btn(actionLabel, actionAttr, "tt-detail-alt-action")}
       </div>
       ${manual}
       ${err}
+    </div>`;
+    return automaticReceiptHandoffHtml(o,block);
+  }
+
+  function automaticReceiptHandoffHtml(o,fallback) {
+    if (!["pending","sent"].includes(o.automaticReceiptStatus)) return fallback;
+    const status=o.automaticReceiptStatus==="sent"?"Код отправлен получателю в подключённый бот.":"Код будет отправлен получателю в подключённый бот.";
+    return `<div data-tt="automatic-receipt-status">
+      <p>${E(status)} Пересылать приглашение не нужно.</p>
+      <p class="tt-muted">При получении предмета попросите получателя назвать код и введите его в этой передаче.</p>
+      <details><summary>Если сообщение с кодом не пришло</summary>${fallback}</details>
     </div>`;
   }
 
@@ -836,10 +847,11 @@
   function recipientCodeInvitationHtml(o) {
     const url = recipientCodeInvitationUrl(o);
     if (!url) return "";
-    return `<div class="tt-recipient-invite" data-tt="recipient-invite-block">
+    const block = `<div class="tt-recipient-invite" data-tt="recipient-invite-block">
       ${btn("Поделиться приглашением", 'data-tt="recipient-invite-share"', "tt-detail-alt-action tt-btn-block")}
       ${messengerInviteManualFallbackHtml(o, url)}
     </div>`;
+    return automaticReceiptHandoffHtml(o,block);
   }
 
   function showMessengerInviteManualFallback(o, url) {

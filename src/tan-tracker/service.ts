@@ -167,11 +167,21 @@ export async function buildTanTrackerBootstrap(
       : null;
 
   const orders: TanTrackerOrderDto[] = [];
+  const autoReceiptRows=actorPartyId && visibleTransferIds.length ? (await pool.query<{transfer_id:string;status:"pending"|"sent"}>(
+    `SELECT q.transfer_id,q.status FROM tt_automatic_receipt_codes q JOIN tt_transfers t ON t.id=q.transfer_id
+     WHERE t.id=ANY($1::text[]) AND t.holder_party_id=$2::uuid AND t.handoff_version=q.handoff_version
+       AND t.pending_party_id=q.pending_party_id AND t.deleted_at IS NULL AND t.general_archived_at IS NULL
+       AND q.status IN ('pending','sent')
+       AND (q.code_expires_at>NOW() OR (q.code_hash IS NULL AND q.next_attempt_at>NOW()-interval '30 minutes'))`,
+    [visibleTransferIds,actorPartyId])).rows : [];
+  const automaticReceiptStatuses=new Map(autoReceiptRows.map(r=>[r.transfer_id,r.status]));
   for (const { row, timeline, revoked } of transferBundles) {
     if (!visibleTransferIds.includes(row.id)) continue;
     const dto = mapTransferToOrderDto(row, timeline, revoked, {
       attachments: attachmentMap.get(row.id) ?? [],
     });
+    const automaticReceiptStatus=automaticReceiptStatuses.get(row.id);
+    if(automaticReceiptStatus)dto.automaticReceiptStatus=automaticReceiptStatus;
     dto.hasConfirmedReceipt = row.first_custody_at != null || auditConfirmedIds.has(row.id);
     if (canViewOrder(dto, ctx, contacts, teamEmployeeGuids, false, partyEmployeeMap)) {
       if (

@@ -88,6 +88,7 @@ export type TanTrackerOrderDto = {
   handoffVer?: number;
   revokedParticipants?: string[];
   activeInvitation?: TanTrackerActiveInvitationDto | null;
+  automaticReceiptStatus?: "pending" | "sent";
   attachments?: TanTrackerAttachmentDto[];
   /** Holder may edit all creation fields before the first confirmed custody handoff. */
   canEditDraft?: boolean;

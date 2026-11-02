@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { enqueueAutomaticReceiptCode } from "./automatic-receipt-codes";
 import { withTransaction } from "../access/db";
 import { getPool } from "../db/pool";
 import { setNoStore } from "../http/no-store";
@@ -86,6 +87,13 @@ async function buildPublicHolderJson(pool: NonNullable<ReturnType<typeof getPool
   const dto = mapTransferToOrderDto(row, timeline, revoked, {
     attachments: attMap.get(row.id) ?? [],
   });
+  const automaticReceipt=(await pool.query<{status:"pending"|"sent"}>(
+    `SELECT status FROM tt_automatic_receipt_codes
+     WHERE transfer_id=$1 AND handoff_version=$2 AND pending_party_id=$3
+       AND status IN ('pending','sent')
+       AND (code_expires_at>NOW() OR (code_hash IS NULL AND next_attempt_at>NOW()-interval '30 minutes'))`,
+    [row.id,row.handoff_version,row.pending_party_id])).rows[0];
+  if(automaticReceipt)dto.automaticReceiptStatus=automaticReceipt.status;
   dto.hasConfirmedReceipt = row.first_custody_at != null ||
     (await transferIdsWithConfirmedFirstCustodyAudit(pool, [row.id])).has(row.id);
   dto.attachments = (dto.attachments ?? []).map((a) => ({ ...a, url: undefined }));
@@ -204,6 +212,7 @@ export async function publicHolderSendToFinalHandler(req: Request, res: Response
          VALUES ($1,$2,$3,$4,$5)`,
         [row.id, nextVer, row.holder_party_id, row.final_recipient_party_id, row.item_title],
       );
+      await enqueueAutomaticReceiptCode(client,row.id);
       await client.query(
         `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
          VALUES ($1,$2,$3,$4,NULL)`,
@@ -468,6 +477,7 @@ export async function publicHolderChangePendingHandler(req: Request, res: Respon
          VALUES ($1,$2,$3,$4,$5)`,
         [row.id, nextVer, row.holder_party_id, pendingPartyId, row.item_title],
       );
+      await enqueueAutomaticReceiptCode(client,row.id);
       await client.query(
         `INSERT INTO tt_transfer_timeline (transfer_id, from_party_id, to_party_id, note, actor_user_id)
          VALUES ($1,$2,$3,$4,NULL)`,

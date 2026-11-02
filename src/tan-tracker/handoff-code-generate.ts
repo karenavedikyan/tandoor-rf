@@ -46,6 +46,8 @@ export async function generateHandoffCodeForPendingParty(
     auditUserId: string | null;
     auditPartyId: string;
     auditAction?: string;
+    /** Automatic delivery is not a recipient request and must not announce one to the holder. */
+    notifyHolder?: boolean;
   },
 ): Promise<HandoffCodeGenerateResult> {
   let pepper: string;
@@ -93,7 +95,7 @@ export async function generateHandoffCodeForPendingParty(
       row.id,
     ])
   ).rows[0]?.holder_party_id;
-  if (holderParty) {
+  if (holderParty && input.notifyHolder !== false) {
     const { notifyCodeGenerated } = await import("./transfer-lk-notify");
     const pendingPartyId = row.pending_party_id;
     if (pendingPartyId) {

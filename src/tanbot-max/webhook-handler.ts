@@ -17,6 +17,7 @@ import { handleExternalRecipientMaxContact, handleExternalRecipientStart } from 
 import type { MaxContactAttachmentPayload } from "../tanbot/external-recipient/max-contact-verify";
 import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
 import { invitationTokenFromText } from "../tan-tracker/external-messenger/direct-invitation";
+import { handleAutomaticReceiptCallback, isAutomaticReceiptCallback } from "../tan-tracker/automatic-receipt-codes";
 import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
 import {
   handleExternalPersonMaxContact,
@@ -315,6 +316,10 @@ async function processUpdateInTransaction(
           };
         }
       }
+    } else if (update.updateType==="message_callback" && callbackPayload && isAutomaticReceiptCallback(callbackPayload)) {
+      const result=await handleAutomaticReceiptCallback(client,{payload:callbackPayload,channel:"max",
+        userId:update.maxUserId,chatId:update.chatId});
+      reply={userId:update.maxUserId,chatId:update.chatId,text:result.text};
     } else if (
       update.updateType === "message_callback" &&
       callbackPayload &&

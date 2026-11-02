@@ -5,6 +5,8 @@ import { loginHandler, logoutHandler, meHandler } from "./auth/handlers";
 import { JSON_BODY_LIMIT } from "./config";
 import { checkReadiness } from "./db/readiness";
 import { ensureAdminNotificationsSchema } from "./tan-tracker/admin-notifications-schema";
+import { ensureAutomaticReceiptSchema } from "./tan-tracker/automatic-receipt-schema";
+import { startAutomaticReceiptWorker } from "./tan-tracker/automatic-receipt-worker";
 import { ensureApprovedTechnicalWebhooks } from "./tanbot/technical-webhook-startup";
 import { closePool, getPool } from "./db/pool";
 import { runOneDiagnosticJob } from "./onec-diagnostics/worker";
@@ -403,6 +405,7 @@ export function createApp(): express.Application {
 
 let stopTanbotOutboxWorker: (() => void) | null = null;
 let stopTanbotMaxOutboxWorker: (() => void) | null = null;
+let stopAutomaticReceiptWorker: (() => void) | null = null;
 
 /** 1C / Bitrix background chain (isolated from Tanbot workers). */
 export async function runOneCBackgroundIntegrationStartup(
@@ -461,6 +464,7 @@ export function startServer(): ReturnType<express.Application["listen"]> {
     scheduleBackgroundIntegrationsAfterListen();
     const pool = getPool();
     if (pool) {
+      stopAutomaticReceiptWorker=startAutomaticReceiptWorker(pool).stop;
       void ensureApprovedTechnicalWebhooks(pool).catch(() =>
         console.error("Technical bot webhook: startup verification failed"),
       );
@@ -471,6 +475,7 @@ export function startServer(): ReturnType<express.Application["listen"]> {
     console.log("SIGTERM received, shutting down gracefully...");
     stopTanbotOutboxWorker?.();
     stopTanbotMaxOutboxWorker?.();
+    stopAutomaticReceiptWorker?.();
     server.close(() => {
       void closePool()
         .catch(() => undefined)
@@ -494,6 +499,7 @@ if (require.main === module) {
     ? ensureAdminNotificationsSchema(pool).then(({ applied }) => {
         console.log(`Admin track notifications schema ready; applied=${applied}`);
       })
+      .then(()=>ensureAutomaticReceiptSchema(pool))
     : Promise.resolve();
   void schemaReady.then(() => startServer()).catch(async (error: unknown) => {
     const code = typeof error === "object" && error !== null && "code" in error

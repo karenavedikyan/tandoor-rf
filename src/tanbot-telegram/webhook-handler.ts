@@ -22,6 +22,7 @@ import {
 } from "../tanbot/external-recipient/bot-flow";
 import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
 import { invitationTokenFromText } from "../tan-tracker/external-messenger/direct-invitation";
+import { handleAutomaticReceiptCallback, isAutomaticReceiptCallback } from "../tan-tracker/automatic-receipt-codes";
 import { findPersonByMessenger } from "../tan-tracker/external-person/person-service";
 import {
   handleExternalPersonTelegramContact,
@@ -236,7 +237,11 @@ async function processParsedUpdate(
       const { isNativeCreateCallback, tryNativeCreateTelegramCallback } = await import(
         "../tanbot/native-create/adapters"
       );
-      if (isNativeCreateCallback(update.callbackData)) {
+      if (isAutomaticReceiptCallback(update.callbackData)) {
+        const result=await handleAutomaticReceiptCallback(client,{payload:update.callbackData,channel:"telegram",
+          userId:update.telegramUserId,chatId:update.chatId});
+        reply={chatId:update.chatId,text:result.text};
+      } else if (isNativeCreateCallback(update.callbackData)) {
         const native = await tryNativeCreateTelegramCallback(client, {
           chatId: update.chatId,
           telegramUserId: update.telegramUserId,

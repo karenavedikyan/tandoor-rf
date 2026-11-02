@@ -20,6 +20,7 @@ import { holderAccessTtlMs, signHolderAccess } from "../../src/tan-tracker/holde
 import { decodeVcfInfoForHmac } from "../../src/tanbot/external-recipient/max-contact-verify";
 import { externalUnavailableMessage } from "../../src/tanbot/native-create/recipient-unified";
 import { normalizeRuPhoneE164 } from "../../src/tan-tracker/phone-normalize";
+import { processAutomaticReceiptCodes } from "../../src/tan-tracker/automatic-receipt-codes";
 type Channel = "max" | "telegram";
 type Button = { text: string; payload?: string; callback_data?: string };
 type Reply = { text: string; buttons: Button[]; messages?: Reply[] };
@@ -230,7 +231,7 @@ const nativeAttachmentFetchStub = async (input: RequestInfo | URL) => {
   throw new Error(`unexpected fetch ${url.href}`);
 };
 
-async function wizardToSummary(actor: ExtActor, recipientPhone: string, name: string, withDoc = false) {
+async function wizardToSummary(actor: ExtActor, recipientPhone: string, name: string, withDoc = false, knownName?:string) {
   let r = await send(actor, { text: "Создать передачу" });
   r = await send(actor, { text: `E2E item ${actor.id}` });
   if (withDoc) {
@@ -247,7 +248,7 @@ async function wizardToSummary(actor: ExtActor, recipientPhone: string, name: st
   }
   r = await send(actor, { callback: button(r, /пропустить/iu) });
   r = await send(actor, { text: recipientPhone });
-  r = await send(actor, { text: name });
+  r = knownName ? await send(actor,{callback:button(r,new RegExp(knownName,"u"))}) : await send(actor, { text: name });
   if (r.buttons.some(b => /^далее$/iu.test(b.text))) r = await send(actor, { callback: button(r, /^далее$/iu) });
   r = await send(actor, { callback: button(r, /без срока/iu) });
   return r;
@@ -534,14 +535,22 @@ describe("native external sender to external recipient (both channels)", { concu
       assert.equal(afterVerify.handoff_version, row.handoff_version + 1);
     });
 
-    it(`${channel}: verified recipient person and party reused without rename`, async () => {
+    for(const staffSender of [false,true]) it(`${channel}: ${staffSender?"staff":"external"} sends auto code to verified recipient without invitation or rename`, async () => {
       const phone = `+7905${String(++seq).padStart(7, "0")}`;
       const existing = await verifiedRecipient(channel, phone, "Canonical Verified Name");
-      const sender = await externalActor(channel);
-      const summary = await wizardToSummary(sender, phone, "Attempted Rename");
-      await confirmSummary(sender, summary);
+      const sender = staffSender ? await staffActor(channel) : await externalActor(channel);
+      // Preserve existing staff catalogue permissions: this is the sender's own contact.
+      if(staffSender)await getPool()!.query(`UPDATE tt_parties SET created_by_user_id=(SELECT user_id FROM tt_parties WHERE id=$2)
+        WHERE id=$1`,[existing.partyId,sender.partyId]);
+      const summary = await wizardToSummary(sender, phone, "Attempted Rename",false,staffSender?"Canonical Verified Name":undefined);
+      const flag=channel==="max"?"TANBOT_MAX_DELIVERY_ENABLED":"TANBOT_TELEGRAM_DELIVERY_ENABLED";
+      const old=process.env[flag];process.env[flag]="true";
+      try {
+      const created=await confirmSummary(sender, summary);
+      assert.match(created.text,/Код будет отправлен/);
+      assert.doesNotMatch((created.messages??[created]).map(m=>m.text).join("\n"),/https:\/\//);
       const transfer = (await getPool()!.query(
-        `SELECT pending_party_id::text FROM tt_transfers WHERE creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`,
+        `SELECT id,public_code,pending_party_id::text FROM tt_transfers WHERE creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`,
         [sender.partyId],
       )).rows[0];
       assert.equal(transfer.pending_party_id, existing.partyId);
@@ -553,6 +562,16 @@ describe("native external sender to external recipient (both channels)", { concu
         (await getPool()!.query(`SELECT id::text FROM tt_external_persons WHERE party_id=$1`, [existing.partyId])).rows[0].id,
         existing.personId,
       );
+      const texts:string[]=[];
+      await processAutomaticReceiptCodes(getPool()!,{channel,deliveryEnabled:true,transport:async m=>{
+        if(m.userId===String(existing.messengerId))texts.push(m.text);
+        return {ok:true};
+      }});
+      assert.equal(texts.length,2);assert.match(texts[1],/^\d{6}$/);
+      await senderVerifyViaBot(sender,created,transfer.public_code,texts[1]);
+      const after=(await getPool()!.query("SELECT holder_party_id::text,pending_party_id FROM tt_transfers WHERE id=$1",[transfer.id])).rows[0];
+      assert.equal(after.holder_party_id,existing.partyId);assert.equal(after.pending_party_id,null);
+      }finally{process.env[flag]=old;}
     });
 
     it(`${channel}: draft document copied once to transfer attachments`, async () => {
