@@ -9,6 +9,16 @@ import { packTelegramNativeReplyMarkup, TELEGRAM_KEYBOARD_AUX_TEXT } from "../..
 import { mockTelegramReplyDeliveryPool } from "../helpers/mock-telegram-reply-pool";
 
 describe("telegram keyboard delivery sequence", () => {
+  it("contextual inline never restores home buttons below the input", () => {
+    const packed = packTelegramNativeReplyMarkup({
+      text: "Дополнительные действия.",
+      replyMarkup: { keyboard: [[{ text: "Создать передачу" }]], is_persistent: true },
+      telegramInlineKeyboard: [[{ text: "Настройки", callback_data: "nc:m:abc:1" }]],
+    });
+    assert.equal(packed.replyKeyboardClear, true);
+    assert.equal(packed.replyKeyboardRestore, undefined);
+    assert.ok(Array.isArray(packed.replyMarkup?.inline_keyboard));
+  });
   it("packs inline plus remove into clear-then-primary delivery extra", () => {
     const packed = packTelegramNativeReplyMarkup({
       text: "Шаг",
@@ -64,7 +74,7 @@ describe("telegram keyboard delivery sequence", () => {
     assert.ok(!((bodies.at(-1)?.reply_markup as { keyboard?: unknown })?.keyboard));
   });
 
-  it("restore step follows compact inline primary", async () => {
+  it("previously stored restore step remains retry-compatible", async () => {
     const home = { keyboard: [[{ text: "Создать передачу" }]], resize_keyboard: true, is_persistent: true };
     const inline = { inline_keyboard: [[{ text: "Настройки", callback_data: "nc:m:abc:1" }]] };
     const extra = {

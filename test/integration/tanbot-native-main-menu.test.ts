@@ -170,7 +170,7 @@ describe("native bot main menu (MAX + Telegram)", { concurrency: false }, () => 
     assert.ok(markup && Array.isArray(markup.inline_keyboard), "compact menu must use inline keyboard");
     assert.equal(markup.keyboard, undefined);
     assert.equal(row.reply_extra?.replyKeyboardClear, true);
-    assert.ok(row.reply_extra?.replyKeyboardRestore);
+    assert.equal(row.reply_extra?.replyKeyboardRestore, undefined, "compact menu must not restore home buttons");
   });
 
   it("Staff draft survives Menu and Continue restores same step and revision", async () => {

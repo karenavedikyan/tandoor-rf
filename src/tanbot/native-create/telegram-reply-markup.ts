@@ -23,10 +23,11 @@ export function packTelegramNativeReplyMarkup(reply: NativeCreateReply): PackedT
     return { replyMarkup: inline, replyKeyboardClear: true };
   }
   if (replyKb && isReplyKeyboardMarkup(replyKb)) {
+    // A contextual inline screen must not resurrect the home keyboard underneath it.
+    // Home/contact replies without inline markup are handled by the first branch.
     return {
       replyMarkup: inline,
       replyKeyboardClear: true,
-      replyKeyboardRestore: replyKb,
     };
   }
   return { replyMarkup: inline };

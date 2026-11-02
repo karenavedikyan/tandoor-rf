@@ -10,6 +10,7 @@ import { buildNativeMainMenuReply, parseNativeBotSlashCommand, isNativeMainMenuT
   isNativeCreateMenuText, isNativeContinueDraftText } from "./main-menu";
 import { buildNativeCreateCallback } from "./callback-codec";
 import { NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
+import { removeTelegramReplyKeyboard } from "./keyboards";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 
 type ReceiptTransfer = LockedReceiptTransfer & {
@@ -121,7 +122,7 @@ export async function appendReceiptEntryChoices(
       return {
         ...reply,
         text,
-        replyMarkup: undefined,
+        replyMarkup: reply.replyMarkup?.remove_keyboard === true ? reply.replyMarkup : undefined,
         telegramInlineKeyboard: menuRow as Array<Array<{ text: string; callback_data: string }>>,
         maxInlineButtons: undefined,
       };
@@ -163,7 +164,7 @@ export async function appendReceiptEntryChoices(
     return {
       ...reply,
       text,
-      replyMarkup: undefined,
+      replyMarkup: reply.replyMarkup?.remove_keyboard === true ? reply.replyMarkup : undefined,
       telegramInlineKeyboard: [...listRows, ...pagingRow, ...menuRow],
       maxInlineButtons: undefined,
     };
@@ -245,7 +246,8 @@ export async function handleReceiptEntryCallback(
     [ctx.channel, ctx.messengerChatId, ctx.messengerUserId.toString(), ctx.isLinkedStaff ? ctx.staffUserId : null,
       ctx.isLinkedStaff ? null : ctx.personId, partyId, row.id, row.handoff_version, row.pending_party_id],
   );
-  return withCancel(ctx, row, `${contextText(row)}\n\nПопросите у получателя код приёма и отправьте его сюда: 6 цифр или сообщение с кодом целиком. Код действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи. Если он истёк, попросите получателя получить новый.\nПередача будет подтверждена только после успешной проверки.`);
+  const reply = withCancel(ctx, row, `${contextText(row)}\n\nПопросите у получателя код приёма и отправьте его сюда: 6 цифр или сообщение с кодом целиком. Код действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи. Если он истёк, попросите получателя получить новый.\nПередача будет подтверждена только после успешной проверки.`);
+  return ctx.channel === "telegram" ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
 }
 export async function handleReceiptEntryText(
   client: PoolClient, ctx: NativeCreateContext, text: string,

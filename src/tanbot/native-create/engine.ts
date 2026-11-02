@@ -359,7 +359,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
     const origin = getAppOrigin() ?? "https://example.invalid";
     return appendReceiptEntryChoices(client, ctx, {
       text: `Мои передачи в личном кабинете:\n${origin}/tan-tracker/`,
-      replyMarkup: ctx.channel === "max" ? menu.replyMarkup : undefined,
+      replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
       telegramInlineKeyboard: undefined,
       maxInlineButtons: undefined,
     }, undefined, receiptPage);
@@ -368,7 +368,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   const origin = getAppOrigin() ?? "https://example.invalid";
   return appendReceiptEntryChoices(client, ctx, {
     text: `Мои передачи:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
-    replyMarkup: ctx.channel === "max" ? menu.replyMarkup : undefined,
+    replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
     telegramInlineKeyboard: undefined,
     maxInlineButtons: undefined,
   }, undefined, receiptPage);
@@ -579,10 +579,14 @@ export async function handleNativeCreateCallback(
     const { receiveCodeReply, settingsReply } = await import("./menu-actions");
     if (parsed.action === "menu_receive") {
       if (parsed.arg && !/^\d{1,5}$/.test(parsed.arg)) return null;
-      return receiveCodeReply(client, ctx, undefined, Number(parsed.arg ?? 0));
+      const reply = await receiveCodeReply(client, ctx, undefined, Number(parsed.arg ?? 0));
+      return ctx.channel === "telegram" && reply.telegramInlineKeyboard
+        ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
     }
     if (parsed.arg) return null;
-    return settingsReply(client, ctx, parsed.action);
+    const reply = await settingsReply(client, ctx, parsed.action);
+    return parsed.action === "menu_settings" && ctx.channel === "telegram" && reply.telegramInlineKeyboard
+      ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
   }
 
   if (parsed.action === "menu_home") {
@@ -979,7 +983,9 @@ export async function handleNativeCreateMessage(
   const slash = parseNativeBotSlashCommand(trimmed);
   if (lower === "настройки" || lower === "получить код приёма" || lower === "получить код приема") {
     const { settingsReply, receiveCodeReply } = await import("./menu-actions");
-    return lower === "настройки" ? settingsReply(client, ctx) : receiveCodeReply(client, ctx);
+    const reply = await (lower === "настройки" ? settingsReply(client, ctx) : receiveCodeReply(client, ctx));
+    return ctx.channel === "telegram" && reply.telegramInlineKeyboard
+      ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
   }
   if (slash === "start") {
     return buildNativeMainMenuReply(client, ctx);
