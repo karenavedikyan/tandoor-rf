@@ -16,6 +16,8 @@ import {
   mapTransferToOrderDto,
 } from "../repository";
 import type { AccessContext } from "../../access/types";
+import { recipientBotLinks } from "./direct-invitation";
+import { formatForwardableRecipientInvitation } from "../../tanbot/native-create/invitation-handoff";
 
 export async function createExternalMessengerInviteHandler(
   req: AccessRequest,
@@ -101,9 +103,20 @@ export async function createExternalMessengerInviteHandler(
       if (!minted) throw Object.assign(new Error("Не удалось создать приглашение."), { http: 503 });
       const origin = getAppOrigin() ?? "";
       const portalPath = `/tan-tracker/recipient?mst=${encodeURIComponent(minted.startToken)}`;
+      const portalUrl = origin ? `${origin}${portalPath}` : portalPath;
+      const context = (await client.query<{ item_title: string; sender_name: string; recipient_name: string }>(
+        `SELECT t.item_title,h.display_name AS sender_name,p.display_name AS recipient_name
+         FROM tt_transfers t JOIN tt_parties h ON h.id=t.holder_party_id
+         JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.id=$1`, [t.id])).rows[0];
+      const botLinks = recipientBotLinks(minted.startToken);
       return {
         startToken: minted.startToken,
-        portalUrl: origin ? `${origin}${portalPath}` : portalPath,
+        portalUrl,
+        botLinks,
+        invitationText: formatForwardableRecipientInvitation({
+          publicCode: t.public_code, item: context.item_title,
+          senderName: context.sender_name, recipientName: context.recipient_name, portalUrl, botLinks,
+        }),
         portalPath,
         transferPublicCode: t.public_code,
       };

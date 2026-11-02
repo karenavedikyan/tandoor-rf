@@ -19,7 +19,7 @@ import { mintExternalMessengerSession, bindSessionMessengerChat, type ExternalMe
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; id: number; chat: number; party: string; user?: string };
 type Button = { text: string; payload?: string; callback_data?: string; url?: string };
-type Reply = { text: string; buttons: Button[] };
+type Reply = { text: string; buttons: Button[]; messages?: Reply[] };
 let app: Express, seq = 530000, originalFetch: typeof fetch, networkCalls = 0;
 const db = getIntegrationDatabaseUrl();
 const code = "345678";
@@ -87,7 +87,7 @@ async function send(a: Actor, text = "", callback?: string, fixedId?: number): P
       return { ok: true, result: {} };
     }, { deliveryEnabled: true });
   }
-  return replies.at(-1) ?? { text: "", buttons: [] };
+  return { ...(replies.at(-1) ?? { text: "", buttons: [] }), messages: replies };
 }
 async function state(id: string) {
   return (await p().query(`SELECT holder_party_id,pending_party_id,handoff_version,status,
@@ -120,6 +120,36 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
   after(async () => { globalThis.fetch = originalFetch; await closePool(); assert.equal(networkCalls, 0); });
   for (const channel of ["max", "telegram"] as const) {
     for (const staff of [true, false]) {
+      it(`${channel}: ${staff ? "staff" : "external"} holder refreshes invitation without creating a new track; foreign and stale callbacks cannot`, async () => {
+        const a = await actor(channel, staff), foreign = await actor(channel, staff), t = await seed(a);
+        const other = await seed(a);
+        await send(a, "", other.callback);
+        const callback = buildReceiptEntryCallback("invite", t.id, 1)!;
+        const before = (await p().query("SELECT COUNT(*)::int AS n FROM tt_transfers")).rows[0].n;
+        const event = ++seq;
+        const response = await send(a, "", callback, event);
+        assert.match(response.text, /Получить код в MAX/);
+        assert.match(response.text, /Получить код в Telegram/);
+        assert.doesNotMatch(response.text, /\/tan-tracker\/recipient/);
+        assert.equal((await p().query(`SELECT * FROM tt_bot_receipt_code_entries
+          WHERE channel=$1 AND messenger_chat_id=$2`, [channel, String(a.chat)])).rowCount, 0);
+        assert.ok(response.messages?.[0]?.buttons.some(b => (b.callback_data ?? b.payload) === t.callback));
+        const sessions = () => p().query("SELECT id,superseded_at FROM tt_external_messenger_sessions WHERE transfer_id=$1", [t.id]);
+        assert.equal((await sessions()).rowCount, 1);
+        await send(a, "", callback, event);
+        assert.equal((await sessions()).rowCount, 1, "webhook retry must not mint a second invitation");
+        await send(a, "", callback);
+        assert.equal((await sessions()).rowCount, 2);
+        assert.equal((await sessions()).rows.filter(r => !r.superseded_at).length, 1);
+        const rejected = await send(foreign, "", callback);
+        assert.match(rejected.text, /устарела|недоступна/);
+        assert.equal((await sessions()).rowCount, 2);
+        await p().query("UPDATE tt_transfers SET handoff_version=2 WHERE id=$1", [t.id]);
+        assert.match((await send(a, "", callback)).text, /устарела/);
+        assert.equal((await sessions()).rowCount, 2);
+        assert.equal((await p().query("SELECT COUNT(*)::int AS n FROM tt_transfers")).rows[0].n, before);
+        assert.equal((await p().query("SELECT consumed_at FROM tt_handoff_codes WHERE transfer_id=$1", [t.id])).rows[0].consumed_at, null);
+      });
       it(`${channel}: ${staff ? "staff" : "verified external holder"} selects exact transfer and confirms pasted receipt once`, async () => {
         const a = await actor(channel, staff), t = await seed(a);
         const menu = await send(a, "Мои передачи");

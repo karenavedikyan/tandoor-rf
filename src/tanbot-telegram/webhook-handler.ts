@@ -21,6 +21,7 @@ import {
   handleExternalRecipientTelegramContact,
 } from "../tanbot/external-recipient/bot-flow";
 import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
+import { invitationTokenFromText } from "../tan-tracker/external-messenger/direct-invitation";
 import { findPersonByMessenger } from "../tan-tracker/external-person/person-service";
 import {
   handleExternalPersonTelegramContact,
@@ -298,6 +299,9 @@ async function processParsedUpdate(
 
   let reply: WebhookReply = null;
   const command = update.text.split(/\s+/)[0]?.toLowerCase() ?? "";
+  const invitation = invitationTokenFromText(update.text);
+  const recipientToken = update.startPayload && isExternalMessengerStartToken(update.startPayload)
+    ? update.startPayload : invitation.kind === "token" ? invitation.token : null;
 
   try {
     if (command === "/stop") {
@@ -325,10 +329,12 @@ async function processParsedUpdate(
             chatId: update.chatId,
             text: "Telegram не подключён к личному кабинету. Подключение выполняется в разделе «Мой профиль».",
           };
-    } else if (update.startPayload && isExternalMessengerStartToken(update.startPayload)) {
+    } else if (invitation.kind === "invalid") {
+      reply = { chatId: update.chatId, text: "Не удалось определить приглашение. Перешлите одно полное сообщение со ссылкой для одной передачи." };
+    } else if (recipientToken) {
       const ext = await handleExternalRecipientStart(client, {
         channel: "telegram",
-        startPayload: update.startPayload,
+        startPayload: recipientToken,
         chatId: update.chatId,
         messengerUserId: update.telegramUserId,
       });

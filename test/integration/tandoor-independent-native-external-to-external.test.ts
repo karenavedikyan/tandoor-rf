@@ -55,6 +55,18 @@ async function externalActor(channel: Channel, phone?: string): Promise<ExtActor
   return { channel, id, chatId, partyId, personId, phone: actorPhone };
 }
 
+async function staffActor(channel: Channel): Promise<ExtActor> {
+  const id = ++seq, chatId = channel === "max" ? id + 200000 : id;
+  const user = await createTestUser({
+    databaseUrl: db, email: `bot-direct-staff-${id}@test.local`, password: "SyntheticPass123!",
+    fullName: "Synthetic staff sender", role: "admin",
+  });
+  const party = await ensurePartyForUserOnWrite(getPool()!, user.id, "Synthetic staff sender", null);
+  await getPool()!.query(`INSERT INTO tanbot_${channel}_accounts(user_id,${channel}_user_id,${channel}_chat_id,notifications_enabled)
+    VALUES($1,$2,$3,TRUE)`, [user.id, String(id), String(chatId)]);
+  return { channel, id, chatId, partyId: party.id, personId: "", phone: "" };
+}
+
 async function verifiedRecipient(channel: Channel, phone: string, name: string): Promise<{
   partyId: string; personId: string; messengerId: number;
 }> {
@@ -236,6 +248,7 @@ async function wizardToSummary(actor: ExtActor, recipientPhone: string, name: st
   r = await send(actor, { callback: button(r, /пропустить/iu) });
   r = await send(actor, { text: recipientPhone });
   r = await send(actor, { text: name });
+  if (r.buttons.some(b => /^далее$/iu.test(b.text))) r = await send(actor, { callback: button(r, /^далее$/iu) });
   r = await send(actor, { callback: button(r, /без срока/iu) });
   return r;
 }
@@ -247,7 +260,8 @@ async function confirmSummary(actor: ExtActor, summary: Reply): Promise<Reply> {
 function parseMst(text: string): string {
   const url = (text.match(/https?:\/\/[^\s)]+/g) ?? [])[0];
   assert.ok(url);
-  const mst = new URL(url).searchParams.get("mst");
+  const parsed = new URL(url);
+  const mst = parsed.searchParams.get("start") ?? parsed.searchParams.get("mst");
   assert.ok(mst);
   return mst;
 }
@@ -257,6 +271,7 @@ async function issueRecipientCode(
   mst: string,
   recipientPhone: string,
   recipientUserId: number,
+  forwardedInvitation?: string,
 ): Promise<string> {
   if (channel === "telegram") {
     const cfg = loadTanbotTelegramStage2Config(); assert.ok(cfg.ok);
@@ -264,7 +279,7 @@ async function issueRecipientCode(
       update_id: ++seq,
       message: {
         message_id: 1, chat: { id: recipientUserId, type: "private" },
-        from: { id: recipientUserId, is_bot: false }, text: `/start ${mst}`,
+        from: { id: recipientUserId, is_bot: false }, text: forwardedInvitation ?? `/start ${mst}`,
       },
     });
     const contact = await handleTanbotTelegramUpdate(getPool()!, cfg.config, {
@@ -284,7 +299,14 @@ async function issueRecipientCode(
     `BEGIN:VCARD\\r\\nVERSION:3.0\\r\\nFN:R\\r\\nTEL;TYPE=CELL:${recipientPhone}\\r\\nEND:VCARD`;
   const hash = createHmac("sha256", process.env.TANBOT_MAX_BOT_TOKEN!)
     .update(decodeVcfInfoForHmac(vcfRaw), "utf8").digest("hex");
-  await handleTanbotMaxUpdate(getPool()!, cfg.config, {
+  await handleTanbotMaxUpdate(getPool()!, cfg.config, forwardedInvitation ? {
+    update_type: "message_created", timestamp: ++seq,
+    message: {
+      sender: { user_id: recipientUserId, is_bot: false },
+      recipient: { chat_id: recipientUserId, chat_type: "dialog" },
+      body: { mid: `forward-${seq}`, text: forwardedInvitation },
+    },
+  } : {
     update_type: "bot_started", timestamp: ++seq, chat_id: recipientUserId,
     user: { user_id: recipientUserId, is_bot: false, first_name: "R" }, payload: mst,
   });
@@ -359,6 +381,41 @@ after(async () => {
 
 describe("native external sender to external recipient (both channels)", { concurrency: false }, () => {
   for (const channel of ["telegram", "max"] as const) {
+    it(`${channel}: staff sender completes native creation, recipient code and sender entry without website`, async () => {
+      const sender = await staffActor(channel), phone = `+7906${String(++seq).padStart(7, "0")}`;
+      const created = await confirmSummary(sender, await wizardToSummary(sender, phone, "Synthetic direct recipient"));
+      const row = (await getPool()!.query(`SELECT id,public_code,pending_party_id FROM tt_transfers
+        WHERE creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`, [sender.partyId])).rows[0];
+      assert.ok(row);
+      const text = (created.messages ?? [created]).map(r => r.text).join("\n");
+      assert.match(text, /https:\/\/max\.ru\/.+\?start=er/);
+      assert.match(text, /https:\/\/t\.me\/.+\?start=er/);
+      assert.doesNotMatch(text, /\/tan-tracker\/recipient/);
+      const mst = parseMst(text);
+      const otp = await issueRecipientCode(channel, mst, phone, ++seq, text);
+      await senderVerifyViaBot(sender, created, row.public_code, otp);
+      assert.equal((await getPool()!.query(`SELECT holder_party_id FROM tt_transfers WHERE id=$1`, [row.id])).rows[0].holder_party_id, row.pending_party_id);
+    });
+    it(`${channel}: forwarded old website links select the older invitation, not the last-created track`, async () => {
+      const sender = await externalActor(channel), phone = `+7907${String(++seq).padStart(7, "0")}`;
+      const first = await confirmSummary(sender, await wizardToSummary(sender, phone, "Synthetic same recipient"));
+      const t1 = (await getPool()!.query(`SELECT id,public_code,pending_party_id FROM tt_transfers
+        WHERE creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`, [sender.partyId])).rows[0];
+      const second = await confirmSummary(sender, await wizardToSummary(sender, phone, "Synthetic same recipient"));
+      const t2 = (await getPool()!.query(`SELECT id,public_code,pending_party_id FROM tt_transfers
+        WHERE creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`, [sender.partyId])).rows[0];
+      assert.notEqual(t1.id, t2.id);
+      const id = ++seq, mst1 = parseMst(first.text), mst2 = parseMst(second.text);
+      const code2 = await issueRecipientCode(channel, mst2, phone, id,
+        `Старое приглашение\nhttps://lk.tandoor.ru/tan-tracker/recipient?mst=${mst2}`);
+      const code1 = await issueRecipientCode(channel, mst1, phone, id,
+        `Старое приглашение\nhttps://lk.tandoor.ru/tan-tracker/recipient?mst=${mst1}`);
+      await senderVerifyViaBot(sender, first, t1.public_code, code1);
+      await senderVerifyViaBot(sender, second, t2.public_code, code2);
+      const rows = (await getPool()!.query(`SELECT holder_party_id,pending_party_id FROM tt_transfers WHERE id=ANY($1::text[])`, [[t1.id,t2.id]])).rows;
+      assert.equal(rows.length, 2);
+      assert.ok(rows.every(r => r.holder_party_id === t1.pending_party_id && r.pending_party_id === null));
+    });
     it(`${channel}: active admin staff unlinked bot gets invitation and code`, async () => {
       const staffPhone = `+7920${String(++seq).padStart(7, "0")}`;
       const admin = await createTestUser({
@@ -389,7 +446,7 @@ describe("native external sender to external recipient (both channels)", { concu
       );
       const inviteText = (created.messages ?? [created]).map(m => m.text).join("\n");
       const urls = inviteText.match(/https?:\/\/[^\s)]+/g) ?? [];
-      assert.equal(urls.length, 1, inviteText);
+      assert.equal(urls.length, 2, inviteText);
       const mst = parseMst(inviteText);
       const code = await issueRecipientCode(channel, mst, staffPhone, ++seq);
       await senderVerifyViaBot(sender, created, row.public_code, code);
@@ -456,12 +513,14 @@ describe("native external sender to external recipient (both channels)", { concu
       )).rows[0];
       assert.equal(row.holder_party_id, sender.partyId);
       const inviteText = (created.messages ?? [created]).map(m => m.text).join("\n");
-      assert.match(inviteText, /Посмотреть передачу/u);
+      assert.match(inviteText, /Получить код в MAX/u);
+      assert.match(inviteText, /Получить код в Telegram/u);
+      assert.doesNotMatch(inviteText, /\/tan-tracker\/recipient\?/u);
       const mst = parseMst(inviteText);
       const beforeIssue = (await getPool()!.query(
         `SELECT holder_party_id::text,pending_party_id::text,handoff_version FROM tt_transfers WHERE id=$1`, [row.id],
       )).rows[0];
-      const code = await issueRecipientCode(channel, mst, recipientPhone, ++seq);
+      const code = await issueRecipientCode(channel, mst, recipientPhone, ++seq, inviteText);
       const afterIssue = (await getPool()!.query(
         `SELECT holder_party_id::text,pending_party_id::text,handoff_version FROM tt_transfers WHERE id=$1`, [row.id],
       )).rows[0];

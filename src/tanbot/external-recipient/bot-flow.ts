@@ -22,6 +22,7 @@ import { loadTanbotMaxStage2Config } from "../../tanbot-max/stage2-config";
 import { isExternalMessengerStartToken } from "../../tan-tracker/external-messenger/start-token";
 import { isExternalMessengerFeatureEnabled } from "../../tan-tracker/external-messenger/config";
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
+import { lockTanbotMaxMessenger, lockTanbotTelegramMessenger } from "../link-advisory-locks";
 import {
   buildNotificationRouteSnapshot,
   formatTransferContextHeader,
@@ -42,7 +43,7 @@ async function issueExternalMessengerCode(
   const issue = await recordCodeIssue(client, session.id);
   if (!issue.allowed) {
     if (issue.alreadyIssued) {
-      return { error: "Код уже был отправлен в этот чат. Если он истёк, попросите отправителя обновить приглашение." };
+      return { error: "Код уже был отправлен в этот чат. Если он истёк, попросите отправителя нажать «Обновить приглашение» в разделе «Мои передачи» бота и прислать вам новое сообщение." };
     }
     return { error: "Лимит выдачи кодов исчерпан. Попросите отправителя новую ссылку." };
   }
@@ -94,6 +95,7 @@ export async function handleExternalRecipientStart(
   if (!isExternalMessengerFeatureEnabled() || !input.startPayload) return null;
   if (!isExternalMessengerStartToken(input.startPayload)) return null;
 
+  await (input.channel === "telegram" ? lockTanbotTelegramMessenger : lockTanbotMaxMessenger)(client, input.messengerUserId);
   const session = await lockSessionByStartToken(client, input.startPayload);
   if (!session) {
     return { text: "Ссылка недействительна или истекла. Попросите отправителя прислать новую." };
@@ -101,6 +103,10 @@ export async function handleExternalRecipientStart(
   const open = await assertSessionTransferStillOpen(client, session);
   if (!open.ok) return { text: open.message };
 
+  // Explicit navigation to receiving must not leave a different sender transfer selected.
+  await client.query(`DELETE FROM tt_bot_receipt_code_entries
+    WHERE channel=$1 AND messenger_chat_id=$2 AND messenger_user_id=$3`,
+  [input.channel, input.chatId.toString(), input.messengerUserId.toString()]);
   await bindSessionMessengerChat(client, session, input.channel, input.chatId, input.messengerUserId);
   return {
     text: "Подтвердите свой номер телефона кнопкой ниже. Код придёт только в этот чат и только после совпадения номера с указанным отправителем.",

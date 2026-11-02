@@ -44,6 +44,14 @@ describe("external messenger invite authority (PG)", { concurrency: false }, () 
     const databaseUrl = getIntegrationDatabaseUrl();
     setIntegrationEnv(databaseUrl, ORIGIN);
     process.env.TT_EXTERNAL_MESSENGER_ENABLED = "true";
+    Object.assign(process.env, {
+      TANBOT_TELEGRAM_ENABLED: "true", TANBOT_TELEGRAM_WEBHOOK_ENABLED: "true",
+      TANBOT_TELEGRAM_BOT_TOKEN: "123456:synthetic-token-not-real-123456789",
+      TANBOT_TELEGRAM_WEBHOOK_SECRET: "synthetic-secret-min16", TANBOT_TELEGRAM_LINK_TOKEN_PEPPER: "synthetic-pepper-min16",
+      TANBOT_MAX_ENABLED: "true", TANBOT_MAX_WEBHOOK_ENABLED: "true",
+      TANBOT_MAX_BOT_TOKEN: "synthetic-max-token", TANBOT_MAX_WEBHOOK_SECRET: "synthetic-secret-min16",
+      TANBOT_MAX_LINK_TOKEN_PEPPER: "synthetic-pepper-min16",
+    });
     await prepareDatabase(databaseUrl);
     await createTestUser({
       databaseUrl,
@@ -127,6 +135,12 @@ describe("external messenger invite authority (PG)", { concurrency: false }, () 
       .send({});
     assert.equal(ok.status, 201, ok.text);
     assert.match(ok.body.startToken, /^er/);
+    assert.match(ok.body.invitationText, /Получить код в MAX: https:\/\/max\.ru\//);
+    assert.match(ok.body.invitationText, /Получить код в Telegram: https:\/\/t\.me\//);
+    assert.doesNotMatch(ok.body.invitationText, /\/tan-tracker\/recipient/);
+    for (const url of Object.values(ok.body.botLinks) as string[]) {
+      assert.equal(new URL(url).searchParams.get("start"), ok.body.startToken);
+    }
   });
 
   it("denies invite in read-only employee preview", async () => {

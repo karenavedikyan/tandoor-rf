@@ -16,6 +16,7 @@ import { isTanbotHandoffCodePilotEnabled } from "../tanbot/handoff-code-pilot-co
 import { handleExternalRecipientMaxContact, handleExternalRecipientStart } from "../tanbot/external-recipient/bot-flow";
 import type { MaxContactAttachmentPayload } from "../tanbot/external-recipient/max-contact-verify";
 import { isExternalMessengerStartToken } from "../tan-tracker/external-messenger/start-token";
+import { invitationTokenFromText } from "../tan-tracker/external-messenger/direct-invitation";
 import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
 import {
   handleExternalPersonMaxContact,
@@ -64,6 +65,9 @@ async function processUpdateInTransaction(
 ): Promise<WebhookReply> {
   const startPayload = (update.startPayload as string | null) ?? null;
   const commandText = (update.commandText as string | null) ?? null;
+  const invitation = invitationTokenFromText(commandText ?? "");
+  const recipientToken = startPayload && isExternalMessengerStartToken(startPayload)
+    ? startPayload : invitation.kind === "token" ? invitation.token : null;
   const callbackPayload = (update.callbackPayload as string | null) ?? null;
   const username = (update.username as string | null) ?? null;
   const firstName = (update.firstName as string | null) ?? null;
@@ -114,7 +118,9 @@ async function processUpdateInTransaction(
       const ownMaxContact =
         !isForwarded && contact.contactUserId === Number(update.maxUserId);
       let ext: Awaited<ReturnType<typeof handleExternalRecipientMaxContact>> | null = null;
-      if (ownMaxContact) {
+      // Unregistered recipients get an explicit MST rejection for foreign/forwarded
+      // contacts, rather than falling through to profile registration.
+      if (ownMaxContact || !canNativeRecipient) {
         ext =
           (await handleExternalRecipientMaxContact(client, {
             maxChatId: update.chatId,
@@ -212,29 +218,32 @@ async function processUpdateInTransaction(
             chatId: update.chatId,
             text: "MAX не подключён к личному кабинету. Подключение выполняется в разделе «Мой профиль».",
           };
+    } else if (invitation.kind === "invalid") {
+      reply = { userId: update.maxUserId, chatId: update.chatId,
+        text: "Не удалось определить приглашение. Перешлите одно полное сообщение со ссылкой для одной передачи." };
+    } else if (recipientToken) {
+      const ext = await handleExternalRecipientStart(client, {
+        channel: "max",
+        startPayload: recipientToken,
+        chatId: update.chatId,
+        messengerUserId: update.maxUserId,
+      });
+      reply = ext
+        ? {
+            userId: update.maxUserId,
+            chatId: update.chatId,
+            text: ext.text,
+            inlineButtons: ext.requestContact
+              ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
+              : undefined,
+          }
+        : {
+            userId: update.maxUserId,
+            chatId: update.chatId,
+            text: "Приглашение недоступно.",
+          };
     } else if (update.updateType === "bot_started") {
-      if (startPayload && isExternalMessengerStartToken(startPayload)) {
-        const ext = await handleExternalRecipientStart(client, {
-          channel: "max",
-          startPayload,
-          chatId: update.chatId,
-          messengerUserId: update.maxUserId,
-        });
-        reply = ext
-          ? {
-              userId: update.maxUserId,
-              chatId: update.chatId,
-              text: ext.text,
-              inlineButtons: ext.requestContact
-                ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
-                : undefined,
-            }
-          : {
-              userId: update.maxUserId,
-              chatId: update.chatId,
-              text: "Приглашение недоступно.",
-            };
-      } else if (!startPayload) {
+      if (!startPayload) {
         const { isExternalMessengerFeatureEnabled } = await import("../tan-tracker/external-messenger/config");
         if (isExternalMessengerFeatureEnabled()) {
           const { tryNativeCreateMaxMessage } = await import("../tanbot/native-create/adapters");
