@@ -27,7 +27,7 @@ function loadRegistryActorContext(): (o: Record<string, unknown>, actor: string 
   const file = path.join(process.cwd(), "public/tan-tracker/tan-tracker.js");
   const source = fs.readFileSync(file, "utf8");
   const fnSource = extractFunctionSource(source, "registryActorContext");
-  const script = `${fnSource}; registryActorContext;`;
+  const script = `${extractFunctionSource(source, "isClosedOrder")}; ${fnSource}; registryActorContext;`;
   const sandbox = {
     contactById: (id: string) => ({ id, name: "Fixture Contact" }),
   };
@@ -96,6 +96,12 @@ function lifecycle(o: Record<string, unknown>, name = "Карина") {
 }
 
 describe("registry lifecycle is independent of viewer role", () => {
+  it("obsolete is terminal but distinct from successful completion or confirmed receipt", () => {
+    for (const actor of [null, "h1", "observer"]) {
+      assert.equal(loadRegistryActorContext()({ status: "obsolete", holderId: "h1", pendingId: "stale" }, actor).key, "obsolete");
+    }
+    assert.equal(lifecycle({ status: "obsolete", hasConfirmedReceipt: true, pendingId: "stale" }).label, "Неактуален");
+  });
   it("completed takes precedence over stale pending and custody hints", () => {
     assert.equal(lifecycle({ status: "completed", pendingId: "p", hasConfirmedReceipt: true }).key, "done");
   });
@@ -122,7 +128,7 @@ describe("registry lifecycle is independent of viewer role", () => {
   });
   it("standalone handoff mirrors canonical receipt only after a successful transition", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "public/tan-tracker/tan-tracker.js"), "utf8");
-    const complete = vm.runInNewContext(`${extractFunctionSource(source, "completeHandoff")}; completeHandoff;`, {
+    const complete = vm.runInNewContext(`${extractFunctionSource(source, "isClosedOrder")}; ${extractFunctionSource(source, "completeHandoff")}; completeHandoff;`, {
       state: {}, archiveInvitation: () => {}, resetPhoneIdentity: () => {}, now: () => 100,
     });
     const o = { status: "waiting", holderId: "sender", pendingId: "oasis", finalRecipientId: "karina", timeline: [], hasConfirmedReceipt: false };
@@ -130,6 +136,9 @@ describe("registry lifecycle is independent of viewer role", () => {
     assert.equal(o.holderId, "oasis");
     assert.equal(o.hasConfirmedReceipt, true);
     assert.equal(lifecycle(o).key, "received");
+    const cancelled = { ...o, status: "obsolete", pendingId: "stale", hasConfirmedReceipt: false };
+    assert.equal(complete(cancelled, "code"), false);
+    assert.equal(cancelled.hasConfirmedReceipt, false);
     assert.equal(complete(o, "code"), false);
     o.pendingId = "karina";
     assert.equal(lifecycle(o).key, "waiting");

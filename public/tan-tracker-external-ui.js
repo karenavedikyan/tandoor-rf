@@ -114,7 +114,7 @@
       return (
         o.fromExternal &&
         o.createdById === actor &&
-        o.status !== "completed" &&
+        !isClosedOrder(o) &&
         o.status !== "delivered"
       );
     }).length;
@@ -157,13 +157,18 @@
     );
   }
 
+  function isClosedOrder(o) {
+    return o.status === "completed" || o.status === "obsolete";
+  }
   function externalGroupOrders(rows, actor) {
     var action = [];
     var held = [];
     var progress = [];
     var done = [];
+    var obsolete = [];
     rows.forEach(function (o) {
-      if (o.status === "completed") done.push(o);
+      if (o.status === "obsolete") obsolete.push(o);
+      else if (isClosedOrder(o)) done.push(o);
       else if (o.pendingId === actor || (o.holderId === actor && o.pendingId)) action.push(o);
       else if (o.holderId === actor) held.push(o);
       else progress.push(o);
@@ -173,6 +178,7 @@
       { id: "held", title: "Предметы у вас", items: held },
       { id: "progress", title: "В пути", items: progress },
       { id: "done", title: "Недавно завершённые", items: done },
+      { id: "obsolete", title: "Неактуальные", items: obsolete },
     ].filter(function (g) {
       return g.items.length;
     });
@@ -845,7 +851,7 @@
       !o.pendingId &&
       o.finalRecipientId &&
       o.holderId !== o.finalRecipientId &&
-      o.status !== "completed" &&
+      !isClosedOrder(o) &&
       o.status !== "delivered";
     var deliveredFinal = o.status === "delivered" && o.holderId === o.finalRecipientId && !o.pendingId;
     var prevEntry =
@@ -883,7 +889,9 @@
         '<p class="tt-muted tt-ext-forward-hint">Можно передать дальше или вернуть отправителю. Это продолжение трека ' +
         E(o.id) + ", а не новая передача.</p>" +
         "</div>";
-    } else if (o.status === "completed") {
+    } else if (o.status === "obsolete") {
+      nextStep = '<div class="tt-panel" data-tt="holder-next-step"><p>Трек неактуален</p><p class="tt-muted">Ожидание отменено. Получение по отменённой передаче не подтверждено.</p></div>';
+    } else if (isClosedOrder(o)) {
       nextStep =
         '<div class="tt-success tt-panel" data-tt="holder-next-step"><p>Передача завершена</p><p class="tt-muted">Больше ничего делать не нужно.</p></div>';
     } else {

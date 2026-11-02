@@ -1,4 +1,8 @@
-export type TanTrackerTransferStatus = "active" | "waiting" | "delivered" | "completed";
+export type TanTrackerTransferStatus = "active" | "waiting" | "delivered" | "completed" | "obsolete";
+
+export function isClosedTransferStatus(status: string): boolean {
+  return status === "completed" || status === "obsolete";
+}
 
 export type TanTrackerPartyKind = "user" | "external";
 

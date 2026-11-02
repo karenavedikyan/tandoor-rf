@@ -84,7 +84,7 @@ export async function deleteTransferAttachmentInTransaction(
   if (
     !canViewOrder(dto, input.scopeCtx, [], input.teamGuids, false, input.partyMap) ||
     dto.holderId !== input.actorPartyId ||
-    dto.status === "completed"
+    (dto.status === "completed" || dto.status === "obsolete")
   ) {
     throw Object.assign(new Error("Нельзя удалить вложение."), { http: 403 });
   }
@@ -136,7 +136,7 @@ export async function addTransferAttachmentsInTransaction(
   if (
     !canViewOrder(dto, input.scopeCtx, [], input.teamGuids, false, input.partyMap) ||
     dto.holderId !== input.actorPartyId ||
-    dto.status === "completed"
+    (dto.status === "completed" || dto.status === "obsolete")
   ) {
     throw Object.assign(new Error("Нельзя прикрепить файлы к этой передаче."), { http: 403 });
   }
@@ -201,7 +201,7 @@ export async function addTransferAttachmentsHandler(req: AccessRequest, res: Res
   if (
     !canViewOrder(dto, scope.ctx, [], scope.teamGuids, false, partyMap) ||
     dto.holderId !== scope.ctx.actorPartyId ||
-    dto.status === "completed"
+    (dto.status === "completed" || dto.status === "obsolete")
   ) {
     setNoStore(res);
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Нельзя прикрепить файлы к этой передаче."));
@@ -266,7 +266,7 @@ export async function deleteTransferAttachmentHandler(req: AccessRequest, res: R
   if (
     !canViewOrder(dto, scope.ctx, [], scope.teamGuids, false, partyMap) ||
     dto.holderId !== scope.ctx.actorPartyId ||
-    dto.status === "completed"
+    (dto.status === "completed" || dto.status === "obsolete")
   ) {
     setNoStore(res);
     res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Нельзя удалить вложение."));

@@ -181,7 +181,7 @@
     };
 
     (orders || []).forEach((o) => {
-      if (o.status === "completed") return;
+      if (o.status === "completed" || o.status === "obsolete") return;
       const fin = contacts.find((c) => c.id === o.finalRecipientId);
       const due = o.dueAt ? fmtDue(o.dueAt) : null;
       const duePhrase = due ? ` до ${due}` : "";

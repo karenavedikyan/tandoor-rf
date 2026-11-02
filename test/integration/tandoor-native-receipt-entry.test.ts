@@ -19,6 +19,10 @@ import { buildNativeCreateCallback } from "../../src/tanbot/native-create/callba
 import { NATIVE_MENU_DRAFT_HEX } from "../../src/tanbot/native-create/menu-sentinel";
 import { trackStatusReply } from "../../src/tanbot/native-create/track-status";
 import { withTransaction } from "../../src/access/db";
+import { markPendingObsoleteInTransaction } from "../../src/tan-tracker/pending-obsolete-mutation";
+import { assignPendingRecipientInTransaction } from "../../src/tan-tracker/pending-mutations";
+import { completeTransferMutation } from "../../src/tan-tracker/legacy-complete-mutation";
+import { verifyPendingReceiptCode } from "../../src/tan-tracker/verify-pending-receipt-code";
 import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../../src/tanbot/native-create/telegram-reply-markup";
 import { tryNativeCreateMaxCallback, tryNativeCreateTelegramCallback } from "../../src/tanbot/native-create/adapters";
 import { mintExternalMessengerSession, bindSessionMessengerChat, type ExternalMessengerSessionRow } from "../../src/tan-tracker/external-messenger/session-service";
@@ -80,16 +84,16 @@ function button(reply: Reply, text: string): string {
   assert.ok(b, `Missing ${text}: ${JSON.stringify(reply)}`);
   return b.payload ?? b.callback_data!;
 }
-async function selectForwardRecipient(a: Actor, initial: Reply) {
-  assert.match(initial.text, /Передать дальше/);
+async function selectForwardRecipient(a: Actor, initial: Reply, replace = false) {
+  assert.match(initial.text, replace ? /Изменить получателя/ : /Передать дальше/);
   const phone = `+7988${String(++seq).padStart(7, "0")}`;
   let reply = await send(a, phone);
-  for (let i = 0; i < 4 && !reply.buttons.some(b => b.text === "Передать дальше"); i++) {
+  for (let i = 0; i < 4 && !reply.buttons.some(b => b.text === (replace ? "Подтвердить замену" : "Передать дальше")); i++) {
     const next = reply.buttons.find(b => b.text === "Далее");
     reply = next ? await send(a, "", next.payload ?? next.callback_data)
       : await send(a, "Synthetic next recipient");
   }
-  assert.match(reply.text, /Продолжится этот же трек/);
+  assert.match(reply.text, /Продолжится (?:этот|тот) же трек/);
   assert.doesNotMatch(reply.text, /Создать передачу|Выберите срок/);
   return { summary: reply, phone };
 }
@@ -151,6 +155,10 @@ async function entries(a: Actor) {
     [a.channel, String(a.chat)])).rows;
 }
 const statusView = (id: string) => buildTrackStatusCallback({ action: "view", transferId: id })!;
+async function pendingBusinessSnapshot(id: string) {
+  const { drafts: _drafts, ...business } = await statusBusinessSnapshot(id);
+  return business;
+}
 async function statusBusinessSnapshot(id: string) {
   return (await p().query(`SELECT jsonb_build_object(
     'transfer',(SELECT to_jsonb(t) FROM tt_transfers t WHERE id=$1),
@@ -184,6 +192,180 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
   after(async () => { globalThis.fetch = originalFetch; await closePool(); assert.equal(networkCalls, 0); });
   for (const channel of ["max", "telegram"] as const) {
     for (const staff of [true, false]) {
+      it(`${channel}: ${staff ? "staff" : "external"} pending cancellation is confirmed, terminal, distinct from completion and never a receipt`, async () => {
+        const a = await actor(channel, staff), t = await seed(a);
+        await p().query(`INSERT INTO tt_transfer_invitations
+          (transfer_id,handoff_version,holder_party_id,pending_party_id,item_snapshot) VALUES($1,1,$2,$3,'Synthetic')`,
+          [t.id, a.party, t.recipient]);
+        await p().query(`INSERT INTO tt_automatic_receipt_codes
+          (id,transfer_id,handoff_version,pending_party_id,channel,messenger_user_id,messenger_chat_id)
+          VALUES($1,$2,1,$3,$4,$5,$6)`, [randomUUID(), t.id, t.recipient, channel, String(a.id), String(a.chat)]);
+        const detail = await send(a, "", t.pick);
+        assert.ok(detail.buttons.some(b => b.text === "Изменить получателя"));
+        const before = await pendingBusinessSnapshot(t.id);
+        await send(a, "", t.callback);
+        assert.equal((await entries(a)).length, 1);
+        const prompt = await send(a, "", button(detail, "Закрыть как неактуальный"));
+        assert.equal((await entries(a)).length, 0, "confirmation navigation leaves OTP input without invalidating code");
+        assert.match(prompt.text, /Держатель не изменится/);
+        assert.deepEqual(await pendingBusinessSnapshot(t.id), before, "opening confirmation changes no business data");
+        const cancelled = button(prompt, "Да, закрыть как неактуальный");
+        await send(a, "", button(prompt, "Отмена"));
+        await send(a, "", cancelled);
+        assert.deepEqual(await pendingBusinessSnapshot(t.id), before, "cancelled confirmation is inert");
+        const fresh = await send(a, "", button(detail, "Закрыть как неактуальный"));
+        const confirm = button(fresh, "Да, закрыть как неактуальный");
+        const result = await send(a, "", confirm);
+        assert.match(result.text, /Неактуален/);
+        const after = await state(t.id);
+        assert.equal(after.status, "obsolete");
+        assert.equal(after.holder_party_id, a.party);
+        assert.equal(after.pending_party_id, null);
+        assert.equal(after.handoff_version, 2);
+        assert.equal(after.successes, 0);
+        const terminal = (await p().query(`SELECT first_custody_at,completed_at FROM tt_transfers WHERE id=$1`, [t.id])).rows[0];
+        assert.equal(terminal.first_custody_at, null);
+        assert.equal(terminal.completed_at, null, "not counted as successful completion");
+        assert.equal((await p().query("SELECT count(*)::int n FROM tt_handoff_codes WHERE transfer_id=$1 AND consumed_at IS NULL", [t.id])).rows[0].n, 0);
+        assert.equal((await p().query("SELECT count(*)::int n FROM tt_transfer_invitations WHERE transfer_id=$1 AND superseded_at IS NULL", [t.id])).rows[0].n, 0);
+        const automatic = (await p().query("SELECT status,encrypted_code FROM tt_automatic_receipt_codes WHERE transfer_id=$1", [t.id])).rows[0];
+        assert.equal(automatic.status, "cancelled");
+        assert.equal(automatic.encrypted_code, null);
+        const active = await seed(a);
+        const snapshot = await pendingBusinessSnapshot(t.id);
+        await assert.rejects(withTransaction(client => assignPendingRecipientInTransaction(client, {
+          transferId: t.id, holderPartyId: a.party, pendingPartyId: active.recipient,
+          auditUserId: a.user ?? null, expectedHandoffVersion: 2, expectedRowVersion: 2,
+        })), "generic route assignment cannot reopen obsolete");
+        await assert.rejects(withTransaction(client => completeTransferMutation(client, {
+          transferId: t.id, actingPartyId: a.party, auditUserId: a.user ?? null, allowLegacyComplete: true,
+        })), "obsolete must not be converted into successful completion");
+        await send(a, "", confirm);
+        await send(a, "", t.callback);
+        await send(a, code);
+        assert.deepEqual(await pendingBusinessSnapshot(t.id), snapshot, "duplicate and stale callbacks cannot mutate terminal track");
+        const list = await send(a, "Мои передачи");
+        const visible = list.buttons.filter(b => /^TT-/u.test(b.text));
+        assert.equal(visible[0]!.text, `${active.id} · Ожидает получения`);
+        assert.equal(visible.at(-1)!.text, `${t.id} · Неактуален`);
+        const view = await send(a, "", button(list, `${t.id} · Неактуален`));
+        assert.match(view.text, /Статус: Неактуален/);
+        assert.doesNotMatch(view.text, /Статус: Завершён|Получение подтверждено/);
+        assert.ok(!view.buttons.some(b => /Ввести код|Закрыть|Завершить|Изменить получателя|Передать дальше/.test(b.text)));
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} replacing pending recipient keeps one track and holder, invalidates old artifacts and updates unreceived final addressee`, async () => {
+        const a = await actor(channel, staff), t = await seed(a);
+        const before = await pendingBusinessSnapshot(t.id);
+        const detail = await send(a, "", t.pick);
+        await send(a, "", t.callback);
+        assert.equal((await entries(a)).length, 1);
+        const choice = await send(a, "", button(detail, "Изменить получателя"));
+        assert.equal((await entries(a)).length, 0, "recipient draft cannot consume OTP attempts");
+        const { summary } = await selectForwardRecipient(a, choice, true);
+        assert.deepEqual(await pendingBusinessSnapshot(t.id), before, "recipient draft cannot change transfer or invalidate old code");
+        const confirm = button(summary, "Подтвердить замену");
+        await send(a, "", confirm);
+        const next = await state(t.id);
+        assert.equal(next.holder_party_id, a.party);
+        assert.notEqual(next.pending_party_id, t.recipient);
+        assert.equal(next.handoff_version, 2);
+        assert.equal(next.successes, 0);
+        assert.equal((await p().query("SELECT count(*)::int n FROM tt_transfers WHERE id=$1", [t.id])).rows[0].n, 1);
+        assert.equal((await p().query("SELECT final_recipient_party_id FROM tt_transfers WHERE id=$1", [t.id])).rows[0].final_recipient_party_id, next.pending_party_id);
+        assert.equal((await p().query("SELECT count(*)::int n FROM tt_handoff_codes WHERE transfer_id=$1 AND handoff_version=1 AND consumed_at IS NULL", [t.id])).rows[0].n, 0);
+        assert.ok((await p().query("SELECT 1 FROM tt_transfer_revoked_parties WHERE transfer_id=$1 AND party_id=$2", [t.id, t.recipient])).rowCount);
+        const snapshot = await pendingBusinessSnapshot(t.id);
+        await send(a, "", confirm);
+        await send(a, "", t.callback);
+        assert.deepEqual(await pendingBusinessSnapshot(t.id), snapshot, "duplicate and old handoff callbacks are inert");
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} OTP winning before pending cancellation confirmation prevents cancellation`, async () => {
+        const a = await actor(channel, staff), t = await seed(a);
+        const detail = await send(a, "", t.pick);
+        const prompt = await send(a, "", button(detail, "Закрыть как неактуальный"));
+        await withTransaction(async client => {
+          const row = (await client.query("SELECT * FROM tt_transfers WHERE id=$1 FOR UPDATE", [t.id])).rows[0];
+          assert.equal((await verifyPendingReceiptCode(client, { row, code, auditUserId: a.user ?? null, actingPartyId: a.party })).ok, true);
+        });
+        const snapshot = await pendingBusinessSnapshot(t.id);
+        const reply = await send(a, "", button(prompt, "Да, закрыть как неактуальный"));
+        assert.match(reply.text, /изменилась|недоступна|устарела/);
+        assert.equal((await state(t.id)).holder_party_id, t.recipient);
+        assert.notEqual((await state(t.id)).status, "obsolete");
+        assert.deepEqual(await pendingBusinessSnapshot(t.id), snapshot);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} pending controls reject foreign, group and stale bindings`, async () => {
+        const a = await actor(channel, staff), other = await actor(channel, staff), t = await seed(a);
+        const before = await statusBusinessSnapshot(t.id);
+        for (const action of ["change", "void"] as const) {
+          const callback = buildReceiptEntryCallback(action, t.id, 1)!;
+          for (const [who, privateDialog] of [[other, true], [a, false]] as const) {
+            const reply = await send(who, "", callback, undefined, privateDialog);
+            assert.ok(!reply.buttons.some(b => /Подтвердить замену|Да, закрыть/.test(b.text)));
+          }
+        }
+        assert.deepEqual(await statusBusinessSnapshot(t.id), before);
+        if (staff) await p().query(`UPDATE tanbot_${channel}_accounts SET stopped_at=NOW() WHERE user_id=$1`, [a.user]);
+        else await p().query("DELETE FROM tt_external_person_verifications WHERE channel=$1 AND messenger_user_id=$2", [channel, String(a.id)]);
+        await send(a, "", buildReceiptEntryCallback("void", t.id, 1)!);
+        assert.deepEqual(await statusBusinessSnapshot(t.id), before);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} OTP winning before replacement confirmation prevents redirecting received track`, async () => {
+        const a = await actor(channel, staff), t = await seed(a);
+        const prompt = await send(a, "", buildReceiptEntryCallback("change", t.id, 1)!);
+        const { summary } = await selectForwardRecipient(a, prompt, true);
+        await withTransaction(async client => {
+          const row = (await client.query("SELECT * FROM tt_transfers WHERE id=$1 FOR UPDATE", [t.id])).rows[0];
+          assert.equal((await verifyPendingReceiptCode(client, { row, code, auditUserId: a.user ?? null, actingPartyId: a.party })).ok, true);
+        });
+        const before = await pendingBusinessSnapshot(t.id);
+        const reply = await send(a, "", button(summary, "Подтвердить замену"));
+        assert.match(reply.text, /изменилась|недоступна|устарела/);
+        assert.deepEqual(await pendingBusinessSnapshot(t.id), before);
+        assert.equal((await state(t.id)).holder_party_id, t.recipient);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} concurrent canonical obsolete close and OTP serialize to exactly one outcome`, async () => {
+        const a = await actor(channel, staff), t = await seed(a);
+        const outcomes = await Promise.all([
+          withTransaction(async client => {
+            await markPendingObsoleteInTransaction(client, { transferId: t.id, actorPartyId: a.party,
+              auditUserId: a.user ?? null, expectedRowVersion: 1, expectedHandoffVersion: 1 });
+            return { kind: "obsolete", ok: true };
+          }).catch(() => ({ kind: "obsolete", ok: false })),
+          withTransaction(async client => {
+            const row = (await client.query("SELECT * FROM tt_transfers WHERE id=$1 FOR UPDATE", [t.id])).rows[0];
+            return { kind: "otp", ok: (await verifyPendingReceiptCode(client, {
+              row, code, auditUserId: a.user ?? null, actingPartyId: a.party,
+            })).ok };
+          }),
+        ]);
+        assert.equal(outcomes.filter(x => x.ok).length, 1);
+        const row = await state(t.id);
+        if (outcomes.find(x => x.kind === "obsolete")!.ok) {
+          assert.equal(row.status, "obsolete");
+          assert.equal(row.holder_party_id, a.party);
+          assert.equal(row.successes, 0);
+        } else {
+          assert.equal(row.holder_party_id, t.recipient);
+          assert.notEqual(row.status, "obsolete");
+          assert.equal(row.successes, 1);
+        }
+        assert.equal(row.pending_party_id, null);
+        assert.equal(row.handoff_version, 2);
+      });
+      it(`${channel}: ${staff ? "staff" : "external"} replacing pending onward recipient preserves confirmed custody and original final recipient`, async () => {
+        const a = await actor(channel, staff), t = await seed(a);
+        await p().query("UPDATE tt_transfers SET first_custody_at=NOW(),creator_party_id=$2 WHERE id=$1", [t.id, t.recipient]);
+        const detail = await send(a, "", t.pick);
+        const prompt = await send(a, "", button(detail, "Изменить получателя"));
+        const { summary } = await selectForwardRecipient(a, prompt, true);
+        await send(a, "", button(summary, "Подтвердить замену"));
+        const row = (await p().query("SELECT * FROM tt_transfers WHERE id=$1", [t.id])).rows[0];
+        assert.equal(row.final_recipient_party_id, t.recipient);
+        assert.equal(row.holder_party_id, a.party);
+        assert.notEqual(row.pending_party_id, t.recipient);
+        assert.ok(row.first_custody_at);
+      });
       it(`${channel}: ${staff ? "staff" : "external"} status is fresh, read-only and follows the holder only after OTP`, async () => {
         const a = await actor(channel, staff), t = await seed(a);
         if (staff) await p().query("UPDATE users SET role='manager' WHERE id=$1", [a.user]);

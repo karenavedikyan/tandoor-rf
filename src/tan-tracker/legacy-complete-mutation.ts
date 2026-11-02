@@ -22,6 +22,7 @@ export function checkTransferCompletionAccess(input: {
   allowLegacyComplete: boolean;
 }): { ok: true } | { ok: false; http: number; message: string } {
   if (input.status === "completed") return { ok: false, http: 409, message: "Передача уже завершена." };
+  if (input.status === "obsolete") return { ok: false, http: 409, message: "Трек закрыт как неактуальный." };
   if (!["active", "waiting", "delivered"].includes(input.status)) {
     return { ok: false, http: 409, message: "Передача недоступна для завершения." };
   }

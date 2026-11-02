@@ -182,7 +182,7 @@ export function buildStepUi(
     photoInspectButtons?: Array<{ label: string; arg: string }>;
     editFields?: Array<{ label: string; arg: string }>;
     wizardShowBack?: boolean;
-    holderAction?: "forward" | "complete";
+    holderAction?: "forward" | "complete" | "replace" | "obsolete";
   },
 ): NativeCreateUi {
   const showBack = extra?.wizardShowBack !== false;
@@ -216,8 +216,10 @@ export function buildStepUi(
   if (kind === "summary") {
     if (extra?.holderAction) {
       const rows: BtnDef[][] = [
-        [{ label: extra.holderAction === "complete" ? "Да, завершить трек" : "Передать дальше", action: "confirm" }],
-        ...(extra.holderAction === "forward" ? [[{ label: "Изменить получателя", action: "back" } as BtnDef]] : []),
+        [{ label: extra.holderAction === "complete" ? "Да, завершить трек"
+          : extra.holderAction === "obsolete" ? "Да, закрыть как неактуальный"
+          : extra.holderAction === "replace" ? "Подтвердить замену" : "Передать дальше", action: "confirm" }],
+        ...(["forward", "replace"].includes(extra.holderAction) ? [[{ label: "Изменить получателя", action: "back" } as BtnDef]] : []),
         [{ label: "Отмена", action: "cancel" }, { label: "Меню", action: "menu" }],
       ];
       return channel === "telegram"

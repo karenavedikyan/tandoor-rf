@@ -109,7 +109,7 @@ export async function publicSendPhoneCodeHandler(req: Request, res: Response): P
   try {
     await withTransaction(async (client) => {
       const row = await loadOpenInvitation(client, invite.transferId, invite.hv, invite.pendingPartyId);
-      if (!row || row.status === "completed" || !row.phone_e164) {
+      if (!row || row.status === "completed" || row.status === "obsolete" || !row.phone_e164) {
         throw Object.assign(new Error("Приглашение недоступно."), { http: 404 });
       }
       const sendStats = (
@@ -194,7 +194,7 @@ export async function publicVerifyPhoneCodeHandler(req: Request, res: Response):
   try {
     await withTransaction(async (client) => {
       const row = await loadOpenInvitation(client, invite.transferId, invite.hv, invite.pendingPartyId);
-      if (!row || row.status === "completed") {
+      if (!row || row.status === "completed" || row.status === "obsolete") {
         outcome = { kind: "fail", http: 404, message: "Приглашение недоступно." };
         return;
       }
@@ -297,7 +297,7 @@ export async function publicConfirmQrHandoffHandler(req: Request, res: Response)
   try {
     await withTransaction(async (client) => {
       const row = await loadOpenInvitation(client, invite.transferId, invite.hv, invite.pendingPartyId);
-      if (!row || row.status === "completed") {
+      if (!row || row.status === "completed" || row.status === "obsolete") {
         throw Object.assign(new Error("Приглашение недоступно."), { http: 404 });
       }
       if (row.id !== session.transferId) {
@@ -387,7 +387,7 @@ export async function publicRecipientCodeGenerateHandler(req: Request, res: Resp
   try {
     payload = await withTransaction(async (client) => {
       const row = await loadOpenInvitation(client, invite.transferId, invite.hv, invite.pendingPartyId);
-      if (!row || row.status === "completed" || !row.pending_party_id) {
+      if (!row || row.status === "completed" || row.status === "obsolete" || !row.pending_party_id) {
         return { ok: false, http: 404, message: "Приглашение недоступно." };
       }
       if (row.id !== session.transferId || row.pending_party_id !== invite.pendingPartyId) {

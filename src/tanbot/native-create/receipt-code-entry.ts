@@ -98,12 +98,18 @@ function transferDetailUi(
   }
   const codeCb = receiptEntryCallback(row.id, row.handoff_version)!;
   const inviteCb = buildReceiptEntryCallback("invite", row.id, row.handoff_version)!;
+  const changeCb = buildReceiptEntryCallback("change", row.id, row.handoff_version)!;
+  const obsoleteCb = buildReceiptEntryCallback("void", row.id, row.handoff_version)!;
   const listCb = buildReceiptEntryCallback("list", String(listPage), 1)!;
   if (ctx.channel === "telegram") {
     return {
       telegramInlineKeyboard: [
         [{ text: "Ввести код", callback_data: codeCb }],
         [{ text: "Запросить код повторно", callback_data: inviteCb }],
+        ...(withNavigation ? [
+          [{ text: "Изменить получателя", callback_data: changeCb }],
+          [{ text: "Закрыть как неактуальный", callback_data: obsoleteCb }],
+        ] : []),
         ...(withNavigation ? [
           [{ text: "К списку", callback_data: listCb }],
           menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>,
@@ -115,6 +121,10 @@ function transferDetailUi(
     maxInlineButtons: [
       [{ type: "callback", text: "Ввести код", payload: codeCb }],
       [{ type: "callback", text: "Запросить код повторно", payload: inviteCb }],
+      ...(withNavigation ? [
+        [{ type: "callback" as const, text: "Изменить получателя", payload: changeCb }],
+        [{ type: "callback" as const, text: "Закрыть как неактуальный", payload: obsoleteCb }],
+      ] : []),
       ...(withNavigation ? [
         [{ type: "callback" as const, text: "К списку", payload: listCb }],
         menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>,
@@ -141,9 +151,9 @@ export async function appendReceiptEntryChoices(
   const rows = (await client.query<HolderActionTransfer>(
     `SELECT * FROM tt_transfers
      WHERE holder_party_id=$1::uuid
-       AND status IN ('waiting','active','delivered','completed') AND deleted_at IS NULL AND general_archived_at IS NULL
-       AND ($2::text IS NULL OR (public_code=$2 AND status<>'completed'))
-     ORDER BY CASE WHEN status='completed' THEN 1 ELSE 0 END,created_at DESC,id DESC
+       AND status IN ('waiting','active','delivered','completed','obsolete') AND deleted_at IS NULL AND general_archived_at IS NULL
+       AND ($2::text IS NULL OR (public_code=$2 AND status NOT IN ('completed','obsolete')))
+     ORDER BY CASE WHEN status IN ('completed','obsolete') THEN 1 ELSE 0 END,created_at DESC,id DESC
      LIMIT 6 OFFSET $3`, [partyId, onlyPublicCode ?? null, page * 5])).rows;
   if (!rows.length) {
     const text = `${reply.text}\n\nПока нет передач, где вы текущий или последний держатель.`;
@@ -185,10 +195,10 @@ export async function appendReceiptEntryChoices(
   }
   const text = options.omitSelectionHint
     ? reply.text
-    : `${reply.text}\n\nВыберите передачу. Активную можно передать дальше или завершить; завершённую можно только посмотреть.`;
+    : `${reply.text}\n\nВыберите передачу. Для активной доступны действия; завершённую или неактуальную можно только посмотреть.`;
   const choices = visible.map(r => ({
-    text: `${r.public_code} · ${r.status === "completed" ? "Завершён" : r.pending_party_id ? "Ожидает получения" : "В работе"}`,
-    data: r.status === "completed"
+    text: `${r.public_code} · ${r.status === "obsolete" ? "Неактуален" : r.status === "completed" ? "Завершён" : r.pending_party_id ? "Ожидает получения" : "В работе"}`,
+    data: r.status === "completed" || r.status === "obsolete"
       ? buildTrackStatusCallback({ action: "view", transferId: r.id })!
       : buildReceiptEntryCallback("pick", r.id, r.handoff_version)!,
   }));
@@ -246,9 +256,11 @@ export async function handleReceiptEntryCallback(
       replyMarkup: undefined,
     };
   }
-  if (parsed.action === "forward" || parsed.action === "close") {
+  if (parsed.action === "forward" || parsed.action === "close" || parsed.action === "change" || parsed.action === "void") {
     await clearReceiptEntry(client, ctx);
-    return startNativeHolderAction(client, ctx, row, parsed.action === "forward" ? "forward" : "complete");
+    await clearReceiptEntry(client, ctx);
+    return startNativeHolderAction(client, ctx, row, parsed.action === "forward" ? "forward"
+      : parsed.action === "change" ? "replace" : parsed.action === "void" ? "obsolete" : "complete");
   }
   if (!row.pending_party_id) return { text: "У этой передачи сейчас нет ожидаемого получателя. Откройте её заново в «Моих передачах»." };
   let forwardInvitationText: string | undefined;

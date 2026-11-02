@@ -58,7 +58,8 @@ function eventActionLine(eventType: StaffTransferEventType, payload: StaffNotifi
     case "tan_tracker.returned":
       return "Назначен возврат создателю. До подтверждения приёма ответственный не меняется.";
     case "tan_tracker.closed":
-      return "Передача завершена.";
+      return payload.notificationState?.phase === "obsolete"
+        ? "Трек закрыт как неактуальный. Получение по отменённой передаче не подтверждено." : "Передача завершена.";
     default:
       return "Событие Тан-трекера.";
   }
@@ -105,7 +106,7 @@ export function staffNotificationLkCopy(
     case "tan_tracker.returned":
       return { title: "Возврат создателю", body: `${ctx}\n\n${action}` };
     case "tan_tracker.closed":
-      return { title: "Завершена", body: `${ctx}\n\n${action}` };
+      return { title: payload.notificationState?.phase === "obsolete" ? "Неактуален" : "Завершена", body: `${ctx}\n\n${action}` };
     default:
       return { title: "Тан-трекер", body: `${item} (${code})` };
   }

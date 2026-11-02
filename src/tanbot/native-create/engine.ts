@@ -183,6 +183,9 @@ function formatSummary(
   payload: NativeCreateDraftPayload,
   attachmentStats: { total: number; imageCount: number; pdfCount: number; otherCount: number },
 ): string {
+  if (payload.holderAction?.kind === "obsolete") {
+    return `Закрыть трек ${payload.holderAction.publicCode} как неактуальный?\n\nПредмет: ${payload.item ?? "Не указан"}\n\nОжидание передачи будет отменено. Старые код и приглашение перестанут действовать. Держатель не изменится; получение не будет подтверждено.\n\nТрек получит отдельный статус «Неактуален», не «Завершён». История сохранится.`;
+  }
   if (payload.holderAction?.kind === "complete") {
     return `Завершить трек ${payload.holderAction.publicCode}?\n\nПредмет: ${payload.item ?? "—"}\n\nПодтвердите, что задача выполнена и дальнейшая передача не нужна. Трек получит статус «Завершён», история сохранится.\n\nСамо получение предмета не завершает трек.`;
   }
@@ -210,6 +213,9 @@ function formatSummary(
       : recipientPhone && payload.recipientPartyId == null && payload.recipientUserId == null
         ? `${recipient} (${recipientPhone})`
         : recipient;
+  if (payload.holderAction?.kind === "replace") {
+    return `Изменить получателя: ${payload.holderAction.publicCode}\n\nПредмет: ${payload.item ?? "Не указан"}\nНовый получатель: ${recipientLine}\n\nПосле подтверждения прежние код и приглашение перестанут действовать. Продолжится тот же трек, история и вложения сохранятся. До проверки нового кода держатель не изменится.\n\nДо первой передачи замена непосредственного конечного получателя также меняет адресата трека; при продолжении маршрута конечный адресат сохраняется.`;
+  }
   if (payload.holderAction?.kind === "forward") {
     return `Передать дальше: ${payload.holderAction.publicCode}\n\nПредмет: ${payload.item ?? "—"}\nПолучатель: ${recipientLine}\n\nПродолжится этот же трек. История, вложения и конечный получатель сохранятся. Предмет и ответственность остаются у вас до успешной проверки кода получателя.\n\nНажмите «Передать дальше», затем перешлите приглашение получателю.`;
   }
@@ -286,9 +292,9 @@ export async function renderDraftPrompt(
   const count = stats.total;
   const prompt = stepPrompt(step, payload, stats);
   const text = payload.holderAction && step !== "summary"
-    ? `Передать дальше: ${payload.holderAction.publicCode}\n\n${prompt}` : prompt;
+    ? `${payload.holderAction.kind === "replace" ? "Изменить получателя" : "Передать дальше"}: ${payload.holderAction.publicCode}\n\n${prompt}` : prompt;
   const wizardOpts = { wizardShowBack: payload.holderAction
-    ? payload.holderAction.kind === "forward" && step !== "recipient" : step !== "item" };
+    ? ["forward", "replace"].includes(payload.holderAction.kind) && step !== "recipient" : step !== "item" };
   let ui = buildStepUi(channel, draftId, payload.revision ?? 1, "nav", wizardOpts);
   if (step === "photo") {
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "photo", { photoSkipHidden: count > 0, ...wizardOpts });
@@ -370,7 +376,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   if (ctx.isLinkedStaff && ctx.staffUserId) {
     const origin = getAppOrigin() ?? "https://example.invalid";
     return appendReceiptEntryChoices(client, ctx, {
-      text: `Мои передачи\nСначала незавершённые треки, ниже завершённые.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/`,
+      text: `Мои передачи\nСначала активные треки, ниже завершённые и неактуальные.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/`,
       replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
       telegramInlineKeyboard: undefined,
       maxInlineButtons: undefined,
@@ -379,7 +385,7 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
   const sessionRaw = await createPersonBrowserSession(client, ctx.personId!, ctx.channel);
   const origin = getAppOrigin() ?? "https://example.invalid";
   return appendReceiptEntryChoices(client, ctx, {
-    text: `Мои передачи\nСначала незавершённые треки, ниже завершённые.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
+    text: `Мои передачи\nСначала активные треки, ниже завершённые и неактуальные.\n\nИстория и детали в личном кабинете:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
     replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
     telegramInlineKeyboard: undefined,
     maxInlineButtons: undefined,
@@ -699,7 +705,7 @@ export async function handleNativeCreateCallback(
 
   const { id, step, payload } = draft;
   if (payload.holderAction) {
-    const allowed = payload.holderAction.kind === "complete"
+    const allowed = ["complete", "obsolete"].includes(payload.holderAction.kind)
       ? ["confirm", "cancel", "menu"]
       : ["confirm", "cancel", "menu", "back", "recipient", "recipient_page", "recipient_ext",
           "recipient_ext_tel", "recipient_ext_keep", "recipient_ext_change", "recipient_ext_next"];

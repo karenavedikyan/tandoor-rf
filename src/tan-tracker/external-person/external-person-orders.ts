@@ -70,6 +70,7 @@ export async function loadExternalPersonOrders(
     if (
       row.holder_party_id === partyId &&
       row.status !== "completed" &&
+      row.status !== "obsolete" &&
       OPEN_HOLDER_STATUSES.has(row.status)
     ) {
       dto.holderAccessToken = signHolderAccess({

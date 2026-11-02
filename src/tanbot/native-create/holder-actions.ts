@@ -14,6 +14,7 @@ import { resolveNativeExternalPendingPartyByPhone } from "./native-external-reci
 import { loadAccessContext } from "../../access/context";
 import type { UserRole } from "../../shared/user";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
+import { markPendingObsoleteInTransaction, OBSOLETE_REASON } from "../../tan-tracker/pending-obsolete-mutation";
 
 export type HolderActionTransfer = {
   id: string; public_code: string; item_title: string; status: string; holder_party_id: string;
@@ -31,9 +32,14 @@ export function holderCompletionPermission(row: Pick<HolderActionTransfer,
 }
 
 export async function startNativeHolderAction(
-  client: PoolClient, ctx: NativeCreateContext, row: HolderActionTransfer, kind: "forward" | "complete",
+  client: PoolClient, ctx: NativeCreateContext, row: HolderActionTransfer,
+  kind: NonNullable<NativeCreateDraftPayload["holderAction"]>["kind"],
 ): Promise<NativeCreateReply> {
-  if (row.pending_party_id) return { text: "Сначала подтвердите текущую передачу получателю." };
+  const pendingAction = kind === "replace" || kind === "obsolete";
+  if (pendingAction ? !row.pending_party_id : row.pending_party_id != null) {
+    return { text: pendingAction ? "Ожидающий получатель уже изменился. Откройте трек заново."
+      : "Сначала подтвердите текущую передачу получателю." };
+  }
   if (kind === "complete") {
     const permission = holderCompletionPermission(row);
     if (!permission.ok) return { text: permission.message };
@@ -43,7 +49,7 @@ export async function startNativeHolderAction(
   if (existing) return buildNativeMainMenuReply(client, ctx, {
     prefix: "У вас есть незаконченный черновик. Продолжите или отмените его через меню, затем откройте нужный трек.", lock: false,
   });
-  const step = kind === "complete" ? "summary" : "recipient";
+  const step = kind === "complete" || kind === "obsolete" ? "summary" : "recipient";
   const draft = await ensureNativeBotDraft(client, {
     channel: ctx.channel, messengerChatId: ctx.messengerChatId, actor,
     personId: ctx.personId, staffUserId: ctx.staffUserId ?? undefined, step,
@@ -71,13 +77,19 @@ export async function confirmNativeHolderAction(
        AND deleted_at IS NULL AND general_archived_at IS NULL FOR UPDATE`,
     [action.transferId, partyId, action.handoffVersion, action.rowVersion],
   )).rows[0];
-  if (!row || row.pending_party_id) return {
+  const pendingAction = action.kind === "replace" || action.kind === "obsolete";
+  if (!row || (pendingAction ? !row.pending_party_id : row.pending_party_id != null)) return {
     text: "Передача уже изменилась или недоступна. Ничего не изменено. Отмените черновик и выберите актуальный трек в «Моих передачах».",
   };
   await client.query("SAVEPOINT native_holder_action");
   let forwardInvitationText: string | null = null;
   try {
-    if (action.kind === "complete") {
+    if (action.kind === "obsolete") {
+      await markPendingObsoleteInTransaction(client, {
+        transferId: row.id, actorPartyId: partyId, auditUserId: ctx.isLinkedStaff ? ctx.staffUserId : null,
+        expectedHandoffVersion: action.handoffVersion, expectedRowVersion: action.rowVersion,
+      });
+    } else if (action.kind === "complete") {
       const outcome = await completeTransferInTransaction(client, {
         transferId: row.id, actingPartyId: partyId, auditUserId: ctx.isLinkedStaff ? ctx.staffUserId : null,
         expectedHandoffVersion: action.handoffVersion, expectedRowVersion: action.rowVersion,
@@ -107,11 +119,18 @@ export async function confirmNativeHolderAction(
           await assertNullCreatorPhoneResolvedPending(client, partyId, pendingPartyId);
         }
       }
+      if (action.kind === "replace" && pendingPartyId === row.pending_party_id) {
+        throw Object.assign(new Error("Выбран прежний получатель. Выберите другого или отмените изменение."), { http: 400 });
+      }
       await assignPendingRecipientInTransaction(client, {
         transferId: row.id, holderPartyId: partyId, pendingPartyId,
         auditUserId: ctx.isLinkedStaff ? ctx.staffUserId : null,
-        expectedHandoffVersion: action.handoffVersion, expectedRowVersion: action.rowVersion, requireNoPending: true,
+        expectedHandoffVersion: action.handoffVersion, expectedRowVersion: action.rowVersion,
+        requireNoPending: action.kind === "forward", replaceUnreceivedFinal: action.kind === "replace",
       });
+      if (action.kind === "replace") {
+        await client.query("DELETE FROM tt_bot_receipt_code_entries WHERE transfer_id=$1", [row.id]);
+      }
       forwardInvitationText = await buildExternalPendingInviteMessage(client, {
         transferId: row.id, pendingPartyId, handoffVersion: row.handoff_version + 1,
         channel: ctx.channel, allowUserParty: true,
@@ -130,6 +149,9 @@ export async function confirmNativeHolderAction(
     return { text: http && [400, 403, 404, 409].includes(http) && err instanceof Error ? err.message
       : "Не удалось выполнить действие. Изменения не сохранены. Попробуйте снова через «Мои передачи»." };
   }
+  if (action.kind === "obsolete") return buildNativeMainMenuReply(client, ctx, {
+    prefix: `Трек ${row.public_code}: Неактуален.\n${OBSOLETE_REASON}`, lock: false,
+  });
   if (action.kind === "complete") return buildNativeMainMenuReply(client, ctx, {
     prefix: `Трек ${row.public_code} завершён.\nЗадача выполнена. История сохранена в личном кабинете.`, lock: false,
   });

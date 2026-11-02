@@ -210,7 +210,7 @@ export async function issueHandoffCodeViaBot(
   if (!transfer.pending_party_id || transfer.pending_party_id !== input.partyId) {
     return { ok: false, message: "Вы не являетесь ожидающим получателем этой передачи." };
   }
-  if (transfer.status === "completed") {
+  if (transfer.status === "completed" || transfer.status === "obsolete") {
     return { ok: false, message: "Передача уже завершена." };
   }
   if (

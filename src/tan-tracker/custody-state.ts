@@ -16,7 +16,7 @@ export const FIRST_CUSTODY_AUDIT_ACTIONS = [
 ] as const;
 
 export function isBeforeFirstConfirmedCustody(row: TransferCustodyRow): boolean {
-  if (row.status === "completed") return false;
+  if (row.status === "completed" || row.status === "obsolete") return false;
   if (row.first_custody_at != null) return false;
   return true;
 }

@@ -53,6 +53,9 @@ export function buildExternalPersonMessengerBody(input: {
   const code = input.publicCode;
   const link = input.holderUrl || input.shellUrl;
   const linkLine = link ? `\nОткрыть: ${link}` : "";
+  if (input.notificationState?.phase === "obsolete") {
+    return `${externalContextBlock(input)}\n\nТрек закрыт как неактуальный. Получение по отменённой передаче не подтверждено.\n\n${formatNotificationTransferState(input.notificationState)}${linkLine}`;
+  }
   const state = formatNotificationTransferState(input.notificationState);
   const ctx = [externalContextBlock(input), state].filter(Boolean).join("\n\n");
   if ((input.event === "after_code" || input.event === "after_receipt" || input.event === "delivered")

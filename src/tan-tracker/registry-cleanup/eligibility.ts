@@ -19,7 +19,7 @@ export function orderCreatorPartyId(o: TanTrackerOrderDto): string | null {
 }
 
 export function isTerminalForPersonalArchive(o: TanTrackerOrderDto): boolean {
-  return o.status === "completed" || o.status === "delivered";
+  return o.status === "completed" || o.status === "obsolete" || o.status === "delivered";
 }
 
 export function actorSeesOrder(
@@ -98,7 +98,7 @@ export function canShowDeleteBeforeReceipt(
   const creator = orderCreatorPartyId(o);
   const allowedRole = creator != null && creator === actor.partyId;
   if (!allowedRole) return false;
-  if (row.status === "completed") return false;
+  if (row.status === "completed" || row.status === "obsolete") return false;
   if (row.first_custody_at != null) return false;
   return true;
 }

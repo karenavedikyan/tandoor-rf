@@ -91,10 +91,11 @@ export function formatTrackStatus(
   now = new Date(),
 ): string {
   const phase = state?.phase;
-  const label = phase === "done" ? "Завершён" : phase === "received" ? "Получение подтверждено. Трек открыт"
+  const label = phase === "obsolete" ? "Неактуален" : phase === "done" ? "Завершён" : phase === "received" ? "Получение подтверждено. Трек открыт"
     : phase === "waiting" ? "Ожидает подтверждения получения" : "Ожидает первой передачи";
   const lines = [`Трек ${line(row.public_code)}`, line(row.item_title), "", `Статус: ${label}`,
-    `${phase === "done" ? "Последний держатель" : "Текущий держатель"}: ${state?.holderName || "Имя не указано"}`];
+    `${phase === "done" || phase === "obsolete" ? "Последний держатель" : "Текущий держатель"}: ${state?.holderName || "Имя не указано"}`];
+  if (phase === "obsolete") lines.push("Текущая передача отменена. Получение по ней не подтверждено.");
   if (phase === "waiting") lines.push(`Следующий получатель: ${state?.pendingName || "Имя не указано"}`,
     "Пока код не подтверждён, держатель не меняется.");
   if (phase === "ready") lines.push("Первое получение пока не подтверждено.");
