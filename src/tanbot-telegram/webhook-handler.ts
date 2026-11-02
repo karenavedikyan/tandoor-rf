@@ -110,7 +110,7 @@ async function processParsedUpdate(
       if (!ext && (account || person)) {
         const adapters = await import("../tanbot/native-create/adapters");
         const menu = await adapters.tryNativeCreateTelegramMessage(client, {
-          chatId: update.chatId, telegramUserId: update.telegramUserId, text: "Меню",
+          chatId: update.chatId, telegramUserId: update.telegramUserId, text: "/start",
         });
         const reply: WebhookReply = {
           chatId: update.chatId, text: menu!.text, replyMarkup: menu!.replyMarkup,

@@ -13,7 +13,7 @@ import {
   stripTransientRecipientDraftFields,
   type NativeCreateDraftPayload,
 } from "./draft-scope";
-import { buildMainMenuInline, buildStepUi, menuReplyKeyboard } from "./keyboards";
+import { buildMainMenuInline, buildStepUi, menuReplyKeyboard, removeTelegramReplyKeyboard } from "./keyboards";
 import {
   draftIdMatchesHex,
   parseNativeCreateCallback,
@@ -79,6 +79,7 @@ export type NativeCreateContext = {
 
 export {
   buildNativeMainMenuReply,
+  buildNativeCompactMenuReply,
   nativeCompletionMenuReply,
   nativeVerifiedContactRequiredReply,
   parseNativeBotSlashCommand,
@@ -107,7 +108,9 @@ async function resumeOwnedNativeDraft(
   const draft = await peekResumableNativeDraft(client, ctx);
   if (!draft) return null;
   const payload = draft.payload as NativeCreateDraftPayload;
-  return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload);
+  return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload, {
+    telegramClearKeyboard: ctx.channel === "telegram",
+  });
 }
 
 function stepPrompt(
@@ -123,11 +126,11 @@ function stepPrompt(
     case "photo":
       if (photoCount > 0) {
         const countLine = genericDraft ? `Файлы: ${photoCount}/5.` : `Фото: ${photoCount}/5.`;
-        return `${countLine} Пришлите ещё вложения или нажмите «Далее». «Пропустить» доступно только без вложений.`;
+        return `${countLine} Пришлите ещё вложения или нажмите «Далее».`;
       }
       return (
         "Вложения: пришлите фото или любые файлы — PDF, Word, Excel, архивы, видео (до 5 по 8 МБ каждый). " +
-        "После добавления нажмите «Далее» или «Пропустить», если вложения не нужны."
+        "Если вложения не нужны, нажмите «Без вложений»."
       );
     case "comment":
       return "Комментарий к передаче или нажмите «Пропустить».";
@@ -269,19 +272,22 @@ export async function renderDraftPrompt(
   draftId: string,
   step: string,
   payload: NativeCreateDraftPayload,
+  options: { telegramClearKeyboard?: boolean } = {},
 ): Promise<NativeCreateReply> {
   const stats = await draftAttachmentStats(client, draftId);
   const count = stats.total;
   const text = stepPrompt(step, payload, stats);
-  let ui = buildStepUi(channel, draftId, payload.revision ?? 1, "nav");
+  const wizardOpts = { wizardShowBack: step !== "item" };
+  let ui = buildStepUi(channel, draftId, payload.revision ?? 1, "nav", wizardOpts);
   if (step === "photo") {
-    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "photo", { photoSkipHidden: count > 0 });
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "photo", { photoSkipHidden: count > 0, ...wizardOpts });
   } else if (step === "comment") {
-    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "comment");
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "comment", wizardOpts);
   } else if (step === "due") {
-    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "due");
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "due", wizardOpts);
   } else if (step === "edit") {
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "edit", {
+      ...wizardOpts,
       editFields: [
         { label: "Предмет", arg: "item" },
         { label: "Фото", arg: "photo" },
@@ -308,6 +314,7 @@ export async function renderDraftPrompt(
     const choices = payload.actor === "external" ? [] : filteredRecipients(payload);
     const slice = choices.slice(page * RECIPIENT_PAGE_SIZE, (page + 1) * RECIPIENT_PAGE_SIZE);
     ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient", {
+      ...wizardOpts,
       recipientButtons: slice.map((c, i) => ({
         label: c.fullName.slice(0, 40),
         arg: String(page * RECIPIENT_PAGE_SIZE + i),
@@ -322,16 +329,17 @@ export async function renderDraftPrompt(
     payload.recipientExtAwaitNameConfirm &&
     (payload.recipientExternal?.phone || payload.externalRecipientPhone)
   ) {
-    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient_ext_name_confirm");
+    ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient_ext_name_confirm", wizardOpts);
   } else if (step === "recipient_ext_phone") {
     const ext = payload.recipientExternal;
     if (ext?.phone && ext.name?.trim()) {
-      ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient_ext_phone");
+      ui = buildStepUi(channel, draftId, payload.revision ?? 1, "recipient_ext_phone", wizardOpts);
     }
   }
   return {
     text,
-    replyMarkup: menuReplyKeyboard(),
+    replyMarkup:
+      channel === "telegram" && options.telegramClearKeyboard ? removeTelegramReplyKeyboard() : undefined,
     telegramInlineKeyboard: channel === "telegram" ? ui.telegramInlineKeyboard : undefined,
     maxInlineButtons: channel === "max" ? ui.maxInlineButtons : undefined,
   };
@@ -346,23 +354,23 @@ async function myTransfersReply(client: PoolClient, ctx: NativeCreateContext, re
       "Подтвердите номер телефона, чтобы открыть передачи.",
     );
   }
-  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false, showMenu: true });
+  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false });
   if (ctx.isLinkedStaff && ctx.staffUserId) {
     const origin = getAppOrigin() ?? "https://example.invalid";
     return appendReceiptEntryChoices(client, ctx, {
       text: `Мои передачи в личном кабинете:\n${origin}/tan-tracker/`,
-      replyMarkup: menu.replyMarkup,
-      maxInlineButtons: menu.maxInlineButtons,
+      replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
       telegramInlineKeyboard: undefined,
+      maxInlineButtons: undefined,
     }, undefined, receiptPage);
   }
   const sessionRaw = await createPersonBrowserSession(client, ctx.personId!, ctx.channel);
   const origin = getAppOrigin() ?? "https://example.invalid";
   return appendReceiptEntryChoices(client, ctx, {
     text: `Мои передачи:\n${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`,
-    replyMarkup: menu.replyMarkup,
-    maxInlineButtons: menu.maxInlineButtons,
+    replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : menu.replyMarkup,
     telegramInlineKeyboard: undefined,
+    maxInlineButtons: undefined,
   }, undefined, receiptPage);
 }
 
@@ -390,7 +398,9 @@ async function startOrResumeCreate(client: PoolClient, ctx: NativeCreateContext)
   });
   const payload = draft.payload as NativeCreateDraftPayload;
   assertDraftBoundToCaller(payload, ctx);
-  return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload);
+  return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload, {
+    telegramClearKeyboard: ctx.channel === "telegram",
+  });
 }
 
 function callbackAllowedForStep(action: ParsedNativeCreateCallback["action"], step: string): boolean {
@@ -423,6 +433,7 @@ function callbackAllowedForStep(action: ParsedNativeCreateCallback["action"], st
     case "cancel":
     case "restart":
     case "menu":
+    case "menu_home":
     case "menu_resume":
       return true;
     default:
@@ -561,18 +572,25 @@ export async function handleNativeCreateCallback(
   const { clearReceiptEntry } = await import("./receipt-code-entry");
   await clearReceiptEntry(client, ctx);
 
+  const { buildNativeCompactMenuReply } = await import("./main-menu");
+
   if (["menu_receive", "menu_settings", "notify_ask_off", "notify_off", "notify_on"].includes(parsed.action)) {
     if (!isNativeMenuDraftHex(parsed.draftIdHex) || parsed.revision !== 1) return null;
     const { receiveCodeReply, settingsReply } = await import("./menu-actions");
     if (parsed.action === "menu_receive") {
       if (parsed.arg && !/^\d{1,5}$/.test(parsed.arg)) return null;
-      return receiveCodeReply(client, ctx, undefined, Number(parsed.arg ?? 0));
+      const reply = await receiveCodeReply(client, ctx, undefined, Number(parsed.arg ?? 0));
+      return ctx.channel === "telegram" && reply.telegramInlineKeyboard
+        ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
     }
     if (parsed.arg) return null;
-    return settingsReply(client, ctx, parsed.action);
+    const reply = await settingsReply(client, ctx, parsed.action);
+    return parsed.action === "menu_settings" && ctx.channel === "telegram" && reply.telegramInlineKeyboard
+      ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
   }
 
-  if (parsed.action === "menu") {
+  if (parsed.action === "menu_home") {
+    if (!isNativeMenuDraftHex(parsed.draftIdHex) || parsed.revision !== 1) return null;
     try {
       await assertNativeCreateContext(client, ctx);
     } catch (err: unknown) {
@@ -580,6 +598,19 @@ export async function handleNativeCreateCallback(
       return buildNativeMainMenuReply(client, ctx, { prefix: message, lock: false });
     }
     return buildNativeMainMenuReply(client, ctx, { lock: false });
+  }
+
+  if (parsed.action === "menu") {
+    try {
+      await assertNativeCreateContext(client, ctx);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Действие недоступно.";
+      return buildNativeCompactMenuReply(client, ctx, { prefix: message, lock: false });
+    }
+    if (isNativeMenuDraftHex(parsed.draftIdHex)) {
+      return buildNativeCompactMenuReply(client, ctx, { lock: false });
+    }
+    return buildNativeCompactMenuReply(client, ctx, { lock: false });
   }
 
   if (parsed.action === "menu_create" || parsed.action === "menu_my") {
@@ -623,7 +654,9 @@ export async function handleNativeCreateCallback(
     const payload = draft.payload as NativeCreateDraftPayload;
     assertDraftBoundToCaller(payload, ctx);
     assertDraftPersonRow(draft, ctx);
-    return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload);
+    return renderDraftPrompt(client, ctx.channel, draft.id, draft.step, payload, {
+      telegramClearKeyboard: ctx.channel === "telegram",
+    });
   }
 
   try {
@@ -845,7 +878,7 @@ export async function handleNativeCreateCallback(
       : "Фото";
     return {
       text: `${kindLabel} ${sortOrder + 1}: ${file.file_name}`,
-      replyMarkup: menuReplyKeyboard(),
+      replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : undefined,
       telegramInlineKeyboard: ui.telegramInlineKeyboard,
       maxInlineButtons: ui.maxInlineButtons,
       nativeMediaQueue: [media],
@@ -944,15 +977,21 @@ export async function handleNativeCreateMessage(
     isNativeContinueDraftText,
     isNativeCreateMenuText,
     buildNativeMainMenuReply,
+    buildNativeCompactMenuReply,
   } = await import("./main-menu");
 
   const slash = parseNativeBotSlashCommand(trimmed);
   if (lower === "настройки" || lower === "получить код приёма" || lower === "получить код приема") {
     const { settingsReply, receiveCodeReply } = await import("./menu-actions");
-    return lower === "настройки" ? settingsReply(client, ctx) : receiveCodeReply(client, ctx);
+    const reply = await (lower === "настройки" ? settingsReply(client, ctx) : receiveCodeReply(client, ctx));
+    return ctx.channel === "telegram" && reply.telegramInlineKeyboard
+      ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
   }
-  if (slash === "start" || slash === "menu") {
+  if (slash === "start") {
     return buildNativeMainMenuReply(client, ctx);
+  }
+  if (slash === "menu") {
+    return buildNativeCompactMenuReply(client, ctx);
   }
   if (lower === "мои передачи" || slash === "my") {
     await lockNativeCreateMessenger(client, ctx);
@@ -973,7 +1012,7 @@ export async function handleNativeCreateMessage(
   }
 
   if (isNativeMainMenuText(trimmed)) {
-    return buildNativeMainMenuReply(client, ctx);
+    return buildNativeCompactMenuReply(client, ctx);
   }
 
   if (isNativeContinueDraftText(trimmed)) {
@@ -1033,8 +1072,7 @@ export async function handleNativeCreateMessage(
   }
 
   if (step === "photo") {
-    const rendered = await renderDraftPrompt(client, ctx.channel, draft.id, step, payload);
-    return { ...rendered, text: "На этом шаге отправьте фото или используйте кнопки «Далее» / «Пропустить»." };
+    return renderDraftPrompt(client, ctx.channel, draft.id, step, payload);
   }
 
   if (step === "comment") {

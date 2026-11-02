@@ -109,7 +109,7 @@ describe("native bot main menu (MAX + Telegram)", { concurrency: false }, () => 
     assert.deepEqual(await globalCounts(), before);
   });
 
-  it("Telegram persistent keyboard is sent without inline_keyboard on main menu", async () => {
+  it("Telegram /start home uses persistent reply keyboard without inline_keyboard", async () => {
     const tgUserId = 89001002;
     await seedStaffTelegram(tgUserId);
     await resetPoolForTests();
@@ -125,7 +125,7 @@ describe("native bot main menu (MAX + Telegram)", { concurrency: false }, () => 
           date: 1,
           chat: { id: tgUserId, type: "private" },
           from: { id: tgUserId, is_bot: false },
-          text: "Меню",
+          text: "/start",
         },
       });
     const row = (
@@ -135,9 +135,42 @@ describe("native bot main menu (MAX + Telegram)", { concurrency: false }, () => 
       )
     ).rows[0]!;
     const markup = row.reply_extra?.replyMarkup;
-    assert.ok(markup && Array.isArray(markup.keyboard), "main menu must use reply keyboard");
+    assert.ok(markup && Array.isArray(markup.keyboard), "home screen must use reply keyboard");
     assert.equal(markup.is_persistent, true);
     assert.equal((markup as { inline_keyboard?: unknown }).inline_keyboard, undefined);
+    assert.notEqual(row.reply_extra?.replyKeyboardClear, true);
+  });
+
+  it("Telegram compact Menu text stores inline actions and keyboard delivery hints", async () => {
+    const tgUserId = 890010021;
+    await seedStaffTelegram(tgUserId);
+    await resetPoolForTests();
+    const { createApp } = await import("../../src/server");
+    const app = createApp();
+    await request(app)
+      .post("/api/tanbot-telegram/webhook")
+      .set("X-Telegram-Bot-Api-Secret-Token", process.env.TANBOT_TELEGRAM_WEBHOOK_SECRET!)
+      .send({
+        update_id: 890010021,
+        message: {
+          message_id: 1,
+          date: 1,
+          chat: { id: tgUserId, type: "private" },
+          from: { id: tgUserId, is_bot: false },
+          text: "Меню",
+        },
+      });
+    const row = (
+      await getPool()!.query<{ reply_extra: Record<string, unknown> }>(
+        `SELECT reply_extra FROM tanbot_telegram_update_dedup WHERE update_id=$1`,
+        [890010021],
+      )
+    ).rows[0]!;
+    const markup = row.reply_extra?.replyMarkup as { inline_keyboard?: unknown; keyboard?: unknown } | undefined;
+    assert.ok(markup && Array.isArray(markup.inline_keyboard), "compact menu must use inline keyboard");
+    assert.equal(markup.keyboard, undefined);
+    assert.equal(row.reply_extra?.replyKeyboardClear, true);
+    assert.equal(row.reply_extra?.replyKeyboardRestore, undefined, "compact menu must not restore home buttons");
   });
 
   it("Staff draft survives Menu and Continue restores same step and revision", async () => {

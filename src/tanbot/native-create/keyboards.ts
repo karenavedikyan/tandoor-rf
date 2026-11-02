@@ -8,6 +8,10 @@ export type NativeCreateUi = {
   maxInlineButtons?: MaxInlineButton[][];
 };
 
+export function removeTelegramReplyKeyboard(): Record<string, unknown> {
+  return { remove_keyboard: true };
+}
+
 export function telegramContactWithMenuKeyboard(): Record<string, unknown> {
   return {
     keyboard: [
@@ -30,16 +34,16 @@ export function maxContactWithMenuInline(): NativeCreateUi {
   };
 }
 
-export function menuReplyKeyboard(options: { showContinue?: boolean; showMenu?: boolean } = {}): Record<string, unknown> {
+/** Primary home reply keyboard (Telegram). */
+export function menuReplyKeyboard(options: { showContinue?: boolean } = {}): Record<string, unknown> {
   const rows: Array<Array<{ text: string }>> = [
-    [{ text: "Оформить передачу" }],
+    [{ text: "Создать передачу" }],
     [{ text: "Мои передачи" }],
-    [{ text: "Получить код приёма" }, { text: "Настройки" }],
   ];
   if (options.showContinue) {
     rows.push([{ text: "Продолжить оформление" }]);
   }
-  if (options.showMenu !== false) rows.push([{ text: "Меню" }]);
+  rows.push([{ text: "Меню" }]);
   return {
     keyboard: rows,
     resize_keyboard: true,
@@ -78,46 +82,78 @@ function maxRow(draftId: string, revision: number, buttons: BtnDef[]): MaxInline
   }));
 }
 
-const NAV: BtnDef[] = [
-  { label: "◀ Назад", action: "back" },
-  { label: "Отмена", action: "cancel" },
-  { label: "Меню", action: "menu" },
-];
+function wizardNav(draftId: string, revision: number, showBack: boolean): BtnDef[] {
+  const row: BtnDef[] = [];
+  if (showBack) row.push({ label: "◀ Назад", action: "back" });
+  row.push({ label: "Отмена", action: "cancel" }, { label: "Меню", action: "menu" });
+  return row;
+}
 
-/** MAX inline main menu; Telegram main menu uses reply keyboard only. */
+function buildNavUi(
+  channel: "telegram" | "max",
+  draftId: string,
+  revision: number,
+  showBack: boolean,
+): NativeCreateUi {
+  const nav = wizardNav(draftId, revision, showBack);
+  return channel === "telegram"
+    ? { telegramInlineKeyboard: [tgRow(draftId, revision, nav)] }
+    : { maxInlineButtons: [maxRow(draftId, revision, nav)] };
+}
+
+/** MAX inline for home screen; Telegram home uses reply keyboard only. */
 export function buildMainMenuInline(
   channel: "telegram" | "max",
   resume?: { draftId: string; revision: number },
-  options: { showMenu?: boolean } = {},
 ): NativeCreateUi {
   const draftId = NATIVE_MENU_DRAFT_HEX;
   const primary: BtnDef[] = [
-    { label: "Оформить передачу", action: "menu_create" },
+    { label: "Создать передачу", action: "menu_create" },
     { label: "Мои передачи", action: "menu_my" },
   ];
   if (channel === "telegram") {
-    const rows: BtnDef[][] = [
-      primary,
-      [{ label: "Получить код приёма", action: "menu_receive" }, { label: "Настройки", action: "menu_settings" }],
-      [{ label: "Меню", action: "menu" }],
-    ];
+    const rows: BtnDef[][] = [primary, [{ label: "Меню", action: "menu" }]];
     return { telegramInlineKeyboard: rows.map((row) => tgRow(draftId, MENU_REVISION, row)) };
   }
-  const rows: MaxInlineButton[][] = primary.map(button => maxRow(draftId, MENU_REVISION, [button]));
+  const maxRows: MaxInlineButton[][] = primary.map((button) => maxRow(draftId, MENU_REVISION, [button]));
   if (resume) {
     const resumePayload = buildNativeCreateCallback("menu_resume", resume.draftId, resume.revision);
     if (resumePayload) {
-      rows.unshift([{ type: "callback", text: "Продолжить оформление", payload: resumePayload }]);
+      maxRows.unshift([{ type: "callback", text: "Продолжить оформление", payload: resumePayload }]);
     }
   }
-  return {
-    maxInlineButtons: [
-      ...rows,
-      maxRow(draftId, MENU_REVISION, [{ label: "Получить код приёма", action: "menu_receive" }]),
-      maxRow(draftId, MENU_REVISION, [{ label: "Настройки", action: "menu_settings" }]),
-      ...(options.showMenu !== false ? [maxRow(draftId, MENU_REVISION, [{ label: "Меню", action: "menu" }])] : []),
-    ],
-  };
+  maxRows.push(maxRow(draftId, MENU_REVISION, [{ label: "Меню", action: "menu" }]));
+  return { maxInlineButtons: maxRows };
+}
+
+/** Secondary actions panel (both channels via inline). */
+export function buildCompactMenuInline(
+  channel: "telegram" | "max",
+  resume?: { draftId: string; revision: number },
+): NativeCreateUi {
+  const draftId = NATIVE_MENU_DRAFT_HEX;
+  const rows: BtnDef[][] = [
+    [{ label: "Получить код приёма", action: "menu_receive" }, { label: "Настройки", action: "menu_settings" }],
+    [{ label: "К основным действиям", action: "menu_home" }],
+  ];
+  if (channel === "telegram") {
+    const tgRows = rows.map((row) => tgRow(draftId, MENU_REVISION, row));
+    if (resume) {
+      const resumePayload = buildNativeCreateCallback("menu_resume", resume.draftId, resume.revision);
+      if (resumePayload) {
+        tgRows.unshift([{ text: "Продолжить оформление", callback_data: resumePayload }]);
+      }
+    }
+    return { telegramInlineKeyboard: tgRows };
+  }
+  const maxRows = rows.map((row) => maxRow(draftId, MENU_REVISION, row));
+  if (resume) {
+    const resumePayload = buildNativeCreateCallback("menu_resume", resume.draftId, resume.revision);
+    if (resumePayload) {
+      maxRows.unshift([{ type: "callback", text: "Продолжить оформление", payload: resumePayload }]);
+    }
+  }
+  return { maxInlineButtons: maxRows };
 }
 
 export function buildStepUi(
@@ -143,20 +179,25 @@ export function buildStepUi(
     staffExternalRecipient?: boolean;
     photoInspectButtons?: Array<{ label: string; arg: string }>;
     editFields?: Array<{ label: string; arg: string }>;
+    wizardShowBack?: boolean;
   },
 ): NativeCreateUi {
+  const showBack = extra?.wizardShowBack !== false;
   if (kind === "photo") {
-    const primary: BtnDef[] = [{ label: "Далее", action: "photo_next" }];
-    if (!extra?.photoSkipHidden) primary.push({ label: "Пропустить", action: "photo_skip" });
+    const primary: BtnDef[] = extra?.photoSkipHidden
+      ? [{ label: "Далее", action: "photo_next" }]
+      : [{ label: "Без вложений", action: "photo_skip" }];
+    const nav = wizardNav(draftId, revision, showBack);
     return channel === "telegram"
-      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, NAV)] }
-      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)] };
+      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, nav)] }
+      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, nav)] };
   }
   if (kind === "comment") {
     const primary: BtnDef[] = [{ label: "Пропустить", action: "comment_skip" }];
+    const nav = wizardNav(draftId, revision, showBack);
     return channel === "telegram"
-      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, NAV)] }
-      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)] };
+      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, nav)] }
+      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, nav)] };
   }
   if (kind === "due") {
     const primary: BtnDef[] = [
@@ -164,22 +205,26 @@ export function buildStepUi(
       { label: "Завтра", action: "due", arg: "m" },
       { label: "Без срока", action: "due", arg: "n" },
     ];
+    const nav = wizardNav(draftId, revision, showBack);
     return channel === "telegram"
-      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, NAV)] }
-      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)] };
+      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, nav)] }
+      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, nav)] };
   }
   if (kind === "summary") {
-    const rows: BtnDef[][] = [
-      [{ label: "Создать передачу", action: "confirm" }],
-    ];
+    const rows: BtnDef[][] = [[{ label: "Создать передачу", action: "confirm" }]];
     if (extra?.photoInspectButtons?.length) {
-      rows.push(extra.photoInspectButtons.map((b) => ({
-        label: b.label,
-        action: "photo_view" as const,
-        arg: b.arg,
-      })));
+      rows.push(
+        extra.photoInspectButtons.map((b) => ({
+          label: b.label,
+          action: "photo_view" as const,
+          arg: b.arg,
+        })),
+      );
     }
-    rows.push([{ label: "Изменить данные", action: "edit" }, NAV[0]!], NAV.slice(1));
+    rows.push(
+      [{ label: "Изменить", action: "edit" }],
+      [{ label: "Меню", action: "menu" }],
+    );
     return channel === "telegram"
       ? { telegramInlineKeyboard: rows.map((row) => tgRow(draftId, revision, row)) }
       : { maxInlineButtons: rows.map((row) => maxRow(draftId, revision, row)) };
@@ -190,51 +235,49 @@ export function buildStepUi(
       action: "edit" as const,
       arg: f.arg,
     }));
+    const tail: BtnDef[][] = [
+      [{ label: "К сводке", action: "back", arg: "summary" }],
+      wizardNav(draftId, revision, false),
+    ];
     return channel === "telegram"
       ? {
           telegramInlineKeyboard: [
             tgRow(draftId, revision, fields),
-            tgRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }]),
-            tgRow(draftId, revision, NAV),
+            ...tail.map((row) => tgRow(draftId, revision, row)),
           ],
         }
       : {
           maxInlineButtons: [
             maxRow(draftId, revision, fields),
-            maxRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }]),
-            maxRow(draftId, revision, NAV),
+            ...tail.map((row) => maxRow(draftId, revision, row)),
           ],
         };
   }
   if (kind === "photo_inspect") {
+    const tail: BtnDef[][] = [
+      [{ label: "К сводке", action: "back", arg: "summary" }],
+      wizardNav(draftId, revision, false),
+    ];
     return channel === "telegram"
-      ? {
-          telegramInlineKeyboard: [
-            tgRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }]),
-            tgRow(draftId, revision, NAV),
-          ],
-        }
-      : {
-          maxInlineButtons: [
-            maxRow(draftId, revision, [{ label: "К сводке", action: "back", arg: "summary" }]),
-            maxRow(draftId, revision, NAV),
-          ],
-        };
+      ? { telegramInlineKeyboard: tail.map((row) => tgRow(draftId, revision, row)) }
+      : { maxInlineButtons: tail.map((row) => maxRow(draftId, revision, row)) };
   }
   if (kind === "recipient_ext_phone") {
     const primary: BtnDef[] = [{ label: "Далее", action: "recipient_ext_next" }];
+    const nav = wizardNav(draftId, revision, showBack);
     return channel === "telegram"
-      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, NAV)] }
-      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)] };
+      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, nav)] }
+      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, nav)] };
   }
   if (kind === "recipient_ext_name_confirm") {
     const primary: BtnDef[] = [
       { label: "Оставить имя", action: "recipient_ext_keep" },
       { label: "Изменить имя", action: "recipient_ext_change" },
     ];
+    const nav = wizardNav(draftId, revision, showBack);
     return channel === "telegram"
-      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, NAV)] }
-      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, NAV)] };
+      ? { telegramInlineKeyboard: [tgRow(draftId, revision, primary), tgRow(draftId, revision, nav)] }
+      : { maxInlineButtons: [maxRow(draftId, revision, primary), maxRow(draftId, revision, nav)] };
   }
   if (kind === "recipient_ext_pick" && extra?.recipientButtons?.length) {
     const pickBtns: BtnDef[] = extra.recipientButtons.map((b) => ({
@@ -242,9 +285,20 @@ export function buildStepUi(
       action: "recipient_ext_tel" as const,
       arg: b.arg,
     }));
+    const nav = wizardNav(draftId, revision, showBack);
     return channel === "telegram"
-      ? { telegramInlineKeyboard: [tgRow(draftId, revision, pickBtns), tgRow(draftId, revision, NAV)] }
-      : { maxInlineButtons: [maxRow(draftId, revision, pickBtns), maxRow(draftId, revision, NAV)] };
+      ? {
+          telegramInlineKeyboard: [
+            tgRow(draftId, revision, pickBtns),
+            tgRow(draftId, revision, nav),
+          ],
+        }
+      : {
+          maxInlineButtons: [
+            maxRow(draftId, revision, pickBtns),
+            maxRow(draftId, revision, nav),
+          ],
+        };
   }
   if (kind === "recipient") {
     const tgRows: Array<Array<{ text: string; callback_data: string }>> = [];
@@ -268,14 +322,13 @@ export function buildStepUi(
       if (channel === "telegram") tgRows.push(tgRow(draftId, revision, pageBtns));
       else maxRows.push(maxRow(draftId, revision, pageBtns));
     }
+    const nav = wizardNav(draftId, revision, showBack);
     if (channel === "telegram") {
-      tgRows.push(tgRow(draftId, revision, NAV));
+      tgRows.push(tgRow(draftId, revision, nav));
       return { telegramInlineKeyboard: tgRows };
     }
-    maxRows.push(maxRow(draftId, revision, NAV));
+    maxRows.push(maxRow(draftId, revision, nav));
     return { maxInlineButtons: maxRows };
   }
-  return channel === "telegram"
-    ? { telegramInlineKeyboard: [tgRow(draftId, revision, NAV)] }
-    : { maxInlineButtons: [maxRow(draftId, revision, NAV)] };
+  return buildNavUi(channel, draftId, revision, showBack);
 }

@@ -27,8 +27,10 @@ for (const channel of ["max", "telegram"] as const) {
         assert.deepEqual(rows[1].map(b => b.text),
           Array.from({ length: photoCount }, (_, i) => `Фото ${i + 1}`));
       }
-      assert.deepEqual(rows.at(-2)!.map(b => b.text), ["Изменить данные", "◀ Назад"]);
-      assert.deepEqual(rows.at(-1)!.map(b => b.text), ["Отмена", "Меню"]);
+      assert.deepEqual(rows.at(-1)!.map(b => b.text), ["Меню"]);
+      assert.deepEqual(rows.at(-2)!.map(b => b.text), ["Изменить"]);
+      assert.equal(rows[0]![0]!.text, "Создать передачу");
+      assert.ok(!rows.flat().some((b) => b.text === "◀ Назад" || b.text === "Отмена"));
       for (const row of rows) {
         assert.ok(row.length >= 1 && row.length <= 5);
         for (const button of row) {

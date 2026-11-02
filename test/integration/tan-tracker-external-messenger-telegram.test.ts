@@ -134,8 +134,9 @@ describe("external recipient messenger (telegram, isolated PG)", { concurrency: 
     assert.match(contactOut.reply?.text ?? "", /\d{6}/);
     const markup = contactOut.reply?.replyMarkup as { keyboard?: { text: string; request_contact?: boolean }[][]; is_persistent?: boolean };
     assert.equal(markup.is_persistent, true);
-    assert.ok(markup.keyboard?.flat().some(b => b.text === "Оформить передачу"));
-    assert.ok(markup.keyboard?.flat().some(b => b.text === "Настройки"));
+    assert.ok(markup.keyboard?.flat().some(b => b.text === "Создать передачу"));
+    assert.ok(markup.keyboard?.flat().some(b => b.text === "Мои передачи"));
+    assert.ok(!markup.keyboard?.flat().some(b => b.text === "Настройки"));
     assert.ok(!markup.keyboard?.flat().some(b => b.request_contact));
 
     const profilesBefore = (await pool.query("SELECT count(*) FROM tt_external_persons")).rows[0].count;
