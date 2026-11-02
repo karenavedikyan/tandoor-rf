@@ -342,12 +342,12 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
       for (let i = 0; i < 7; i++) ids.push((await seed(a)).id);
       const foreign = await seed(other);
       const first = await send(a, "Мои передачи");
-      const choices = first.buttons.filter(b => /Ввести код/.test(b.text));
+      const choices = first.buttons.filter(b => /^TT-/u.test(b.text));
       assert.equal(choices.length, 5);
       const next = first.buttons.find(b => /Следующие передачи/.test(b.text))!;
       assert.ok(next);
       const second = await send(a, "", next.payload ?? next.callback_data);
-      const rest = second.buttons.filter(b => /Ввести код/.test(b.text));
+      const rest = second.buttons.filter(b => /^TT-/u.test(b.text));
       assert.equal(rest.length, 2);
       const shown = [...choices, ...rest].map(b => parseReceiptEntryCallback(b.payload ?? b.callback_data ?? "")!.transferId);
       assert.deepEqual([...shown].sort(), ids.sort()); assert.ok(!shown.includes(foreign.id));

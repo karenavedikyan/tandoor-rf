@@ -9,6 +9,7 @@ import {
 import { loadNativeBotDraft, type NativeCreateActorKind } from "./draft-scope";
 import type { ExternalRequestDraftRow } from "../../tan-tracker/external-request/draft-store";
 import {
+  buildCompactMenuInline,
   buildMainMenuInline,
   maxContactWithMenuInline,
   menuReplyKeyboard,
@@ -16,6 +17,7 @@ import {
 } from "./keyboards";
 
 export const NATIVE_MAIN_MENU_ACTION_PROMPT = "Выберите действие.";
+export const NATIVE_COMPACT_MENU_PROMPT = "Дополнительные действия.";
 
 export function nativeMainMenuGreetingLines(ctx: NativeCreateContext): string[] {
   const lines = ["Тандор", "Посылки, документы и предметы с подтверждением получения.", ""];
@@ -100,21 +102,30 @@ export async function peekResumableNativeDraft(
   return draft;
 }
 
+async function resumeDraftHint(
+  client: PoolClient,
+  ctx: NativeCreateContext,
+): Promise<{ draftId: string; revision: number } | undefined> {
+  const resumeDraft = await peekResumableNativeDraft(client, ctx);
+  if (resumeDraft == null) return undefined;
+  return {
+    draftId: resumeDraft.id,
+    revision: (resumeDraft.payload as { revision?: number }).revision ?? 1,
+  };
+}
+
+/** Home screen: primary actions and optional draft resume. */
 export async function buildNativeMainMenuReply(
   client: PoolClient,
   ctx: NativeCreateContext,
-  options: { prefix?: string; lock?: boolean; showMenu?: boolean } = {},
+  options: { prefix?: string; lock?: boolean } = {},
 ): Promise<NativeCreateReply> {
   if (options.lock !== false) {
     await lockNativeCreateMessenger(client, ctx);
   }
-  const resumeDraft = await peekResumableNativeDraft(client, ctx);
-  const resume =
-    resumeDraft != null
-      ? { draftId: resumeDraft.id, revision: (resumeDraft.payload as { revision?: number }).revision ?? 1 }
-      : undefined;
+  const resume = await resumeDraftHint(client, ctx);
   const text = nativeMainMenuText(ctx, options.prefix);
-  const keyboard = menuReplyKeyboard({ showContinue: !!resume, showMenu: options.showMenu === true });
+  const keyboard = menuReplyKeyboard({ showContinue: !!resume });
   if (ctx.channel === "telegram") {
     return {
       text,
@@ -123,7 +134,39 @@ export async function buildNativeMainMenuReply(
       maxInlineButtons: undefined,
     };
   }
-  const inline = buildMainMenuInline("max", resume, { showMenu: options.showMenu === true });
+  const inline = buildMainMenuInline("max", resume);
+  return {
+    text,
+    replyMarkup: keyboard,
+    maxInlineButtons: inline.maxInlineButtons,
+    telegramInlineKeyboard: undefined,
+  };
+}
+
+/** Compact secondary menu; preserves draft. */
+export async function buildNativeCompactMenuReply(
+  client: PoolClient,
+  ctx: NativeCreateContext,
+  options: { prefix?: string; lock?: boolean } = {},
+): Promise<NativeCreateReply> {
+  if (options.lock !== false) {
+    await lockNativeCreateMessenger(client, ctx);
+  }
+  const resume = await resumeDraftHint(client, ctx);
+  const prefix = options.prefix?.trim();
+  const text = prefix
+    ? `${prefix}\n\n${NATIVE_COMPACT_MENU_PROMPT}`
+    : `${nativeMainMenuGreetingLines(ctx).slice(0, 3).join("\n")}\n\n${NATIVE_COMPACT_MENU_PROMPT}`;
+  const keyboard = menuReplyKeyboard({ showContinue: !!resume });
+  const inline = buildCompactMenuInline(ctx.channel, resume);
+  if (ctx.channel === "telegram") {
+    return {
+      text,
+      replyMarkup: keyboard,
+      telegramInlineKeyboard: inline.telegramInlineKeyboard,
+      maxInlineButtons: undefined,
+    };
+  }
   return {
     text,
     replyMarkup: keyboard,
@@ -162,7 +205,7 @@ export async function nativeCompletionMenuReply(
   ctx: NativeCreateContext,
   resultText: string,
 ): Promise<NativeCreateReply> {
-  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false, showMenu: true });
+  const menu = await buildNativeMainMenuReply(client, ctx, { lock: false });
   return {
     text: resultText,
     replyMarkup: menu.replyMarkup,

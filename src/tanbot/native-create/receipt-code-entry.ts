@@ -7,9 +7,9 @@ import { parseHandoffCodePaste } from "../../tan-tracker/handoff-code-paste-pars
 import { verifyPendingReceiptCode, type LockedReceiptTransfer } from "../../tan-tracker/verify-pending-receipt-code";
 import { HANDOFF_CODE_TTL_MS } from "../../tan-tracker/otp-config";
 import { buildNativeMainMenuReply, parseNativeBotSlashCommand, isNativeMainMenuText,
-  isNativeCreateMenuText, isNativeContinueDraftText, peekResumableNativeDraft } from "./main-menu";
-import { buildMainMenuInline } from "./keyboards";
+  isNativeCreateMenuText, isNativeContinueDraftText } from "./main-menu";
 import { buildNativeCreateCallback } from "./callback-codec";
+import { NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 
 type ReceiptTransfer = LockedReceiptTransfer & {
@@ -49,11 +49,46 @@ export async function clearReceiptEntry(client: PoolClient, ctx: NativeCreateCon
   await client.query(`DELETE FROM tt_bot_receipt_code_entries WHERE channel=$1 AND messenger_chat_id=$2`,
     [ctx.channel, ctx.messengerChatId]);
 }
+function menuInlineRow(ctx: NativeCreateContext): Array<{ text: string; callback_data: string }> | Array<{ type: "callback"; text: string; payload: string }> {
+  const payload = buildNativeCreateCallback("menu", NATIVE_MENU_DRAFT_HEX, 1)!;
+  return ctx.channel === "telegram"
+    ? [{ text: "Меню", callback_data: payload }]
+    : [{ type: "callback" as const, text: "Меню", payload }];
+}
+
 function withCancel(ctx: NativeCreateContext, row: ReceiptTransfer, text: string): NativeCreateReply {
   const callback = buildReceiptEntryCallback("cancel", row.id, row.handoff_version)!;
   return ctx.channel === "telegram"
     ? { text, telegramInlineKeyboard: [[{ text: "Отменить ввод кода", callback_data: callback }]] }
     : { text, maxInlineButtons: [[{ type: "callback", text: "Отменить ввод кода", payload: callback }]] };
+}
+
+function transferDetailUi(
+  ctx: NativeCreateContext,
+  row: { id: string; public_code: string; handoff_version: number },
+  listPage = 0,
+): Pick<NativeCreateReply, "telegramInlineKeyboard" | "maxInlineButtons"> {
+  const codeCb = receiptEntryCallback(row.id, row.handoff_version)!;
+  const inviteCb = buildReceiptEntryCallback("invite", row.id, row.handoff_version)!;
+  const listCb = buildReceiptEntryCallback("list", String(listPage), 1)!;
+  if (ctx.channel === "telegram") {
+    return {
+      telegramInlineKeyboard: [
+        [{ text: "Ввести код", callback_data: codeCb }],
+        [{ text: "Обновить приглашение", callback_data: inviteCb }],
+        [{ text: "К списку", callback_data: listCb }],
+        menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>,
+      ],
+    };
+  }
+  return {
+    maxInlineButtons: [
+      [{ type: "callback", text: "Ввести код", payload: codeCb }],
+      [{ type: "callback", text: "Обновить приглашение", payload: inviteCb }],
+      [{ type: "callback", text: "К списку", payload: listCb }],
+      menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>,
+    ],
+  };
 }
 async function loadTransfer(client: PoolClient, id: string, partyId: string): Promise<ReceiptTransfer | null> {
   return (await client.query<ReceiptTransfer>(
@@ -89,44 +124,41 @@ export async function appendReceiptEntryChoices(
     text: "Следующие передачи",
     data: buildReceiptEntryCallback("list", String(page + 1), 1)!,
   });
+  if (onlyPublicCode && visible.length === 1) {
+    const picked = visible[0]!;
+    const detail = transferDetailUi(ctx, picked, page);
+    return { ...reply, ...detail };
+  }
   const text = options.omitSelectionHint
     ? reply.text
-    : `${reply.text}\n\nДля подтверждения в этом чате выберите передачу кнопкой «Ввести код».`;
+    : `${reply.text}\n\nВыберите передачу, чтобы увидеть действия для неё.`;
   if (ctx.channel === "telegram") {
-    // Telegram cannot attach both reply and inline keyboards in one message.
-    // Keep the complete navigation inline when adding receipt buttons, not just the new action.
-    const existing = reply.telegramInlineKeyboard ?? [];
-    const hasMenu = existing.flat().some(b => b.text === "Меню" && !!b.callback_data);
-    const footer = hasMenu ? [] : buildMainMenuInline("telegram").telegramInlineKeyboard ?? [];
-    const resume = await peekResumableNativeDraft(client, ctx);
-    const resumeCallback = resume
-      ? buildNativeCreateCallback("menu_resume", resume.id, (resume.payload as { revision?: number }).revision ?? 1)
-      : null;
+    const listRows = visible.map((r) => {
+      const pickCb = buildReceiptEntryCallback("pick", r.id, r.handoff_version)!;
+      return [{ text: r.public_code, callback_data: pickCb }];
+    });
+    const pagingRow = paging.length ? [paging.map((p) => ({ text: p.text, callback_data: p.data }))] : [];
+    const menuRow = [menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>];
     return {
-      ...reply, text,
-      telegramInlineKeyboard: [
-        ...visible.flatMap(r => [
-          [{ text: `Ввести код · ${r.public_code}`, callback_data: receiptEntryCallback(r.id, r.handoff_version)! }],
-          [{ text: `Обновить приглашение · ${r.public_code}`, callback_data: buildReceiptEntryCallback("invite", r.id, r.handoff_version)! }],
-        ]),
-        ...(paging.length ? [paging.map(p => ({ text: p.text, callback_data: p.data }))] : []),
-        ...existing.map(row => row.map(b => "url" in b && typeof b.url === "string" && b.text === "Мои передачи"
-          ? { ...b, text: "Открыть список в ЛК" } : b)),
-        ...(resumeCallback ? [[{ text: "Продолжить оформление", callback_data: resumeCallback }]] : []),
-        ...footer,
-      ],
+      ...reply,
+      text,
+      telegramInlineKeyboard: [...listRows, ...pagingRow, ...menuRow],
+      maxInlineButtons: undefined,
     };
   }
+  const listRows = visible.map((r) => {
+    const pickCb = buildReceiptEntryCallback("pick", r.id, r.handoff_version)!;
+    return [{ type: "callback" as const, text: r.public_code, payload: pickCb }];
+  });
+  const pagingRow = paging.length
+    ? [paging.map((p) => ({ type: "callback" as const, text: p.text, payload: p.data }))]
+    : [];
+  const menuRow = [menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>];
   return {
-    ...reply, text,
-    maxInlineButtons: [
-      ...visible.flatMap(r => [
-        [{ type: "callback" as const, text: `Ввести код · ${r.public_code}`, payload: receiptEntryCallback(r.id, r.handoff_version)! }],
-        [{ type: "callback" as const, text: `Обновить приглашение · ${r.public_code}`, payload: buildReceiptEntryCallback("invite", r.id, r.handoff_version)! }],
-      ]),
-      ...(paging.length ? [paging.map(p => ({ type: "callback" as const, text: p.text, payload: p.data }))] : []),
-      ...(reply.maxInlineButtons ?? []),
-    ],
+    ...reply,
+    text,
+    maxInlineButtons: [...listRows, ...pagingRow, ...menuRow],
+    telegramInlineKeyboard: undefined,
   };
 }
 export async function handleReceiptEntryCallback(
@@ -150,6 +182,15 @@ export async function handleReceiptEntryCallback(
     await clearReceiptEntry(client, ctx);
     return { text: "Эта кнопка устарела или передача недоступна. Откройте «Мои передачи» и выберите актуальную передачу." };
   }
+  if (parsed.action === "pick") {
+    await clearReceiptEntry(client, ctx);
+    const detail = transferDetailUi(ctx, row);
+    return {
+      text: `${contextText(row)}\n\nВыберите действие для этой передачи.`,
+      ...detail,
+      replyMarkup: undefined,
+    };
+  }
   if (parsed.action === "invite") {
     if (!row.pending_party_id) return { text: "У этой передачи сейчас нет ожидаемого получателя." };
     const invitation = await buildExternalPendingInviteMessage(client, {
@@ -158,14 +199,17 @@ export async function handleReceiptEntryCallback(
     });
     if (!invitation) return { text: "Не удалось подготовить приглашение. Проверьте номер получателя." };
     await clearReceiptEntry(client, ctx);
-    const codeCallback = receiptEntryCallback(row.id, row.handoff_version)!;
+    const detail = transferDetailUi(ctx, row);
     return {
       text: `Приглашение для ${row.public_code} обновлено. Перешлите следующее сообщение получателю. Старую ссылку больше не используйте.`,
       forwardInvitationText: invitation,
       ...(ctx.channel === "telegram"
-        ? { telegramInlineKeyboard: [[{ text: `Ввести код · ${row.public_code}`, callback_data: codeCallback }]] }
-        : { maxInlineButtons: [[{ type: "callback" as const, text: `Ввести код · ${row.public_code}`, payload: codeCallback }]] }),
+        ? { telegramInlineKeyboard: detail.telegramInlineKeyboard }
+        : { maxInlineButtons: detail.maxInlineButtons }),
     };
+  }
+  if (parsed.action !== "code") {
+    return { text: "Эта кнопка устарела. Откройте «Мои передачи» и выберите актуальную передачу." };
   }
   await client.query(
     `INSERT INTO tt_bot_receipt_code_entries
