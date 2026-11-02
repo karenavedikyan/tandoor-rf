@@ -3,6 +3,7 @@ import { buildNotificationTransferState } from "../../tan-tracker/notification-t
 import type { NativeCreateContext, NativeCreateReply } from "./engine";
 import { assertNativeCreateContext, lockNativeCreateMessenger } from "./access-guard";
 import { buildReceiptEntryCallback, type ReceiptEntryCallback } from "../receipt-entry-callback";
+import { buildTrackStatusCallback } from "../track-status-callback";
 import { parseHandoffCodePaste } from "../../tan-tracker/handoff-code-paste-parse";
 import { verifyPendingReceiptCode, type LockedReceiptTransfer } from "../../tan-tracker/verify-pending-receipt-code";
 import { HANDOFF_CODE_TTL_MS } from "../../tan-tracker/otp-config";
@@ -130,7 +131,7 @@ async function loadTransfer(client: PoolClient, id: string, partyId: string): Pr
        AND t.deleted_at IS NULL AND t.general_archived_at IS NULL
      FOR UPDATE OF t`, [id, partyId])).rows[0] ?? null;
 }
-/** Explicit current-holder choices only, never another user's list or an inferred "last transfer". */
+/** Current holder's active choices and read-only completed tracks, never another user's list. */
 export async function appendReceiptEntryChoices(
   client: PoolClient, ctx: NativeCreateContext, reply: NativeCreateReply, onlyPublicCode?: string, page = 0,
   options: { omitSelectionHint?: boolean } = {},
@@ -140,11 +141,12 @@ export async function appendReceiptEntryChoices(
   const rows = (await client.query<HolderActionTransfer>(
     `SELECT * FROM tt_transfers
      WHERE holder_party_id=$1::uuid
-       AND status IN ('waiting','active','delivered') AND deleted_at IS NULL AND general_archived_at IS NULL
-       AND ($2::text IS NULL OR public_code=$2)
-     ORDER BY created_at DESC,id DESC LIMIT 6 OFFSET $3`, [partyId, onlyPublicCode ?? null, page * 5])).rows;
+       AND status IN ('waiting','active','delivered','completed') AND deleted_at IS NULL AND general_archived_at IS NULL
+       AND ($2::text IS NULL OR (public_code=$2 AND status<>'completed'))
+     ORDER BY CASE WHEN status='completed' THEN 1 ELSE 0 END,created_at DESC,id DESC
+     LIMIT 6 OFFSET $3`, [partyId, onlyPublicCode ?? null, page * 5])).rows;
   if (!rows.length) {
-    const text = `${reply.text}\n\nПока нет активных передач, где вы текущий держатель.`;
+    const text = `${reply.text}\n\nПока нет передач, где вы текущий или последний держатель.`;
     const menuRow = ctx.channel === "telegram"
       ? [menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>]
       : [menuInlineRow(ctx) as Array<{ type: "callback"; text: string; payload: string }>];
@@ -183,12 +185,15 @@ export async function appendReceiptEntryChoices(
   }
   const text = options.omitSelectionHint
     ? reply.text
-    : `${reply.text}\n\nВыберите передачу, чтобы увидеть действия для неё.`;
+    : `${reply.text}\n\nВыберите передачу. Активную можно передать дальше или завершить; завершённую можно только посмотреть.`;
+  const choices = visible.map(r => ({
+    text: `${r.public_code} · ${r.status === "completed" ? "Завершён" : r.pending_party_id ? "Ожидает получения" : "В работе"}`,
+    data: r.status === "completed"
+      ? buildTrackStatusCallback({ action: "view", transferId: r.id })!
+      : buildReceiptEntryCallback("pick", r.id, r.handoff_version)!,
+  }));
   if (ctx.channel === "telegram") {
-    const listRows = visible.map((r) => {
-      const pickCb = buildReceiptEntryCallback("pick", r.id, r.handoff_version)!;
-      return [{ text: r.public_code, callback_data: pickCb }];
-    });
+    const listRows = choices.map(r => [{ text: r.text, callback_data: r.data }]);
     const pagingRow = paging.length ? [paging.map((p) => ({ text: p.text, callback_data: p.data }))] : [];
     const menuRow = [menuInlineRow(ctx) as Array<{ text: string; callback_data: string }>];
     return {
@@ -199,10 +204,7 @@ export async function appendReceiptEntryChoices(
       maxInlineButtons: undefined,
     };
   }
-  const listRows = visible.map((r) => {
-    const pickCb = buildReceiptEntryCallback("pick", r.id, r.handoff_version)!;
-    return [{ type: "callback" as const, text: r.public_code, payload: pickCb }];
-  });
+  const listRows = choices.map(r => [{ type: "callback" as const, text: r.text, payload: r.data }]);
   const pagingRow = paging.length
     ? [paging.map((p) => ({ type: "callback" as const, text: p.text, payload: p.data }))]
     : [];
