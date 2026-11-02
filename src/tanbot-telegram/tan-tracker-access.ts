@@ -30,7 +30,7 @@ export async function canDeliverAssignmentNotification(
     status: string;
   }>(`SELECT holder_party_id::text, handoff_version, status FROM tt_transfers WHERE id = $1`, [transferId]);
   const t = row.rows[0];
-  if (!t || t.status === "completed") return false;
+  if (!t || t.status === "completed" || t.status === "obsolete") return false;
   if (t.holder_party_id !== partyId) return false;
   if (t.handoff_version < handoffVersion) return false;
 
@@ -83,7 +83,7 @@ export async function canDeliverTanTrackerOutboxNotification(
   const t = row.rows[0];
   if (!t) return false;
   if (t.handoff_version < handoffVersion) return false;
-  if (eventType !== "tan_tracker.closed" && t.status === "completed") return false;
+  if (eventType !== "tan_tracker.closed" && (t.status === "completed" || t.status === "obsolete")) return false;
 
   const participates =
     partyId === t.creator_party_id ||

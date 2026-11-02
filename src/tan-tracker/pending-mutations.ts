@@ -12,6 +12,7 @@ import { assertPartyEligibleAsRecipient } from "./party-eligibility";
 import { invalidateOpenHandoffArtifacts } from "./handoff-invalidation";
 import { notifyPendingCancelled, notifyReturnToCreator, notifyRouteContinued } from "./transfer-lk-notify";
 import { transferWriteBlocked } from "./transfer-write-guard";
+import { transferHasConfirmedFirstCustody } from "./custody-state";
 import type { PoolClient } from "pg";
 
 async function loadTransfer(client: { query: Function }, id: string) {
@@ -46,6 +47,7 @@ export async function assignPendingRecipientInTransaction(
   input: {
     transferId: string; holderPartyId: string; pendingPartyId: string; auditUserId: string | null;
     expectedHandoffVersion?: number; expectedRowVersion?: number; requireNoPending?: boolean;
+    replaceUnreceivedFinal?: boolean;
   },
 ): Promise<void> {
   const row = await loadTransfer(client, input.transferId);
@@ -62,6 +64,9 @@ export async function assignPendingRecipientInTransaction(
     throw Object.assign(new Error("Нельзя передать самому себе."), { http: 400 });
   }
   const prev = row.pending_party_id;
+  const replaceFinal = input.replaceUnreceivedFinal === true && prev != null &&
+    prev === row.final_recipient_party_id && row.creator_party_id === input.holderPartyId &&
+    !(await transferHasConfirmedFirstCustody(client, row.id));
   if (prev && prev !== input.pendingPartyId) {
     await client.query(
       `INSERT INTO tt_transfer_revoked_parties (transfer_id, party_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
@@ -72,7 +77,8 @@ export async function assignPendingRecipientInTransaction(
   const nextVer = row.handoff_version + 1;
   await client.query(
     `UPDATE tt_transfers SET pending_party_id=$2, status='waiting', handoff_version=$3,
-            row_version=row_version+1 WHERE id=$1`, [row.id, input.pendingPartyId, nextVer],
+            final_recipient_party_id=CASE WHEN $4::boolean THEN $2 ELSE final_recipient_party_id END,
+            row_version=row_version+1 WHERE id=$1`, [row.id, input.pendingPartyId, nextVer, replaceFinal],
   );
   await client.query(
     `INSERT INTO tt_transfer_invitations (transfer_id, handoff_version, holder_party_id, pending_party_id, item_snapshot)
@@ -87,7 +93,11 @@ export async function assignPendingRecipientInTransaction(
   await client.query(
     `INSERT INTO tt_audit_log (transfer_id, actor_user_id, acting_party_id, action, detail)
      VALUES ($1,$2::uuid,$3::uuid,'holder_pending_change',$4::jsonb)`,
-    [row.id, input.auditUserId, row.holder_party_id, JSON.stringify({ pendingPartyId: input.pendingPartyId })],
+    [row.id, input.auditUserId, row.holder_party_id, JSON.stringify({
+      pendingPartyId: input.pendingPartyId,
+      ...(replaceFinal ? { previousFinalRecipientPartyId: row.final_recipient_party_id,
+        finalRecipientPartyId: input.pendingPartyId } : {}),
+    })],
   );
   if (input.pendingPartyId === row.creator_party_id && input.pendingPartyId !== row.holder_party_id) {
     await notifyReturnToCreator(client, {
@@ -180,7 +190,7 @@ export async function changePendingHandler(req: AccessRequest, res: Response): P
     if (!row || transferWriteBlocked(row)) return { ok: false as const, code: transferWriteBlocked(row) ? 403 : 404 };
     if (row.holder_party_id !== party.id) return { ok: false as const, code: 403 };
     if (pendingPartyId === row.holder_party_id) return { ok: false as const, code: 400 };
-    if (row.status === "completed") return { ok: false as const, code: 400 };
+    if (row.status === "completed" || row.status === "obsolete") return { ok: false as const, code: 400 };
     await assertPartyEligibleAsRecipient(client, access, user.id, pendingPartyId);
     await assignPendingRecipientInTransaction(client, {
       transferId: row.id, holderPartyId: party.id, pendingPartyId, auditUserId,

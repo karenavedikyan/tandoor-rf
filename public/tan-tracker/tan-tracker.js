@@ -1709,6 +1709,7 @@
   }
 
   function registryActorContext(o, actor) {
+    if (o.status === "obsolete") return { key: "obsolete", label: "Неактуален", icon: "circle-x" };
     if (o.status === "completed") return { key: "done", label: "Завершена", icon: "check-circle" };
     if (o.status === "delivered" && o.holderId === actor && !o.pendingId)
       return { key: "delivered", label: "Доставлено", icon: "package-check" };
@@ -1718,7 +1719,7 @@
       const p = contactById(o.pendingId);
       return { key: "wait", label: "Ожидает код", icon: "key-round", hint: p?.name };
     }
-    if (o.holderId === actor && !o.pendingId && o.status !== "completed" && o.status !== "delivered")
+    if (o.holderId === actor && !o.pendingId && !isClosedOrder(o) && o.status !== "delivered")
       return { key: "send", label: "Нужно передать", icon: "send" };
     return { key: "route", label: "В пути", icon: "route" };
   }
@@ -1751,6 +1752,7 @@
   }
 
   function transferLifecycleContext(o) {
+    if (o.status === "obsolete") return { key: "obsolete", label: "Неактуален", icon: "circle-x" };
     if (o.status === "completed") return { key: "done", label: "Завершена", icon: "check-circle" };
     if (o.pendingId) return {
       key: "waiting", label: "Ожидает приёма", icon: "key-round",
@@ -1783,10 +1785,10 @@
     const h = contactById(o.holderId);
     const p = o.pendingId ? contactById(o.pendingId) : null;
     const fin = o.finalRecipientId ? contactById(o.finalRecipientId) : null;
-    const next = o.status === "completed" ? null : p || (fin && fin.id !== o.holderId ? fin : null);
+    const next = isClosedOrder(o) ? null : p || (fin && fin.id !== o.holderId ? fin : null);
     return `<span class="tt-custody" data-tt-custody>
       <span class="tt-custody-current">${contactAvatarHtml(h)}<span class="tt-custody-copy">
-        <span class="tt-custody-label">${o.status === "completed" ? "Последний держатель" : "Ответственный"}</span>
+        <span class="tt-custody-label">${isClosedOrder(o) ? "Последний держатель" : "Ответственный"}</span>
         <strong class="tt-custody-name" data-tt-holder>${E(responsibleHolderName(o, actor))}</strong>
       </span></span>${
       next
@@ -1806,7 +1808,7 @@
   function registryCardHtml(o, actor) {
     const ctx = registryActorContext(o, actor);
     const overdue = isOverdue(o);
-    const done = o.status === "completed";
+    const done = isClosedOrder(o);
     const due = humanDueLabel(o);
     const accent =
       ctx.key === "send"
@@ -1840,11 +1842,11 @@
     const actor = actorContactId();
     const base = orders.filter((o) => orderVisible(o));
     const handoff = base.filter(
-      (o) => o.holderId === actor && o.status !== "completed" && o.finalRecipientId && o.holderId !== o.finalRecipientId
+      (o) => o.holderId === actor && !isClosedOrder(o) && o.finalRecipientId && o.holderId !== o.finalRecipientId
     ).length;
     const receive = base.filter((o) => o.pendingId === actor).length;
     const overdue = base.filter((o) => isOverdue(o)).length;
-    const active = base.filter((o) => o.status !== "completed").length;
+    const active = base.filter((o) => !isClosedOrder(o)).length;
     return { handoff, receive, overdue, active, total: base.length };
   }
 
@@ -1852,9 +1854,11 @@
     const action = [];
     const progress = [];
     const done = [];
+    const obsolete = [];
     rows.forEach((o) => {
       const ctx = registryActorContext(o, actor);
-      if (o.status === "completed") done.push(o);
+      if (o.status === "obsolete") obsolete.push(o);
+      else if (isClosedOrder(o)) done.push(o);
       else if (ctx.key === "send" || ctx.key === "wait" || ctx.key === "inbox") action.push(o);
       else progress.push(o);
     });
@@ -1862,6 +1866,7 @@
       { id: "action", title: "Требуют вашего действия", items: action },
       { id: "progress", title: "В работе", items: progress },
       { id: "done", title: "Завершённые", items: done },
+      { id: "obsolete", title: "Неактуальные", items: obsolete },
     ].filter((g) => g.items.length);
   }
 
@@ -2766,14 +2771,18 @@
     return Date.now();
   }
 
+  function isClosedOrder(o) {
+    return o.status === "completed" || o.status === "obsolete";
+  }
   function orderStatus(o) {
-    if (o.status === "completed") return "completed";
+    if (o.status === "obsolete") return "obsolete";
+    if (isClosedOrder(o)) return "completed";
     if (o.status === "delivered") return "delivered";
     if (o.pendingId) return "waiting";
     return "active";
   }
   function isOverdue(o) {
-    return o.status !== "completed" && o.status !== "delivered" && o.dueAt && o.dueAt < now();
+    return !isClosedOrder(o) && o.status !== "delivered" && o.dueAt && o.dueAt < now();
   }
   function dueCell(o) {
     if (!o.dueAt) return "—";
@@ -2791,7 +2800,7 @@
       state.error = "Ожидание уже подтверждено или отменено.";
       return false;
     }
-    if (o.status === "completed") {
+    if (isClosedOrder(o)) {
       state.error = "Передача завершена.";
       return false;
     }
@@ -3004,7 +3013,7 @@
   function ensureDemoCodeForHolder(o) {
     state.error = "";
     state.toast = "";
-    if (!o || o.status === "completed") {
+    if (!o || isClosedOrder(o)) {
       state.error = "Передача завершена — код недоступен.";
       return null;
     }
@@ -3030,7 +3039,7 @@
   }
 
   function generateCode(o) {
-    if (o.status === "completed" || !o.pendingId) return null;
+    if (isClosedOrder(o) || !o.pendingId) return null;
     if (TT_LK && window.TanTrackerLk && window.TanTrackerLk.generateHandoffCode) {
       const publicOpts =
         window.__TT_PUBLIC_RECIPIENT__ && state.lkPhoneSessionToken
@@ -3144,7 +3153,7 @@
       return false;
     }
     o._codeBusy = true;
-    if (o.status === "completed") {
+    if (isClosedOrder(o)) {
       state.error = "Передача завершена — код больше не действует.";
       o._codeBusy = false;
       return false;
@@ -3257,14 +3266,14 @@
   }
 
   function canActorCompleteTransfer(o, actor) {
-    if (!actor || o.pendingId || o.status === "completed") return false;
+    if (!actor || o.pendingId || isClosedOrder(o)) return false;
     if (o.holderId !== actor) return false;
     if (o.finalRecipientId && o.holderId !== o.finalRecipientId && !o.allowLegacyComplete) return false;
     return true;
   }
 
   function completeOrder(o) {
-    if (o.status === "completed") return;
+    if (isClosedOrder(o)) return;
     if (o.pendingId) {
       state.error = "Сначала отмените ожидание или подтвердите передачу.";
       return;
@@ -3341,7 +3350,7 @@
       state.error = "Нельзя передать самому себе.";
       return;
     }
-    if (o.status === "completed") {
+    if (isClosedOrder(o)) {
       state.error = "Завершённую передачу нельзя продолжить.";
       return;
     }
@@ -3445,7 +3454,7 @@
       });
     }
     if (state.mineFilter === "handoff") {
-      list = list.filter((o) => o.holderId === actor && o.status !== "completed" && o.finalRecipientId && o.holderId !== o.finalRecipientId);
+      list = list.filter((o) => o.holderId === actor && !isClosedOrder(o) && o.finalRecipientId && o.holderId !== o.finalRecipientId);
     }
     if (state.mineFilter === "receive") {
       list = list.filter((o) => o.pendingId === actor);
@@ -3463,7 +3472,7 @@
       if (state.statusFilter === "overdue" && !isOverdue(o)) return false;
       if (state.statusFilter === "route") {
         const ctx = registryActorContext(o, actor);
-        if (ctx.key !== "route" || o.status === "completed") return false;
+        if (ctx.key !== "route" || isClosedOrder(o)) return false;
       }
       return true;
     });
@@ -4103,10 +4112,11 @@
     const nodes = [];
     let nodeCount = 0;
 
-    if (o.status === "completed") {
+    if (isClosedOrder(o)) {
       const delivered = contactById(o.holderId);
       nodeCount = 1;
-      nodes.push(routeStepperNode(delivered, "Доставлено · конечный получатель", "delivered", false, false));
+      nodes.push(routeStepperNode(delivered, o.status === "obsolete" ? "Последний держатель · трек неактуален"
+        : "Доставлено · конечный получатель", o.status === "obsolete" ? "current" : "delivered", false, false));
       const horizontalDone = typeof window !== "undefined" && window.innerWidth >= 1024;
       return `<div class="tt-route-stepper${horizontalDone ? " tt-route-stepper--horizontal" : ""}" data-tt="detail-route-grid" data-tt-route-nodes="${nodeCount}">${nodes.join("")}</div>`;
     }
@@ -4176,7 +4186,7 @@
     const actor = actorContactId();
     const isHolder = o.holderId === actor;
     const heroAttr = 'data-tt-detail-hero-primary=""';
-    if (o.status === "completed") return "";
+    if (isClosedOrder(o)) return "";
     if (o.pendingId && isHolder) {
       return `<div class="tt-detail-dock" data-tt="detail-mobile-dock" hidden>${btn("Ввести код", `data-tt="enter-code-dock" ${heroAttr}`, "tt-primary")}</div>`;
     }
@@ -4198,7 +4208,7 @@
     const dueCls = dueHuman.overdue ? "tt-due-overdue" : "tt-due-line";
     const rows = [
       `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Статус</span><span class="tt-detail-fact-value">${statusBadge(o, actor)}</span></div>`,
-      `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">${o.status === "completed" ? "Последний держатель" : "Ответственный"}</span><span class="tt-detail-fact-value" data-tt-holder>${E(responsibleHolderName(o, actor))}</span></div>`,
+      `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">${isClosedOrder(o) ? "Последний держатель" : "Ответственный"}</span><span class="tt-detail-fact-value" data-tt-holder>${E(responsibleHolderName(o, actor))}</span></div>`,
       `<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Срок</span><span class="tt-detail-fact-value ${dueCls}">${E(duePhrase)}</span></div>`,
     ];
     if (o.qty) rows.push(`<div class="tt-detail-fact-row"><span class="tt-detail-fact-label">Количество</span><span class="tt-detail-fact-value">${E(o.qty)}</span></div>`);
@@ -4235,7 +4245,7 @@
   }
 
   function shortRelayReminder(o, p, isHolder, mustRelay) {
-    if (!isHolder || !mustRelay || o.status === "completed") return "";
+    if (!isHolder || !mustRelay || isClosedOrder(o)) return "";
     const text = o.pendingId
       ? `Ждём подтверждения от ${p?.name || "получателя"} — вы ответственны.`
       : `Передайте ${contactById(o.finalRecipientId)?.name || "конечному получателю"}.`;
@@ -4260,7 +4270,7 @@
   }
 
   function isFormerHolderAfterHandoff(o, actor) {
-    if (!actor || o.status === "completed" || o.holderId === actor) return false;
+    if (!actor || isClosedOrder(o) || o.holderId === actor) return false;
     return actorHasConfirmedOutboundHandoff(o, actor);
   }
 
@@ -4302,6 +4312,10 @@
   }
 
   function completedTaskCard(o, actor) {
+    if (o.status === "obsolete") return `<section class="tt-detail-task-card tt-detail-task-card--terminal" data-tt="detail-task-card">
+      <h3 class="tt-detail-task-heading">Трек неактуален</h3>
+      <p>Ожидание передачи отменено. Получение по отменённой передаче не подтверждено.</p>
+      <p class="tt-muted">Доступен только просмотр истории и материалов.</p></section>`;
     const custodian = contactById(o.holderId);
     const audience = completedTerminalAudience(o, actor);
     const verified = hasVerifiedDeliveryConfirmation(o);
@@ -4453,7 +4467,7 @@
       isHolder &&
       o.finalRecipientId &&
       o.holderId !== o.finalRecipientId &&
-      o.status !== "completed" &&
+      !isClosedOrder(o) &&
       o.status !== "delivered";
     const confirmingComplete = canComplete && state.completeConfirmOrderId === o.id;
     const canContinueDelivered =
@@ -4471,8 +4485,8 @@
       if (extBlocks) return extBlocks;
     }
 
-    if (o.status === "completed") return completedTaskCard(o, actor);
-    if (o.pendingId === actor && o.status !== "completed") return pendingRecipientDetailCard(o, h);
+    if (isClosedOrder(o)) return completedTaskCard(o, actor);
+    if (o.pendingId === actor && !isClosedOrder(o)) return pendingRecipientDetailCard(o, h);
     if (!isHolder) {
       if (isFormerHolderAfterHandoff(o, actor) || (o.status === "delivered" && o.createdById === actor)) return formerHolderTaskCard(o);
       const wait = p
@@ -4543,7 +4557,7 @@
     const attCount = attItems.length;
 
     const otherActionBtns =
-      isHolder && o.status !== "completed" && o.pendingId
+      isHolder && !isClosedOrder(o) && o.pendingId
         ? `${o.canEditDraft ? overflowActionBtn("Изменить передачу", "edit-draft", "pencil") : ""}${overflowActionBtn("Выбрать другого получателя", "change-pending", "user-round-cog")}${overflowActionBtn("Отменить ожидание", "cancel-pending", "ban")}`
         : isHolder && o.canEditDraft
           ? overflowActionBtn("Изменить передачу", "edit-draft", "pencil")
@@ -4576,11 +4590,11 @@
     const metaBlock = desktopDetail
       ? ""
       : `<div class="tt-detail-meta">${statusBadge(o, actor)}<span class="${dueCls}">${E(dueLabel)}</span></div>
-        <p class="tt-detail-holder-line">${o.status === "completed" ? "Последний держатель" : "Ответственный"}: <strong data-tt-holder>${E(responsibleHolderName(o, actor))}</strong></p>`;
+        <p class="tt-detail-holder-line">${isClosedOrder(o) ? "Последний держатель" : "Ответственный"}: <strong data-tt-holder>${E(responsibleHolderName(o, actor))}</strong></p>`;
     return `<div class="tt-panel tt-detail-panel tt-view-enter${mobileDock ? " tt-detail-panel--has-dock" : ""}" data-tt="detail">
       <header class="tt-detail-head tt-detail-head-v2">
         ${
-          o.status === "completed"
+          isClosedOrder(o)
             ? ""
             : `<button type="button" class="tt-back-v2" data-tt="back-list"><i data-lucide="arrow-left"></i> Передачи</button>`
         }
@@ -4597,13 +4611,13 @@
       <details class="tt-disclosure tt-detail-att-wrap" data-tt="detail-attachments-disclosure"${isDetailAttDisclosureOpen(o) ? " open" : ""}>
         ${disclosureSummary("Фото и файлы", { icon: "paperclip", count: attCount ? attCount : null })}
         <div class="tt-disclosure-body">${attachmentsSection(o, {
-          readonly: !isHolder || o.status === "completed",
-          showPicker: isHolder && o.status !== "completed",
+          readonly: !isHolder || isClosedOrder(o),
+          showPicker: isHolder && !isClosedOrder(o),
           compact: true,
           omitTitle: true,
           inputKey: "detail",
           items: attItems,
-          allowServerDelete: TT_LK && isHolder && o.status !== "completed",
+          allowServerDelete: TT_LK && isHolder && !isClosedOrder(o),
         })}</div>
       </details>
       </div>
@@ -4757,7 +4771,7 @@
     const to = contactById(inv?.pendingId || o.pendingId);
     const fin = contactById(o.finalRecipientId);
     const intermediate =
-      fin && o.finalRecipientId && to?.id && o.finalRecipientId !== to.id && o.status !== "completed";
+      fin && o.finalRecipientId && to?.id && o.finalRecipientId !== to.id && !isClosedOrder(o);
     const c = o.code;
     const verified = identityVerified(o);
     const qrMode = state.recipientVia === "qr";
@@ -5828,7 +5842,7 @@
     if (action === "complete" && o) {
       state.error = "";
       const actor = actorContactId();
-      if (o.status === "completed") state.error = "Передача уже завершена.";
+      if (isClosedOrder(o)) state.error = "Передача уже завершена.";
       else if (o.pendingId) state.error = "Сначала отмените ожидание или подтвердите передачу.";
       else if (!actor || o.holderId !== actor) state.error = "Завершить может только текущий держатель.";
       else if (!canActorCompleteTransfer(o, actor)) state.error = "Сначала передайте предмет конечному получателю.";

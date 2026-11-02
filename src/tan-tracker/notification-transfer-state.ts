@@ -3,7 +3,7 @@ import { transferIdsWithConfirmedFirstCustodyAudit } from "./custody-state";
 import { resolvePartyDisplayNameForNotification, sanitizeNotificationDisplayName } from "./staff-notification-route";
 
 export type NotificationTransferState = {
-  phase: "ready" | "waiting" | "received" | "done";
+  phase: "ready" | "waiting" | "received" | "done" | "obsolete";
   holderName?: string;
   pendingName?: string;
 };
@@ -19,7 +19,7 @@ export async function buildNotificationTransferState(
     [transferId],
   )).rows[0];
   if (!row) return undefined;
-  const phase = row.status === "completed" ? "done" : row.pending_party_id ? "waiting" :
+  const phase = row.status === "obsolete" ? "obsolete" : row.status === "completed" ? "done" : row.pending_party_id ? "waiting" :
     row.status === "delivered" || row.first_custody_at != null ||
     (await transferIdsWithConfirmedFirstCustodyAudit(client, [row.id])).has(row.id) ? "received" : "ready";
   const holderName = await resolvePartyDisplayNameForNotification(client, row.holder_party_id);
@@ -31,7 +31,7 @@ export async function buildNotificationTransferState(
 export function normalizeNotificationTransferState(value: unknown): NotificationTransferState | undefined {
   if (!value || typeof value !== "object") return undefined;
   const v = value as Record<string, unknown>;
-  if (typeof v.phase !== "string" || !["ready", "waiting", "received", "done"].includes(v.phase)) return undefined;
+  if (typeof v.phase !== "string" || !["ready", "waiting", "received", "done", "obsolete"].includes(v.phase)) return undefined;
   const holderName = typeof v.holderName === "string" ? sanitizeNotificationDisplayName(v.holderName) : null;
   const pendingName = v.phase === "waiting" && typeof v.pendingName === "string"
     ? sanitizeNotificationDisplayName(v.pendingName) : null;
@@ -42,8 +42,8 @@ export function normalizeNotificationTransferState(value: unknown): Notification
 export function formatNotificationTransferState(value: NotificationTransferState | undefined): string {
   const state = normalizeNotificationTransferState(value);
   if (!state) return "";
-  const label = state.phase === "done" ? "Завершена" :
+  const label = state.phase === "obsolete" ? "Неактуален" : state.phase === "done" ? "Завершена" :
     state.phase === "received" ? "Получение подтверждено" :
     state.phase === "waiting" ? `Ожидает приёма · ${state.pendingName || "Получатель не указан"}` : "Ожидает передачи";
-  return `Статус: ${label}\n${state.phase === "done" ? "Последний держатель" : "Ответственный"}: ${state.holderName || "Не указан"}`;
+  return `Статус: ${label}\n${state.phase === "done" || state.phase === "obsolete" ? "Последний держатель" : "Ответственный"}: ${state.holderName || "Не указан"}`;
 }

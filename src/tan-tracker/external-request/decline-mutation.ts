@@ -45,7 +45,7 @@ export async function declineExternalRequestHandler(req: AccessRequest, res: Res
     ).rows[0];
     if (!row || !row.from_external) return { ok: false as const, code: 404 };
     if (row.pending_party_id !== party.id) return { ok: false as const, code: 403 };
-    if (row.status === "completed" || row.external_declined_at) return { ok: false as const, code: 409 };
+    if (row.status === "completed" || row.status === "obsolete" || row.external_declined_at) return { ok: false as const, code: 409 };
     await invalidateOpenHandoffArtifacts(client, row.id);
     await client.query(
       `UPDATE tt_transfers SET pending_party_id = NULL, status = 'completed',

@@ -52,7 +52,7 @@ export async function publicRecipientContextHandler(req: Request, res: Response)
       [invite.transferId, invite.hv, invite.pendingPartyId],
     )
   ).rows[0];
-  if (!row || row.status === "completed") {
+  if (!row || row.status === "completed" || row.status === "obsolete") {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Приглашение недоступно."));
     return;
@@ -131,6 +131,11 @@ export async function publicRecipientReceiptHandler(req: Request, res: Response)
     return;
   }
   const { row, dto, contacts } = bounded;
+  if (row.status === "obsolete") {
+    setNoStore(res);
+    res.status(409).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Трек неактуален. Получение по отменённой передаче не подтверждено."));
+    return;
+  }
   if (!recipientMayRefreshAfterReceipt(invite, row.holder_party_id) && row.status !== "completed") {
     setNoStore(res);
     res.status(404).json(apiError(ERROR_CODES.NOT_FOUND, "Результат получения недоступен."));
@@ -207,7 +212,7 @@ export async function publicRecipientAttachmentHandler(req: Request, res: Respon
          AND t.handoff_version = $2
          AND t.pending_party_id = $3::uuid
          AND inv.pending_party_id = $3::uuid
-         AND t.status <> 'completed'`,
+         AND t.status NOT IN ('completed','obsolete')`,
       [invite.transferId, invite.hv, invite.pendingPartyId],
     )
   ).rows[0];

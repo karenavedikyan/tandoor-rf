@@ -27,7 +27,7 @@ export type NativeCreateDraftPayload = ExternalDraftPayload & {
   staffUserId?: string;
   /** Continue/close the existing track, never create a replacement track. */
   holderAction?: {
-    kind: "forward" | "complete";
+    kind: "forward" | "complete" | "replace" | "obsolete";
     transferId: string;
     publicCode: string;
     handoffVersion: number;
