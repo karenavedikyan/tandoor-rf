@@ -54,6 +54,7 @@ import {
 import { userIdFromPendingUserPartyRef } from "../../tan-tracker/recipient-catalog";
 import { isUuid } from "../../tan-tracker/phone-normalize";
 import { parseReceiptEntryCallback } from "../receipt-entry-callback";
+import { parseTrackStatusCallback, parseTrackStatusText } from "../track-status-callback";
 
 export type NativeCreateReply = {
   text: string;
@@ -88,7 +89,8 @@ export {
 } from "./main-menu";
 
 export function isNativeCreateCallback(data: string): boolean {
-  return parseNativeCreateCallback(data) != null || parseReceiptEntryCallback(data) != null;
+  return parseNativeCreateCallback(data) != null || parseReceiptEntryCallback(data) != null
+    || parseTrackStatusCallback(data) != null;
 }
 
 export function navError(message: string, channel: "telegram" | "max"): NativeCreateReply {
@@ -555,6 +557,14 @@ export async function handleNativeCreateCallback(
   ctx: NativeCreateContext,
   callbackData: string,
 ): Promise<NativeCreateReply | null> {
+  const status = parseTrackStatusCallback(callbackData);
+  if (status) {
+    await lockNativeCreateMessenger(client, ctx);
+    const { clearReceiptEntry } = await import("./receipt-code-entry");
+    await clearReceiptEntry(client, ctx);
+    const { trackStatusReply } = await import("./track-status");
+    return trackStatusReply(client, ctx, status);
+  }
   const receipt = parseReceiptEntryCallback(callbackData);
   if (receipt) {
     await lockNativeCreateMessenger(client, ctx);
@@ -583,6 +593,12 @@ export async function handleNativeCreateCallback(
   await clearReceiptEntry(client, ctx);
 
   const { buildNativeCompactMenuReply } = await import("./main-menu");
+
+  if (parsed.action === "menu_status") {
+    if (!isNativeMenuDraftHex(parsed.draftIdHex) || parsed.revision !== 1 || parsed.arg) return null;
+    const { trackStatusReply } = await import("./track-status");
+    return trackStatusReply(client, ctx);
+  }
 
   if (["menu_receive", "menu_settings", "notify_ask_off", "notify_off", "notify_on"].includes(parsed.action)) {
     if (!isNativeMenuDraftHex(parsed.draftIdHex) || parsed.revision !== 1) return null;
@@ -993,6 +1009,14 @@ export async function handleNativeCreateMessage(
   ctx: NativeCreateContext,
   text: string,
 ): Promise<NativeCreateReply | null> {
+  const status = parseTrackStatusText(text);
+  if (status) {
+    await lockNativeCreateMessenger(client, ctx);
+    const { clearReceiptEntry } = await import("./receipt-code-entry");
+    await clearReceiptEntry(client, ctx);
+    const { trackStatusReply } = await import("./track-status");
+    return trackStatusReply(client, ctx, status.transferId ? { action: "view", transferId: status.transferId } : undefined);
+  }
   const { handleReceiptEntryText } = await import("./receipt-code-entry");
   const receiptReply = await handleReceiptEntryText(client, ctx, text);
   if (receiptReply) return receiptReply;

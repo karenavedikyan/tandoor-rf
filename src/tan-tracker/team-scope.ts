@@ -1,10 +1,12 @@
 import type { AccessContext } from "../access/types";
 import { loadRopTeamEmployeeGuids } from "../access/rop-read-scope";
 import { query } from "../db/pool";
+import type { PoolClient } from "pg";
 
 /** Employee GUIDs whose transfers/contacts are visible for team-scoped roles. */
 export async function loadTanTrackerTeamEmployeeGuids(
   access: AccessContext,
+  client?: PoolClient,
 ): Promise<Set<string> | null> {
   if (access.role === "director" || access.role === "admin") {
     return null;
@@ -13,9 +15,13 @@ export async function loadTanTrackerTeamEmployeeGuids(
   if (!employeeId) {
     return new Set();
   }
+  // Transactional bot readers must not acquire a second connection from the same pool.
+  const run = (sql: string, params: unknown[]) => client
+    ? client.query<{ employee_guid: string }>(sql, params)
+    : query<{ employee_guid: string }>(sql, params);
   if (access.role === "rop") {
-    const legacy = await loadRopTeamEmployeeGuids(access.userId, employeeId);
-    const onecTeams = await query<{ employee_guid: string }>(
+    const legacy = await loadRopTeamEmployeeGuids(access.userId, employeeId, client);
+    const onecTeams = await run(
       `
         SELECT DISTINCT lower(m.guid_manager::text) AS employee_guid
         FROM onec_wholesale_team_groups g
@@ -33,7 +39,7 @@ export async function loadTanTrackerTeamEmployeeGuids(
     return merged;
   }
   if (access.role === "regional_manager") {
-    const result = await query<{ employee_guid: string }>(
+    const result = await run(
       `
         SELECT m.guid_manager::text AS employee_guid
         FROM onec_wholesale_team_groups g

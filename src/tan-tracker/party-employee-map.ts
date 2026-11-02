@@ -1,7 +1,7 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 export async function loadPartyEmployeeMap(
-  pool: Pool,
+  pool: Pool | PoolClient,
   partyIds: string[],
 ): Promise<Map<string, string | null>> {
   const map = new Map<string, string | null>();
