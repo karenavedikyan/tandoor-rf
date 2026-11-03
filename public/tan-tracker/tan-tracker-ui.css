@@ -517,6 +517,11 @@ body.tt-active.tt-registry-list #af-required-reminder.af-required-reminder--tt-c
   max-height:12rem; overflow:auto;
 }
 .tt-invite-message-fallback--visible { display:block; }
+.tt-invitation-preview { display:grid; gap:8px; min-width:0; margin-top:12px; }
+.tt-invitation-preview > label { font-weight:600; }
+.tt-invitation-preview .tt-invite-message-fallback { margin:0; font-size:14px; min-height:12rem; max-height:20rem; }
+.tt-invitation-preview > p { margin:0; overflow-wrap:anywhere; }
+@media(max-width:600px) { .tt-invitation-preview .tt-invite-message-fallback { font-size:16px; } }
 [data-theme=dark] .tt-invite-message-fallback { background:var(--surface-2,#2a2a28); }
 .tt-messenger-invite { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
 .tt-messenger-invite-actions { display:flex; flex-direction:column; gap:8px; margin-top:8px; }

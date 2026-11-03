@@ -528,6 +528,7 @@
     messengerInviteError: "",
     messengerInviteManualKey: null,
     messengerInviteManualVisible: false,
+    messengerInviteCopyFeedback: "",
     messengerInviteActionGen: 0,
     registryPersonal: null,
     registryPersonalView: "main",
@@ -629,6 +630,7 @@
   function resetMessengerInviteManualFallback() {
     state.messengerInviteManualKey = null;
     state.messengerInviteManualVisible = false;
+    state.messengerInviteCopyFeedback = "";
     state.messengerInviteBusy = false;
     state.messengerInviteActionGen += 1;
     pendingClipboardFallbackSelect = null;
@@ -645,12 +647,8 @@
     return true;
   }
 
-  function messengerInviteShareSupported() {
-    return typeof navigator !== "undefined" && typeof navigator.share === "function";
-  }
-
   function messengerInvitePrimaryLabel() {
-    return messengerInviteShareSupported() ? "Поделиться приглашением" : "Скопировать приглашение";
+    return "Поделиться приглашением";
   }
 
   function messengerPortalUrlValid(o) {
@@ -798,7 +796,12 @@
     const key = messengerInviteContextKey(o, portalUrl);
     if (!state.messengerInviteManualVisible || state.messengerInviteManualKey !== key) return "";
     const plain = messengerInvitationMessagePlain(o, portalUrl);
-    return `<textarea class="tt-invite-message-fallback tt-invite-message-fallback--visible" data-tt="messenger-invite-message-text" readonly rows="8" aria-label="Текст приглашения для ручного копирования">${E(plain)}</textarea>`;
+    return `<section class="tt-invitation-preview" id="tt-invitation-preview" aria-label="Приглашение для получателя">
+      <label for="tt-invitation-message">Текст приглашения</label>
+      <textarea id="tt-invitation-message" class="tt-invite-message-fallback tt-invite-message-fallback--visible" data-tt="messenger-invite-message-text" readonly rows="10" aria-label="Текст приглашения для копирования">${E(plain)}</textarea>
+      ${btn("Скопировать приглашение", 'data-tt="messenger-invite-copy"', "tt-primary tt-btn-block")}
+      <p class="tt-muted" role="status" data-tt="messenger-invite-copy-status">${E(state.messengerInviteCopyFeedback || "Скопируйте текст и отправьте его получателю в личный чат MAX или Telegram.")}</p>
+    </section>`;
   }
 
   function messengerInviteBlockHtml(o) {
@@ -810,8 +813,8 @@
     const busy = state.messengerInviteBusy && state.messengerInviteOrderId === o.id;
     const portalUrl = messengerPortalUrlValid(o) ? o.messengerPortalUrl : "";
     const manual = portalUrl ? messengerInviteManualFallbackHtml(o, portalUrl) : "";
-    const actionLabel = busy ? "Подготовка…" : messengerInvitePrimaryLabel();
-    const actionAttr = busy ? 'data-tt="messenger-invite-action" disabled' : 'data-tt="messenger-invite-action"';
+    const actionLabel = busy ? "Подготовка…" : manual ? "Скрыть приглашение" : messengerInvitePrimaryLabel();
+    const actionAttr = `data-tt="messenger-invite-action" aria-expanded="${manual ? "true" : "false"}" aria-controls="tt-invitation-preview"${busy ? " disabled" : ""}`;
     const block = `<div class="tt-messenger-invite" data-tt="messenger-invite-block">
       <p class="tt-muted">Отправьте внешнему получателю приглашение в мессенджере (Telegram / MAX).</p>
       <div class="tt-messenger-invite-actions">
@@ -826,10 +829,14 @@
   function automaticReceiptHandoffHtml(o,fallback) {
     if (!["pending","sent"].includes(o.automaticReceiptStatus)) return fallback;
     const status=o.automaticReceiptStatus==="sent"?"Код отправлен получателю в подключённый бот.":"Код будет отправлен получателю в подключённый бот.";
+    const url = messengerPortalUrlValid(o) ? o.messengerPortalUrl : recipientCodeInvitationUrl(o);
+    const previewOpen = url && state.messengerInviteManualVisible &&
+      state.messengerInviteManualKey === messengerInviteContextKey(o, url);
+    const preparing = state.messengerInviteBusy && state.messengerInviteOrderId === o.id;
     return `<div data-tt="automatic-receipt-status">
       <p>${E(status)} Пересылать приглашение не нужно.</p>
       <p class="tt-muted">При получении предмета попросите получателя назвать код и введите его в этой передаче.</p>
-      <details><summary>Если сообщение с кодом не пришло</summary>${fallback}</details>
+      <details${previewOpen || preparing ? " open" : ""}><summary>Если сообщение с кодом не пришло</summary>${fallback}</details>
     </div>`;
   }
 
@@ -847,9 +854,10 @@
   function recipientCodeInvitationHtml(o) {
     const url = recipientCodeInvitationUrl(o);
     if (!url) return "";
+    const preview = messengerInviteManualFallbackHtml(o, url);
     const block = `<div class="tt-recipient-invite" data-tt="recipient-invite-block">
-      ${btn("Поделиться приглашением", 'data-tt="recipient-invite-share"', "tt-detail-alt-action tt-btn-block")}
-      ${messengerInviteManualFallbackHtml(o, url)}
+      ${btn(preview ? "Скрыть приглашение" : "Поделиться приглашением", `data-tt="recipient-invite-share" aria-expanded="${preview ? "true" : "false"}" aria-controls="tt-invitation-preview"`, "tt-detail-alt-action tt-btn-block")}
+      ${preview}
     </div>`;
     return automaticReceiptHandoffHtml(o,block);
   }
@@ -857,8 +865,9 @@
   function showMessengerInviteManualFallback(o, url) {
     state.messengerInviteManualKey = messengerInviteContextKey(o, url);
     state.messengerInviteManualVisible = true;
-    state.toast =
-      "Не удалось скопировать автоматически. Выделите текст ниже и скопируйте вручную.";
+    state.messengerInviteCopyFeedback =
+      "Не удалось скопировать автоматически. Выделите текст приглашения и скопируйте вручную.";
+    state.toast = "";
     queueClipboardFallbackSelect('[data-tt="messenger-invite-message-text"]');
     renderTracker({ soft: true });
   }
@@ -869,11 +878,22 @@
       renderTracker();
       return Promise.resolve();
     }
-    const manual = () => showMessengerInviteManualFallback(o, url, text);
+    const key = messengerInviteContextKey(o, url);
+    state.toast = "";
+    const generation = state.messengerInviteActionGen;
+    const stillCurrent = () => state.view === "detail" && state.orderId === o.id &&
+      state.messengerInviteActionGen === generation && state.messengerInviteManualVisible &&
+      state.messengerInviteManualKey === key &&
+      messengerInviteContextKey(orders.find(x => x.id === o.id), url) === key;
+    const manual = () => { if (stillCurrent()) showMessengerInviteManualFallback(o, url); };
     if (navigator.clipboard?.writeText) {
-      return navigator.clipboard.writeText(text).then(
+      let copyRequest;
+      try { copyRequest = navigator.clipboard.writeText(text); }
+      catch { manual(); return Promise.resolve(); }
+      return Promise.resolve(copyRequest).then(
         () => {
-          resetMessengerInviteManualFallback();
+          if (!stillCurrent()) return;
+          state.messengerInviteCopyFeedback = "Приглашение скопировано. Вставьте его в личный чат получателю.";
           state.toast = "Приглашение скопировано";
           renderTracker({ soft: true });
         },
@@ -884,35 +904,20 @@
     return Promise.resolve();
   }
 
-  function shareMessengerInvitation(o, url) {
-    const text = messengerInvitationMessagePlain(o, url);
-    if (!text || !messengerInviteShareSupported()) {
-      return copyMessengerInvitationWithFeedback(o, url);
+  function showMessengerInvitationPreview(o, url) {
+    const key = messengerInviteContextKey(o, url);
+    if (state.messengerInviteManualVisible && state.messengerInviteManualKey === key) {
+      resetMessengerInviteManualFallback();
+    } else {
+      state.messengerInviteManualKey = key;
+      state.messengerInviteManualVisible = true;
+      state.messengerInviteCopyFeedback = "";
     }
-    let shareRequest;
-    try {
-      shareRequest = navigator.share({ title: "Получение передачи", text });
-    } catch (error) {
-      if (error?.name === "AbortError") return Promise.resolve();
-      return copyMessengerInvitationWithFeedback(o, url);
-    }
-    return Promise.resolve(shareRequest)
-      .then(() => {
-        resetMessengerInviteManualFallback();
-        renderTracker({ soft: true });
-      })
-      .catch((err) => {
-        if (err && err.name === "AbortError") {
-          renderTracker({ soft: true });
-          return;
-        }
-        return copyMessengerInvitationWithFeedback(o, url);
-      });
+    renderTracker({ soft: true });
   }
 
   function deliverMessengerInvitation(o, url) {
-    if (messengerInviteShareSupported()) return shareMessengerInvitation(o, url);
-    return copyMessengerInvitationWithFeedback(o, url);
+    showMessengerInvitationPreview(o, url);
   }
 
   function runMessengerInviteAction(o) {
@@ -5610,7 +5615,16 @@
     if (action === "recipient-invite-share") {
       const order = orders.find((x) => x.id === state.orderId);
       const url = recipientCodeInvitationUrl(order);
-      if (url) void shareMessengerInvitation(order, url);
+      if (url) showMessengerInvitationPreview(order, url);
+      return;
+    }
+    if (action === "messenger-invite-copy") {
+      const order = orders.find((x) => x.id === state.orderId);
+      const url = messengerPortalUrlValid(order) ? order.messengerPortalUrl : recipientCodeInvitationUrl(order);
+      if (url && state.messengerInviteManualVisible &&
+        state.messengerInviteManualKey === messengerInviteContextKey(order, url)) {
+        void copyMessengerInvitationWithFeedback(order, url);
+      }
       return;
     }
     if (action === "create-edit-comment") {

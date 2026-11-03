@@ -1,235 +1,149 @@
 import assert from "node:assert/strict";
-import { after, before, describe, it } from "node:test";
+import { before, after, describe, it } from "node:test";
 import type { Page } from "playwright";
 import {
-  seedTanTrackerBrowserUsers,
-  startBrowserHttpFixture,
-  stopBrowserHttpFixture,
+  seedTanTrackerBrowserUsers, startBrowserHttpFixture, stopBrowserHttpFixture,
   type BrowserHttpFixture,
 } from "./helpers/http-integration-browser";
 
-describe("messenger invitation single-action UI (browser mocks)", { concurrency: false }, () => {
+describe("tan-tracker invitation preview and explicit copy", () => {
   let fixture: BrowserHttpFixture;
-
+  let phone = 60;
   before(async () => {
     fixture = await startBrowserHttpFixture({
-      attachmentsDir: "var/tt-messenger-invite-ui-browser",
+      attachmentsDir: "var/tt-browser-single-invite",
       extraEnv: {
-        TT_EXTERNAL_MESSENGER_ENABLED: "true",
-        TANBOT_TELEGRAM_ENABLED: "true",
+        TT_EXTERNAL_MESSENGER_ENABLED: "true", TANBOT_TELEGRAM_ENABLED: "true",
         TANBOT_TELEGRAM_BOT_TOKEN: "123456789:AAH-test-token-for-browser-only",
         TANBOT_TELEGRAM_BOT_USERNAME: "tandoor_test_bot",
-        TANBOT_TELEGRAM_LINK_TOKEN_PEPPER: "test-link-pepper-min-16-chars",
-        TANBOT_MAX_ENABLED: "false",
+        TANBOT_TELEGRAM_LINK_TOKEN_PEPPER: "test-link-pepper-min-16-chars", TANBOT_MAX_ENABLED: "false",
       },
     });
     await seedTanTrackerBrowserUsers(fixture.databaseUrl, fixture.password);
   });
-
-  after(async () => {
-    await stopBrowserHttpFixture(fixture);
-  });
-
-  async function login(page: Page, email: string) {
+  after(async () => { if (fixture) await stopBrowserHttpFixture(fixture); });
+  async function create(page: Page) {
     await page.goto(`${fixture.baseUrl}/login`);
-    await page.fill("#email", email);
+    await page.fill("#email", "tt-browser-admin@test.local");
     await page.fill("#password", fixture.password);
     await page.click("#login-button");
-    await page.waitForURL(/\/(clients|profile|work|access|admin)(\/|\?|$)/, { timeout: 25000 });
-  }
-
-  async function createExternalTransfer(page: Page, phone = "+79991112255") {
+    await page.waitForURL(/\/(clients|profile|work|access|admin)(\/|\?|$)/);
     await page.goto(`${fixture.baseUrl}/tan-tracker`);
-    await page.waitForSelector('[data-testid="tan-tracker"]', { timeout: 25000 });
-    await page.click('[data-tt="create"]');
+    await page.waitForSelector('[data-testid="tan-tracker"]');
+    await page.locator('[data-tt="create"]:visible, [data-tt="create-fab"]:visible').first().click();
     await page.fill('[data-tt-field="item"]', "Single invite action box");
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-skip-files"]');
     await page.click('[data-tt="create-new-recipient"]');
-    await page.waitForSelector('[data-create-phase="recipient-new-phone"]', { timeout: 15000 });
-    await page.fill('[data-tt-field="newPhone"]', phone);
+    await page.fill('[data-tt-field="newPhone"]', `+799911122${++phone}`);
     await page.click('[data-tt="create-wizard-next"]');
-    await page.waitForSelector('[data-create-phase="recipient-new-name"]', { timeout: 15000 });
-    await page.fill('[data-tt-field="newName"]', "Invite UI Recipient");
+    await page.fill('[data-tt-field="newName"]', "Invite recipient");
     await page.click('[data-tt="create-wizard-next"]');
-    const createResp = page.waitForResponse(
-      (r) => r.request().method() === "POST" && r.url().includes("/api/tan-tracker/transfers") && r.status() === 201,
-      { timeout: 30000 },
-    );
     await page.click('[data-tt="create-wizard-submit"]');
-    await createResp;
-    await page.waitForSelector('[data-tt="detail"]', { timeout: 30000 });
+    await page.waitForSelector('[data-tt="detail"]');
   }
-
-  it("Web Share uses full text with a single URL; AbortError does not copy", async () => {
-    const context = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
-    try {
-      const page = await context.newPage();
-      await login(page, "tt-browser-admin@test.local");
-      await createExternalTransfer(page);
-
-      await page.evaluate(`Object.defineProperty(navigator, "share", {
-        configurable: true,
-        value: (payload) => {
-          window.__ttSharePayload = payload;
+  async function observe(page: Page, mode = "success") {
+    await page.evaluate(`(() => {
+      const mode = ${JSON.stringify(mode)};
+      const w = window;
+      w.__shares = []; w.__copies = [];
+      Object.defineProperty(navigator, "share", { configurable: true, value: (p) => {
+        w.__shares.push(p); throw new Error("system share must not run");
+      } });
+      Object.defineProperty(navigator, "clipboard", { configurable: true,
+        value: mode === "missing" ? undefined : { writeText: (text) => {
+          w.__copies.push(text);
+          if (mode === "sync-error") throw new Error("synchronous denial");
+          if (mode === "denied") return Promise.reject(new Error("clipboard denied"));
+          if (mode === "pending") return new Promise(resolve => { w.__resolveCopy = resolve; });
           return Promise.resolve();
-        }
-      })`);
-      await page.evaluate(`Object.defineProperty(navigator, "clipboard", {
-        configurable: true,
-        value: { writeText: () => Promise.reject(new Error("clipboard should not run")) }
-      })`);
-
-      await page.click('[data-tt="messenger-invite-action"]');
-      await page.waitForFunction(() => window.__ttSharePayload, undefined, { timeout: 30000 });
-
-      const payload = (await page.evaluate("window.__ttSharePayload")) as { text?: string; url?: string };
-      assert.ok(payload?.text);
-      assert.equal(payload.url, undefined);
-      assert.match(payload.text!, /Single invite action box/);
-      const urls = payload.text!.match(/https?:\/\/[^\s]+/g) || [];
-      assert.equal(urls.length, 1);
-
-      await page.evaluate(`Object.defineProperty(navigator, "share", {
-        configurable: true,
-        value: () => Promise.reject(Object.assign(new Error("cancel"), { name: "AbortError" }))
-      })`);
-      await page.click('[data-tt="messenger-invite-action"]');
-      await page.waitForTimeout(300);
-      assert.equal(await page.locator('[data-tt="messenger-invite-message-text"].tt-invite-message-fallback--visible').count(), 0);
-      const toast = (await page.locator('[data-tt="toast"]').textContent()) || "";
-      assert.doesNotMatch(toast, /Приглашение скопировано/);
-    } finally {
-      await context.close();
-    }
-  });
-
-  it("clipboard denied reveals manual full message only on demand", async () => {
-    const context = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
+        } },
+      });
+    })()`);
+  }
+  for (const width of [1366, 375]) {
+    it(`${width}px: shows text without native sharing or auto-copy, then copies the exact invitation`, async () => {
+      const context = await fixture.browser.newContext({ viewport: { width, height: 900 } });
+      try {
+        const page = await context.newPage(), errors: string[] = [];
+        page.on("pageerror", error => errors.push(error.message));
+        await create(page); await observe(page);
+        let posts = 0;
+        page.on("request", req => { if (req.method() === "POST" && req.url().includes("/messenger-invite")) posts++; });
+        await page.click('[data-tt="messenger-invite-action"]');
+        const field = page.locator('[data-tt="messenger-invite-message-text"]');
+        await field.waitFor({ state: "visible" });
+        const text = await field.inputValue();
+        assert.match(text, /Single invite action box/);
+        assert.match(text, /Посмотреть передачу и получить код:/);
+        assert.equal((text.match(/https?:\/\/\S+/g) || []).length, 1);
+        assert.doesNotMatch(text, /[?&](est|tt_hat)=|holderAccessToken/);
+        assert.deepEqual(await page.evaluate(() => [(window as any).__shares.length, (window as any).__copies.length]), [0, 0]);
+        assert.equal(await page.locator('[data-tt="messenger-invite-action"]').getAttribute("aria-expanded"), "true");
+        await page.click('[data-tt="messenger-invite-copy"]');
+        await page.locator('[data-tt="messenger-invite-copy-status"]').filter({ hasText: "Приглашение скопировано." }).waitFor();
+        assert.deepEqual(await page.evaluate(() => (window as any).__copies), [text]);
+        assert.equal(await field.isVisible(), true);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+        await page.click('[data-tt="messenger-invite-action"]');
+        assert.equal(await field.count(), 0);
+        await page.click('[data-tt="messenger-invite-action"]');
+        await field.waitFor({ state: "visible" });
+        assert.equal(await field.inputValue(), text);
+        assert.equal(posts, 1);
+        assert.deepEqual(errors, []);
+      } finally { await context.close(); }
+    });
+  }
+  for (const mode of ["denied", "sync-error", "missing"]) {
+    it(`${mode}: keeps text selectable and gives honest manual-copy feedback`, async () => {
+      const context = await fixture.browser.newContext();
+      try {
+        const page = await context.newPage();
+        await create(page); await observe(page, mode);
+        await page.click('[data-tt="messenger-invite-action"]');
+        const field = page.locator('[data-tt="messenger-invite-message-text"]');
+        await field.waitFor({ state: "visible" });
+        await page.click('[data-tt="messenger-invite-copy"]');
+        await page.locator('[data-tt="messenger-invite-copy-status"]').filter({ hasText: "Не удалось скопировать автоматически" }).waitFor();
+        assert.match(await field.inputValue(), /Посмотреть передачу и получить код:/);
+        assert.equal(await field.isVisible(), true);
+        assert.equal(await page.evaluate(() => (window as any).__shares.length), 0);
+        assert.doesNotMatch(await page.locator('[data-tt="messenger-invite-copy-status"]').innerText(), /Приглашение скопировано/);
+      } finally { await context.close(); }
+    });
+  }
+  it("late preparation after leaving cannot reveal or copy the old invitation", async () => {
+    const context = await fixture.browser.newContext();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
     try {
       const page = await context.newPage();
-      await login(page, "tt-browser-admin@test.local");
-      await createExternalTransfer(page, "+79991112257");
-      await page.evaluate(`Object.defineProperty(navigator, "share", { configurable: true, value: undefined })`);
-      await Promise.all([
-        page.waitForResponse(
-          (r) => r.request().method() === "POST" && r.url().includes("/messenger-invite") && r.status() === 201,
-          { timeout: 30000 },
-        ),
-        page.click('[data-tt="messenger-invite-action"]'),
-      ]);
-      await page.evaluate(`Object.defineProperty(navigator, "clipboard", {
-        configurable: true, value: { writeText: () => Promise.reject(new Error("denied")) }
-      })`);
-      assert.equal(await page.locator('[data-tt="messenger-invite-message-text"]').count(), 0);
-      await page.click('[data-tt="messenger-invite-action"]');
-      await page.waitForSelector('[data-tt="messenger-invite-message-text"].tt-invite-message-fallback--visible', {
-        timeout: 10000,
-      });
-      const manual = await page.inputValue('[data-tt="messenger-invite-message-text"]');
-      assert.match(manual, /Single invite action box/);
-      assert.match(manual, /Получить код приёма:/);
-    } finally {
-      await context.close();
-    }
-  });
-
-  it("first click with missing URL prepares invite then copies", async () => {
-    const context = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
-    try {
-      const page = await context.newPage();
-      await login(page, "tt-browser-admin@test.local");
-      await createExternalTransfer(page, "+79991112258");
-      await page.evaluate(`Object.defineProperty(navigator, "share", { configurable: true, value: undefined })`);
-      await page.evaluate(`Object.defineProperty(navigator, "clipboard", {
-        configurable: true, value: { writeText: (text) => {
-          window.__ttInvitationCopied = text; return Promise.resolve();
-        } }
-      })`);
-      let posts = 0;
-      page.on("request", (req) => {
-        if (req.method() === "POST" && req.url().includes("/messenger-invite")) posts += 1;
-      });
-      await Promise.all([
-        page.waitForResponse(
-          (r) => r.request().method() === "POST" && r.url().includes("/messenger-invite") && r.status() === 201,
-          { timeout: 30000 },
-        ),
-        page.click('[data-tt="messenger-invite-action"]'),
-      ]);
-      await page.waitForSelector('[data-tt="toast"]', { timeout: 30000 });
-      assert.ok(posts >= 1);
-      const copied = String(await page.evaluate("window.__ttInvitationCopied"));
-      assert.match(copied, /Single invite action box/);
-    } finally {
-      await context.close();
-    }
-  });
-
-  it("late invite completion is ignored after switching to another order", async () => {
-    const context = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
-    try {
-      const page = await context.newPage();
-      await login(page, "tt-browser-admin@test.local");
-      await createExternalTransfer(page, "+79991112259");
-      const firstCode = await page.locator(".tt-detail-task-card .tt-detail-task-receiver").count();
-      assert.ok(firstCode >= 0);
-      await page.route("**/messenger-invite", async (route) => {
-        await new Promise((r) => setTimeout(r, 800));
-        await route.continue();
-      });
-      await page.evaluate(`Object.defineProperty(navigator, "share", { configurable: true, value: undefined })`);
-      await page.evaluate(`Object.defineProperty(navigator, "clipboard", {
-        configurable: true, value: { writeText: (text) => {
-          window.__ttInvitationCopied = text; return Promise.resolve();
-        } }
-      })`);
-      void page.click('[data-tt="messenger-invite-action"]');
+      await create(page); await observe(page);
+      await page.route("**/messenger-invite", async route => { await gate; await route.continue(); });
+      const requested = page.waitForRequest(r => r.method() === "POST" && r.url().includes("/messenger-invite"));
+      await page.click('[data-tt="messenger-invite-action"]'); await requested;
       await page.click('[data-tt="back-list"]');
-      await page.waitForSelector('[data-tt="registry-shell"]', { timeout: 15000 });
-      await page.waitForTimeout(1200);
-      const copied = await page.evaluate("window.__ttInvitationCopied");
-      assert.equal(copied, undefined);
-      assert.equal(await page.locator('[data-tt="messenger-invite-message-text"].tt-invite-message-fallback--visible').count(), 0);
-    } finally {
-      await context.close();
-    }
+      const response = page.waitForResponse(r => r.url().includes("/messenger-invite"));
+      release(); await response;
+      assert.equal(await page.locator('[data-tt="detail"]').count(), 0);
+      assert.equal(await page.locator('[data-tt="messenger-invite-message-text"]').count(), 0);
+      assert.deepEqual(await page.evaluate(() => [(window as any).__shares.length, (window as any).__copies.length]), [0, 0]);
+    } finally { release(); await context.close(); }
   });
-
-  it("technical share failure falls back to clipboard copy", async () => {
-    const context = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
+  it("late clipboard completion after leaving cannot write feedback into another view", async () => {
+    const context = await fixture.browser.newContext();
     try {
       const page = await context.newPage();
-      await login(page, "tt-browser-admin@test.local");
-      await createExternalTransfer(page, "+79991112256");
-
-      await Promise.all([
-        page.waitForResponse(
-          (r) => r.request().method() === "POST" && r.url().includes("/messenger-invite") && r.status() === 201,
-          { timeout: 30000 },
-        ),
-        page.click('[data-tt="messenger-invite-action"]'),
-      ]);
-
-      await page.evaluate(`Object.defineProperty(navigator, "share", {
-        configurable: true,
-        value: () => Promise.reject(new Error("share failed"))
-      })`);
-      await page.evaluate(`Object.defineProperty(navigator, "clipboard", {
-        configurable: true,
-        value: { writeText: (text) => {
-          window.__ttInvitationCopied = text; return Promise.resolve();
-        } }
-      })`);
+      await create(page); await observe(page, "pending");
       await page.click('[data-tt="messenger-invite-action"]');
-      await page.waitForSelector('[data-tt="toast"]', { timeout: 10000 });
-      const toast = (await page.locator('[data-tt="toast"]').textContent()) || "";
-      assert.match(toast, /Приглашение скопировано/);
-      const copied = String(await page.evaluate("window.__ttInvitationCopied"));
-      assert.match(copied, /Single invite action box/);
-      assert.equal((copied.match(/https?:\/\/[^\s]+/g) || []).length, 1);
-    } finally {
-      await context.close();
-    }
+      await page.waitForSelector('[data-tt="messenger-invite-message-text"]');
+      await page.click('[data-tt="messenger-invite-copy"]');
+      await page.waitForFunction(() => typeof (window as any).__resolveCopy === "function");
+      await page.click('[data-tt="back-list"]');
+      await page.evaluate(() => (window as any).__resolveCopy());
+      assert.equal(await page.locator('[data-tt="messenger-invite-copy-status"]').count(), 0);
+      assert.equal(await page.getByText("Приглашение скопировано", { exact: true }).count(), 0);
+    } finally { await context.close(); }
   });
 });

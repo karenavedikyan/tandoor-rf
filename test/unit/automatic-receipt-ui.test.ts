@@ -6,7 +6,11 @@ import { automaticReceiptSenderGuidance } from "../../src/tan-tracker/automatic-
 const source = fs.readFileSync("public/tan-tracker/tan-tracker.js", "utf8");
 const start = source.indexOf("  function automaticReceiptHandoffHtml(");
 const end = source.indexOf("  function recipientCodeInvitationUrl(", start);
-const context = vm.createContext({ E: (x: string) => x });
+const context = vm.createContext({
+  E: (x: string) => x, state: { messengerInviteManualVisible: false, messengerInviteManualKey: "" },
+  messengerPortalUrlValid: () => false, recipientCodeInvitationUrl: () => "fixture",
+  messengerInviteContextKey: () => "fixture",
+});
 vm.runInContext(source.slice(start, end), context);
 const render = (status?: string) =>
   vm.runInContext(
@@ -37,4 +41,10 @@ it("holder sees queued versus delivered copy, never digits, with invitation only
   assert.match(render("sent"), /Пересылать приглашение не нужно/);
   for (const s of [undefined, "failed", "cancelled"])
     assert.equal(render(s), "FALLBACK");
+});
+it("keeps the automatic-delivery fallback expanded while its invitation text is open", () => {
+  context.state.messengerInviteManualVisible = true;
+  context.state.messengerInviteManualKey = "fixture";
+  try { assert.match(render("sent"), /<details open>/); }
+  finally { context.state.messengerInviteManualVisible = false; }
 });
