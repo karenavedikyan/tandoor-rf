@@ -3,12 +3,12 @@ import { getAppOrigin } from "../../config";
 import {
   createPersonBrowserSession,
   findPersonByMessenger,
-  upsertVerifiedPerson,
 } from "../../tan-tracker/external-person/person-service";
 import { isExternalMessengerFeatureEnabled } from "../../tan-tracker/external-messenger/config";
 import { findAccountByMaxUserId } from "../../tanbot-max/link-repository";
-import { menuReplyKeyboard } from "../native-create/keyboards";
+import { buildMainMenuInline, menuReplyKeyboard } from "../native-create/keyboards";
 import { tryNativeCreateMaxMessage, tryNativeCreateMaxPhoto } from "../native-create/adapters";
+import { registerVerifiedBotContact } from "./verified-contact-registration";
 
 export type ExternalPersonBotReply = {
   text: string;
@@ -37,19 +37,22 @@ export async function handleExternalPersonMaxContact(
   if (input.contactUserId == null || BigInt(input.contactUserId) !== input.maxUserId) {
     return { text: "Нужен ваш собственный контакт из Max.", requestContact: true };
   }
-  const person = await upsertVerifiedPerson(client, {
+  const registration = await registerVerifiedBotContact(client, {
     channel: "max",
     messengerUserId: input.maxUserId,
     messengerChatId: input.chatId,
     phoneRaw: input.phoneRaw,
     displayName: input.firstName,
   });
+  if (!registration.ok) return { text: registration.text, requestContact: true };
+  const person = registration.person;
   const sessionRaw = await createPersonBrowserSession(client, person.id, "max");
   const origin = getAppOrigin() ?? "https://example.invalid";
   const url = `${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`;
   return {
     text: `Номер подтверждён. Откройте «Мои передачи» или «Создать передачу»:\n${url}`,
     replyMarkup: menuReplyKeyboard(),
+    inlineButtons: buildMainMenuInline("max").maxInlineButtons,
   };
 }
 

@@ -217,7 +217,7 @@ function formatSummary(
     return `Изменить получателя: ${payload.holderAction.publicCode}\n\nПредмет: ${payload.item ?? "Не указан"}\nНовый получатель: ${recipientLine}\n\nПосле подтверждения прежние код и приглашение перестанут действовать. Продолжится тот же трек, история и вложения сохранятся. До проверки нового кода держатель не изменится.\n\nДо первой передачи замена непосредственного конечного получателя также меняет адресата трека; при продолжении маршрута конечный адресат сохраняется.`;
   }
   if (payload.holderAction?.kind === "forward") {
-    return `Передать дальше: ${payload.holderAction.publicCode}\n\nПредмет: ${payload.item ?? "—"}\nПолучатель: ${recipientLine}\n\nПродолжится этот же трек. История, вложения и конечный получатель сохранятся. Предмет и ответственность остаются у вас до успешной проверки кода получателя.\n\nНажмите «Передать дальше», затем перешлите приглашение получателю.`;
+    return `Передать дальше: ${payload.holderAction.publicCode}\n\nПредмет: ${payload.item ?? "—"}\nПолучатель: ${recipientLine}\n\nПродолжится этот же трек. История, вложения и конечный получатель сохранятся. Предмет и ответственность остаются у вас до успешной проверки кода получателя.\n\nНажмите «Передать дальше». Бот покажет следующий шаг для получения кода.`;
   }
   return (
     "Проверьте данные:\n" +
@@ -1109,6 +1109,11 @@ export async function handleNativeCreateMessage(
       return buildNativeMainMenuReply(client, ctx, { prefix: message, lock: false });
     }
     return startOrResumeCreate(client, ctx);
+  }
+
+  if (ctx.privateDialogOk && !ctx.isLinkedStaff && !ctx.personId && normalizeRuPhoneE164(trimmed)) {
+    const { nativeVerifiedContactRequiredReply } = await import("./main-menu");
+    return nativeVerifiedContactRequiredReply(ctx, "Номер ещё не подтверждён.");
   }
 
   await lockNativeCreateMessenger(client, ctx);

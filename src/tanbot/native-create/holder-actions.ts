@@ -13,7 +13,9 @@ import {
 import { resolveNativeExternalPendingPartyByPhone } from "./native-external-recipient-by-phone";
 import { loadAccessContext } from "../../access/context";
 import type { UserRole } from "../../shared/user";
-import { buildExternalPendingInviteMessage } from "./invitation-handoff";
+import { prepareNativeRecipientCodeDelivery } from "./invitation-handoff";
+import { automaticReceiptSenderGuidance } from "../../tan-tracker/automatic-receipt-codes";
+import { buildForwardInvitationGuidance } from "./forward-invitation-guidance";
 import { markPendingObsoleteInTransaction, OBSOLETE_REASON } from "../../tan-tracker/pending-obsolete-mutation";
 
 export type HolderActionTransfer = {
@@ -83,6 +85,7 @@ export async function confirmNativeHolderAction(
   };
   await client.query("SAVEPOINT native_holder_action");
   let forwardInvitationText: string | null = null;
+  let automaticReceipt = false;
   try {
     if (action.kind === "obsolete") {
       await markPendingObsoleteInTransaction(client, {
@@ -131,11 +134,13 @@ export async function confirmNativeHolderAction(
       if (action.kind === "replace") {
         await client.query("DELETE FROM tt_bot_receipt_code_entries WHERE transfer_id=$1", [row.id]);
       }
-      forwardInvitationText = await buildExternalPendingInviteMessage(client, {
+      const delivery = await prepareNativeRecipientCodeDelivery(client, {
         transferId: row.id, pendingPartyId, handoffVersion: row.handoff_version + 1,
         channel: ctx.channel, allowUserParty: true,
       });
-      if (!forwardInvitationText) throw new Error("Не удалось подготовить приглашение.");
+      automaticReceipt = delivery.automaticReceipt;
+      forwardInvitationText = delivery.forwardInvitationText ?? null;
+      if (!automaticReceipt && !forwardInvitationText) throw new Error("Не удалось подготовить приглашение.");
     }
     await client.query(
       `UPDATE tt_external_request_drafts SET confirmed_transfer_id=$2, step='done', updated_at=NOW()
@@ -156,7 +161,8 @@ export async function confirmNativeHolderAction(
     prefix: `Трек ${row.public_code} завершён.\nЗадача выполнена. История сохранена в личном кабинете.`, lock: false,
   });
   return appendReceiptEntryChoices(client, ctx, {
-    text: `Для трека ${row.public_code} назначен следующий получатель.\n\nПредмет пока остаётся у вас. Перешлите получателю следующее приглашение, дождитесь кода и нажмите «Ввести код». Ответственность перейдёт только после проверки кода.`,
-    forwardInvitationText: forwardInvitationText!,
+    text: automaticReceipt ? automaticReceiptSenderGuidance(row.public_code, true)
+      : buildForwardInvitationGuidance(row.public_code, true),
+    ...(forwardInvitationText ? { forwardInvitationText } : {}),
   }, row.public_code);
 }

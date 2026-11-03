@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import request from "supertest";
 import type { Express } from "express";
@@ -26,6 +26,7 @@ import { verifyPendingReceiptCode } from "../../src/tan-tracker/verify-pending-r
 import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../../src/tanbot/native-create/telegram-reply-markup";
 import { tryNativeCreateMaxCallback, tryNativeCreateTelegramCallback } from "../../src/tanbot/native-create/adapters";
 import { mintExternalMessengerSession, bindSessionMessengerChat, type ExternalMessengerSessionRow } from "../../src/tan-tracker/external-messenger/session-service";
+import { decodeVcfInfoForHmac } from "../../src/tanbot/external-recipient/max-contact-verify";
 
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; id: number; chat: number; party: string; user?: string };
@@ -113,14 +114,20 @@ async function pickTransferAndEnterCode(a: Actor, t: { id: string; pick: string 
   assert.ok(codeBtn, JSON.stringify(detail));
   return send(a, "", codeBtn!.payload ?? codeBtn!.callback_data!);
 }
-async function send(a: Actor, text = "", callback?: string, fixedId?: number, privateDialog = true): Promise<Reply> {
+async function send(a: Actor, text = "", callback?: string, fixedId?: number, privateDialog = true,
+  contact?: { phone: string; ownerId?: number; forwarded?: boolean; badSignature?: boolean }): Promise<Reply> {
   const id = fixedId ?? ++seq, replies: Reply[] = [];
   if (a.channel === "telegram") {
     const message = { message_id: id, chat: { id: a.chat, type: privateDialog ? "private" : "group" } };
     const r = await request(app).post("/api/tanbot-telegram/webhook")
       .set("X-Telegram-Bot-Api-Secret-Token", process.env.TANBOT_TELEGRAM_WEBHOOK_SECRET!)
       .send(callback ? { update_id: id, callback_query: { id: `receipt-${id}`, from: { id: a.id, is_bot: false },
-        data: callback, message } } : { update_id: id, message: { ...message, from: { id: a.id, is_bot: false }, text } });
+        data: callback, message } } : { update_id: id, message: {
+          ...message, from: { id: a.id, is_bot: false },
+          ...(contact?.forwarded ? { forward_date: 1, forward_from: { id: a.id + 1 } } : {}),
+          ...(contact ? { contact: { phone_number: contact.phone, first_name: "Synthetic own contact",
+            user_id: contact.ownerId ?? a.id } } : { text }),
+        } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const cfg = loadTanbotTelegramStage2Config(); assert.ok(cfg.ok);
     await processUndeliveredTelegramWebhookReplies(p(), cfg.config, async input => {
@@ -131,7 +138,15 @@ async function send(a: Actor, text = "", callback?: string, fixedId?: number, pr
       return { ok: true, result: { message_id: id } };
     }, { deliveryEnabled: true });
   } else {
-    const message = { recipient: { chat_id: a.chat, chat_type: privateDialog ? "dialog" : "chat", user_id: a.id }, body: { mid: `receipt-${id}`, text } };
+    const vcf = contact ? ["BEGIN:VCARD", "VERSION:3.0", "FN:Synthetic own contact",
+      `TEL;TYPE=CELL:${contact.phone}`, "END:VCARD"].join("\\r\\n") : "";
+    const message = { recipient: { chat_id: a.chat, chat_type: privateDialog ? "dialog" : "chat", user_id: a.id },
+      ...(contact?.forwarded ? { link: { type: "forward" } } : {}),
+      body: { mid: `receipt-${id}`, ...(contact ? { attachments: [{ type: "contact", payload: {
+        vcf_info: vcf, max_info: { user_id: contact.ownerId ?? a.id },
+        hash: contact.badSignature ? "0".repeat(64) : createHmac("sha256", process.env.TANBOT_MAX_BOT_TOKEN!)
+          .update(decodeVcfInfoForHmac(vcf), "utf8").digest("hex"),
+      } }] } : { text }) } };
     const r = await request(app).post("/api/tanbot-max/webhook")
       .set("X-Max-Bot-Api-Secret", process.env.TANBOT_MAX_WEBHOOK_SECRET!)
       .send(callback ? { update_type: "message_callback", timestamp: id, message,
@@ -197,6 +212,139 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
   });
   after(async () => { globalThis.fetch = originalFetch; await closePool(); assert.equal(networkCalls, 0); });
   for (const channel of ["max", "telegram"] as const) {
+    it(`${channel}: a new own contact self-registers, creates a transfer and cannot access another person's track`, async () => {
+      const id = ++seq, a: Actor = { channel, id, chat: channel === "max" ? id + 100000 : id, party: "" };
+      const phone = `+7987${String(id).padStart(7, "0")}`;
+      const snapshot = async () => (await p().query(`SELECT jsonb_build_object(
+        'persons',(SELECT COUNT(*) FROM tt_external_persons),
+        'verifications',(SELECT COUNT(*) FROM tt_external_person_verifications),
+        'parties',(SELECT COUNT(*) FROM tt_parties),
+        'drafts',(SELECT COUNT(*) FROM tt_external_request_drafts),
+        'sessions',(SELECT COUNT(*) FROM tt_external_person_sessions),
+        'transfers',(SELECT COUNT(*) FROM tt_transfers),
+        'codes',(SELECT COUNT(*) FROM tt_handoff_codes)) AS value`)).rows[0].value;
+      const before = await snapshot();
+      await send(a, "Создать передачу");
+      for (const contact of [{ phone, ownerId: a.id + 1 }, { phone, forwarded: true },
+        ...(channel === "max" ? [{ phone, badSignature: true }] : [])]) {
+        const rejected = await send(a, "", undefined, undefined, true, contact);
+        assert.doesNotMatch(rejected.text, /Номер подтверждён/);
+        assert.deepEqual(await snapshot(), before);
+      }
+      await send(a, "", undefined, undefined, false, { phone });
+      assert.deepEqual(await snapshot(), before);
+      const contactId = ++seq;
+      const reply = await send(a, "", undefined, contactId, true, { phone });
+      assert.match(reply.text, /Номер подтверждён/);
+      assert.ok(reply.buttons.some(b => b.text === "Создать передачу"));
+      const registered = { ...before, persons: before.persons + 1, parties: before.parties + 1,
+        verifications: before.verifications + 1, sessions: before.sessions + 1 };
+      assert.deepEqual(await snapshot(), registered);
+      await send(a, "", undefined, contactId, true, { phone });
+      assert.deepEqual(await snapshot(), registered, "webhook replay cannot create another profile/session");
+      const identity = (await p().query(`SELECT p.party_id,pt.kind,pt.created_by_user_id FROM tt_external_persons p
+        JOIN tt_parties pt ON pt.id=p.party_id WHERE p.phone_e164=$1`, [phone])).rows[0];
+      assert.equal(identity.kind, "external");
+      assert.equal(identity.created_by_user_id, null);
+      const staffAccounts = channel === "max" ? "tanbot_max_accounts" : "tanbot_telegram_accounts";
+      const messengerColumn = channel === "max" ? "max_user_id" : "telegram_user_id";
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM ${staffAccounts}
+        WHERE ${messengerColumn}=$1`, [String(a.id)])).rows[0].n, 0);
+      a.party = identity.party_id;
+      const press = async (r: Reply, pattern: RegExp) => {
+        const b = r.buttons.find(b => pattern.test(b.text));
+        assert.ok(b, JSON.stringify(r));
+        const cb = b.payload ?? b.callback_data;
+        return send(a, cb ? "" : b.text, cb);
+      };
+      await press(reply, /^Создать передачу$/);
+      let r = await send(a, `Synthetic self-registration item ${a.id}`);
+      r = await press(r, /Без вложений|Пропустить/iu);
+      r = await press(r, /Пропустить/iu);
+      r = await send(a, `+7986${String(a.id).padStart(7, "0")}`);
+      r = await send(a, "Synthetic recipient");
+      for (let i = 0; i < 3 && !r.buttons.some(b => /Без срока/iu.test(b.text)); i++) {
+        r = await press(r, /оставить имя|^далее$/iu);
+      }
+      r = await press(r, /Без срока/iu);
+      await press(r, /^Создать передачу$/);
+      const created = (await p().query(`SELECT id,holder_party_id,status FROM tt_transfers
+        WHERE creator_party_id=$1`, [a.party])).rows;
+      assert.equal(created.length, 1);
+      assert.equal(created[0].holder_party_id, a.party);
+      assert.equal(created[0].status, "waiting");
+      const outsider = await actor(channel), secret = await seed(outsider);
+      const mine = await send(a, "Мои передачи");
+      assert.doesNotMatch(JSON.stringify(mine), new RegExp(secret.id));
+      const secretCode = (await p().query(`SELECT public_code FROM tt_transfers WHERE id=$1`, [secret.id])).rows[0].public_code;
+      assert.ok(!JSON.stringify(mine).includes(secretCode));
+      const forbidden = await send(a, "", statusView(secret.id));
+      assert.doesNotMatch(forbidden.text, /Synthetic receipt item/);
+      assert.equal((await state(secret.id)).holder_party_id, outsider.party);
+    });
+    it(`${channel}: a known own contact registers and can enter creation, but a foreign contact cannot`, async () => {
+      const id = ++seq, a: Actor = { channel, id, chat: channel === "max" ? id + 100000 : id, party: "" };
+      const phone = `+7987${String(id).padStart(7, "0")}`;
+      const party = (await p().query(`INSERT INTO tt_parties(kind,display_name,phone_e164)
+        VALUES('external','Synthetic allowed contact',$1) RETURNING id`, [phone])).rows[0].id;
+      await send(a, "Создать передачу");
+      const foreign = await send(a, "", undefined, undefined, true, { phone, ownerId: a.id + 1 });
+      assert.doesNotMatch(foreign.text, /Номер подтверждён/);
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_external_person_verifications
+        WHERE channel=$1 AND messenger_user_id=$2`, [channel, String(a.id)])).rows[0].n, 0);
+      const reply = await send(a, "", undefined, undefined, true, { phone });
+      assert.match(reply.text, /Номер подтверждён/);
+      const identity = (await p().query(`SELECT p.party_id,p.phone_e164 FROM tt_external_person_verifications v
+        JOIN tt_external_persons p ON p.id=v.person_id WHERE v.channel=$1 AND v.messenger_user_id=$2`,
+        [channel, String(a.id)])).rows;
+      assert.deepEqual(identity, [{ party_id: party, phone_e164: phone }]);
+      const create = await send(a, "/new");
+      assert.doesNotMatch(create.text, /Номер ещё не подтверждён|Номер не найден/);
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_external_request_drafts
+        WHERE person_id=(SELECT person_id FROM tt_external_person_verifications
+          WHERE channel=$1 AND messenger_user_id=$2)`, [channel, String(a.id)])).rows[0].n, 1);
+    });
+    for (const conflict of ["employee", "duplicate"] as const) {
+      it(`${channel}: ${conflict} phone rejection is explained without verifying the person`, async () => {
+        const id = ++seq, a: Actor = { channel, id, chat: channel === "max" ? id + 100000 : id, party: "" };
+        const phone = `+7987${String(id).padStart(7, "0")}`;
+        if (conflict === "employee") {
+          await createTestUser({ databaseUrl: db, email: `contact-collision-${id}@test.local`,
+            password: "SyntheticPass123!", fullName: "Synthetic employee", role: "manager", phone });
+        } else {
+          await p().query(`INSERT INTO tt_parties(kind,display_name,phone_e164)
+            VALUES('external','Synthetic duplicate A',$1),('external','Synthetic duplicate B',$1)`, [phone]);
+        }
+        const reply = await send(a, "", undefined, undefined, true, { phone });
+        assert.match(reply.text, conflict === "employee" ? /номер принадлежит сотруднику/ : /несколько контактов/);
+        assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_external_person_verifications
+          WHERE channel=$1 AND messenger_user_id=$2`, [channel, String(a.id)])).rows[0].n, 0);
+        assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_external_persons
+          WHERE phone_e164=$1`, [phone])).rows[0].n, 0);
+      });
+    }
+    it(`${channel}: an unverified person's typed phone returns own-contact guidance without identity, session or draft writes`, async () => {
+      const id = ++seq, a: Actor = { channel, id, chat: channel === "max" ? id + 100000 : id, party: "" };
+      const snapshot = async () => (await p().query(`SELECT jsonb_build_object(
+        'persons',(SELECT COUNT(*) FROM tt_external_persons),
+        'verifications',(SELECT COUNT(*) FROM tt_external_person_verifications),
+        'drafts',(SELECT COUNT(*) FROM tt_external_request_drafts),
+        'sessions',(SELECT COUNT(*) FROM tt_external_person_sessions),
+        'transfers',(SELECT COUNT(*) FROM tt_transfers)) AS value`)).rows[0].value;
+      const before = await snapshot();
+      const create = await send(a, "Создать передачу");
+      assert.match(create.text, /Номер, введённый текстом, не подтверждает/);
+      for (const phone of ["89990001234", "9990001234", "+7 (999) 000-12-34"]) {
+        const reply = await send(a, phone);
+        assert.match(reply.text, /Номер ещё не подтверждён/);
+        assert.match(reply.text, /Нажмите «Отправить мой номер»/);
+        assert.ok(reply.buttons.some(b => b.text === "Отправить мой номер"));
+        assert.doesNotMatch(reply.text, /Дополнительные действия|Что передаёте|Что передаете/);
+        assert.deepEqual(await snapshot(), before);
+      }
+      await send(a, "89990001234", undefined, undefined, false);
+      assert.deepEqual(await snapshot(), before, "group input must not create trusted identity or draft");
+    });
     for (const staff of [true, false]) {
       it(`${channel}: ${staff ? "staff" : "external"} pending cancellation is confirmed, terminal, distinct from completion and never a receipt`, async () => {
         const a = await actor(channel, staff), t = await seed(a);

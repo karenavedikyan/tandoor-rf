@@ -163,6 +163,7 @@ async function processUpdateInTransaction(
         const phoneRaw = phoneDigits ? (phoneDigits.startsWith("7") ? `+${phoneDigits}` : `+7${phoneDigits}`) : "";
         if (
           token &&
+          recipientChatType === "dialog" &&
           phoneRaw &&
           verifyMaxContactVcfHash(token, contact.vcfInfo, contact.contactHash) &&
           contact.contactUserId === Number(update.maxUserId)
@@ -186,7 +187,9 @@ async function processUpdateInTransaction(
               copyOnlyCode: ext.copyOnlyCode,
               inlineButtons: ext.requestContact
                 ? [[{ type: "request_contact", text: "Отправить мой номер" }]]
-                : undefined,
+                : "inlineButtons" in ext
+                  ? (ext.inlineButtons as import("./delivery-transport").MaxInlineButton[][] | undefined)
+                  : undefined,
             }
           : { userId: update.maxUserId, chatId: update.chatId, text: "Контакт не принят." };
       }

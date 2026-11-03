@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { requestAutomaticReceiptCodeByHolder } from "../../tan-tracker/automatic-receipt-codes";
 import { buildNotificationTransferState } from "../../tan-tracker/notification-transfer-state";
 import type { NativeCreateContext, NativeCreateReply } from "./engine";
 import { assertNativeCreateContext, lockNativeCreateMessenger } from "./access-guard";
@@ -246,21 +247,30 @@ export async function handleReceiptEntryCallback(
   }
   if (!row.pending_party_id) return { text: "У этой передачи сейчас нет ожидаемого получателя. Откройте её заново в «Моих передачах»." };
   let forwardInvitationText: string | undefined;
+  let automaticRetry = false;
   if (parsed.action === "invite" || parsed.action === "retry") {
     if (!row.pending_party_id) return { text: "У этой передачи сейчас нет ожидаемого получателя." };
-    const invitation = await buildExternalPendingInviteMessage(client, {
+    const automatic = await requestAutomaticReceiptCodeByHolder(client, {
+      transferId: row.id, holderPartyId: partyId, handoffVersion: row.handoff_version, channel: ctx.channel,
+    });
+    if (automatic === "unavailable") return { text: "Передача уже изменилась. Откройте её заново в «Моих передачах»." };
+    if (automatic === "cooldown") return { text: "Повторный запрос доступен через минуту после выдачи кода. Получатель может использовать уже выданный код." };
+    automaticRetry = automatic === "queued";
+    const invitation = automaticRetry ? null : await buildExternalPendingInviteMessage(client, {
       transferId: row.id, pendingPartyId: row.pending_party_id, handoffVersion: row.handoff_version,
       channel: ctx.channel, allowUserParty: true,
     });
-    if (!invitation) return { text: "Не удалось подготовить приглашение. Проверьте номер получателя." };
+    if (!automaticRetry && !invitation) return { text: "Не удалось подготовить приглашение. Проверьте номер получателя." };
     if (parsed.action === "retry") {
-      forwardInvitationText = invitation;
+      forwardInvitationText = invitation ?? undefined;
     } else {
       await clearReceiptEntry(client, ctx);
       const detail = transferDetailUi(ctx, row, 0, false);
       return {
-        text: `Получите код у получателя для ${row.public_code}. Перешлите ему следующее сообщение: он получит код в боте и назовёт его вам. Используйте новое сообщение вместо прежней ссылки.`,
-        forwardInvitationText: invitation,
+        text: automaticRetry
+          ? `Для ${row.public_code} запрошена повторная отправка кода получателю в подключённый бот. Пересылать приглашение не нужно. Дождитесь кода от получателя и нажмите «Ввести код».`
+          : `Получите код у получателя для ${row.public_code}. Перешлите ему следующее сообщение: он получит код в боте и назовёт его вам. Используйте новое сообщение вместо прежней ссылки.`,
+        ...(invitation ? { forwardInvitationText: invitation } : {}),
         ...(ctx.channel === "telegram"
           ? { telegramInlineKeyboard: detail.telegramInlineKeyboard }
           : { maxInlineButtons: detail.maxInlineButtons }),
@@ -283,7 +293,7 @@ export async function handleReceiptEntryCallback(
       ctx.isLinkedStaff ? null : ctx.personId, partyId, row.id, row.handoff_version, row.pending_party_id],
   );
   const reply = {
-    ...withCancel(ctx, row, `Дождитесь кода от получателя.\n\n${contextText(row)}\n\nКогда получатель сообщит код, отправьте его сюда: 6 цифр или сообщение с кодом целиком.\nКод действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи. Если срок истёк, нажмите «Запросить код повторно» и перешлите получателю новое сообщение.\nПередача будет подтверждена только после успешной проверки.${forwardInvitationText ? "\n\nПерешлите получателю следующее сообщение, чтобы он получил новый код. Ввод кода для этой передачи остаётся открыт." : ""}`),
+    ...withCancel(ctx, row, `Дождитесь кода от получателя.\n\n${contextText(row)}\n\nКогда получатель сообщит код, отправьте его сюда: 6 цифр или сообщение с кодом целиком.\nКод действует ${Math.round(HANDOFF_CODE_TTL_MS / 60_000)} минут с момента выдачи. Если срок истёк, нажмите «Запросить код повторно».\nПередача будет подтверждена только после успешной проверки.${automaticRetry ? "\n\nЗапрошена повторная отправка кода получателю в подключённый бот. Пересылать приглашение не нужно. Ввод кода остаётся открыт." : forwardInvitationText ? "\n\nПерешлите получателю следующее сообщение, чтобы он получил новый код. Ввод кода для этой передачи остаётся открыт." : ""}`),
     ...(forwardInvitationText ? { forwardInvitationText } : {}),
   };
   return ctx.channel === "telegram" ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;

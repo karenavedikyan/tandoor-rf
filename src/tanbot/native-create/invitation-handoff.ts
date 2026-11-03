@@ -3,6 +3,19 @@ import { formatNotificationTransferState } from "../../tan-tracker/notification-
 import { getAppOrigin } from "../../config";
 import { mintExternalMessengerSession } from "../../tan-tracker/external-messenger/session-service";
 import { recipientBotLinks, type RecipientBotLinks } from "../../tan-tracker/external-messenger/direct-invitation";
+import { enqueueAutomaticReceiptCode } from "../../tan-tracker/automatic-receipt-codes";
+
+/** Same delivery decision for creation and continuation, never exposing an OTP to the holder. */
+export async function prepareNativeRecipientCodeDelivery(
+  client: PoolClient,
+  input: Parameters<typeof buildExternalPendingInviteMessage>[1],
+): Promise<{ automaticReceipt: boolean; forwardInvitationText?: string }> {
+  if (await enqueueAutomaticReceiptCode(client, input.transferId, input.channel)) {
+    return { automaticReceipt: true };
+  }
+  const invitation = await buildExternalPendingInviteMessage(client, input);
+  return { automaticReceipt: false, ...(invitation ? { forwardInvitationText: invitation } : {}) };
+}
 
 export function formatForwardableRecipientInvitation(input: {
   publicCode: string;

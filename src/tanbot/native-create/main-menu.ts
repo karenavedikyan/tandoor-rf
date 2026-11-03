@@ -180,9 +180,10 @@ export function nativeVerifiedContactRequiredReply(
   ctx: NativeCreateContext,
   message: string,
 ): NativeCreateReply {
+  const text = `${message}\n\nНажмите «Отправить мой номер» и подтвердите отправку своего контакта в приложении.\nНомер, введённый текстом, не подтверждает, что он принадлежит вам.`;
   if (ctx.channel === "telegram") {
     return {
-      text: message,
+      text,
       requestContact: true,
       replyMarkup: telegramContactWithMenuKeyboard(),
       telegramInlineKeyboard: undefined,
@@ -191,7 +192,7 @@ export function nativeVerifiedContactRequiredReply(
   }
   const inline = maxContactWithMenuInline();
   return {
-    text: message,
+    text,
     requestContact: true,
     maxInlineButtons: inline.maxInlineButtons,
     replyMarkup: menuReplyKeyboard(),

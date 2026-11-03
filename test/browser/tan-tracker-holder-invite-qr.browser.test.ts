@@ -86,6 +86,7 @@ describe("current external holder shares a recipient invitation and mobile QR", 
         await page.goto(detailUrl());
         assert.equal(await page.locator('[data-tt="messenger-invite-message-text"]').count(), 0);
         await page.getByRole("button", { name: "Поделиться приглашением", exact: true }).click();
+        await page.getByRole("button", { name: "Скопировать приглашение", exact: true }).click();
         await page.waitForFunction(() => Boolean((window as any).__copiedInvite));
         const text = await page.evaluate(() => (window as any).__copiedInvite as string);
         for (const expected of ["Отправитель: Тестовый получатель", "Получатель: Тестовый сотрудник", "Предмет: Ключи от склада", `Трек: ${id}`, "получите код приёма", "Сообщите этот код отправителю"]) {
@@ -130,7 +131,7 @@ describe("current external holder shares a recipient invitation and mobile QR", 
   }
 
   for (const mode of ["native", "abort", "sync-error", "denied"] as const) {
-    it(`share mode ${mode}: native sharing, cancellation and safe clipboard fallback`, async () => {
+    it(`preview with ${mode} native-share API: explicit copy, no system sharing`, async () => {
       const context = await fixture.browser.newContext({ viewport: { width: 375, height: 812 } });
       try {
         await context.addInitScript(`(() => {
@@ -153,17 +154,17 @@ describe("current external holder shares a recipient invitation and mobile QR", 
         const page = await context.newPage();
         await page.goto(detailUrl());
         await page.getByRole("button", { name: "Поделиться приглашением", exact: true }).click();
+        await page.getByRole("button", { name: "Скопировать приглашение", exact: true }).click();
+        await page.waitForFunction(() => (window as any).__copyCalls.length === 1);
+        const calls = await page.evaluate(() => ({ share: (window as any).__shareCalls, copy: (window as any).__copyCalls }));
+        assert.equal(calls.share.length, 0);
+        assert.equal(calls.copy.length, 1);
+        assert.match(calls.copy[0], /Трек: TT-2026-960/);
         if (mode === "denied") {
           const manual = page.locator('[data-tt="messenger-invite-message-text"]');
           await manual.waitFor();
           assert.match(await manual.inputValue(), /Сообщите этот код отправителю/);
           assert.match(await manual.inputValue(), /Получить код приёма: http/);
-        } else {
-          await page.waitForFunction((m) => m === "sync-error" ? (window as any).__copyCalls.length === 1 : (window as any).__shareCalls.length === 1, mode);
-          const calls = await page.evaluate(() => ({ share: (window as any).__shareCalls, copy: (window as any).__copyCalls }));
-          assert.equal(calls.share.length, 1);
-          assert.equal(calls.copy.length, mode === "sync-error" ? 1 : 0);
-          assert.match(calls.share[0].text, /Трек: TT-2026-960/);
         }
         assert.deepEqual((await pool.query(stateSql)).rows, baseline);
       } finally { await context.close(); }
