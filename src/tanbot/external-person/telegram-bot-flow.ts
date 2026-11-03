@@ -3,12 +3,12 @@ import { getAppOrigin } from "../../config";
 import {
   createPersonBrowserSession,
   findPersonByMessenger,
-  upsertVerifiedPerson,
 } from "../../tan-tracker/external-person/person-service";
 import { isExternalMessengerFeatureEnabled } from "../../tan-tracker/external-messenger/config";
 import { findAccountByTelegramUserId } from "../../tanbot-telegram/link-repository";
 import { menuReplyKeyboard } from "../native-create/keyboards";
 import { tryNativeCreateTelegramMessage, tryNativeCreateTelegramPhoto } from "../native-create/adapters";
+import { registerVerifiedBotContact } from "./verified-contact-registration";
 
 export type ExternalPersonBotReply = {
   text: string;
@@ -35,13 +35,15 @@ export async function handleExternalPersonTelegramContact(
   if (input.contactUserId == null || BigInt(input.contactUserId) !== input.telegramUserId) {
     return { text: "Нужен ваш собственный контакт из Telegram.", requestContact: true };
   }
-  const person = await upsertVerifiedPerson(client, {
+  const registration = await registerVerifiedBotContact(client, {
     channel: "telegram",
     messengerUserId: input.telegramUserId,
     messengerChatId: input.chatId,
     phoneRaw: input.phoneRaw,
     displayName: input.firstName,
   });
+  if (!registration.ok) return { text: registration.text, requestContact: true };
+  const person = registration.person;
   const sessionRaw = await createPersonBrowserSession(client, person.id, "telegram");
   const origin = getAppOrigin() ?? "https://example.invalid";
   const url = `${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`;
