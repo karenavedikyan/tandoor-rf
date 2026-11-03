@@ -6,7 +6,7 @@ import {
 } from "../../tan-tracker/external-person/person-service";
 import { isExternalMessengerFeatureEnabled } from "../../tan-tracker/external-messenger/config";
 import { findAccountByMaxUserId } from "../../tanbot-max/link-repository";
-import { menuReplyKeyboard } from "../native-create/keyboards";
+import { buildMainMenuInline, menuReplyKeyboard } from "../native-create/keyboards";
 import { tryNativeCreateMaxMessage, tryNativeCreateMaxPhoto } from "../native-create/adapters";
 import { registerVerifiedBotContact } from "./verified-contact-registration";
 
@@ -52,6 +52,7 @@ export async function handleExternalPersonMaxContact(
   return {
     text: `Номер подтверждён. Откройте «Мои передачи» или «Создать передачу»:\n${url}`,
     replyMarkup: menuReplyKeyboard(),
+    inlineButtons: buildMainMenuInline("max").maxInlineButtons,
   };
 }
 

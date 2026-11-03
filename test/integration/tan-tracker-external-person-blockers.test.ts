@@ -3,6 +3,7 @@ import { after, before, describe, it } from "node:test";
 import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { getPool, closePool, resetPoolForTests } from "../../src/db/pool";
+import { withTransaction as tx } from "../../src/access/db";
 import { upsertVerifiedPerson } from "../../src/tan-tracker/external-person/person-service";
 import { confirmExternalRequestDraft } from "../../src/tan-tracker/external-request/confirm";
 import { loadExternalPersonOrders } from "../../src/tan-tracker/external-person/external-person-orders";
@@ -66,7 +67,41 @@ describe("external person blocker fixes", { concurrency: false }, () => {
     }
   });
 
-  it("rejects unknown phone self-registration on bot verify", async () => {
+  it("serializes approved MAX/Telegram self-registration into one canonical person and party", async () => {
+    const phoneRaw = "+79992220420";
+    const rows = await Promise.all((["max", "telegram"] as const).map(channel => tx(c => upsertVerifiedPerson(c, {
+      channel, messengerUserId: 90420n, messengerChatId: 90420n, phoneRaw,
+      displayName: "Synthetic concurrent contact", allowSelfRegistration: true,
+    }))));
+    assert.equal(rows[0].id, rows[1].id);
+    assert.equal(rows[0].party_id, rows[1].party_id);
+    assert.equal((await getPool()!.query(`SELECT COUNT(*)::int n FROM tt_external_persons
+      WHERE phone_e164=$1`, [phoneRaw])).rows[0].n, 1);
+    assert.equal((await getPool()!.query(`SELECT COUNT(*)::int n FROM tt_parties
+      WHERE phone_e164=$1 AND kind='external' AND created_by_user_id IS NULL`, [phoneRaw])).rows[0].n, 1);
+    assert.equal((await getPool()!.query(`SELECT COUNT(*)::int n FROM tt_external_person_verifications
+      WHERE person_id=$1`, [rows[0].id])).rows[0].n, 2);
+  });
+
+  it("does not rebind one messenger identity during concurrent different-phone registration", async () => {
+    const phones = ["+79992220421", "+79992220422"];
+    const outcomes = await Promise.allSettled(phones.map(phoneRaw => tx(c => upsertVerifiedPerson(c, {
+      channel: "telegram", messengerUserId: 90421n, messengerChatId: 90421n,
+      phoneRaw, displayName: "Synthetic conflicting contact", allowSelfRegistration: true,
+    }))));
+    assert.equal(outcomes.filter(r => r.status === "fulfilled").length, 1);
+    const rejected = outcomes.find(r => r.status === "rejected");
+    assert.ok(rejected && rejected.status === "rejected");
+    assert.equal(rejected.reason.http, 409);
+    assert.equal((await getPool()!.query(`SELECT COUNT(*)::int n FROM tt_external_persons
+      WHERE phone_e164=ANY($1::text[])`, [phones])).rows[0].n, 1);
+    assert.equal((await getPool()!.query(`SELECT COUNT(*)::int n FROM tt_parties
+      WHERE phone_e164=ANY($1::text[])`, [phones])).rows[0].n, 1);
+    assert.equal((await getPool()!.query(`SELECT COUNT(*)::int n FROM tt_external_person_verifications
+      WHERE channel='telegram' AND messenger_user_id='90421'`)).rows[0].n, 1);
+  });
+
+  it("keeps unknown-phone registration denied unless the verified-contact caller explicitly permits it", async () => {
     const pool = getPool()!;
     const client = await pool.connect();
     try {

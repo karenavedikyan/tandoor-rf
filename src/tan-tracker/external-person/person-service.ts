@@ -4,6 +4,8 @@ import { mintExternalPersonSessionToken } from "./session-token";
 import { requireHandoffOtpPepper } from "../otp-config";
 import { resolveKnownExternalPartyByPhone } from "./known-party";
 import { assertPersonHasVerificationChannel, type ExternalMessengerChannel } from "./messenger-provenance";
+import { lockPhonePartyResolution, resolveOrCreateGlobalExternalPartyByPhone } from "../phone-party-resolver";
+import { lockTanbotMaxMessenger, lockTanbotTelegramMessenger } from "../../tanbot/link-advisory-locks";
 
 export type ExternalPersonRow = {
   id: string;
@@ -36,24 +38,35 @@ export async function upsertVerifiedPerson(
     messengerChatId: bigint;
     phoneRaw: string;
     displayName: string | null;
+    /** Set only after the messenger has authenticated an own-contact event. */
+    allowSelfRegistration?: boolean;
   },
 ): Promise<ExternalPersonRow> {
   const phone = normalizeRuPhoneE164(input.phoneRaw);
   if (!phone) {
     throw Object.assign(new Error("Некорректный номер телефона."), { http: 400 });
   }
+  // Serialize one messenger identity, then one phone across both channels.
+  // Keep the phone lock through person/verification creation in the caller's transaction.
+  await (input.channel === "telegram" ? lockTanbotTelegramMessenger : lockTanbotMaxMessenger)(
+    client, input.messengerUserId,
+  );
+  await lockPhonePartyResolution(client, phone);
   const existingByMessenger = await findPersonByMessenger(client, input.channel, input.messengerUserId);
   if (existingByMessenger && existingByMessenger.phone_e164 !== phone) {
     throw Object.assign(new Error("Этот мессенджер уже привязан к другому номеру."), { http: 409 });
   }
   const known = await resolveKnownExternalPartyByPhone(client, phone);
-  if (!known) {
+  if (!known && !input.allowSelfRegistration) {
     throw Object.assign(
       new Error("Номер не найден среди контактов Тандор. Попросите сотрудника добавить вас в передачу."),
       { http: 403 },
     );
   }
-  const partyId = known.partyId;
+  const name = (known?.displayName || input.displayName || "Клиент").trim().slice(0, 200) || "Клиент";
+  const partyId = known?.partyId ?? await resolveOrCreateGlobalExternalPartyByPhone(client, {
+    phoneE164: phone, displayName: name, createdByUserId: null,
+  });
   let person = (
     await client.query<ExternalPersonRow>(
       `SELECT id::text, phone_e164, display_name, party_id::text FROM tt_external_persons WHERE phone_e164 = $1 LIMIT 1`,
@@ -61,7 +74,6 @@ export async function upsertVerifiedPerson(
     )
   ).rows[0];
   if (!person) {
-    const name = (known.displayName || input.displayName || "Клиент").trim().slice(0, 200) || "Клиент";
     person = (
       await client.query<ExternalPersonRow>(
         `INSERT INTO tt_external_persons (phone_e164, display_name, party_id)
