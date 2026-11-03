@@ -3,6 +3,13 @@ import { describe, it } from "node:test";
 import { buildForwardInvitationGuidance } from "../../src/tanbot/native-create/forward-invitation-guidance";
 
 describe("sender forward-invitation guidance", () => {
+  it("continuation preserves invitation and OTP requirements without announcing a new track", () => {
+    const text = buildForwardInvitationGuidance("TT-2026-19", true);
+    assert.match(text, /назначен следующий получатель/);
+    assert.match(text, /Перешлите|Переслать/);
+    assert.match(text, /Ответственность перейдёт только после проверки кода/);
+    assert.doesNotMatch(text, /Передача создана/);
+  });
   it("leads with getting the recipient code, then explains forwarding the next message concisely", () => {
     const text = buildForwardInvitationGuidance("TT-2026-015");
     assert.equal(text.split("\n")[0], "ПОЛУЧИТЕ КОД У ПОЛУЧАТЕЛЯ!");

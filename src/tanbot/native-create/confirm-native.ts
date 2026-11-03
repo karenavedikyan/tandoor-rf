@@ -14,10 +14,10 @@ import { nextPublicTransferCode } from "../../tan-tracker/repository";
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
 import { tanTrackerCanWrite } from "../../tan-tracker/guards";
 import type { NativeCreateDraftPayload } from "./draft-scope";
-import { buildExternalPendingInviteMessage } from "./invitation-handoff";
+import { prepareNativeRecipientCodeDelivery } from "./invitation-handoff";
 import { resolveNativeExternalPendingPartyByPhone } from "./native-external-recipient-by-phone";
 import { notifyAdminsOfNewTrack } from "../../tan-tracker/admin-overview";
-import { enqueueAutomaticReceiptCode, automaticReceiptSenderGuidance } from "../../tan-tracker/automatic-receipt-codes";
+import { automaticReceiptSenderGuidance } from "../../tan-tracker/automatic-receipt-codes";
 
 async function stageDraftFilesForStaff(
   client: PoolClient,
@@ -157,22 +157,20 @@ export async function confirmNativeStaffDraft(
   );
   const pRow = pending.rows[0];
   const status = formatNotificationTransferState(await buildNotificationTransferState(client, publicCode));
-  if (await enqueueAutomaticReceiptCode(client,publicCode,input.channel)) {
-    return {publicCode,resultText:automaticReceiptSenderGuidance(publicCode)};
-  }
   if (pRow?.pending_party_id) {
-    const invite = await buildExternalPendingInviteMessage(client, {
+    const delivery = await prepareNativeRecipientCodeDelivery(client, {
       transferId: publicCode,
       pendingPartyId: pRow.pending_party_id,
       handoffVersion: pRow.handoff_version,
       channel: input.channel,
       allowUserParty:true,
     });
-    if (invite) {
+    if (delivery.automaticReceipt) return { publicCode, resultText: automaticReceiptSenderGuidance(publicCode) };
+    if (delivery.forwardInvitationText) {
       return {
         publicCode,
         resultText: `Передача создана: ${publicCode}.\n\n${status}\n\nСледом придёт готовое приглашение. Перешлите его получателю целиком.\n\n${SENDER_HANDOFF_GUIDANCE}\nКарточка доступна через «Мои передачи».`,
-        forwardInvitationText: invite,
+        forwardInvitationText: delivery.forwardInvitationText,
       };
     }
   }
@@ -355,8 +353,7 @@ export async function confirmNativeExternalToExternalDraft(
     );
   }
 
-  const automaticReceipt=await enqueueAutomaticReceiptCode(client,publicCode,input.channel);
-  const forwardInvitationText = automaticReceipt ? null : await buildExternalPendingInviteMessage(client, {
+  const { automaticReceipt, forwardInvitationText } = await prepareNativeRecipientCodeDelivery(client, {
     transferId: publicCode,
     pendingPartyId: recipientPartyId,
     handoffVersion: 1,

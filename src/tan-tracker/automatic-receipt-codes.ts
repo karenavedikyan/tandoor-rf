@@ -67,8 +67,41 @@ export type AutomaticReceiptTransport = (input: {
 export const automaticReceiptCallback = (id: string) => `ac:${id}`;
 export const isAutomaticReceiptCallback = (s: string) =>
   /^ac:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
-export const automaticReceiptSenderGuidance = (code: string) =>
-  `Передача создана: ${code}.\n\nКод будет отправлен получателю в подключённый бот. Пересылать приглашение не нужно.\nПопросите получателя назвать код при получении предмета, затем нажмите «Ввести код».\nЕсли сообщение не пришло, в «Моих передачах» доступно «Обновить приглашение».`;
+export const automaticReceiptSenderGuidance = (code: string, existingTrack = false) =>
+  `${existingTrack ? `Для трека ${code} назначен следующий получатель.` : `Передача создана: ${code}.`}\n\nКод будет отправлен получателю в подключённый бот. Пересылать приглашение не нужно.\nПопросите получателя назвать код при получении предмета, затем нажмите «Ввести код».\nОтветственность перейдёт только после проверки кода.\nЕсли сообщение не пришло, нажмите «Запросить код повторно».`;
+
+async function queueAutomaticReceiptRenewal(client: PoolClient, id: string): Promise<void> {
+  await client.query(
+    `UPDATE tt_automatic_receipt_codes SET generation=generation+1,status='pending',
+    encrypted_code=NULL,code_hash=NULL,code_expires_at=NULL,header_sent_at=NULL,sent_at=NULL,
+    attempt_count=0,next_attempt_at=NOW(),last_error_code=NULL WHERE id=$1::uuid`, [id],
+  );
+}
+
+/** A holder requests delivery, never acts as the recipient and never receives the code. */
+export async function requestAutomaticReceiptCodeByHolder(
+  client: PoolClient,
+  input: { transferId: string; holderPartyId: string; handoffVersion: number; channel: ReceiptChannel },
+): Promise<"queued" | "manual" | "unavailable" | "cooldown"> {
+  const t = (await client.query<Transfer>(
+    "SELECT * FROM tt_transfers WHERE id=$1 FOR UPDATE", [input.transferId],
+  )).rows[0];
+  if (!t || t.holder_party_id !== input.holderPartyId || t.handoff_version !== input.handoffVersion ||
+      !t.pending_party_id || t.pending_party_id === t.holder_party_id || t.deleted_at ||
+      t.general_archived_at || !["waiting", "active"].includes(t.status)) return "unavailable";
+  if (!await enqueueAutomaticReceiptCode(client, t.id, input.channel)) return "manual";
+  const j = (await client.query<Job>(
+    "SELECT * FROM tt_automatic_receipt_codes WHERE transfer_id=$1 AND handoff_version=$2 FOR UPDATE",
+    [t.id, t.handoff_version],
+  )).rows[0];
+  // Never silently retarget an existing job after a messenger rebind.
+  if (!j || !open(t, j) || !await targetStillMatches(client, j)) return "manual";
+  if (j.code_expires_at && Date.now() - (j.code_expires_at.getTime() - HANDOFF_CODE_TTL_MS) < 60_000) {
+    return "cooldown";
+  }
+  await queueAutomaticReceiptRenewal(client, j.id);
+  return "queued";
+}
 
 export async function enqueueAutomaticReceiptCode(
   client: PoolClient,
@@ -423,12 +456,7 @@ export async function handleAutomaticReceiptCallback(
     return {
       text: "Повторный запрос доступен через минуту после выдачи кода.",
     };
-  await client.query(
-    `UPDATE tt_automatic_receipt_codes SET generation=generation+1,status='pending',
-    encrypted_code=NULL,code_hash=NULL,code_expires_at=NULL,header_sent_at=NULL,sent_at=NULL,
-    attempt_count=0,next_attempt_at=NOW(),last_error_code=NULL WHERE id=$1::uuid`,
-    [id],
-  );
+  await queueAutomaticReceiptRenewal(client, id);
   return {
     text: "Запрошен новый код. Он придёт отдельным сообщением в этот чат.",
   };

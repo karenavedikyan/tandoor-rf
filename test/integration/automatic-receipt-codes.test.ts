@@ -15,8 +15,12 @@ import {
   processAutomaticReceiptCodes,
   handleAutomaticReceiptCallback,
   automaticReceiptCallback,
+  requestAutomaticReceiptCodeByHolder,
   type AutomaticReceiptTransport,
 } from "../../src/tan-tracker/automatic-receipt-codes";
+import { buildMaxNativeCreateContext, buildTelegramNativeCreateContext } from "../../src/tanbot/native-create/adapters";
+import { handleNativeCreateCallback, handleNativeCreateMessage, type NativeCreateReply } from "../../src/tanbot/native-create/engine";
+import { buildReceiptEntryCallback } from "../../src/tanbot/receipt-entry-callback";
 import { generateHandoffCodeForPendingParty } from "../../src/tan-tracker/handoff-code-generate";
 import { hashOtp } from "../../src/tan-tracker/phone-verification";
 import { requireHandoffOtpPepper } from "../../src/tan-tracker/otp-config";
@@ -101,8 +105,8 @@ async function actor(channel: Channel, staff = false): Promise<Actor> {
   );
   return { party, person, user, chat, phone, channel };
 }
-async function transfer(to: Actor) {
-  const from = await actor(to.channel),
+async function transfer(to: Actor, fromStaff = true) {
+  const from = await actor(to.channel, fromStaff),
     id = `TT-AUTO-${++sequence}`;
   await p().query(
     `INSERT INTO tt_transfers(id,public_code,item_title,status,creator_party_id,holder_party_id,pending_party_id,final_recipient_party_id,handoff_version)
@@ -123,8 +127,8 @@ const jobs = async (id: string) =>
       [id],
     )
   ).rows;
-async function queued(to: Actor) {
-  const t = await transfer(to);
+async function queued(to: Actor, fromStaff = true) {
+  const t = await transfer(to, fromStaff);
   assert.equal(
     await tx((c) => enqueueAutomaticReceiptCode(c, t.id, to.channel)),
     true,
@@ -150,6 +154,26 @@ async function callback(a: Actor, id: string) {
       payload: automaticReceiptCallback(id),
     }),
   );
+}
+async function native(a: Actor, text = "", data?: string): Promise<NativeCreateReply> {
+  return tx(async c => {
+    const ctx = a.channel === "max"
+      ? await buildMaxNativeCreateContext(c, { chatId: BigInt(a.chat), maxUserId: BigInt(a.user), recipientChatType: "dialog" })
+      : await buildTelegramNativeCreateContext(c, { chatId: BigInt(a.chat), telegramUserId: BigInt(a.user), privateDialogOk: true });
+    const reply = data ? await handleNativeCreateCallback(c, ctx, data) : await handleNativeCreateMessage(c, ctx, text);
+    assert.ok(reply);
+    return reply;
+  });
+}
+function nativeButtons(reply: NativeCreateReply) {
+  return (reply.telegramInlineKeyboard ?? reply.maxInlineButtons ?? []).flat() as Array<{
+    text: string; callback_data?: string; payload?: string;
+  }>;
+}
+function nativeButton(reply: NativeCreateReply, text: string): string {
+  const b = nativeButtons(reply).find(b => b.text === text);
+  assert.ok(b, JSON.stringify(reply));
+  return b.callback_data ?? b.payload!;
 }
 const collect =
   (
@@ -610,6 +634,99 @@ describe(
         });
         assert.equal(out.length, 0);
         assert.equal((await jobs(t.id))[0].status, "cancelled");
+      });
+      for (const holderStaff of [true, false]) for (const recipientStaff of [true, false]) {
+        it(`${channel}: native continuation ${holderStaff ? "staff" : "external"} to original ${recipientStaff ? "staff" : "external"} sender reuses creation delivery, history and canonical OTP`, async () => {
+          const a = await actor(channel, holderStaff), t = await queued(a, recipientStaff);
+          // Staff can select only their eligible external contacts; do not widen the production catalog.
+          if (holderStaff && !recipientStaff) {
+            await p().query("UPDATE tt_parties SET created_by_user_id=$2 WHERE id=$1", [t.from.party, a.staff]);
+          }
+          const initial: Parameters<AutomaticReceiptTransport>[0][] = [];
+          await processAutomaticReceiptCodes(p(), { channel, transport: collect(initial), deliveryEnabled: true });
+          assert.equal(initial.length, 2);
+          await tx(async c => {
+            const row = (await c.query("SELECT * FROM tt_transfers WHERE id=$1 FOR UPDATE", [t.id])).rows[0];
+            assert.equal((await verifyPendingReceiptCode(c, {
+              row, code: initial[1].text, auditUserId: t.from.staff ?? null, actingPartyId: t.from.party, botReply: true,
+            })).ok, true);
+          });
+          const received = (await p().query("SELECT * FROM tt_transfers WHERE id=$1", [t.id])).rows[0];
+          assert.equal(received.holder_party_id, a.party);
+          const existingHistory = (await p().query("SELECT id FROM tt_transfer_timeline WHERE transfer_id=$1", [t.id])).rows;
+          const parties = Number((await p().query("SELECT COUNT(*) FROM tt_parties")).rows[0].count);
+          let reply = await native(a, "", buildReceiptEntryCallback("forward", t.id, received.handoff_version)!);
+          assert.match(reply.text, /Передать дальше/);
+          reply = await native(a, t.from.phone);
+          for (let step = 0; step < 6 && !nativeButtons(reply).some(b => b.text === "Передать дальше"); step++) {
+            const next = nativeButtons(reply).find(b => /^(Далее|Подтвердить имя|Synthetic staff|Synthetic receiver)/.test(b.text));
+            reply = next ? await native(a, "", next.callback_data ?? next.payload)
+              : await native(a, recipientStaff ? "Synthetic staff" : "Synthetic receiver");
+          }
+          assert.match(reply.text, /Продолжится этот же трек/);
+          assert.doesNotMatch(reply.text, /затем перешлите приглашение/);
+          const confirmed = await native(a, "", nativeButton(reply, "Передать дальше"));
+          assert.match(confirmed.text, /Код будет отправлен получателю в подключённый бот/);
+          assert.match(confirmed.text, /Пересылать приглашение не нужно/);
+          assert.doesNotMatch(confirmed.text, /Передача создана/);
+          assert.equal(confirmed.forwardInvitationText, undefined);
+          const pending = (await p().query("SELECT * FROM tt_transfers WHERE id=$1", [t.id])).rows[0];
+          assert.equal(pending.holder_party_id, a.party);
+          assert.equal(pending.pending_party_id, t.from.party);
+          for (const key of ["id", "public_code", "item_title", "final_recipient_party_id", "comment"]) {
+            assert.equal(pending[key], received[key]);
+          }
+          assert.equal(pending.due_at?.getTime(), received.due_at?.getTime());
+          assert.equal(Number((await p().query("SELECT COUNT(*) FROM tt_parties")).rows[0].count), parties);
+          assert.equal(Number((await p().query("SELECT COUNT(*) FROM tt_transfers WHERE id=$1", [t.id])).rows[0].count), 1);
+          const laterHistory = new Set((await p().query("SELECT id FROM tt_transfer_timeline WHERE transfer_id=$1", [t.id])).rows.map(r => r.id));
+          for (const h of existingHistory) assert.ok(laterHistory.has(h.id));
+          const out: Parameters<AutomaticReceiptTransport>[0][] = [];
+          await processAutomaticReceiptCodes(p(), { channel, transport: collect(out), deliveryEnabled: true });
+          assert.equal(out.length, 2);
+          assert.ok(out.every(m => m.userId === t.from.user && m.channel === channel));
+          assert.doesNotMatch(confirmed.text, new RegExp(out[1].text));
+          const entry = await native(a, "", nativeButton(confirmed, "Ввести код"));
+          const currentJob = (await jobs(t.id)).find(j => j.handoff_version === pending.handoff_version)!;
+          const cooldown = await native(a, "", nativeButton(entry, "Запросить код повторно"));
+          assert.match(cooldown.text, /через минуту/);
+          assert.equal((await jobs(t.id)).find(j => j.id === currentJob.id)!.generation, currentJob.generation);
+          await expire(t.id);
+          const retry = await native(a, "", nativeButton(entry, "Запросить код повторно"));
+          assert.match(retry.text, /повторная отправка кода получателю в подключённый бот/);
+          assert.equal(retry.forwardInvitationText, undefined);
+          const renewed: Parameters<AutomaticReceiptTransport>[0][] = [];
+          await processAutomaticReceiptCodes(p(), { channel, transport: collect(renewed), deliveryEnabled: true });
+          assert.equal(renewed.length, 2);
+          assert.ok(renewed.every(m => m.userId === t.from.user));
+          assert.doesNotMatch(retry.text, new RegExp(renewed[1].text));
+          assert.equal((await p().query("SELECT holder_party_id FROM tt_transfers WHERE id=$1", [t.id])).rows[0].holder_party_id, a.party);
+          const receipt = await native(a, renewed[1].text);
+          assert.match(receipt.text, /Получение подтверждено/);
+          const after = (await p().query("SELECT * FROM tt_transfers WHERE id=$1", [t.id])).rows[0];
+          assert.equal(after.holder_party_id, t.from.party);
+          assert.equal(after.pending_party_id, null);
+          assert.notEqual(after.status, "completed");
+        });
+      }
+      it(`${channel}: holder resend rejects foreign, stale, closed and general-archived requests without changing jobs`, async () => {
+        const a = await actor(channel), t = await queued(a);
+        const before = await jobs(t.id);
+        for (const input of [
+          { holderPartyId: a.party, handoffVersion: 1 },
+          { holderPartyId: t.from.party, handoffVersion: 0 },
+        ]) {
+          assert.equal(await tx(c => requestAutomaticReceiptCodeByHolder(c, { transferId: t.id, channel, ...input })), "unavailable");
+        }
+        for (const sql of ["status='completed',completed_at=NOW()", "status='obsolete'", "general_archived_at=NOW()", "deleted_at=NOW()"]) {
+          await tx(async c => {
+            await c.query("SAVEPOINT guarded_case");
+            await c.query(`UPDATE tt_transfers SET ${sql} WHERE id=$1`, [t.id]);
+            assert.equal(await requestAutomaticReceiptCodeByHolder(c, { transferId: t.id, channel, holderPartyId: t.from.party, handoffVersion: 1 }), "unavailable");
+            await c.query("ROLLBACK TO SAVEPOINT guarded_case");
+          });
+        }
+        assert.deepEqual(await jobs(t.id), before);
       });
       it(`${channel}: continuing the same track enqueues only the new stage and invalidates old refresh`, async () => {
         const a = await actor(channel),
