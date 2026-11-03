@@ -197,6 +197,28 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
   });
   after(async () => { globalThis.fetch = originalFetch; await closePool(); assert.equal(networkCalls, 0); });
   for (const channel of ["max", "telegram"] as const) {
+    it(`${channel}: an unverified person's typed phone returns own-contact guidance without identity, session or draft writes`, async () => {
+      const id = ++seq, a: Actor = { channel, id, chat: channel === "max" ? id + 100000 : id, party: "" };
+      const snapshot = async () => (await p().query(`SELECT jsonb_build_object(
+        'persons',(SELECT COUNT(*) FROM tt_external_persons),
+        'verifications',(SELECT COUNT(*) FROM tt_external_person_verifications),
+        'drafts',(SELECT COUNT(*) FROM tt_external_request_drafts),
+        'sessions',(SELECT COUNT(*) FROM tt_external_person_sessions),
+        'transfers',(SELECT COUNT(*) FROM tt_transfers)) AS value`)).rows[0].value;
+      const before = await snapshot();
+      const create = await send(a, "Создать передачу");
+      assert.match(create.text, /Номер, введённый текстом, не подтверждает/);
+      for (const phone of ["89990001234", "9990001234", "+7 (999) 000-12-34"]) {
+        const reply = await send(a, phone);
+        assert.match(reply.text, /Номер ещё не подтверждён/);
+        assert.match(reply.text, /Нажмите «Отправить мой номер»/);
+        assert.ok(reply.buttons.some(b => b.text === "Отправить мой номер"));
+        assert.doesNotMatch(reply.text, /Дополнительные действия|Что передаёте|Что передаете/);
+        assert.deepEqual(await snapshot(), before);
+      }
+      await send(a, "89990001234", undefined, undefined, false);
+      assert.deepEqual(await snapshot(), before, "group input must not create trusted identity or draft");
+    });
     for (const staff of [true, false]) {
       it(`${channel}: ${staff ? "staff" : "external"} pending cancellation is confirmed, terminal, distinct from completion and never a receipt`, async () => {
         const a = await actor(channel, staff), t = await seed(a);

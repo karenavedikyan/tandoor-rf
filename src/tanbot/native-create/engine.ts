@@ -1111,6 +1111,11 @@ export async function handleNativeCreateMessage(
     return startOrResumeCreate(client, ctx);
   }
 
+  if (ctx.privateDialogOk && !ctx.isLinkedStaff && !ctx.personId && normalizeRuPhoneE164(trimmed)) {
+    const { nativeVerifiedContactRequiredReply } = await import("./main-menu");
+    return nativeVerifiedContactRequiredReply(ctx, "Номер ещё не подтверждён.");
+  }
+
   await lockNativeCreateMessenger(client, ctx);
   try {
     await assertNativeCreateContext(client, ctx);

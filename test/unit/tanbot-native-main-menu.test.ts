@@ -11,9 +11,26 @@ import {
   NATIVE_MAIN_MENU_ACTION_PROMPT,
   nativeMainMenuText,
   isNativeCreateMenuText,
+  nativeVerifiedContactRequiredReply,
 } from "../../src/tanbot/native-create/main-menu";
 
 describe("native main menu helpers", () => {
+  it("own-phone gate explains the trusted contact requirement with provider-native buttons", () => {
+    for (const channel of ["max", "telegram"] as const) {
+      const reply = nativeVerifiedContactRequiredReply({
+        channel, messengerChatId: "1", messengerUserId: 1n, privateDialogOk: true,
+        isLinkedStaff: false, staffUserId: null, personId: null,
+      }, "Подтвердите номер телефона.");
+      assert.match(reply.text, /Нажмите «Отправить мой номер»/);
+      assert.match(reply.text, /Номер, введённый текстом, не подтверждает/);
+      assert.equal(reply.requestContact, true);
+      if (channel === "max") assert.equal(reply.maxInlineButtons?.[0]?.[0]?.type, "request_contact");
+      else {
+        const markup = reply.replyMarkup as { keyboard: Array<Array<{ request_contact?: boolean }>> };
+        assert.equal(markup.keyboard[0]?.[0]?.request_contact, true);
+      }
+    }
+  });
   it("parseNativeBotSlashCommand accepts exact commands with optional @bot suffix", () => {
     assert.equal(parseNativeBotSlashCommand("/start"), "start");
     assert.equal(parseNativeBotSlashCommand("/start@Tandoor_bot"), "start");
