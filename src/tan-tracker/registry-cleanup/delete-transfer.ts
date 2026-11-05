@@ -34,6 +34,10 @@ export async function deleteTransferBeforeFirstCustody(
   );
   await cancelQueuedNotificationsForTransferDelete(client, row.id);
   await clearPersonalFlagsForTransfer(client, row.id);
+  // ON DELETE SET NULL would reactivate historical bot drafts and collide with
+  // the one-active-draft-per-chat index. Remove only this transfer's confirmed
+  // drafts (and their cascading file metadata), never the chat's active draft.
+  await client.query(`DELETE FROM tt_external_request_drafts WHERE confirmed_transfer_id = $1`, [row.id]);
   await client.query(`DELETE FROM tt_transfers WHERE id = $1`, [row.id]);
   return { ok: true, publicCode };
 }
