@@ -44,10 +44,10 @@ describe("assistant assignments: coordinator-only decisions and scoped access", 
     const r = await get(who, "/api/clients/v3/list?entity=legal&pageSize=100");
     assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.total as number;
   }
-  it("coordinator and admin approve; director, ROP, manager-as-non-author cannot approve", async () => {
+  it("coordinator and admin approve; out-of-team ROP and ordinary users cannot approve", async () => {
     const id = await create();
     assert.equal(await total(), 0);
-    for (const role of ["director", "rop", "manager", "assistant"]) {
+    for (const role of ["rop", "manager", "assistant"]) {
       assert.equal((await decide(id, "approve", role)).status, 403, role);
     }
     const adminBypass = await request(app).post("/api/admin/access/delegations/" + id + "/record-approval")
@@ -121,7 +121,7 @@ describe("assistant assignments: coordinator-only decisions and scoped access", 
     const id = await create({ delegatorUserId: users.manager2!.id, clientGuids: [FOREIGN_LEGAL] }, "coordinator");
     assert.equal((await decide(id, "approve")).status, 200); assert.equal(await total(), 1);
     assert.equal((await get("coordinator", "/api/access/coordinator-managers")).status, 200);
-    assert.equal((await get("director", "/api/access/delegations/" + id)).body.delegation.canReview, false);
+    assert.equal((await get("director", "/api/access/delegations/" + id)).body.delegation.canReview, true);
     assert.equal((await get("assistant", "/api/clients/v3/legal/" + LEGAL)).status, 404);
   });
   it("overlapping approvals are serialized across different assistants", async () => {

@@ -37,7 +37,13 @@ describe("LK admin capability policy", () => {
     assert.equal(lkCanAuthorAssignment("manager", "m1", "m1"), true);
     assert.equal(lkCanAuthorAssignment("manager", "m2", "m1"), false);
     assert.equal(lkCanCoordinatorAssignmentDecisions("admin"), true);
-    assert.equal(lkCanCoordinatorAssignmentDecisions("director"), false);
+    assert.equal(lkCanCoordinatorAssignmentDecisions("director"), true);
+    assert.equal(lkCanCoordinatorAssignmentDecisions("rop"), true);
+    assert.equal(lkCanAuthorAssignment("director", "d1", "m1"), true);
+    assert.equal(lkCanAuthorAssignment("rop", "r1", "m1"), true); // Requires a server-side current-team check.
+    assert.equal(lkCanReadAssignmentActivity("rop"), true);
+    assert.equal(lkCanSubmitAssignmentReview("director"), false);
+    assert.equal(lkCanSubmitAssignmentReview("rop"), false);
     assert.equal(lkCanReadAssignmentActivity("admin"), true);
     assert.equal(lkCanReadAssignmentReviewsOverview("admin"), true);
     assert.equal(lkCanSubmitAssignmentReview("admin"), false);

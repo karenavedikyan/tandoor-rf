@@ -34,8 +34,8 @@
     app.className="aa";
     app.innerHTML='<nav class="aa-tabs" aria-label="Представления назначений">'+
       button("list","Назначения",'aria-pressed="'+(view==="list")+'"')+
-      (["manager","coordinator","admin"].includes(user.role)?button("new","Новое назначение","",view==="new"?"aa-primary":""):"")+
-      (["coordinator","director","admin"].includes(user.role)?button("activity","Активность РОА",'aria-pressed="'+(view==="activity")+'"'):"")+
+      (["manager","coordinator","director","rop","admin"].includes(user.role)?button("new","Новое назначение","",view==="new"?"aa-primary":""):"")+
+      (["coordinator","director","rop","admin"].includes(user.role)?button("activity","Журнал распределения",'aria-pressed="'+(view==="activity")+'"'):"")+
       (["manager","coordinator","director","admin"].includes(user.role)?button("reviews",user.role==="manager"?"Оценить работу":"Оценки ассистентов",'aria-pressed="'+(view==="reviews")+'"'):"")+
       '</nav><p id="aa-status" class="aa-muted" role="status" aria-live="polite"></p><div id="aa-view"></div><div id="aa-detail"></div>'+
       '<dialog id="aa-decision" class="aa-dialog"><form id="aa-decision-form"><h2 id="aa-decision-title"></h2><p id="aa-decision-note"></p><label>Основание или комментарий<textarea id="aa-decision-reason" minlength="5" maxlength="2000" required></textarea></label><p id="aa-decision-error" class="aa-error" role="alert"></p><div class="aa-actions">'+button("close-dialog","Отмена")+'<button type="submit" class="aa-primary">Подтвердить</button></div></form></dialog>';
@@ -47,8 +47,8 @@
   async function run(fn) { try{await fn();}catch(err){note(err.message||"Ошибка запроса.",true);} }
   function renderList() {
     var activity=view==="activity";
-    $("aa-view").innerHTML='<section class="aa-box" id="aa-list-box"><div class="aa-toolbar"><h2>'+ (activity?"Активность координатора":"Назначения и заявки")+"</h2>"+button("fullscreen","На весь экран")+'</div>'+
-      (activity?'<p class="aa-muted">Решения, основания и условия на момент действия.</p>':user.role==="coordinator"?'<p class="aa-note">Вы РОА (руководитель отдела ассистентов), координатор и единственный согласующий. В очереди заявки всех территорий.</p>':user.role==="admin"?'<p class="aa-note">Администратор: полный доступ к назначениям — подготовка, согласование и журнал. Обязательную оценку по-прежнему оставляет передающий менеджер.</p>':"")+
+    $("aa-view").innerHTML='<section class="aa-box" id="aa-list-box"><div class="aa-toolbar"><h2>'+ (activity?"Журнал распределения":"Назначения и заявки")+"</h2>"+button("fullscreen","На весь экран")+'</div>'+
+      (activity?'<p class="aa-muted">Решения РОА и руководителей, основания и условия на момент действия.</p>':user.role==="coordinator"?'<p class="aa-note">Вы РОА: основное распределение ассистентов и согласование заявок всех территорий. Директор и РОП своих команд могут подменить вас.</p>':user.role==="director"?'<p class="aa-note">Директор: создание, согласование, изменение и отзыв назначений по всей компании.</p>':user.role==="rop"?'<p class="aa-note">РОП: создание, согласование, изменение и отзыв назначений только в своей текущей команде.</p>':user.role==="admin"?'<p class="aa-note">Администратор: полный доступ к назначениям — подготовка, согласование и журнал. Обязательную оценку по-прежнему оставляет передающий менеджер.</p>':"")+
       '<form id="aa-list-filter" class="aa-toolbar"><label>Поиск<input name="q" type="search" placeholder="'+(activity?"Сотрудник, основание":"Менеджер, ассистент, номер")+'" value="'+e(listQuery)+'"></label>'+
       (activity?'<label>Действие<select name="action"><option value="">Все действия</option>'+Object.keys(labels).map(function(k){return '<option value="'+k+'" '+(k===historyAction?"selected":"")+">"+e(labels[k])+"</option>";}).join("")+'</select></label>':
         '<label>Статус<select name="status">'+[["","Все назначения"],["queue","На согласовании"],["active","Согласованные"],["draft","Черновики и возвраты"],["archive","Архив"]].map(function(x){return '<option value="'+x[0]+'" '+(x[0]===listStatus?"selected":"")+">"+x[1]+"</option>";}).join("")+'</select></label>')+
@@ -63,8 +63,8 @@
     var data=await request((activity?"/assignments/activity?":"/assignments?")+p);
     if(seq!==listSeq||!$("aa-list-data"))return;
     var html="";
-    if(!activity&&data.coordinatorCount===0&&["manager","coordinator"].includes(user.role)) html+='<p class="aa-note">РОА (координатор) пока не назначен. Заявки сохранятся в очереди, но доступ не откроется до согласования.</p>';
-    if(!data.items.length) html+='<p class="aa-muted">Здесь пока нет '+(activity?"действий координатора":"назначений с выбранными условиями")+'. '+(!listQuery&&!listStatus&&user.role==="manager"?"Создайте новое назначение.":"Попробуйте изменить фильтры.")+"</p>";
+    if(!activity&&data.coordinatorCount===0&&["manager","coordinator"].includes(user.role)) html+='<p class="aa-note">РОА пока не назначен. Заявки также могут согласовать директор или РОП своей команды.</p>';
+    if(!data.items.length) html+='<p class="aa-muted">Здесь пока нет '+(activity?"действий РОА и руководителей":"назначений с выбранными условиями")+'. '+(!listQuery&&!listStatus&&user.role==="manager"?"Создайте новое назначение.":"Попробуйте изменить фильтры.")+"</p>";
     else html+='<div class="aa-scroll" tabindex="0" aria-label="Таблица назначений, прокрутка в двух направлениях"><table><thead><tr>'+
       (activity?"<th>Когда и кто</th><th>Действие</th><th>Назначение и условия</th><th>Основание</th>":"<th>Менеджер</th><th>Ассистент</th><th>Клиенты / юрлица</th><th>Период, МСК</th><th>Статус</th><th></th>")+
       "</tr></thead><tbody>"+data.items.map(function(d){
@@ -95,7 +95,7 @@
     if(["draft","pending_approval"].includes(d.status)&&author)actions+=button("cancel","Отменить заявку");
     if(d.status==="active"&&review)actions+=button("revoke","Отозвать доступ","","aa-danger");
     $("aa-detail").innerHTML='<section class="aa-box"><div class="aa-toolbar"><h2>Назначение №'+e(d.id.slice(0,8))+"</h2>"+button("close-detail","Закрыть")+'</div><div class="aa-grid"><div><span class="aa-muted">Передающий менеджер</span><p>'+e(d.delegator_name)+'</p></div><div><span class="aa-muted">Ассистент</span><p>'+e(d.assistant_name)+'</p></div></div><p><span class="aa-tag">'+e(d.effective_label)+'</span></p><p>'+e(dt.formatMskDisplay(d.starts_at))+" — "+e(dt.formatMskDisplay(d.ends_at))+' МСК, окончание не включая.</p><p>'+e(d.basis||"Основание сохранено в истории прежней версии.")+'</p>'+
-      (p?'<div class="aa-note"><h3>Предложенные условия</h3><p>До решения координатора доступ приостановлен.</p><p>'+e(p.assistant_name)+" · "+e(dt.formatMskDisplay(p.starts_at))+" — "+e(dt.formatMskDisplay(p.ends_at))+"</p><p>"+e(p.basis)+"</p>"+clientNames(p.clients)+"</div>":d.returnedProposal?'<p class="aa-note">Последние изменения возвращены на уточнение. Прежние согласованные условия сохранены; возвращённые условия можно исправить и отправить снова.</p>':"")+
+      (p?'<div class="aa-note"><h3>Предложенные условия</h3><p>До согласования доступ приостановлен.</p><p>'+e(p.assistant_name)+" · "+e(dt.formatMskDisplay(p.starts_at))+" — "+e(dt.formatMskDisplay(p.ends_at))+"</p><p>"+e(p.basis)+"</p>"+clientNames(p.clients)+"</div>":d.returnedProposal?'<p class="aa-note">Последние изменения возвращены на уточнение. Прежние согласованные условия сохранены; возвращённые условия можно исправить и отправить снова.</p>':"")+
       '<h3>Согласованный / текущий состав</h3>'+clientNames(d.clients)+'<div class="aa-actions">'+actions+'</div>'+
       (d.history&&d.history.length?'<h3>История назначения</h3><ol class="aa-history">'+d.history.map(function(h){var s=h.snapshot;return "<li><strong>"+e(labels[h.change_type]||h.change_type)+"</strong><time>"+e(dt.formatMskDisplay(h.changed_at))+"</time><span class=\"aa-muted\">"+e(h.actor_name||"Событие прежней версии")+"</span><p>"+e(h.comment)+"</p>"+(s?'<details><summary>Условия на момент действия</summary><p>'+e(s.delegator_name)+" → "+e(s.assistant_name)+"</p><p>"+e(dt.formatMskDisplay(s.starts_at))+" — "+e(dt.formatMskDisplay(s.ends_at))+"</p>"+clientNames(s.clients)+(s.proposal?"<h3>Предложенные изменения</h3><p>"+e(s.proposal.assistant_name)+" · "+e(dt.formatMskDisplay(s.proposal.starts_at))+" — "+e(dt.formatMskDisplay(s.proposal.ends_at))+"</p>"+clientNames(s.proposal.clients):"")+"</details>":"")+"</li>";}).join("")+"</ol>":"")+"</section>";
     if(window.AssignmentReviews)$("aa-detail").querySelector(".aa-grid").insertAdjacentHTML("afterend",window.AssignmentReviews.summary(d));
@@ -165,7 +165,7 @@
         result=await request("/delegations/"+editing.id+"/"+(editing.status==="draft"?"edit":"change-requests"),body);
         if(editing.status==="draft"&&body.submit) result=await request("/delegations/"+editing.id+"/submit",{basis:body.basis,rowVersion:result.rowVersion});
       } else result=await request("/delegations",body);
-      var id=result.id;editing=null;view="list";listStatus="";mount();note(body.submit?"Заявка отправлена координатору. Доступ изменится только после согласования.":"Черновик сохранён.");
+      var id=result.id;editing=null;view="list";listStatus="";mount();note(body.submit?"Заявка отправлена на согласование РОА или уполномоченному руководителю. Доступ изменится только после согласования.":"Черновик сохранён.");
       if(id)await openDetail(id);window.dispatchEvent(new Event("tandoor:notifications-refresh"));
     } catch(err){note(err.message,true);} finally{buttons.forEach(function(b){b.disabled=false;});}
   }
@@ -212,10 +212,10 @@
     user=u;if(!["admin","manager","coordinator","director","rop","assistant"].includes(u.role)){app.className="aa";app.textContent="Назначения недоступны для этой роли.";return;}
     window.AssignmentWorkspace={user:u,request:request,formatDate:dt.formatMskDisplay,
       reviews:function(){view="reviews";mount();},detail:openDetail,note:note};
-    view=u.role==="director"?"activity":"list";listStatus=u.role==="coordinator"?"queue":"";
+    view="list";listStatus=u.role==="coordinator"?"queue":"";
     run(async function(){
-      if(["manager","coordinator","admin"].includes(u.role))assistants=(await request("/assignments/assistants")).users;
-      if(["coordinator","admin"].includes(u.role))managers=(await request("/coordinator-managers")).managers;
+      if(["manager","coordinator","director","rop","admin"].includes(u.role))assistants=(await request("/assignments/assistants")).users;
+      if(["coordinator","director","rop","admin"].includes(u.role))managers=(await request("/coordinator-managers")).managers;
       var params=new URLSearchParams(window.location.search);
       if(["manager","coordinator","director","admin"].includes(u.role)&&(params.has("reviews")||params.has("review")))view="reviews";
       mount();var id=params.get("assignment");if(id)await openDetail(id);

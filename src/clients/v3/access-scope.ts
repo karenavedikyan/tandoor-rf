@@ -34,7 +34,7 @@ function hardwareAssignmentClause(alias: string, employeeParam: string): string 
 }
 
 /** ROP-readable employee GUIDs: legacy linked team + wholesale org memberships for teams led by this ROP. */
-function v3RopTeamEmployeeGuidsSubquery(ropUserParam: string, ropEmployeeParam: string): string {
+export function v3RopTeamEmployeeGuidsSubquery(ropUserParam: string, ropEmployeeParam: string): string {
   const legacy = ropLegacyTeamEmployeesSubquery(ropUserParam, ropEmployeeParam);
   return `
     SELECT employee_guid::uuid FROM (

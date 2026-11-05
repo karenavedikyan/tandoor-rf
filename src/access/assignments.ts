@@ -15,6 +15,7 @@ import { v3EntityAssignmentScope } from "../clients/v3/access-scope";
 import { v3JsonManagerField } from "../clients/v3/json-paths";
 import type { ActiveUserRow } from "./types";
 import { assignmentReviewStates, ensureReviewNotifications, pendingAssignmentReviews } from "./assignment-reviews";
+import { assertAssignmentLeadershipScope, ropAssignmentDelegatorClause } from "./assignment-leadership-scope";
 import {
   lkCanAuthorAssignment,
   lkCanCoordinatorAssignmentDecisions,
@@ -48,7 +49,7 @@ function requireAuthor(user: AssignmentActor, d: Row): void {
 }
 function requireCoordinator(user: AssignmentActor): void {
   if (!lkCanCoordinatorAssignmentDecisions(user.role)) {
-    fail("Решения принимает координатор (РОА) или администратор с полными правами.", "FORBIDDEN");
+    fail("Решения принимает РОА, директор, РОП своей команды или администратор.", "FORBIDDEN");
   }
 }
 export async function assignmentClientsAccess(input: {
@@ -81,6 +82,7 @@ async function validateTerms(c: PoolClient, user: AssignmentActor, delegatorId: 
   if (new Date(window.endsAt).getTime() <= Date.now()) fail("Окончание должно быть в будущем.");
   const delegator = await getActiveUser(c, delegatorId);
   if (!["manager", "rop"].includes(delegator.role)) fail("Выберите передающего менеджера.");
+  await assertAssignmentLeadershipScope(user, delegatorId, c);
   const assistant = await getActiveUser(c, String(body.assistantUserId));
   if (assistant.role !== "assistant") fail("Получатель должен иметь роль ассистента.");
   const link = await c.query("SELECT 1 FROM user_onec_employee_links WHERE user_id=$1 AND revoked_at IS NULL", [assistant.id]);
@@ -92,16 +94,26 @@ async function validateTerms(c: PoolClient, user: AssignmentActor, delegatorId: 
       AND NOT EXISTS(SELECT 1 FROM access_denials ad WHERE ad.user_id=$3 AND ad.revoked_at IS NULL
         AND (ad.scope_type='all_clients' OR ad.object_id=le.guid_client))`, [guids.guids, employeeId, delegator.id]);
   if (owned.rowCount !== guids.guids.length) fail("Выбранные клиенты не входят в действующую базу передающего менеджера.", "FORBIDDEN");
-  if (user.role === "coordinator" || user.role === "admin") {
+  if (lkCanPrepareAssignmentOnBehalfOfManager(user.role)) {
     const denied = await c.query(`SELECT 1 FROM access_denials WHERE user_id=$1 AND revoked_at IS NULL
       AND (scope_type='all_clients' OR object_id=ANY($2::uuid[])) LIMIT 1`, [user.id, guids.guids]);
     if (denied.rowCount) {
       fail(
         user.role === "admin"
           ? "Явный запрет ограничивает доступ администратора к выбранным клиентам."
-          : "Явный запрет ограничивает доступ координатора к выбранным клиентам.",
+          : "Явный запрет ограничивает доступ руководителя к выбранным клиентам.",
         "FORBIDDEN",
       );
+    }
+    if (user.role === "director" || user.role === "rop") {
+      const actorContext = await loadAccessContext(user.id, undefined, c);
+      const scope = v3EntityAssignmentScope(actorContext, "le", "legal");
+      const visible = await c.query(
+        `SELECT le.guid_client FROM onec_v3_legal_entities le
+         WHERE (${scope.clause}) AND le.guid_client=ANY($${scope.params.length + 1}::uuid[])`,
+        [...scope.params, guids.guids],
+      );
+      if (visible.rowCount !== guids.guids.length) fail("Выбранные клиенты ограничены текущими правами руководителя.", "FORBIDDEN");
     }
   }
   return { clientGuids: guids.guids, ...window, assistantUserId: assistant.id, basis: text(body.basis, true) };
@@ -170,16 +182,26 @@ async function record(c: PoolClient, user: ActiveUserRow, id: string, action: st
   if (!labels[action]) return;
   const ids = new Set<string>([after.delegator_user_id]);
   if (["submit", "propose_change", "cancel", "cancel_change"].includes(action)) {
-    const coords = await c.query("SELECT id FROM users WHERE role='coordinator' AND status='active'");
+    const coords = await c.query(
+      `SELECT u.id FROM users u WHERE u.status='active' AND
+       (u.role IN ('coordinator','director') OR
+        (u.role='rop' AND ${ropAssignmentDelegatorClause("u.id", "$1")}))`,
+      [after.delegator_user_id],
+    );
     for (const row of coords.rows) ids.add(row.id);
   }
   if (["approve", "revoke", "propose_change", "approve_change", "reject_change", "return_change", "cancel_change"].includes(action)) {
     ids.add(after.assistant_user_id);
     if (before) ids.add(before.assistant_user_id);
   }
-  if (user.role === "coordinator") {
-    const directors = await c.query("SELECT id FROM users WHERE role='director' AND status='active'");
-    for (const row of directors.rows) ids.add(row.id);
+  if (lkCanCoordinatorAssignmentDecisions(user.role)) {
+    const supervisors = await c.query(
+      `SELECT u.id FROM users u WHERE u.status='active' AND
+       (u.role IN ('coordinator','director') OR
+        (u.role='rop' AND ${ropAssignmentDelegatorClause("u.id", "$1")}))`,
+      [after.delegator_user_id],
+    );
+    for (const row of supervisors.rows) ids.add(row.id);
   }
   const range = `${new Date(after.starts_at).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })} — ${new Date(after.ends_at).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })} МСК`;
   for (const recipient of ids) {
@@ -188,7 +210,7 @@ async function record(c: PoolClient, user: ActiveUserRow, id: string, action: st
     // No client identities, turnover, or decision comments in the notification payload.
     let message = "Назначение №" + id.slice(0, 8) + ". " + range + ".";
     if (target.role === "assistant") {
-      message += action === "propose_change" ? " Доступ приостановлен до решения координатора."
+      message += action === "propose_change" ? " Доступ приостановлен до согласования."
         : action === "approve_change" && recipient !== after.assistant_user_id ? " Ваш доступ завершён."
         : action === "reject_change" || action === "return_change" || action === "cancel_change" ? " Сохраняются прежние условия доступа."
         : action === "revoke" ? " Доступ закрыт." : " Откройте раздел «Клиенты».";
@@ -202,7 +224,7 @@ async function record(c: PoolClient, user: ActiveUserRow, id: string, action: st
 export async function writeAssignment(actor: AssignmentActor, action: string, id: string | null, body: Row) {
   return withTransaction(async c => {
     const user = await actorInTransaction(c, actor);
-    if (!["manager", "coordinator", "admin"].includes(user.role)) fail("Эта роль не изменяет назначения.", "FORBIDDEN");
+    if (user.role !== "manager" && !lkCanPrepareAssignmentOnBehalfOfManager(user.role)) fail("Эта роль не изменяет назначения.", "FORBIDDEN");
     if (action === "create") {
       const delegatorId = user.role === "manager" ? user.id : String(body.delegatorUserId);
       if (user.role === "manager" && body.delegatorUserId && body.delegatorUserId !== user.id) fail("Выбирайте только своих клиентов.", "FORBIDDEN");
@@ -219,6 +241,7 @@ export async function writeAssignment(actor: AssignmentActor, action: string, id
     const locked = await c.query("SELECT * FROM delegations WHERE id=$1 FOR UPDATE", [id]);
     const d = locked.rows[0] as Row | undefined;
     if (!d) fail("Назначение не найдено.", "NOT_FOUND");
+    await assertAssignmentLeadershipScope(user, d.delegator_user_id, c);
     if (body.rowVersion !== undefined && Number(body.rowVersion) !== d.row_version) fail("Назначение уже изменилось. Обновите его.", "CONFLICT");
     const before = await snapshot(c, id!);
     const comment = text(body.basis ?? body.reason, true);
@@ -281,7 +304,7 @@ export async function writeAssignment(actor: AssignmentActor, action: string, id
       await c.query("UPDATE delegations SET status='draft',workflow_state='returned' WHERE id=$1", [id]);
     } else if (action === "reject" || action === "cancel" || action === "revoke") {
       if (action === "reject" && d.status !== "pending_approval") fail("Отклонить можно только заявку.", "CONFLICT");
-      if (action === "cancel" && !["draft", "pending_approval"].includes(d.status)) fail("Действующий доступ отзывает координатор.", "CONFLICT");
+      if (action === "cancel" && !["draft", "pending_approval"].includes(d.status)) fail("Действующий доступ отзывает РОА или уполномоченный руководитель.", "CONFLICT");
       if (action === "revoke" && d.status !== "active") fail("Отозвать можно только согласованное назначение.", "CONFLICT");
       await c.query(`UPDATE delegations SET status='revoked',workflow_state=$2,revoked_at=NOW(),
         revoked_by_user_id=$3,revoke_reason=$4 WHERE id=$1`,
@@ -304,8 +327,7 @@ function visibility(actor: AssignmentActor, params: unknown[]): string {
   const p = "$" + params.length;
   if (actor.role === "manager") return `d.delegator_user_id=${p}::uuid`;
   if (actor.role === "assistant") return `d.assistant_user_id=${p}::uuid AND d.approved_by_user_id IS NOT NULL`;
-  if (actor.role === "rop") return `(d.delegator_user_id=${p}::uuid OR EXISTS(SELECT 1 FROM rop_team_members tm
-    WHERE tm.rop_user_id=${p}::uuid AND tm.member_user_id=d.delegator_user_id AND tm.revoked_at IS NULL))`;
+  if (actor.role === "rop") return ropAssignmentDelegatorClause(p, "d.delegator_user_id");
   return "FALSE";
 }
 export async function listAssignments(actor: AssignmentActor, input: { page: number; q: string; status: string }) {
@@ -343,6 +365,7 @@ export async function assignmentDetail(actor: AssignmentActor, id: string) {
   if (!allowed.rowCount) fail("Назначение не найдено.", "NOT_FOUND");
   return withTransaction(async c => {
     const d = await snapshot(c, id);
+    await assertAssignmentLeadershipScope(actor, d.delegator_user_id, c);
     const access = await assignmentClientsAccess({ actorUserId: actor.id, actorRole: actor.role, delegatorUserId: d.delegator_user_id, entries: d.clients });
     d.clients = access.access === "visible" ? access.clients : null;
     d.clients_access = access.access;
@@ -381,10 +404,15 @@ export async function assignmentDetail(actor: AssignmentActor, id: string) {
   });
 }
 export async function assignmentActivity(actor: AssignmentActor, page: number, action: string, q: string) {
-  if (!lkCanReadAssignmentActivity(actor.role)) fail("Журнал доступен координатору, директору и администратору.", "FORBIDDEN");
+  if (!lkCanReadAssignmentActivity(actor.role)) fail("Журнал доступен РОА, директору, РОП своей команды и администратору.", "FORBIDDEN");
   const params: unknown[] = ["%" + q.replace(/[%_\\]/g, "\\$&") + "%"];
-  let where = `h.actor_role IN ('coordinator','admin') AND (h.actor_name ILIKE $1 OR h.comment ILIKE $1 OR
+  let where = `h.actor_role IN ('coordinator','director','rop','admin') AND (h.actor_name ILIKE $1 OR h.comment ILIKE $1 OR
     h.snapshot->>'delegator_name' ILIKE $1 OR h.snapshot->>'assistant_name' ILIKE $1)`;
+  if (actor.role === "rop") {
+    params.push(actor.id);
+    where += ` AND EXISTS (SELECT 1 FROM delegations d WHERE d.id=h.delegation_id
+      AND ${ropAssignmentDelegatorClause("$" + params.length, "d.delegator_user_id")})`;
+  }
   if (action) { params.push(action); where += ` AND h.change_type=$${params.length}`; }
   const count = await query(`SELECT COUNT(*)::int AS total FROM delegation_change_history h WHERE ${where}`, params);
   const result = await query<Row>(`SELECT h.id,h.delegation_id,h.changed_at,h.change_type,h.actor_role,h.actor_name,h.comment,h.snapshot
@@ -403,7 +431,11 @@ export async function assignmentActivity(actor: AssignmentActor, page: number, a
 
 export async function assignmentManagers(actor: AssignmentActor) {
   if (!lkCanPickAssignmentManagers(actor.role)) fail("Недостаточно прав.", "FORBIDDEN");
-  const result = await query(`SELECT id,full_name,email FROM users WHERE status='active' AND role IN('manager','rop') ORDER BY full_name,id`);
+  const result = await query(
+    `SELECT u.id,u.full_name,u.email FROM users u WHERE u.status='active' AND u.role IN('manager','rop')
+     ${actor.role === "rop" ? `AND ${ropAssignmentDelegatorClause("$1", "u.id")}` : ""}
+     ORDER BY u.full_name,u.id`, actor.role === "rop" ? [actor.id] : [],
+  );
   return result.rows;
 }
 export async function assignmentPicker(actor: AssignmentActor, managerId: string, input: Row) {
@@ -415,13 +447,22 @@ export async function assignmentPicker(actor: AssignmentActor, managerId: string
   ) {
     fail("Нет доступа к клиентам менеджера.", "NOT_FOUND");
   }
+  await assertAssignmentLeadershipScope(actor, managerId);
   const ctx = await loadAccessContext(managerId);
   const actorCtx = await loadAccessContext(actor.id);
   if (!["manager", "rop"].includes(ctx.role)) fail("Выберите передающего менеджера.");
   let scope = v3EntityAssignmentScope(ctx, "le", "legal");
+  let retailScope = v3EntityAssignmentScope(ctx, "ro", "retail");
+  if (actor.role === "director" || actor.role === "rop") {
+    const intersect = (left: typeof scope, right: typeof scope) => ({
+      clause: `(${left.clause}) AND (${right.clause.replace(/\$(\d+)/g, (_, n: string) => "$" + (Number(n) + left.params.length))})`,
+      params: [...left.params, ...right.params],
+    });
+    scope = intersect(scope, v3EntityAssignmentScope(actorCtx, "le", "legal"));
+    retailScope = intersect(retailScope, v3EntityAssignmentScope(actorCtx, "ro", "retail"));
+  }
   if (actorCtx.explicitlyDeniedAll) scope = { clause: "FALSE", params: [] };
   const params = [...scope.params];
-  const retailScope = v3EntityAssignmentScope(ctx, "ro", "retail");
   const retailOffset = params.length;
   const retailSql = retailScope.clause.replace(/\$(\d+)/g, (_, n: string) => "$" + (Number(n) + retailOffset));
   params.push(...retailScope.params);
@@ -492,7 +533,7 @@ export async function assignmentNotifications(actor: AssignmentActor, page = 1, 
   if (!readOnly) {
   await ensureReviewNotifications(actor);
   const params: unknown[] = [];
-  const where = ["manager", "assistant", "coordinator", "director"].includes(actor.role) ? visibility(actor, params) : "FALSE";
+  const where = ["manager", "assistant", "coordinator", "director", "rop"].includes(actor.role) ? visibility(actor, params) : "FALSE";
   params.push(actor.id);
   // Generate time-based notices idempotently while the cabinet is open; no external scheduler or channel.
   const due = await query<Row>(`WITH due AS (SELECT d.id,d.row_version,d.starts_at,d.ends_at,d.approved_at,
@@ -522,11 +563,15 @@ export async function assignmentNotifications(actor: AssignmentActor, page = 1, 
   const privateScope = actor.role === "manager"
     ? `(n.kind IN('review_required','review_submitted') AND EXISTS(SELECT 1 FROM delegations rd WHERE rd.id=n.delegation_id AND rd.delegator_user_id=$1))`
     : ["coordinator", "director"].includes(actor.role) ? `n.kind='review_received'` : "FALSE";
-  const inboxWhere = `n.user_id=$1 AND (n.kind NOT IN('review_required','review_submitted','review_received') OR ${privateScope})`;
+  const inboxParams: unknown[] = [actor.id];
+  const teamScope = actor.role === "rop"
+    ? ` AND EXISTS (SELECT 1 FROM delegations d WHERE d.id=n.delegation_id AND (${visibility(actor, inboxParams)}))`
+    : "";
+  const inboxWhere = `n.user_id=$1 AND (n.kind NOT IN('review_required','review_submitted','review_received') OR ${privateScope})${teamScope}`;
   const items = await query(`SELECT n.id,n.delegation_id,n.kind,n.title,n.message,n.created_at,n.read_at FROM assistant_assignment_notifications n
-    WHERE ${inboxWhere}${unreadOnly ? " AND n.read_at IS NULL" : ""} ORDER BY n.created_at DESC,n.id DESC LIMIT 30 OFFSET $2`, [actor.id, (page - 1) * 30]);
+    WHERE ${inboxWhere}${unreadOnly ? " AND n.read_at IS NULL" : ""} ORDER BY n.created_at DESC,n.id DESC LIMIT 30 OFFSET $${inboxParams.length + 1}`, [...inboxParams, (page - 1) * 30]);
   const count = await query(`SELECT COUNT(*) FILTER(WHERE ${unreadOnly ? "read_at IS NULL" : "TRUE"})::int AS total,
-    COUNT(*) FILTER(WHERE read_at IS NULL)::int AS unread FROM assistant_assignment_notifications n WHERE ${inboxWhere}`, [actor.id]);
+    COUNT(*) FILTER(WHERE read_at IS NULL)::int AS unread FROM assistant_assignment_notifications n WHERE ${inboxWhere}`, inboxParams);
   const boundaries = actor.role === "assistant" ? await query(`SELECT MIN(t.at) AS next FROM delegations d
     CROSS JOIN LATERAL (VALUES(d.starts_at),(d.ends_at)) t(at)
     WHERE d.assistant_user_id=$1 AND d.status='active' AND d.revoked_at IS NULL AND t.at>NOW()`, [actor.id]) : null;
