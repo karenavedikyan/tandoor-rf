@@ -27,19 +27,19 @@ export function lkCanWriteTanTracker(role: string): boolean {
   return tanTrackerNavAllowed(role);
 }
 
-/** Assignment author: manager for own delegations; coordinator/admin for any valid delegator. */
+/** ROP capabilities always require a separate current-team check on the server. */
 export function lkCanAuthorAssignment(role: string, actorUserId: string, delegatorUserId: string): boolean {
-  if (role === "coordinator" || role === "admin") return true;
+  if (lkCanPrepareAssignmentOnBehalfOfManager(role)) return true;
   return role === "manager" && actorUserId === delegatorUserId;
 }
 
-/** Coordinator decisions (approve/reject/revoke/change decisions). */
+/** Operational decisions; ROP is scoped to their current team, not global. */
 export function lkCanCoordinatorAssignmentDecisions(role: string): boolean {
-  return role === "coordinator" || role === "admin";
+  return ["coordinator", "director", "rop", "admin"].includes(role);
 }
 
 export function lkCanReadAssignmentActivity(role: string): boolean {
-  return role === "director" || role === "coordinator" || role === "admin";
+  return ["director", "coordinator", "rop", "admin"].includes(role);
 }
 
 export function lkCanReadAssignmentReviewsOverview(role: string): boolean {
@@ -47,15 +47,15 @@ export function lkCanReadAssignmentReviewsOverview(role: string): boolean {
 }
 
 export function lkCanPickAssignmentManagers(role: string): boolean {
-  return role === "coordinator" || role === "admin";
+  return ["coordinator", "director", "rop", "admin"].includes(role);
 }
 
 export function lkCanSearchAssignmentAssistants(role: string): boolean {
-  return role === "manager" || role === "coordinator" || role === "admin";
+  return role === "manager" || lkCanPrepareAssignmentOnBehalfOfManager(role);
 }
 
 export function lkCanPrepareAssignmentOnBehalfOfManager(role: string): boolean {
-  return role === "coordinator" || role === "admin";
+  return ["coordinator", "director", "rop", "admin"].includes(role);
 }
 
 /** Mandatory review submission stays with the real delegating manager only. */

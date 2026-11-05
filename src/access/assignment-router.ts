@@ -12,6 +12,7 @@ import { searchAssistants } from "./service";
 import { attachAccessContext, blockPreviewWrites, type AccessRequest } from "./middleware";
 import { assignmentSchemaReady, prepareAssignmentSchema } from "./assignment-schema";
 import { appointAssignmentCoordinator } from "./assignment-coordinator";
+import { lkCanSearchAssignmentAssistants } from "../shared/lk-role-capabilities";
 import * as reviews from "./assignment-reviews";
 
 function uuid(value: unknown): string {
@@ -103,7 +104,7 @@ export function assignmentRouter(): express.Router {
     res.json({ managers: await assignments.assignmentManagers(actor(req)) });
   }));
   router.get("/assignments/assistants", ...auth, handle(async (req, res) => {
-    if (!["manager", "coordinator", "admin"].includes(actor(req).role)) {
+    if (!lkCanSearchAssignmentAssistants(actor(req).role)) {
       res.status(403).json(apiError(ERROR_CODES.FORBIDDEN, "Недостаточно прав.")); return;
     }
     res.json({ users: await searchAssistants(str(req.query.q), 100) });
