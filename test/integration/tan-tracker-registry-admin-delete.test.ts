@@ -24,6 +24,7 @@ describe("tan-tracker admin force delete (isolated PG)", { concurrency: false },
   let directorCookie = "";
   let managerCookie = "";
   let adminUserId = "";
+  let adminPartyId = "";
   let managerUserId = "";
   let managerPartyId = "";
   const databaseUrl = getIntegrationDatabaseUrl();
@@ -65,7 +66,7 @@ describe("tan-tracker admin force delete (isolated PG)", { concurrency: false },
     const managerEmployeeId = randomUUID();
     try {
       managerPartyId = (await ensurePartyForUserOnWrite(client, managerUserId, "Force Delete Manager", null)).id;
-      await ensurePartyForUserOnWrite(client, adminUserId, "Force Delete Admin", null);
+      adminPartyId = (await ensurePartyForUserOnWrite(client, adminUserId, "Force Delete Admin", null)).id;
       await ensurePartyForUserOnWrite(client, director.id, "Force Delete Director", null);
       await client.query(
         `INSERT INTO onec_wholesale_employee_roster (guid_manager, name_manager, post, raw_json)
@@ -322,6 +323,164 @@ describe("tan-tracker admin force delete (isolated PG)", { concurrency: false },
     assert.deepEqual(del.body.applied, ["ADMDELLEG"]);
   });
 
+  it("deletes confirmed bot drafts without colliding with or deleting the active chat draft", async () => {
+    const codes = ["DRAFTDEL1", "DRAFTDEL2", "DRAFTKEEP"];
+    const ids = codes.map((code) => `bot-draft-transfer-${code}`);
+    for (let i = 0; i < ids.length; i++) {
+      await insertTransfer({
+        id: ids[i]!,
+        code: codes[i]!,
+        status: "active",
+        creatorPartyId: managerPartyId,
+        holderPartyId: managerPartyId,
+        firstCustodyAt: "now",
+      });
+    }
+    const chat = "admin-delete-active-draft";
+    const activeDraft = randomUUID();
+    await pool.query(
+      `INSERT INTO tt_external_request_drafts (id, channel, messenger_chat_id, step, payload)
+       VALUES ($1::uuid, 'telegram', $2, 'item', '{"itemTitle":"Keep active"}'::jsonb)`,
+      [activeDraft, chat],
+    );
+    const confirmedDraftIds = [];
+    for (const transferId of ids) {
+      const draftId = randomUUID();
+      confirmedDraftIds.push(draftId);
+      await pool.query(
+        `INSERT INTO tt_external_request_drafts
+           (id, channel, messenger_chat_id, step, confirmed_transfer_id)
+         VALUES ($1::uuid, 'telegram', $2, 'confirmed', $3)`,
+        [draftId, chat, transferId],
+      );
+      await pool.query(
+        `INSERT INTO tt_external_request_draft_files
+           (draft_id, storage_key, file_name, mime_type, byte_size)
+         VALUES ($1::uuid, $2, 'draft.txt', 'text/plain', 1)`,
+        [draftId, `draft-file/${draftId}`],
+      );
+    }
+    const del = await request(app)
+      .post("/api/tan-tracker/registry/cleanup")
+      .set({ Origin: ORIGIN, Cookie: adminCookie, "Content-Type": "application/json" })
+      .send({ action: "delete", transferIds: codes.slice(0, 2), deleteAck: "УДАЛИТЬ" });
+    assert.equal(del.status, 200, del.text);
+    assert.deepEqual(del.body.applied, codes.slice(0, 2));
+    assert.deepEqual(del.body.skipped, []);
+    assert.equal(
+      (await pool.query(`SELECT 1 FROM tt_transfers WHERE id = ANY($1::text[])`, [ids.slice(0, 2)])).rowCount,
+      0,
+    );
+    assert.equal(
+      (await pool.query(`SELECT 1 FROM tt_external_request_drafts WHERE id = ANY($1::uuid[])`, [confirmedDraftIds.slice(0, 2)])).rowCount,
+      0,
+    );
+    assert.equal(
+      (await pool.query(`SELECT 1 FROM tt_external_request_draft_files WHERE draft_id = ANY($1::uuid[])`, [confirmedDraftIds.slice(0, 2)])).rowCount,
+      0,
+    );
+    const active = await pool.query(
+      `SELECT step, payload, confirmed_transfer_id FROM tt_external_request_drafts WHERE id = $1::uuid`,
+      [activeDraft],
+    );
+    assert.deepEqual(active.rows, [{ step: "item", payload: { itemTitle: "Keep active" }, confirmed_transfer_id: null }]);
+    assert.equal(
+      (await pool.query(`SELECT 1 FROM tt_external_request_drafts WHERE id = $1::uuid AND confirmed_transfer_id = $2`, [confirmedDraftIds[2], ids[2]])).rowCount,
+      1,
+    );
+    assert.equal((await pool.query(`SELECT 1 FROM tt_transfers WHERE id = $1`, [ids[2]])).rowCount, 1);
+    assert.equal(
+      (await pool.query(`SELECT 1 FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`, [confirmedDraftIds[2]])).rowCount,
+      1,
+    );
+    assert.equal(
+      (await pool.query(`SELECT 1 FROM tt_transfer_delete_audit WHERE transfer_public_code = ANY($1::text[])`, [codes.slice(0, 2)])).rowCount,
+      2,
+    );
+  });
+
+  it("batch-deletes bot transfers from one chat without reviving historical drafts", async () => {
+    const codes = ["DRAFTMAX1", "DRAFTMAX2"];
+    for (const code of codes) {
+      const id = `bot-draft-transfer-${code}`;
+      await insertTransfer({
+        id, code, status: "waiting", creatorPartyId: managerPartyId, holderPartyId: managerPartyId,
+      });
+      await pool.query(
+        `INSERT INTO tt_external_request_drafts (channel, messenger_chat_id, step, confirmed_transfer_id)
+         VALUES ('max', 'admin-delete-no-active-draft', 'confirmed', $1)`,
+        [id],
+      );
+    }
+    const del = await request(app)
+      .post("/api/tan-tracker/registry/cleanup")
+      .set({ Origin: ORIGIN, Cookie: adminCookie, "Content-Type": "application/json" })
+      .send({ action: "delete", transferIds: codes, deleteAck: "УДАЛИТЬ" });
+    assert.equal(del.status, 200, del.text);
+    assert.deepEqual(del.body.applied, codes);
+    assert.equal(
+      (await pool.query(`SELECT 1 FROM tt_external_request_drafts WHERE channel = 'max' AND messenger_chat_id = 'admin-delete-no-active-draft'`)).rowCount,
+      0,
+    );
+  });
+
+  it("single deletion never turns a confirmed historical draft back into an active draft", async () => {
+    const id = "bot-draft-transfer-single";
+    const code = "DRAFTSINGLE";
+    await insertTransfer({
+      id, code, status: "waiting", creatorPartyId: managerPartyId, holderPartyId: managerPartyId,
+    });
+    const draftId = randomUUID();
+    await pool.query(
+      `INSERT INTO tt_external_request_drafts (id, channel, messenger_chat_id, step, confirmed_transfer_id)
+       VALUES ($1::uuid, 'telegram', 'admin-delete-single-draft', 'confirmed', $2)`,
+      [draftId, id],
+    );
+    const del = await request(app)
+      .post("/api/tan-tracker/registry/cleanup")
+      .set({ Origin: ORIGIN, Cookie: adminCookie, "Content-Type": "application/json" })
+      .send({ action: "delete", transferIds: [code], deleteAck: "УДАЛИТЬ" });
+    assert.equal(del.status, 200, del.text);
+    assert.deepEqual(del.body.applied, [code]);
+    assert.equal(
+      (await pool.query(`SELECT 1 FROM tt_external_request_drafts WHERE id = $1::uuid`, [draftId])).rowCount,
+      0,
+    );
+  });
+
+  it("rolls back transfer, confirmed draft, file metadata, and audit together", async () => {
+    const id = "bot-draft-transfer-rollback";
+    const code = "DRAFTROLLBACK";
+    await insertTransfer({
+      id, code, status: "waiting", creatorPartyId: managerPartyId, holderPartyId: managerPartyId,
+    });
+    const draftId = randomUUID();
+    await pool.query(
+      `INSERT INTO tt_external_request_drafts (id, channel, messenger_chat_id, step, confirmed_transfer_id)
+       VALUES ($1::uuid, 'max', 'admin-delete-rollback-draft', 'confirmed', $2)`,
+      [draftId, id],
+    );
+    await pool.query(
+      `INSERT INTO tt_external_request_draft_files (draft_id, storage_key, file_name, mime_type, byte_size)
+       VALUES ($1::uuid, 'rollback-file', 'draft.txt', 'text/plain', 1)`,
+      [draftId],
+    );
+    const { withTransaction } = await import("../../src/access/db");
+    const { deleteTransferBeforeFirstCustody } = await import("../../src/tan-tracker/registry-cleanup/delete-transfer");
+    await assert.rejects(withTransaction(async (client) => {
+      const result = await deleteTransferBeforeFirstCustody(
+        client, id, { userId: adminUserId, partyId: adminPartyId }, { adminForceDelete: true },
+      );
+      assert.deepEqual(result, { ok: true, publicCode: code });
+      assert.equal((await client.query(`SELECT 1 FROM tt_external_request_drafts WHERE id = $1::uuid`, [draftId])).rowCount, 0);
+      throw new Error("TEST_BATCH_ABORT");
+    }), /TEST_BATCH_ABORT/);
+    assert.equal((await pool.query(`SELECT 1 FROM tt_transfers WHERE id = $1`, [id])).rowCount, 1);
+    assert.equal((await pool.query(`SELECT 1 FROM tt_external_request_drafts WHERE id = $1::uuid AND confirmed_transfer_id = $2`, [draftId, id])).rowCount, 1);
+    assert.equal((await pool.query(`SELECT 1 FROM tt_external_request_draft_files WHERE draft_id = $1::uuid`, [draftId])).rowCount, 1);
+    assert.equal((await pool.query(`SELECT 1 FROM tt_transfer_delete_audit WHERE transfer_public_code = $1`, [code])).rowCount, 0);
+  });
+
   it("non-admin creator denied after receipt; director not admin; pre-receipt creator still allowed", async () => {
     await insertTransfer({
       id: "ttadm0000000000000000000000000005",
@@ -347,6 +506,12 @@ describe("tan-tracker admin force delete (isolated PG)", { concurrency: false },
       holderPartyId: managerPartyId,
       completedAt: "now",
     });
+    const protectedDraft = randomUUID();
+    await pool.query(
+      `INSERT INTO tt_external_request_drafts (id, channel, messenger_chat_id, step, confirmed_transfer_id)
+       VALUES ($1::uuid, 'telegram', 'protected-received-draft', 'confirmed', $2)`,
+      [protectedDraft, "ttadm0000000000000000000000000005"],
+    );
 
     const mgrDenied = await request(app)
       .post("/api/tan-tracker/registry/cleanup")
@@ -354,6 +519,10 @@ describe("tan-tracker admin force delete (isolated PG)", { concurrency: false },
       .send({ action: "delete", transferIds: ["MGRDELRCV"], deleteAck: "УДАЛИТЬ" });
     assert.equal(mgrDenied.status, 200);
     assert.equal(mgrDenied.body.applied.length, 0);
+    assert.equal(
+      (await pool.query(`SELECT 1 FROM tt_external_request_drafts WHERE id = $1::uuid`, [protectedDraft])).rowCount,
+      1,
+    );
 
     const dirDenied = await request(app)
       .post("/api/tan-tracker/registry/cleanup")
