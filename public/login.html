@@ -85,14 +85,15 @@
 
       <details class="auth-help">
         <summary>Забыли пароль?</summary>
-        <p>Если бот не подключён, попросите администратора выдать временный код для входа.</p>
-        <p>Для восстановления собственного доступа введите логин и выберите уже подключённый в профиле бот.
-          Код придёт только в привязанный к этому аккаунту бот.
-          Если бот не подключён, обратитесь к администратору.</p>
+        <p>Сотруднику: введите свой логин и выберите MAX или Telegram.
+          Код с ФИО и логином придёт в бот назначенного администратора.
+          Свяжитесь с ним для проверки личности и получения кода. Ваш собственный бот не требуется.</p>
+        <p>Администратору для восстановления собственного доступа:
+          код придёт в ваш заранее подключённый бот выбранного канала.</p>
         <form id="bot-recovery-request-form" class="form">
           <label class="field"><span class="field__label">Логин (email)</span>
             <input name="email" class="field__input" type="email" autocomplete="username" required /></label>
-          <label class="field"><span class="field__label">Куда получить код</span>
+          <label class="field"><span class="field__label">Канал бота: MAX или Telegram</span>
             <select name="channel" class="field__input"><option value="max">MAX</option><option value="telegram">Telegram</option></select></label>
           <button type="submit" class="primary-button">Восстановить пароль через бота</button>
           <p class="status" role="status" aria-live="polite"></p>

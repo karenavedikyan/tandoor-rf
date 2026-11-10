@@ -11,7 +11,7 @@ import { createRecoveryDelivery } from "./password-recovery-delivery";
 import { loginWithRecoveryCode, RecoveryError, requestPasswordRecovery, type RecoveryChannel, type RecoveryDelivery } from "./password-reset-service";
 
 const str = (v: unknown): string => typeof v === "string" ? v : "";
-export const PUBLIC_RECOVERY_MESSAGE = "Если аккаунт активен и выбранный бот уже подключён, код придёт в него. Код действует 10 минут; новый можно запрашивать не чаще раза в минуту. Если сообщения нет, обратитесь к администратору.";
+export const PUBLIC_RECOVERY_MESSAGE = "Если аккаунт активен и восстановление доступно, код отправлен в бот назначенного администратора (для сотрудника) или в собственный бот (для администратора). Сотруднику нужно связаться с администратором для проверки личности и получения кода. Код действует 10 минут; новый запрос доступен не чаще раза в минуту.";
 
 export function botPasswordRecoveryHandler(mode: "admin" | "request" | "login", delivery: RecoveryDelivery = createRecoveryDelivery()) {
   return async (req: Request, res: Response): Promise<void> => {

@@ -35,6 +35,38 @@ describe("bot password recovery", { concurrency: false }, () => {
   after(async () => { await closePool(); await pool?.end(); });
 
   for (const channel of ["max", "telegram"] as const) {
+    it(`employee forgot-password request sends labeled ${channel} code only to configured admin, without employee bot or admin login`, async () => {
+      await pool.query("DELETE FROM tanbot_max_accounts WHERE user_id=$1", [fixture.employeeId]);
+      await pool.query("DELETE FROM tanbot_telegram_accounts WHERE user_id=$1", [fixture.employeeId]);
+      await pool.query("UPDATE sessions SET revoked_at=NOW() WHERE user_id=$1", [fixture.adminId]);
+      const response = await post("/api/auth/recover-password", {
+        email: EMPLOYEE, channel, recipientUserId: fixture.employeeId, chatId: "99999",
+        adminUserId: fixture.employeeId, actorId: fixture.adminId, currentPassword: PASSWORD,
+      });
+      assert.equal(response.status, 202);
+      assert.equal(messages.length, 1);
+      const msg = messages[0]!;
+      assert.equal(msg.userId, channel === "max" ? "33003" : "11001");
+      assert.match(msg.text, /Для кого: Тестовый Сотрудник/);
+      assert.ok(msg.text.includes(EMPLOYEE)); assert.match(msg.text, /Личность инициатора ещё не подтверждена/);
+      assert.match(msg.text, /после проверки его личности/);
+      assert.doesNotMatch(msg.text, /Запросил администратор:/);
+      const code = codeFromMessage(msg);
+      assert.equal(JSON.stringify(response.body).includes(code), false);
+      const stored = (await pool.query("SELECT * FROM password_recovery_challenges")).rows[0];
+      assert.equal(stored.request_kind, "employee-requested"); assert.equal(stored.initiated_session_id, null);
+      assert.equal(stored.recipient_user_id, fixture.adminId); assert.equal(JSON.stringify(stored).includes(code), false);
+      assert.equal((await pool.query("SELECT * FROM access_audit_log")).rowCount, 0);
+      assert.ok(await resolveSessionUser(fixture.employeeSession.token));
+      assert.equal((await pool.query("SELECT password_hash FROM users WHERE id=$1", [fixture.employeeId])).rows[0].password_hash, originalHash);
+      const login = await loginWithRecoveryCode(pool, EMPLOYEE, code); assert.ok(login);
+      assert.equal(await loginWithRecoveryCode(pool, ADMIN, code), null);
+      const event = (await pool.query("SELECT * FROM access_audit_log WHERE action='user.password_recovery_login'")).rows[0];
+      assert.equal(event.actor_user_id, fixture.employeeId);
+      assert.equal(event.after_json.issued_by_admin_user_id, null);
+      assert.equal(event.after_json.recipient_user_id, fixture.adminId);
+      assert.equal(event.after_json.request_origin, "login_page");
+    });
     it(`labels employee and initiating admin; sends ${channel} code to ADMIN's bot, not employee`, async () => {
       assert.equal(await issue(channel), true);
       const msg = messages[0]!;
@@ -124,12 +156,55 @@ describe("bot password recovery", { concurrency: false }, () => {
       "UPDATE tanbot_max_accounts SET linked_at=NOW()+INTERVAL '1 second' WHERE user_id=$1",
       "UPDATE users SET status='disabled' WHERE id=$1",
       "UPDATE sessions SET revoked_at=NOW() WHERE user_id=$1",
+      "DELETE FROM sessions WHERE user_id=$1",
       "UPDATE users SET role='manager' WHERE id=$1",
     ]) {
       fixture = await seedRecoveryTest(pool, originalHash); messages = [];
       await issue(); await pool.query(mutation, [fixture.adminId]);
       assert.equal(await loginWithRecoveryCode(pool, EMPLOYEE, codeFromMessage(messages[0]!)), null);
     }
+  });
+  it("public employee routing fails closed for missing/invalid/non-admin configuration, with no fallback to employee bot", async () => {
+    for (const configured of ["", "invalid-uuid", fixture.employeeId, "00000000-0000-4000-8000-000000000001"]) {
+      process.env.PASSWORD_RECOVERY_ADMIN_USER_ID = configured;
+      const response = await post("/api/auth/recover-password", { email: EMPLOYEE, channel: "max" });
+      const unknown = await post("/api/auth/recover-password", { email: "missing@example.test", channel: "max" });
+      assert.equal(response.status, 202); assert.deepEqual(response.body, unknown.body);
+      assert.equal(messages.length, 0);
+      assert.equal((await pool.query("SELECT * FROM password_recovery_challenges")).rowCount, 0);
+    }
+    // Admin self-recovery does not depend on the employee recipient setting.
+    await requestPasswordRecovery(pool, { email: ADMIN, channel: "telegram" }, delivery);
+    assert.equal(messages[0]!.userId, "11001");
+    assert.ok(await loginWithRecoveryCode(pool, ADMIN, codeFromMessage(messages[0]!)));
+  });
+  it("employee-requested codes invalidate on recipient configuration, role, credentials or bot changes", async () => {
+    for (const mutation of [
+      "UPDATE users SET role='manager' WHERE id=$1",
+      "UPDATE users SET status='disabled' WHERE id=$1",
+      "UPDATE users SET password_must_change=TRUE WHERE id=$1",
+      "UPDATE users SET password_hash='changed' WHERE id=$1",
+      "UPDATE tanbot_max_accounts SET stopped_at=NOW() WHERE user_id=$1",
+      "UPDATE tanbot_max_accounts SET notifications_enabled=FALSE WHERE user_id=$1",
+      "UPDATE tanbot_max_accounts SET max_user_id=99009 WHERE user_id=$1",
+    ]) {
+      fixture = await seedRecoveryTest(pool, originalHash); messages = [];
+      assert.equal(await issue("max", false), true);
+      await pool.query(mutation, [fixture.adminId]);
+      assert.equal(await loginWithRecoveryCode(pool, EMPLOYEE, codeFromMessage(messages[0]!)), null);
+    }
+    fixture = await seedRecoveryTest(pool, originalHash); messages = [];
+    await issue("max", false);
+    delete process.env.PASSWORD_RECOVERY_ADMIN_USER_ID;
+    assert.equal(await loginWithRecoveryCode(pool, EMPLOYEE, codeFromMessage(messages[0]!)), null);
+  });
+  it("public requests cannot target administrators through employee routing or forge authenticated attribution", async () => {
+    const response = await post("/api/auth/recover-password", { email: ADMIN, channel: "max", mode: "employee", recipientUserId: fixture.employeeId });
+    assert.equal(response.status, 202); assert.equal(messages[0]!.userId, "33003");
+    assert.match(messages[0]!.text, /Для кого: Тестовый Администратор/);
+    assert.doesNotMatch(messages[0]!.text, /Запросил администратор:/);
+    const stored = (await pool.query("SELECT * FROM password_recovery_challenges")).rows[0];
+    assert.equal(stored.request_kind, "admin-self"); assert.equal(stored.user_id, stored.recipient_user_id);
   });
   it("admin proof is mandatory and target admin accounts cannot be reset by another admin", async () => {
     for (const extra of [{ currentPassword: "bad" }, { confirmed: false }, { basis: "" },

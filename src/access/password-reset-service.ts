@@ -16,6 +16,11 @@ export class RecoveryError extends Error {
 export const credentialFingerprint = (value: string): string => createHash("sha256").update(value).digest("hex");
 export const hashRecoveryCode = (id: string, code: string): string =>
   createHmac("sha256", requireHandoffOtpPepper()).update(`password-recovery:${id}:${code}`).digest("hex");
+/** Server-only routing. Never infer a recipient from a public request or the first admin in the DB. */
+export function getRecoveryAdminUserId(): string | null {
+  const id = process.env.PASSWORD_RECOVERY_ADMIN_USER_ID?.trim().toLowerCase();
+  return id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : null;
+}
 export function matchesRecoveryCode(id: string, code: string, stored: string | null): boolean {
   if (!stored || !/^\d{8}$/.test(code)) return false;
   const expected = Buffer.from(stored, "hex"), actual = Buffer.from(hashRecoveryCode(id, code), "hex");
@@ -25,6 +30,7 @@ type User = { id: string; email: string; full_name: string; role: string; status
 type Destination = { messenger_user_id: string; messenger_chat_id: string; linked_at: Date };
 type Challenge = Destination & {
   id: string; user_id: string; recipient_user_id: string; initiated_session_id: string | null;
+  request_kind: "admin-issued" | "employee-requested" | "admin-self";
   channel: RecoveryChannel; code_hash: string | null; credential_fingerprint: string; recipient_fingerprint: string;
 };
 async function atomic<T>(pool: Pool, run: (c: PoolClient) => Promise<T>): Promise<T> {
@@ -62,7 +68,7 @@ async function liveSession(c: PoolClient, sessionId: string, userId: string): Pr
   )).rowCount;
 }
 
-/** A public request only delivers to the target's existing bot; admin requests only to the actor's bot. */
+/** Public employees route to the configured admin; admin self-recovery routes to their own bot. */
 export async function requestPasswordRecovery(
   pool: Pool, input: { email: string; channel: RecoveryChannel; admin?: AdminResetProof }, deliver: RecoveryDelivery,
 ): Promise<boolean> {
@@ -71,10 +77,11 @@ export async function requestPasswordRecovery(
     throw new RecoveryError(400, "VALIDATION_ERROR", "Укажите корректный логин и выберите MAX или Telegram.");
   }
   return atomic(pool, async c => {
+    const configuredAdminId = getRecoveryAdminUserId();
     const r = await c.query<User>(
       `SELECT id,email,full_name,role,status,password_hash,password_must_change FROM users
        WHERE LOWER(BTRIM(email))=$1 OR id=$2::uuid ORDER BY id FOR UPDATE`,
-      [email, input.admin?.actorId ?? null],
+      [email, input.admin?.actorId ?? configuredAdminId],
     );
     const target = r.rows.find(u => u.email.trim().toLowerCase() === email);
     let recipient = target;
@@ -91,6 +98,9 @@ export async function requestPasswordRecovery(
       if (!target || target.role === "admin" || target.id === recipient.id || target.status !== "active") {
         throw new RecoveryError(400, "INVALID_TARGET", "Выберите активного сотрудника без роли администратора.");
       }
+    } else if (target && target.role !== "admin") {
+      recipient = r.rows.find(u => u.id === configuredAdminId);
+      if (!recipient || recipient.role !== "admin" || recipient.status !== "active" || recipient.password_must_change) return false;
     }
     if (!target || target.status !== "active" || !recipient) return false;
     const route = await destination(c, input.channel, recipient.id);
@@ -106,17 +116,19 @@ export async function requestPasswordRecovery(
       return false;
     }
     const id = randomUUID(), code = String(randomInt(10_000_000, 100_000_000));
+    const publicEmployeeRequest = !input.admin && target.id !== recipient.id;
+    const requestKind: Challenge["request_kind"] = input.admin ? "admin-issued" : publicEmployeeRequest ? "employee-requested" : "admin-self";
     await c.query(
       `UPDATE password_recovery_challenges SET cancelled_at=NOW(),code_hash=NULL
        WHERE user_id=$1::uuid AND used_at IS NULL AND cancelled_at IS NULL`, [target.id],
     );
     await c.query(
       `INSERT INTO password_recovery_challenges(id,user_id,recipient_user_id,initiated_session_id,channel,
-       messenger_user_id,messenger_chat_id,linked_at,code_hash,credential_fingerprint,recipient_fingerprint,expires_at)
-       VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,NOW()+INTERVAL '10 minutes')`,
+       messenger_user_id,messenger_chat_id,linked_at,code_hash,credential_fingerprint,recipient_fingerprint,expires_at,request_kind)
+       VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,NOW()+INTERVAL '10 minutes',$12)`,
       [id, target.id, recipient.id, input.admin?.sessionId ?? null, input.channel,
         route.messenger_user_id, route.messenger_chat_id, route.linked_at,
-        hashRecoveryCode(id, code), credentialFingerprint(target.password_hash), credentialFingerprint(recipient.password_hash)],
+        hashRecoveryCode(id, code), credentialFingerprint(target.password_hash), credentialFingerprint(recipient.password_hash), requestKind],
     );
     // Write audit before sending; an audit failure never leaks a usable, unaudited code.
     // Anonymous requests live in the challenge table, not under a forged authenticated audit actor.
@@ -131,7 +143,9 @@ export async function requestPasswordRecovery(
             : "Запрос: со страницы входа без авторизации. Личность инициатора ещё не подтверждена.\n") +
           `Временный код: ${code}\nДействует 10 минут, только для одного входа с обязательной сменой пароля.\n` +
           (input.admin ? "Вы запросили код как администратор. Передайте его только указанному сотруднику лично."
-            : "Никому не сообщайте код. Если вы не запрашивали восстановление, проигнорируйте сообщение."),
+            : publicEmployeeRequest
+              ? "В форме «Забыли пароль» указан этот логин. ФИО относится к аккаунту, а не к подтверждённой личности отправителя. Передайте код только указанному сотруднику лично после проверки его личности. Если запрос не подтверждён, проигнорируйте сообщение."
+              : "Никому не сообщайте код. Если вы не запрашивали восстановление, проигнорируйте сообщение."),
       });
     } catch { /* Never expose provider errors, token URLs or message bodies. */ }
     if (!sent) throw new RecoveryError(503, "DELIVERY_UNAVAILABLE", "Не удалось отправить код. Действующий пароль не изменён. Повторите запрос позже.");
@@ -164,9 +178,12 @@ export async function loginWithRecoveryCode(pool: Pool, emailRaw: string, code: 
         target.status !== "active" || recipient.status !== "active" ||
         credentialFingerprint(target.password_hash) !== row.credential_fingerprint ||
         credentialFingerprint(recipient.password_hash) !== row.recipient_fingerprint) return null;
-    if (target.id !== recipient.id &&
-        (recipient.role !== "admin" || target.role === "admin" || !row.initiated_session_id ||
-         !await liveSession(c, row.initiated_session_id, recipient.id))) return null;
+    if (target.id !== recipient.id) {
+      if (recipient.role !== "admin" || recipient.password_must_change || target.role === "admin") return null;
+      if (row.request_kind === "admin-issued") {
+        if (!row.initiated_session_id || !await liveSession(c, row.initiated_session_id, recipient.id)) return null;
+      } else if (row.request_kind !== "employee-requested" || recipient.id !== getRecoveryAdminUserId()) return null;
+    } else if (row.request_kind !== "admin-self" || target.role !== "admin") return null;
     const route = await destination(c, row.channel, recipient.id);
     if (!route || route.messenger_user_id !== row.messenger_user_id ||
         route.messenger_chat_id !== row.messenger_chat_id ||
@@ -189,8 +206,10 @@ export async function loginWithRecoveryCode(pool: Pool, emailRaw: string, code: 
       [target.id, credentialFingerprint(token), row.id],
     );
     await audit(c, target.id, target.id, "user.password_recovery_login",
-      target.id === recipient.id ? "Self-service recovery code redeemed" : "Admin-issued employee recovery code redeemed", row.channel,
-      { recipient_user_id: recipient.id, issued_by_admin_user_id: target.id === recipient.id ? null : recipient.id });
+      target.id === recipient.id ? "Self-service recovery code redeemed"
+        : row.request_kind === "admin-issued" ? "Admin-issued employee recovery code redeemed" : "Employee-requested recovery code redeemed", row.channel,
+      { recipient_user_id: recipient.id, issued_by_admin_user_id: row.request_kind === "admin-issued" ? recipient.id : null,
+        request_origin: row.request_kind === "admin-issued" ? "authenticated_admin" : "login_page" });
     return { token, userId: target.id };
   });
 }

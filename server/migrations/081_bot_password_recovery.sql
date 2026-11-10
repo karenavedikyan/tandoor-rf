@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS password_recovery_challenges (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   recipient_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   initiated_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
+  request_kind TEXT NOT NULL DEFAULT 'admin-issued'
+    CHECK (request_kind IN ('admin-issued','employee-requested','admin-self')),
   channel TEXT NOT NULL CHECK (channel IN ('max','telegram')),
   messenger_user_id TEXT NOT NULL,
   messenger_chat_id TEXT NOT NULL,

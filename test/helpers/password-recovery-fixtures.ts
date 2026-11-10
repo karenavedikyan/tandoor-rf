@@ -26,6 +26,7 @@ export async function seedRecoveryTest(pool: Pool, hash: string) {
   );
   const adminId: string = r.rows.find(u => u.email === RECOVERY_ADMIN).id;
   const employeeId: string = r.rows.find(u => u.email === RECOVERY_EMPLOYEE).id;
+  process.env.PASSWORD_RECOVERY_ADMIN_USER_ID = adminId;
   await pool.query(
     `INSERT INTO tanbot_telegram_accounts(user_id,telegram_user_id,telegram_chat_id)
      VALUES($1,11001,11001),($2,22002,22002);

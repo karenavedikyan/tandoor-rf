@@ -92,6 +92,26 @@ describe("bot password recovery browser flows", { concurrency: false }, () => {
     assert.deepEqual(errors, []);
     await context.close();
   });
+  it("employee clicks forgot-password without own bot and receives code from configured admin before changing password", async () => {
+    await pool.query("DELETE FROM tanbot_max_accounts WHERE user_id=$1", [fixture.employeeId]);
+    await pool.query("DELETE FROM tanbot_telegram_accounts WHERE user_id=$1", [fixture.employeeId]);
+    await page.goto(origin + "/login");
+    await page.getByText("Забыли пароль?", { exact: true }).click();
+    const form = page.locator("#bot-recovery-request-form");
+    await form.locator('[name="email"]').fill(EMPLOYEE);
+    await form.locator('[name="channel"]').selectOption("telegram");
+    await form.getByRole("button", { name: "Восстановить пароль через бота" }).click();
+    await form.getByText("Если аккаунт активен", { exact: false }).waitFor();
+    assert.equal(messages.length, 1); assert.equal(messages[0]!.userId, "11001");
+    assert.match(messages[0]!.text, /Для кого: Тестовый Сотрудник/);
+    assert.ok(messages[0]!.text.includes(EMPLOYEE));
+    assert.match(messages[0]!.text, /Личность инициатора ещё не подтверждена/);
+    assert.equal(await page.locator("#login-with-code").isChecked(), true);
+    await page.screenshot({ path: "/tmp/tandoor-password-recovery-employee-request.png", fullPage: true });
+    await enterCode(EMPLOYEE, codeFromMessage(messages[0]!));
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
   it("mobile recovery form fits; existing-code button and mode toggle work both ways; invalid code is safe", async () => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto(origin + "/login");

@@ -18,7 +18,11 @@ No production migration, publication, real messages or deployment without separa
 
 ## Self-service recovery and restricted login
 - Login: Забыли пароль?, own login, MAX/Telegram, Восстановить пароль через бота.
-- Public requests deliver only to the target's own confirmed bot; public response does not disclose existence/binding.
+- Employee requests deliver only to the server-configured administrator's confirmed bot; no employee bot is required.
+- Administrator self-recovery delivers only to that administrator's own confirmed bot.
+- Missing/invalid recipient configuration fails closed; HTTP input cannot choose or override the recipient.
+- No password/session changes occur until the administrator personally verifies the employee and shares the code.
+- Public response is generic across unknown accounts, unavailable bots and successful requests.
 - Messages explicitly state that unauthenticated initiator identity is not yet verified.
 - Existing code: select Войти по временному коду из бота, enter login and code.
 - Code expires after 10 minutes, allows 5 verification attempts, and is consumed on one login.
@@ -28,6 +32,7 @@ No production migration, publication, real messages or deployment without separa
 - Stopped/rebound bot, disabled account, changed credentials, revoked initiating admin session and stale code fail closed.
 - Delivery uses existing bounded bot transports synchronously; no plaintext code in DB, audit, outbox or API.
 - No reserved offline keys, new credentials, scheduled jobs, real-user messages or production migration in this patch.
+- Before release configure PASSWORD_RECOVERY_ADMIN_USER_ID with the separately approved administrator account ID.
 
 ## QA
 - Synthetic integration tests cover transactions, rollback on audit failure, authorization,
