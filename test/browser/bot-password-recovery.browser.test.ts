@@ -1,0 +1,152 @@
+import assert from "node:assert/strict";
+import { before, beforeEach, after, describe, it } from "node:test";
+import type http from "node:http";
+import type { Pool } from "pg";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { closePool } from "../../src/db/pool";
+import { SESSION_COOKIE_NAME } from "../../src/config";
+import { prepareRecoveryTest, seedRecoveryTest, codeFromMessage,
+  RECOVERY_PASSWORD as PASSWORD, RECOVERY_NEW_PASSWORD as NEW_PASSWORD,
+  RECOVERY_ADMIN as ADMIN, RECOVERY_EMPLOYEE as EMPLOYEE, type RecoveryMessage } from "../helpers/password-recovery-fixtures";
+
+let pool: Pool, hash: string, browser: Browser, server: http.Server, origin: string;
+let fixture: Awaited<ReturnType<typeof seedRecoveryTest>>, messages: RecoveryMessage[];
+let context: BrowserContext, page: Page, errors: string[];
+async function enterCode(email: string, code: string) {
+  await page.goto(origin + "/login");
+  await page.locator("#email").fill(email);
+  await page.locator("#login-with-code").check();
+  await page.locator("#password").fill(code);
+  await page.locator("#login-button").click();
+  await page.waitForURL("**/change-password");
+  await page.locator("#current-password").fill(code);
+  await page.locator("#new-password").fill(NEW_PASSWORD);
+  await page.locator("#confirm-password").fill(NEW_PASSWORD);
+  await page.locator("#change-password-button").click();
+  await page.waitForURL(url => ["/clients", "/profile"].includes(url.pathname));
+}
+describe("bot password recovery browser flows", { concurrency: false }, () => {
+  before(async () => {
+    const setup = await prepareRecoveryTest(); pool = setup.pool; hash = setup.hash;
+    const { createApp } = await import("../../src/server");
+    const app = createApp({ recoveryDelivery: async msg => { messages.push(msg); return true; } });
+    server = app.listen(0, "127.0.0.1");
+    await new Promise<void>(resolve => server.once("listening", resolve));
+    const address = server.address(); assert.ok(address && typeof address !== "string");
+    origin = `http://127.0.0.1:${address.port}`;
+    process.env.APP_ORIGIN = origin;
+    browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH, args: ["--no-sandbox"] });
+  });
+  beforeEach(async () => {
+    fixture = await seedRecoveryTest(pool, hash); messages = []; errors = [];
+    context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    page = await context.newPage();
+    page.on("pageerror", error => errors.push(error.message));
+  });
+  after(async () => {
+    await context?.close(); await browser?.close();
+    if (server) await new Promise<void>(resolve => server.close(() => resolve()));
+    await closePool(); await pool?.end();
+  });
+  it("admin requests labeled code in own MAX bot, existing search remains usable, employee changes password", async () => {
+    await context.addCookies([{ name: SESSION_COOKIE_NAME, value: fixture.adminSession.token, url: origin }]);
+    await page.goto(origin + "/admin/access");
+    const form = page.locator("#employee-reset-form");
+    await form.waitFor({ state: "visible" });
+    await form.locator('[name="email"]').fill(EMPLOYEE);
+    await form.locator('[name="currentPassword"]').fill(PASSWORD);
+    await form.locator('[name="basis"]').fill("Synthetic browser recovery");
+    await form.locator('[name="channel"]').selectOption("max");
+    await form.locator('[name="confirmed"]').check();
+    await form.getByRole("button", { name: "Восстановить пароль через бота" }).click();
+    await page.getByText("Код отправлен в ваш подключённый бот.", { exact: false }).waitFor();
+    assert.equal(messages[0]!.userId, "33003");
+    assert.match(messages[0]!.text, /Для кого: Тестовый Сотрудник/);
+    assert.ok(messages[0]!.text.includes(EMPLOYEE)); assert.ok(messages[0]!.text.includes(ADMIN));
+    assert.equal(await form.locator('[name="currentPassword"]').inputValue(), "");
+    await page.locator("#user-search-input").fill("Тестовый");
+    await page.locator("#user-search-btn").click();
+    await page.locator("#user-search-results").getByText(EMPLOYEE, { exact: true }).waitFor();
+    await form.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: "/tmp/tandoor-password-recovery-admin.png", fullPage: false });
+    const code = codeFromMessage(messages[0]!);
+    await context.clearCookies();
+    await enterCode(EMPLOYEE, code);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+  it("forgot-password form sends to own Telegram bot, marks code mode, admin completes recovery", async () => {
+    await page.goto(origin + "/login");
+    await page.getByText("Забыли пароль?", { exact: true }).click();
+    const form = page.locator("#bot-recovery-request-form");
+    await form.locator('[name="email"]').fill(ADMIN);
+    await form.locator('[name="channel"]').selectOption("telegram");
+    await form.getByRole("button", { name: "Восстановить пароль через бота" }).click();
+    await form.getByText("Если аккаунт активен", { exact: false }).waitFor();
+    assert.equal(messages[0]!.channel, "telegram"); assert.equal(messages[0]!.userId, "11001");
+    assert.match(messages[0]!.text, /Личность инициатора ещё не подтверждена/);
+    assert.equal(await page.locator("#login-with-code").isChecked(), true);
+    assert.equal(await page.locator("#email").inputValue(), ADMIN);
+    await page.screenshot({ path: "/tmp/tandoor-password-recovery-login.png", fullPage: true });
+    await enterCode(ADMIN, codeFromMessage(messages[0]!));
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+  it("employee clicks forgot-password without own bot and receives code from configured admin before changing password", async () => {
+    delete process.env.PASSWORD_RECOVERY_ADMIN_USER_ID;
+    await pool.query("INSERT INTO password_recovery_settings(singleton,admin_user_id) VALUES(TRUE,$1)", [fixture.adminId]);
+    await pool.query("DELETE FROM tanbot_max_accounts WHERE user_id=$1", [fixture.employeeId]);
+    await pool.query("DELETE FROM tanbot_telegram_accounts WHERE user_id=$1", [fixture.employeeId]);
+    await page.goto(origin + "/login");
+    await page.getByText("Забыли пароль?", { exact: true }).click();
+    const form = page.locator("#bot-recovery-request-form");
+    await form.locator('[name="email"]').fill(EMPLOYEE);
+    await form.locator('[name="channel"]').selectOption("telegram");
+    await form.getByRole("button", { name: "Восстановить пароль через бота" }).click();
+    await form.getByText("Если аккаунт активен", { exact: false }).waitFor();
+    assert.equal(messages.length, 1); assert.equal(messages[0]!.userId, "11001");
+    assert.match(messages[0]!.text, /Для кого: Тестовый Сотрудник/);
+    assert.ok(messages[0]!.text.includes(EMPLOYEE));
+    assert.match(messages[0]!.text, /Личность инициатора ещё не подтверждена/);
+    assert.equal(await page.locator("#login-with-code").isChecked(), true);
+    await page.screenshot({ path: "/tmp/tandoor-password-recovery-employee-request.png", fullPage: true });
+    await enterCode(EMPLOYEE, codeFromMessage(messages[0]!));
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+  it("mobile recovery form fits; existing-code button and mode toggle work both ways; invalid code is safe", async () => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto(origin + "/login");
+    await page.getByText("Забыли пароль?", { exact: true }).click();
+    await page.locator('#bot-recovery-request-form [name="email"]').fill(EMPLOYEE);
+    await page.locator("#use-recovery-code").click();
+    assert.equal(await page.locator("#login-with-code").isChecked(), true);
+    await page.locator("#password").fill("00000000");
+    await page.locator("#login-button").click();
+    await page.locator("#status-message").getByText("Неверный или истёкший код.", { exact: false }).waitFor();
+    await page.locator("#login-with-code").uncheck();
+    assert.equal(await page.locator("#password").getAttribute("autocomplete"), "current-password");
+    assert.equal(await page.locator("#password").inputValue(), "");
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await page.screenshot({ path: "/tmp/tandoor-password-recovery-mobile.png", fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    assert.equal(await page.locator("#login-with-code").isChecked(), false);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+  it("ordinary temporary-password login still forces change without code mode", async () => {
+    await pool.query("UPDATE users SET password_must_change=TRUE WHERE id=$1", [fixture.employeeId]);
+    await page.goto(origin + "/login");
+    await page.locator("#email").fill(EMPLOYEE);
+    await page.locator("#password").fill(PASSWORD);
+    await page.locator("#login-button").click();
+    await page.waitForURL("**/change-password");
+    await page.locator("#current-password").fill(PASSWORD);
+    await page.locator("#new-password").fill(NEW_PASSWORD);
+    await page.locator("#confirm-password").fill(NEW_PASSWORD);
+    await page.locator("#change-password-button").click();
+    await page.waitForURL(url => ["/clients", "/profile"].includes(url.pathname));
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+});

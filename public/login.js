@@ -58,11 +58,12 @@
     api.setStatus(statusEl, "Вход…", "loading");
 
     api
-      .apiRequest("/api/auth/login", {
+      .apiRequest(document.getElementById("login-with-code")?.checked ? "/api/auth/recovery-login" : "/api/auth/login", {
         method: "POST",
         body: {
           email: emailInput.value,
           password: passwordInput.value,
+          code: document.getElementById("login-with-code")?.checked ? passwordInput.value : undefined,
         },
       })
       .then(function (result) {

@@ -43,6 +43,8 @@ import type { AuthenticatedRequest } from "../middleware/auth";
 import { setNoStore } from "../http/no-store";
 import { employeeRolloutRouter } from "./employee-rollout-router";
 import { assignmentRouter } from "./assignment-router";
+import { botPasswordRecoveryHandler } from "./bot-password-recovery-handlers";
+import type { RecoveryDelivery } from "./password-reset-service";
 
 async function adminOverviewHandler(req: AuthenticatedRequest, res: Response): Promise<void> {
   const overview = await listAccessOverview();
@@ -50,10 +52,13 @@ async function adminOverviewHandler(req: AuthenticatedRequest, res: Response): P
   res.status(200).json(overview);
 }
 
-export function createAccessAdminRouter(): express.Router {
+export function createAccessAdminRouter(recoveryDelivery?: RecoveryDelivery): express.Router {
   const router = express.Router();
   router.use("/users/rollouts", employeeRolloutRouter());
   const adminChain = [requireDatabaseReady, requireAuth, requireAdmin] as const;
+  router.post("/users/reset-password", csrfProtection, ...adminChain, (req, res, next) => {
+    void botPasswordRecoveryHandler("admin", recoveryDelivery)(req, res).catch(next);
+  });
 
   router.get("/overview", ...adminChain, (req, res, next) => {
     void adminOverviewHandler(req, res).catch(next);

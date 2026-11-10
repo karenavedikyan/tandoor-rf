@@ -3,6 +3,8 @@ import { hashPassword, validatePasswordInput, verifyPassword } from "../auth/pas
 import { toUserDto, type UserDto } from "../shared/user";
 import { ACCESS_AUDIT_ACTIONS } from "./constants";
 import { USER_AUDIT_ENTITY_TYPE } from "./user-provisioning";
+import { matchesRecoveryCode } from "./password-reset-service";
+import { SESSION_TTL_MS } from "../config";
 
 let testFaultBeforePasswordChangeAudit = false;
 
@@ -79,7 +81,17 @@ async function changePasswordOnClient(
     return { ok: false, code: "NOT_FOUND", message: "Пользователь не найден." };
   }
 
-  const currentOk = await verifyPassword(input.currentPassword, user.password_hash);
+  const recoverySession = (await client.query<{ id: string; code_hash: string | null }>(
+    `SELECT r.id,r.code_hash FROM sessions s
+     JOIN password_recovery_challenges r ON r.id=s.password_recovery_challenge_id
+     WHERE s.id=$1::uuid AND s.user_id=$2::uuid AND s.revoked_at IS NULL AND s.expires_at>NOW()
+       AND s.preview_user_id IS NULL AND r.user_id=s.user_id AND r.used_at IS NOT NULL
+       FOR UPDATE OF s,r`,
+    [input.sessionId, input.userId],
+  )).rows[0];
+  const currentOk = recoverySession && user.password_must_change
+    ? matchesRecoveryCode(recoverySession.id, input.currentPassword, recoverySession.code_hash)
+    : await verifyPassword(input.currentPassword, user.password_hash);
   if (!currentOk) {
     return {
       ok: false,
@@ -125,6 +137,14 @@ async function changePasswordOnClient(
 
   if (testFaultBeforePasswordChangeAudit) {
     throw new Error("Simulated audit write failure.");
+  }
+  if (recoverySession) {
+    await client.query("UPDATE password_recovery_challenges SET code_hash=NULL WHERE id=$1::uuid", [recoverySession.id]);
+    await client.query(
+      `UPDATE sessions SET password_recovery_challenge_id=NULL,
+       expires_at=NOW()+($2::bigint*INTERVAL '1 millisecond') WHERE id=$1::uuid`,
+      [input.sessionId, SESSION_TTL_MS],
+    );
   }
 
   await client.query(

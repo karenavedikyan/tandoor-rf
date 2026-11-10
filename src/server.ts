@@ -47,6 +47,8 @@ import { uploadExternalWebDraftPhotoHandler } from "./tan-tracker/external-perso
 import { attachAccessContext, blockPreviewWrites } from "./access/middleware";
 import { getSelfProfileHandler, patchSelfProfileHandler } from "./profile/handlers";
 import { changePasswordHandler } from "./profile/password-handlers";
+import { botPasswordRecoveryHandler } from "./access/bot-password-recovery-handlers";
+import type { RecoveryDelivery } from "./access/password-reset-service";
 import { logServerError } from "./http/safe-server-error-log";
 import { apiError, ERROR_CODES } from "./shared/errors";
 import {
@@ -147,7 +149,7 @@ async function readyHandler(_req: Request, res: Response): Promise<void> {
   res.status(200).json({ status: "ready" });
 }
 
-export function createApp(): express.Application {
+export function createApp(options: { recoveryDelivery?: RecoveryDelivery } = {}): express.Application {
   const app = express();
   const publicDir = resolvePublicDir();
 
@@ -222,6 +224,12 @@ export function createApp(): express.Application {
   });
 
   const authRouter = express.Router();
+  authRouter.post("/recover-password", csrfProtection, requireDatabaseReady, (req, res, next) => {
+    void botPasswordRecoveryHandler("request", options.recoveryDelivery)(req, res).catch(next);
+  });
+  authRouter.post("/recovery-login", csrfProtection, requireDatabaseReady, (req, res, next) => {
+    void botPasswordRecoveryHandler("login", options.recoveryDelivery)(req, res).catch(next);
+  });
   authRouter.post(
     "/login",
     csrfProtection,
@@ -283,7 +291,7 @@ export function createApp(): express.Application {
   app.use("/api/tanbot-max/webhook", createTanbotMaxWebhookRouter());
   app.use("/api/clients", createClientsRouter());
   app.use("/api/internal-catalog", createInternalCatalogRouter());
-  app.use("/api/admin/access", createAccessAdminRouter());
+  app.use("/api/admin/access", createAccessAdminRouter(options.recoveryDelivery));
   app.use("/api/admin/clients", createAdminClientsRouter());
   app.use("/api/admin/tanbot-telegram", createTanbotTelegramAdminRouter());
   app.use("/api/admin/tanbot-max", createTanbotMaxAdminRouter());

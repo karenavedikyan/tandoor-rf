@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { buildSessionCookie, clearSessionCookie, parseSessionToken } from "./cookie";
 import { clearLoginFailuresForEmail, reserveLoginAttempt } from "./rate-limit";
 import {
-  createSession,
+  createSessionIfPasswordUnchanged,
   revokeSessionByToken,
 } from "./session";
 import {
@@ -103,7 +103,12 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const session = await createSession(user.id);
+  const session = await createSessionIfPasswordUnchanged(user.id, user.password_hash);
+  if (!session) {
+    setNoStore(res);
+    res.status(401).json(apiError(ERROR_CODES.INVALID_CREDENTIALS, INVALID_CREDENTIALS_MESSAGE));
+    return;
+  }
   await clearLoginFailuresForEmail(email);
   await query(
     `

@@ -64,6 +64,8 @@
           </div>
         </label>
 
+        <label class="field"><span><input id="login-with-code" type="checkbox" />
+          Войти по временному коду из бота</span></label>
         <button id="login-button" type="submit" class="primary-button">Войти</button>
       </form>
 
@@ -81,11 +83,28 @@
         aria-atomic="true"
       ></p>
 
-      <p class="auth-help">Нет доступа или забыли пароль? Обратитесь к администратору кабинета.</p>
+      <details class="auth-help">
+        <summary>Забыли пароль?</summary>
+        <p>Сотруднику: введите свой логин и выберите MAX или Telegram.
+          Код с ФИО и логином придёт в бот назначенного администратора.
+          Свяжитесь с ним для проверки личности и получения кода. Ваш собственный бот не требуется.</p>
+        <p>Администратору для восстановления собственного доступа:
+          код придёт в ваш заранее подключённый бот выбранного канала.</p>
+        <form id="bot-recovery-request-form" class="form">
+          <label class="field"><span class="field__label">Логин (email)</span>
+            <input name="email" class="field__input" type="email" autocomplete="username" required /></label>
+          <label class="field"><span class="field__label">Канал бота: MAX или Telegram</span>
+            <select name="channel" class="field__input"><option value="max">MAX</option><option value="telegram">Telegram</option></select></label>
+          <button type="submit" class="primary-button">Восстановить пароль через бота</button>
+          <p class="status" role="status" aria-live="polite"></p>
+        </form>
+        <p><button type="button" class="secondary-button" id="use-recovery-code">У меня уже есть временный код</button></p>
+      </details>
     </main>
     <script src="/common.js" defer></script>
     <script src="/brand/shell-icons.js" defer></script>
     <script src="/clients-shell.js" defer></script>
     <script src="/login.js?v=20261101-stale-links" defer></script>
+    <script src="/bot-password-recovery.js" defer></script>
   </body>
 </html>
