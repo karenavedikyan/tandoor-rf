@@ -39,13 +39,13 @@ export async function handleStaffOrExternalMessengerStop(
     const account = await findAccountByTelegramUserId(client, input.messengerUserId);
     if (account) {
       await disconnectStaffTelegramOnClient(client, account.user_id);
-      return "Уведомления Telegram отключены. Включить снова можно в личном кабинете.";
+      return "Уведомления Telegram отключены. Чтобы подключиться снова, подтвердите свой номер кнопкой в боте.";
     }
   } else {
     const account = await findAccountByMaxUserId(client, input.messengerUserId);
     if (account) {
       await disconnectStaffMaxOnClient(client, account.user_id);
-      return "Уведомления MAX отключены. Включить снова можно в личном кабинете.";
+      return "Уведомления MAX отключены. Чтобы подключиться снова, подтвердите свой номер кнопкой в боте.";
     }
   }
 
@@ -58,6 +58,6 @@ export async function handleStaffOrExternalMessengerStop(
   }
 
   return input.channel === "max"
-    ? "MAX не подключён. Подключение сотрудника — в личном кабинете; внешние передачи — по ссылке из бота."
-    : "Telegram не подключён. Подключение сотрудника — в личном кабинете; внешние передачи — по ссылке из бота.";
+    ? "MAX не подключён. Чтобы подключиться, откройте меню бота и подтвердите свой номер."
+    : "Telegram не подключён. Чтобы подключиться, откройте меню бота и подтвердите свой номер.";
 }

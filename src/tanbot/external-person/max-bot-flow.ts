@@ -9,6 +9,7 @@ import { findAccountByMaxUserId } from "../../tanbot-max/link-repository";
 import { buildMainMenuInline, menuReplyKeyboard } from "../native-create/keyboards";
 import { tryNativeCreateMaxMessage, tryNativeCreateMaxPhoto } from "../native-create/adapters";
 import { registerVerifiedBotContact } from "./verified-contact-registration";
+import { linkStaffByVerifiedContact } from "../verified-contact-staff-link";
 
 export type ExternalPersonBotReply = {
   text: string;
@@ -37,6 +38,14 @@ export async function handleExternalPersonMaxContact(
   if (input.contactUserId == null || BigInt(input.contactUserId) !== input.maxUserId) {
     return { text: "Нужен ваш собственный контакт из Max.", requestContact: true };
   }
+  const identity = await linkStaffByVerifiedContact(client, {
+    channel: "max", messengerUserId: input.maxUserId, messengerChatId: input.chatId, phoneRaw: input.phoneRaw,
+  });
+  if (identity.kind === "rejected") return { text: identity.text };
+  if (identity.kind === "staff") return {
+    text: "Номер подтверждён. Откройте «Мои передачи» или «Создать передачу»:",
+    inlineButtons: buildMainMenuInline("max").maxInlineButtons,
+  };
   const registration = await registerVerifiedBotContact(client, {
     channel: "max",
     messengerUserId: input.maxUserId,
