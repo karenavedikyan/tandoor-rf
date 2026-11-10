@@ -156,11 +156,23 @@ async function processUpdateInTransaction(
           };
         }
       }
+      // Already-verified identities keep their context. Do not fall through from
+      // the draft's messenger lock into registration's LK-user-first lock order.
+      if (!reply && !ext && (linkedStaff || person) && recipientChatType === "dialog" && !isForwarded) {
+        const { tryNativeCreateMaxMessage } = await import("../tanbot/native-create/adapters");
+        const menu = await tryNativeCreateMaxMessage(client, {
+          chatId: update.chatId, maxUserId: update.maxUserId, text: "/start", recipientChatType,
+        });
+        if (menu) reply = {
+          userId: update.maxUserId, chatId: update.chatId, text: menu.text, inlineButtons: menu.inlineButtons,
+        };
+      }
       if (!reply && !ext && isExternalMessengerFeatureEnabled()) {
         const maxCfg = loadTanbotMaxStage2Config();
         const token = maxCfg.ok ? maxCfg.config.botToken : "";
         const phoneDigits = extractPhoneFromVcf(contact.vcfInfo);
-        const phoneRaw = phoneDigits ? (phoneDigits.startsWith("7") ? `+${phoneDigits}` : `+7${phoneDigits}`) : "";
+        // Normalize 7/8/10-digit provider numbers in the shared identity service.
+        const phoneRaw = phoneDigits ?? "";
         if (
           token &&
           recipientChatType === "dialog" &&

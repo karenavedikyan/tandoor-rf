@@ -9,6 +9,7 @@ import { findAccountByTelegramUserId } from "../../tanbot-telegram/link-reposito
 import { menuReplyKeyboard } from "../native-create/keyboards";
 import { tryNativeCreateTelegramMessage, tryNativeCreateTelegramPhoto } from "../native-create/adapters";
 import { registerVerifiedBotContact } from "./verified-contact-registration";
+import { linkStaffByVerifiedContact } from "../verified-contact-staff-link";
 
 export type ExternalPersonBotReply = {
   text: string;
@@ -35,6 +36,14 @@ export async function handleExternalPersonTelegramContact(
   if (input.contactUserId == null || BigInt(input.contactUserId) !== input.telegramUserId) {
     return { text: "Нужен ваш собственный контакт из Telegram.", requestContact: true };
   }
+  const identity = await linkStaffByVerifiedContact(client, {
+    channel: "telegram", messengerUserId: input.telegramUserId, messengerChatId: input.chatId, phoneRaw: input.phoneRaw,
+  });
+  if (identity.kind === "rejected") return { text: identity.text, replyMarkup: { remove_keyboard: true } };
+  if (identity.kind === "staff") return {
+    text: "Номер подтверждён. Откройте «Мои передачи» или «Создать передачу»:",
+    replyMarkup: menuReplyKeyboard(),
+  };
   const registration = await registerVerifiedBotContact(client, {
     channel: "telegram",
     messengerUserId: input.telegramUserId,
@@ -54,7 +63,7 @@ export async function handleExternalPersonTelegramContact(
   const origin = getAppOrigin() ?? "https://example.invalid";
   const url = `${origin}/tan-tracker/?est=${encodeURIComponent(sessionRaw)}`;
   return {
-    text: `Номер подтверждён. Откройте «Мои передачи» или «Оформить передачу» в меню:\n${url}`,
+    text: `Номер подтверждён. Откройте «Мои передачи» или «Создать передачу»:\n${url}`,
     replyMarkup: menuReplyKeyboard(),
   };
 }

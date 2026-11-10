@@ -21,9 +21,7 @@ export const NATIVE_COMPACT_MENU_PROMPT = "Дополнительные дейс
 
 export function nativeMainMenuGreetingLines(ctx: NativeCreateContext): string[] {
   const lines = ["Тандор", "Посылки, документы и предметы с подтверждением получения.", ""];
-  if (ctx.isLinkedStaff) {
-    lines.push("Вы вошли как сотрудник.");
-  } else if (ctx.personId) {
+  if (ctx.isLinkedStaff || ctx.personId) {
     lines.push("Номер телефона подтверждён.");
   } else {
     lines.push("Для оформления передачи подтвердите свой номер телефона.");

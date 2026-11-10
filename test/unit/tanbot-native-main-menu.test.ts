@@ -65,6 +65,17 @@ describe("native main menu helpers", () => {
     assert.match(text, /^Тандор\n/u);
     assert.match(text, new RegExp(NATIVE_MAIN_MENU_ACTION_PROMPT));
   });
+
+  it("confirmed staff and external identities have the same user-facing greeting", () => {
+    for (const channel of ["max", "telegram"] as const) {
+      const base = { channel, messengerChatId: "1", messengerUserId: 1n, privateDialogOk: true };
+      const staff = nativeMainMenuText({ ...base, isLinkedStaff: true, staffUserId: "staff", personId: null });
+      const external = nativeMainMenuText({ ...base, isLinkedStaff: false, staffUserId: null, personId: "person" });
+      assert.equal(staff, external);
+      assert.match(staff, /Номер телефона подтверждён/);
+      assert.doesNotMatch(staff, /сотрудник|внешний/);
+    }
+  });
 });
 
 describe("native bot command install registry", () => {

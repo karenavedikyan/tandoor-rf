@@ -616,6 +616,7 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
 
   it("max: signed own-contact outside eligible draft is not treated as recipient card", async () => {
     const actor = await staffActor("max");
+    const verificationsBefore = (await getPool()!.query(`SELECT COUNT(*)::int n FROM tt_external_person_verifications`)).rows[0].n;
     const phone = "+79991112233";
     const { vcfRaw, hash } = signedMaxVcf(phone, actor.messengerId);
     const reply = await send(actor, {
@@ -624,6 +625,12 @@ describe("native recipient contact (HTTP both channels)", { concurrency: false }
       hash,
       contactUserId: actor.messengerId,
     });
-    assert.match(reply.text, /не принят|команды/i);
+    assert.match(reply.text, /Номер телефона подтверждён/i);
+    assert.ok(reply.buttons.some(b => b.text === "Создать передачу"));
+    assert.equal((await getPool()!.query(`SELECT COUNT(*)::int n FROM tt_external_person_verifications`)).rows[0].n, verificationsBefore,
+      "returning the already-linked user's menu cannot create an external identity");
+    assert.equal((await getPool()!.query(`SELECT COUNT(*)::int n FROM tt_external_request_drafts
+      WHERE payload->>'staffUserId'=$1`, [actor.staffId])).rows[0].n, 0,
+      "returning the menu cannot treat the card as a new recipient or create a draft");
   });
 });

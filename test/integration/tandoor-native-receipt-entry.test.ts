@@ -27,9 +27,8 @@ import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../../src/tanbot/native-create/teleg
 import { tryNativeCreateMaxCallback, tryNativeCreateTelegramCallback } from "../../src/tanbot/native-create/adapters";
 import { mintExternalMessengerSession, bindSessionMessengerChat, type ExternalMessengerSessionRow } from "../../src/tan-tracker/external-messenger/session-service";
 import { decodeVcfInfoForHmac } from "../../src/tanbot/external-recipient/max-contact-verify";
-import { startTanbotMaxLink } from "../../src/tanbot-max/link-service";
-import { startTanbotLink as startTanbotTelegramLink } from "../../src/tanbot-telegram/link-service";
 import { nativeBotDraftChatKey } from "../../src/tanbot/native-create/draft-scope";
+import { linkStaffByVerifiedContact } from "../../src/tanbot/verified-contact-staff-link";
 
 type Channel = "max" | "telegram";
 type Actor = { channel: Channel; id: number; chat: number; party: string; user?: string };
@@ -39,6 +38,28 @@ let app: Express, seq = 530000, originalFetch: typeof fetch, networkCalls = 0;
 const db = getIntegrationDatabaseUrl();
 const code = "345678";
 const p = () => getPool()!;
+async function unlinkedStaff(channel: Channel, status = "active") {
+  const id = ++seq, phone = `+7987${String(id).padStart(7, "0")}`;
+  const user = await createTestUser({ databaseUrl: db, email: `own-contact-${id}@test.local`,
+    password: "SyntheticPass123!", fullName: "Synthetic contact owner", role: "manager", status, phone });
+  const a: Actor = { channel, id, chat: channel === "max" ? id + 100000 : id, party: "", user: user.id };
+  return { a, phone, user: user.id };
+}
+async function identitySnapshot() {
+  return (await p().query(`SELECT jsonb_build_object(
+    'users',(SELECT jsonb_agg(to_jsonb(u) ORDER BY id) FROM users u),
+    'sessions',(SELECT COUNT(*) FROM sessions),
+    'externalSessions',(SELECT COUNT(*) FROM tt_external_person_sessions),
+    'persons',(SELECT COUNT(*) FROM tt_external_persons),
+    'verifications',(SELECT COUNT(*) FROM tt_external_person_verifications),
+    'parties',(SELECT COUNT(*) FROM tt_parties),
+    'transfers',(SELECT COUNT(*) FROM tt_transfers)) AS value`)).rows[0].value;
+}
+async function ownContactLink(a: Actor, phone: string) {
+  return withTransaction(client => linkStaffByVerifiedContact(client, {
+    channel: a.channel, messengerUserId: BigInt(a.id), messengerChatId: BigInt(a.chat), phoneRaw: phone,
+  }));
+}
 async function actor(channel: Channel, staff = true): Promise<Actor> {
   const id = ++seq, chat = channel === "max" ? id + 100000 : id;
   if (staff) {
@@ -118,7 +139,7 @@ async function pickTransferAndEnterCode(a: Actor, t: { id: string; pick: string 
   return send(a, "", codeBtn!.payload ?? codeBtn!.callback_data!);
 }
 async function send(a: Actor, text = "", callback?: string, fixedId?: number, privateDialog = true,
-  contact?: { phone: string; ownerId?: number; forwarded?: boolean; badSignature?: boolean }): Promise<Reply> {
+  contact?: { phone: string; ownerId?: number; omitOwner?: boolean; forwarded?: boolean; badSignature?: boolean }): Promise<Reply> {
   const id = fixedId ?? ++seq, replies: Reply[] = [];
   if (a.channel === "telegram") {
     const message = { message_id: id, chat: { id: a.chat, type: privateDialog ? "private" : "group" } };
@@ -129,7 +150,7 @@ async function send(a: Actor, text = "", callback?: string, fixedId?: number, pr
           ...message, from: { id: a.id, is_bot: false },
           ...(contact?.forwarded ? { forward_date: 1, forward_from: { id: a.id + 1 } } : {}),
           ...(contact ? { contact: { phone_number: contact.phone, first_name: "Synthetic own contact",
-            user_id: contact.ownerId ?? a.id } } : { text }),
+            ...(contact.omitOwner ? {} : { user_id: contact.ownerId ?? a.id }) } } : { text }),
         } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const cfg = loadTanbotTelegramStage2Config(); assert.ok(cfg.ok);
@@ -146,7 +167,7 @@ async function send(a: Actor, text = "", callback?: string, fixedId?: number, pr
     const message = { recipient: { chat_id: a.chat, chat_type: privateDialog ? "dialog" : "chat", user_id: a.id },
       ...(contact?.forwarded ? { link: { type: "forward" } } : {}),
       body: { mid: `receipt-${id}`, ...(contact ? { attachments: [{ type: "contact", payload: {
-        vcf_info: vcf, max_info: { user_id: contact.ownerId ?? a.id },
+        vcf_info: vcf, max_info: contact.omitOwner ? {} : { user_id: contact.ownerId ?? a.id },
         hash: contact.badSignature ? "0".repeat(64) : createHmac("sha256", process.env.TANBOT_MAX_BOT_TOKEN!)
           .update(decodeVcfInfoForHmac(vcf), "utf8").digest("hex"),
       } }] } : { text }) } };
@@ -214,7 +235,194 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
     app = (await import("../../src/server")).createApp();
   });
   after(async () => { globalThis.fetch = originalFetch; await closePool(); assert.equal(networkCalls, 0); });
+  it("both channels: staff own contacts reuse one LK user and party without granting browser sessions", async () => {
+    const { a: max, phone, user } = await unlinkedStaff("max");
+    const party = await ensurePartyForUserOnWrite(p(), user, "Synthetic multi-channel owner", phone);
+    const telegram: Actor = { ...max, channel: "telegram", id: ++seq, chat: seq };
+    const before = await identitySnapshot();
+    for (const a of [max, telegram]) {
+      assert.match((await send(a, "", undefined, undefined, true, { phone })).text, /Номер подтверждён/);
+      assert.deepEqual((await p().query(`SELECT user_id::text FROM tanbot_${a.channel}_accounts
+        WHERE ${a.channel}_user_id=$1`, [String(a.id)])).rows, [{ user_id: user }]);
+    }
+    assert.deepEqual(await identitySnapshot(), before);
+    assert.deepEqual((await p().query(`SELECT id::text FROM tt_parties WHERE kind='user' AND user_id=$1`,
+      [user])).rows, [{ id: party.id }]);
+  });
+  it("both channels: external own contacts reuse the same canonical person and party", async () => {
+    const id = ++seq, phone = `+7987${String(id).padStart(7, "0")}`;
+    const max: Actor = { channel: "max", id, chat: id + 100000, party: "" };
+    const telegram: Actor = { ...max, channel: "telegram", id: ++seq, chat: seq };
+    for (const a of [max, telegram]) {
+      assert.match((await send(a, "", undefined, undefined, true, { phone })).text, /Номер подтверждён/);
+    }
+    const identities = (await p().query(`SELECT v.channel,p.id::text,p.party_id::text FROM tt_external_person_verifications v
+      JOIN tt_external_persons p ON p.id=v.person_id WHERE p.phone_e164=$1 ORDER BY v.channel`, [phone])).rows;
+    assert.equal(identities.length, 2);
+    assert.deepEqual(identities.map(x => x.channel), ["max", "telegram"]);
+    assert.equal(identities[0].id, identities[1].id);
+    assert.equal(identities[0].party_id, identities[1].party_id);
+    assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_parties WHERE phone_e164=$1`, [phone])).rows[0].n, 1);
+  });
   for (const channel of ["max", "telegram"] as const) {
+    it(`${channel}: an existing external messenger identity cannot be upgraded into a staff account by contact sharing`, async () => {
+      const external = await actor(channel, false), staff = await unlinkedStaff(channel);
+      const bound = { ...staff.a, id: external.id, chat: external.chat };
+      const before = await identitySnapshot();
+      assert.equal((await ownContactLink(bound, staff.phone)).kind, "rejected");
+      await send(bound, "", undefined, undefined, true, { phone: staff.phone });
+      assert.deepEqual(await identitySnapshot(), before);
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tanbot_${channel}_accounts
+        WHERE user_id=$1`, [staff.user])).rows[0].n, 0);
+      assert.equal((await p().query(`SELECT p.party_id FROM tt_external_person_verifications v
+        JOIN tt_external_persons p ON p.id=v.person_id WHERE channel=$1 AND messenger_user_id=$2`,
+        [channel, String(external.id)])).rows[0].party_id, external.party);
+    });
+    it(`${channel}: revoking staff role/status after own-contact confirmation still denies creation`, async () => {
+      const { a, phone, user } = await unlinkedStaff(channel);
+      await send(a, "", undefined, undefined, true, { phone });
+      await p().query(`UPDATE users SET role='marketer' WHERE id=$1`, [user]);
+      const before = await identitySnapshot();
+      const denied = await send(a, "Создать передачу");
+      assert.match(denied.text, /недоступ|запрещ/i);
+      assert.deepEqual(await identitySnapshot(), before);
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_external_request_drafts
+        WHERE payload->>'staffUserId'=$1`, [user])).rows[0].n, 0);
+      await p().query(`UPDATE users SET role='manager',status='disabled' WHERE id=$1`, [user]);
+      const disabledBefore = await identitySnapshot();
+      const disabled = await send(a, "Создать передачу");
+      assert.match(disabled.text, /недоступ|запрещ/i);
+      assert.deepEqual(await identitySnapshot(), disabledBefore);
+    });
+    it(`${channel}: staff authentication requires a private provider-owned contact, not typed/forwarded/foreign data`, async () => {
+      const { a, phone } = await unlinkedStaff(channel);
+      const before = await identitySnapshot();
+      await send(a, phone);
+      for (const contact of [{ phone, ownerId: a.id + 1 }, { phone, omitOwner: true },
+        { phone, forwarded: true }, ...(channel === "max" ? [{ phone, badSignature: true }] : [])]) {
+        const r = await send(a, "", undefined, undefined, true, contact);
+        assert.doesNotMatch(r.text, /Номер подтверждён/);
+      }
+      await send(a, "", undefined, undefined, false, { phone });
+      if (channel === "telegram") {
+        await send({ ...a, chat: a.chat + 1 }, "", undefined, undefined, true, { phone });
+      }
+      assert.deepEqual(await identitySnapshot(), before);
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tanbot_${channel}_accounts
+        WHERE user_id=$1`, [a.user])).rows[0].n, 0);
+      assert.match((await send(a, "", undefined, undefined, true, { phone })).text, /Номер подтверждён/);
+      assert.deepEqual(await identitySnapshot(), before, "only a binding/audit may change, not auth data or business identities");
+    });
+    for (const problem of ["duplicate-staff", "disabled", "invited", "stale-alias", "null-phone-alias",
+      "external-party", "other-active-binding", "other-stopped-binding", "reserved-stopped-messenger",
+      "different-chat"] as const) {
+      it(`${channel}: ${problem} cannot silently select, replace or merge an identity`, async () => {
+        const { a, phone, user } = await unlinkedStaff(channel,
+          problem === "disabled" || problem === "invited" ? problem : "active");
+        if (problem === "duplicate-staff") {
+          await createTestUser({ databaseUrl: db, email: `duplicate-${a.id}@test.local`,
+            password: "SyntheticPass123!", fullName: "Synthetic duplicate", phone });
+        }
+        if (problem === "stale-alias" || problem === "null-phone-alias") {
+          await ensurePartyForUserOnWrite(p(), user, "Synthetic old alias", phone);
+          await p().query(`UPDATE users SET phone=$2 WHERE id=$1`, [user,
+            problem === "null-phone-alias" ? null : `+7986${String(a.id).padStart(7, "0")}`]);
+        }
+        if (problem === "external-party") {
+          await p().query(`INSERT INTO tt_parties(kind,display_name,phone_e164)
+            VALUES('external','Synthetic conflicting identity',$1)`, [phone]);
+        }
+        if (["other-active-binding", "other-stopped-binding", "different-chat"].includes(problem)) {
+          await p().query(`INSERT INTO tanbot_${channel}_accounts
+            (user_id,${channel}_user_id,${channel}_chat_id,notifications_enabled,stopped_at)
+            VALUES($1,$2,$3,FALSE,$4)`, [user, String(problem === "different-chat" ? a.id : a.id + 10000000),
+            String(a.chat + 10000000), problem === "other-stopped-binding" ? new Date() : null]);
+        }
+        if (problem === "reserved-stopped-messenger") {
+          const owner = await unlinkedStaff(channel);
+          await p().query(`INSERT INTO tanbot_${channel}_accounts
+            (user_id,${channel}_user_id,${channel}_chat_id,notifications_enabled,stopped_at)
+            VALUES($1,$2,$3,FALSE,NOW())`, [owner.user, String(a.id), String(a.chat)]);
+        }
+        const before = await identitySnapshot();
+        const bindings = async () => (await p().query(`SELECT * FROM tanbot_${channel}_accounts ORDER BY user_id`)).rows;
+        const previousBindings = await bindings();
+        await send(a, "", undefined, undefined, true, { phone });
+        assert.deepEqual(await identitySnapshot(), before);
+        assert.deepEqual(await bindings(), previousBindings);
+        // Service contract also refuses a conflicting active messenger/chat even
+        // where the webhook correctly stays in an already-authenticated context.
+        const result = await ownContactLink(a, phone);
+        assert.equal(result.kind, "rejected");
+        if (result.kind === "rejected") {
+          for (const privateValue of [phone, user, "@test.local"]) {
+            assert.ok(!result.text.includes(privateValue), "rejection cannot disclose identity details");
+          }
+        }
+      });
+    }
+    it(`${channel}: confirmation cancels stale LK tokens, is replay-safe and preserves active notification preferences`, async () => {
+      const { a, phone, user } = await unlinkedStaff(channel);
+      await p().query(`INSERT INTO tanbot_${channel}_link_attempts(user_id,token_hash,expires_at)
+        VALUES($1,$2,NOW()+INTERVAL '1 hour')`, [user, randomUUID()]);
+      const before = await identitySnapshot(), event = ++seq;
+      const first = await send(a, "", undefined, event, true, { phone });
+      assert.match(first.text, /Номер подтверждён/);
+      await send(a, "", undefined, event, true, { phone });
+      await p().query(`UPDATE tanbot_${channel}_accounts SET notifications_enabled=FALSE WHERE user_id=$1`, [user]);
+      const repeat = await send(a, "", undefined, undefined, true, { phone });
+      assert.doesNotMatch(repeat.text, /Контакт не принят|Используйте личный кабинет|Подключить/);
+      assert.equal((await ownContactLink(a, phone)).kind, "staff");
+      assert.equal((await p().query(`SELECT notifications_enabled FROM tanbot_${channel}_accounts
+        WHERE user_id=$1`, [user])).rows[0].notifications_enabled, false);
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tanbot_${channel}_link_audit
+        WHERE user_id=$1 AND action='own_contact_link'`, [user])).rows[0].n, 1);
+      assert.ok((await p().query(`SELECT cancelled_at FROM tanbot_${channel}_link_attempts
+        WHERE user_id=$1`, [user])).rows[0].cancelled_at);
+      assert.deepEqual(await identitySnapshot(), before);
+    });
+    it(`${channel}: stop can be resumed by the same own contact, never as a shadow external profile`, async () => {
+      const { a, phone, user } = await unlinkedStaff(channel);
+      await send(a, "", undefined, undefined, true, { phone });
+      const before = await identitySnapshot();
+      const stopped = await send(a, "/stop");
+      assert.doesNotMatch(stopped.text, /заново подключите.*(?:ЛК|личном кабинете)/i);
+      assert.ok((await p().query(`SELECT stopped_at FROM tanbot_${channel}_accounts WHERE user_id=$1`, [user])).rows[0].stopped_at);
+      assert.match((await send(a, "", undefined, undefined, true, { phone })).text, /Номер подтверждён/);
+      const account = (await p().query(`SELECT stopped_at,notifications_enabled FROM tanbot_${channel}_accounts
+        WHERE user_id=$1`, [user])).rows[0];
+      assert.deepEqual(account, { stopped_at: null, notifications_enabled: true });
+      assert.deepEqual(await identitySnapshot(), before);
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tanbot_${channel}_link_audit
+        WHERE user_id=$1 AND action='own_contact_link'`, [user])).rows[0].n, 2);
+    });
+    it(`${channel}: concurrent confirmations serialize and cannot replace the winning binding`, async () => {
+      const { a, phone, user } = await unlinkedStaff(channel);
+      const same = await Promise.all([ownContactLink(a, phone), ownContactLink(a, phone)]);
+      assert.deepEqual(same.map(x => x.kind), ["staff", "staff"]);
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tanbot_${channel}_link_audit
+        WHERE user_id=$1 AND action='own_contact_link'`, [user])).rows[0].n, 1);
+      const second = await unlinkedStaff(channel);
+      const other = { ...second.a, id: second.a.id + 20000000, chat: second.a.chat + 20000000 };
+      const different = await Promise.all([ownContactLink(second.a, second.phone), ownContactLink(other, second.phone)]);
+      assert.deepEqual(different.map(x => x.kind).sort(), ["rejected", "staff"]);
+      assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tanbot_${channel}_accounts
+        WHERE user_id=$1`, [second.user])).rows[0].n, 1);
+      const third = await unlinkedStaff(channel), fourth = await unlinkedStaff(channel);
+      const oneMessenger = { ...fourth.a, id: third.a.id, chat: third.a.chat };
+      const owners = await Promise.all([ownContactLink(third.a, third.phone), ownContactLink(oneMessenger, fourth.phone)]);
+      assert.deepEqual(owners.map(x => x.kind).sort(), ["rejected", "staff"],
+        "one messenger cannot race its way into two staff accounts");
+    });
+    for (const format of ["national", "ten-digits"] as const) {
+      it(`${channel}: ${format} provider-owned phone normalizes to the existing canonical staff number`, async () => {
+        const { a, phone } = await unlinkedStaff(channel);
+        const raw = format === "national" ? `8${phone.slice(2)}` : phone.slice(2);
+        assert.match((await send(a, "", undefined, undefined, true, { phone: raw })).text, /Номер подтверждён/);
+        assert.deepEqual((await p().query(`SELECT user_id::text FROM tanbot_${channel}_accounts
+          WHERE ${channel}_user_id=$1`, [String(a.id)])).rows, [{ user_id: a.user }]);
+      });
+    }
     it(`${channel}: a new own contact self-registers, creates a transfer and cannot access another person's track`, async () => {
       const id = ++seq, a: Actor = { channel, id, chat: channel === "max" ? id + 100000 : id, party: "" };
       const phone = `+7987${String(id).padStart(7, "0")}`;
@@ -307,34 +515,21 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         WHERE person_id=(SELECT person_id FROM tt_external_person_verifications
           WHERE channel=$1 AND messenger_user_id=$2)`, [channel, String(a.id)])).rows[0].n, 1);
     });
-    for (const conflict of ["employee", "duplicate"] as const) {
+    for (const conflict of ["duplicate"] as const) {
       it(`${channel}: ${conflict} phone rejection is explained without verifying the person`, async () => {
         const id = ++seq, a: Actor = { channel, id, chat: channel === "max" ? id + 100000 : id, party: "" };
         const phone = `+7987${String(id).padStart(7, "0")}`;
-        if (conflict === "employee") {
-          await createTestUser({ databaseUrl: db, email: `contact-collision-${id}@test.local`,
-            password: "SyntheticPass123!", fullName: "Synthetic employee", role: "manager", phone });
-        } else {
-          await p().query(`INSERT INTO tt_parties(kind,display_name,phone_e164)
-            VALUES('external','Synthetic duplicate A',$1),('external','Synthetic duplicate B',$1)`, [phone]);
-        }
+        await p().query(`INSERT INTO tt_parties(kind,display_name,phone_e164)
+          VALUES('external','Synthetic duplicate A',$1),('external','Synthetic duplicate B',$1)`, [phone]);
         const reply = await send(a, "", undefined, undefined, true, { phone });
-        assert.match(reply.text, conflict === "employee" ? /номер принадлежит сотруднику/ : /несколько контактов/);
+        assert.match(reply.text, /несколько контактов/);
         assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_external_person_verifications
           WHERE channel=$1 AND messenger_user_id=$2`, [channel, String(a.id)])).rows[0].n, 0);
         assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_external_persons
           WHERE phone_e164=$1`, [phone])).rows[0].n, 0);
-        if (conflict === "employee") {
-          assert.match(reply.text, /Подключить (?:MAX|Telegram)/);
-          assert.ok(reply.buttons.some(b => b.url === "http://127.0.0.1:3000/profile"));
-          assert.ok(!reply.buttons.some(b => b.text === "Отправить мой номер"));
-          assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tanbot_${channel}_accounts
-            WHERE ${channel}_user_id=$1`, [String(a.id)])).rows[0].n, 0,
-          "contact sharing must not auto-link a staff account");
-        }
       });
     }
-    it(`${channel}: employee with an existing LK transfer links securely and creates in the bot as the same staff`, async () => {
+    it(`${channel}: employee confirms an own contact without LK navigation and creates as the same staff`, async () => {
       const id = ++seq;
       const phone = `+7987${String(id).padStart(7, "0")}`;
       const user = await createTestUser({ databaseUrl: db, email: `staff-multichannel-${id}@test.local`,
@@ -346,28 +541,13 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
       const before = await state(existing.id);
       const denied = await send(a, "Создать передачу");
       assert.ok(denied.buttons.some(b => b.text === "Отправить мой номер"));
-      const guidance = await send(a, "", undefined, undefined, true, { phone });
-      assert.match(guidance.text, /Созданные ранее передачи сохранятся/);
-      assert.ok(!guidance.buttons.some(b => b.text === "Отправить мой номер"));
+      const confirmed = await send(a, "", undefined, undefined, true, { phone });
+      assert.match(confirmed.text, /Номер подтверждён/);
+      assert.doesNotMatch(confirmed.text, /Подключить|сотрудник|\/profile/);
+      assert.ok(!confirmed.buttons.some(b => b.text === "Отправить мой номер" || b.url));
       assert.deepEqual(await state(existing.id), before);
       assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_external_persons
         WHERE phone_e164=$1`, [phone])).rows[0].n, 0);
-      const config = channel === "max" ? loadTanbotMaxStage2Config() : loadTanbotTelegramStage2Config();
-      assert.ok(config.ok);
-      const link = channel === "max"
-        ? await startTanbotMaxLink(p(), config.config as Parameters<typeof startTanbotMaxLink>[1], user.id)
-        : await startTanbotTelegramLink(p(), config.config as Parameters<typeof startTanbotTelegramLink>[1], user.id);
-      const token = new URL(link.deepLink).searchParams.get("start");
-      assert.ok(token);
-      if (channel === "max") {
-        const response = await request(app).post("/api/tanbot-max/webhook")
-          .set("X-Max-Bot-Api-Secret", process.env.TANBOT_MAX_WEBHOOK_SECRET!)
-          .send({ update_type: "bot_started", timestamp: ++seq, chat_id: a.chat,
-            user: { user_id: a.id, is_bot: false, first_name: "Synthetic manager" }, payload: token });
-        assert.equal(response.status, 200, response.text);
-      } else {
-        await send(a, `/start ${token}`);
-      }
       const binding = (await p().query(`SELECT user_id::text FROM tanbot_${channel}_accounts
         WHERE ${channel}_user_id=$1 AND stopped_at IS NULL`, [String(a.id)])).rows;
       assert.deepEqual(binding, [{ user_id: user.id }]);
@@ -408,6 +588,14 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         WHERE creator_party_id=$1`, [a.party])).rows[0].n, 2);
       assert.equal((await p().query(`SELECT COUNT(*)::int n FROM tt_external_persons
         WHERE phone_e164=$1`, [phone])).rows[0].n, 0, "staff is never registered as an external person");
+      const outsider = await actor(channel), secret = await seed(outsider);
+      const mineAfterCreate = await send(a, "Мои передачи");
+      assert.ok(!JSON.stringify(mineAfterCreate).includes(secret.id));
+      const secretBefore = await state(secret.id);
+      const forbidden = await send(a, "", statusView(secret.id));
+      assert.doesNotMatch(forbidden.text, /Synthetic receipt item/);
+      assert.deepEqual(await state(secret.id), secretBefore,
+        "own-contact linking must not broaden the manager's access to unrelated transfers");
     });
     it(`${channel}: an unverified person's typed phone returns own-contact guidance without identity, session or draft writes`, async () => {
       const id = ++seq, a: Actor = { channel, id, chat: channel === "max" ? id + 100000 : id, party: "" };
