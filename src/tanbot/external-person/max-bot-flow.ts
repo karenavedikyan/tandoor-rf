@@ -44,7 +44,13 @@ export async function handleExternalPersonMaxContact(
     phoneRaw: input.phoneRaw,
     displayName: input.firstName,
   });
-  if (!registration.ok) return { text: registration.text, requestContact: true };
+  if (!registration.ok) return {
+    text: registration.text,
+    requestContact: registration.requestContact ?? true,
+    inlineButtons: registration.profileUrl
+      ? [[{ type: "link", text: "Подключить MAX в профиле", url: registration.profileUrl }]]
+      : undefined,
+  };
   const person = registration.person;
   const sessionRaw = await createPersonBrowserSession(client, person.id, "max");
   const origin = getAppOrigin() ?? "https://example.invalid";

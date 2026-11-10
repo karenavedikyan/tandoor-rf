@@ -42,7 +42,13 @@ export async function handleExternalPersonTelegramContact(
     phoneRaw: input.phoneRaw,
     displayName: input.firstName,
   });
-  if (!registration.ok) return { text: registration.text, requestContact: true };
+  if (!registration.ok) return {
+    text: registration.text,
+    requestContact: registration.requestContact ?? true,
+    replyMarkup: registration.profileUrl
+      ? { inline_keyboard: [[{ text: "Подключить Telegram в профиле", url: registration.profileUrl }]] }
+      : registration.requestContact === false ? { remove_keyboard: true } : undefined,
+  };
   const person = registration.person;
   const sessionRaw = await createPersonBrowserSession(client, person.id, "telegram");
   const origin = getAppOrigin() ?? "https://example.invalid";
