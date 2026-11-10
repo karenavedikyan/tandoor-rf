@@ -39,19 +39,24 @@ export async function loadExternalPersonOrders(
   const deleteActor = registryCleanupActorFromExternalParty(partyId);
   const orders: TanTrackerOrderDto[] = [];
   for (const row of rows.rows) {
+    // The shared card follows custody and explicitly assigned recipients, not uploader identity.
+    // A past creator without a current role keeps only their existing limited view.
+    const recipientAccess = [row.holder_party_id, row.pending_party_id, row.final_recipient_party_id].includes(partyId);
     const timeline = await pool.query<TanTrackerTimelineRow>(
       `SELECT id, transfer_id, from_party_id, to_party_id, note, occurred_at, actor_user_id
        FROM tt_transfer_timeline
        WHERE transfer_id = $1
-         AND (from_party_id = $2::uuid OR to_party_id = $2::uuid)
+         AND ($3::boolean OR from_party_id = $2::uuid OR to_party_id = $2::uuid)
        ORDER BY occurred_at ASC`,
-      [row.id, partyId],
+      [row.id, partyId, recipientAccess],
     );
     const revoked = await listRevokedParties(pool, row.id);
     const attMap = await listAttachmentsForTransfers(pool, [row.id]);
     const rawAtt = attMap.get(row.id) ?? [];
     const attachments =
-      row.from_external && row.creator_party_id === partyId
+      recipientAccess
+        ? rawAtt
+        : row.from_external && row.creator_party_id === partyId
         ? rawAtt
             .filter((a) => !a.addedBy)
             .map((a) => ({
@@ -66,7 +71,6 @@ export async function loadExternalPersonOrders(
     const dto = mapTransferToOrderDto(row, timeline.rows, revoked, { attachments });
     dto.hasConfirmedReceipt = row.first_custody_at != null || auditConfirmedIds.has(row.id);
     dto.attachments = attachments;
-    dto.timeline = dto.timeline.filter((e) => e.from === partyId || e.to === partyId);
     if (
       row.holder_party_id === partyId &&
       row.status !== "completed" &&
