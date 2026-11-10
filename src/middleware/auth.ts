@@ -57,6 +57,19 @@ export async function requireAuth(
     }
 
     const requestPath = req.originalUrl.split("?")[0] ?? req.path;
+    if (session.user.mustChangePassword) {
+      const recovery = await query<{ password_recovery_challenge_id: string | null }>(
+        "SELECT password_recovery_challenge_id FROM sessions WHERE id=$1::uuid", [session.sessionId],
+      );
+      const path = requestPath.toLowerCase();
+      const allowed = (req.method === "GET" && ["/api/auth/me", "/api/profile/self"].includes(path)) ||
+        (req.method === "POST" && ["/api/profile/change-password", "/api/auth/logout"].includes(path));
+      if (recovery.rows[0]?.password_recovery_challenge_id && !allowed) {
+        setNoStore(res);
+        res.status(403).json(apiError(ERROR_CODES.PASSWORD_CHANGE_REQUIRED, "Вход по коду разрешает только смену пароля."));
+        return;
+      }
+    }
     if (!isPasswordChangeExemptPath(requestPath)) {
       const mustChange = await query<{ password_must_change: boolean }>(
         `SELECT password_must_change FROM users WHERE id = $1::uuid`,

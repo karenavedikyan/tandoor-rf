@@ -26,6 +26,26 @@
           <div id="access-panel" class="clients-panel" hidden></div>
 
           <div id="admin-access-app" class="clients-panel clients-hidden">
+            <section class="clients-card">
+              <h2 class="clients-card__title">Восстановление пароля сотруднику</h2>
+              <p class="clients-subtitle">Только для активных сотрудников без роли администратора.
+                Код с ФИО и логином сотрудника придёт в ваш подключённый бот.
+                Передайте код сотруднику лично. Пароль и сессии изменятся только после входа по коду.</p>
+              <form id="employee-reset-form" class="form">
+                <label class="field"><span class="field__label">Точный email сотрудника</span>
+                  <input name="email" class="field__input" type="email" autocomplete="off" required /></label>
+                <label class="field"><span class="field__label">Ваш текущий пароль администратора</span>
+                  <input name="currentPassword" class="field__input" type="password" autocomplete="current-password" required /></label>
+                <label class="field"><span class="field__label">Основание сброса</span>
+                  <input name="basis" class="field__input" maxlength="500" required /></label>
+                <label class="field"><span class="field__label">Получить код в мой бот</span>
+                  <select name="channel" class="field__input"><option value="max">MAX</option><option value="telegram">Telegram</option></select></label>
+                <label class="field"><span><input name="confirmed" type="checkbox" required />
+                  Подтверждаю выдачу кода указанному сотруднику через мой подключённый бот.</span></label>
+                <button type="submit" class="workspace-button workspace-button--primary">Восстановить пароль через бота</button>
+                <p class="status" role="status" aria-live="polite"></p>
+              </form>
+            </section>
             <section class="clients-card" id="employee-rollout-section">
               <h2 class="clients-card__title">Выдача доступов сотрудникам</h2>
               <p class="clients-subtitle">Сначала подготовьте и сохраните конфиденциальный файл паролей.
@@ -211,5 +231,6 @@
     <script src="/clients-shell.js" defer></script>
     <script src="/admin-access.js" defer></script>
     <script src="/employee-rollout.js" defer></script>
+    <script src="/bot-password-recovery.js" defer></script>
   </body>
 </html>

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { query } from "../db/pool";
+import { query, requirePool } from "../db/pool";
 import { SESSION_TTL_MS } from "../config";
 import { toUserDto, type UserDto } from "../shared/user";
 
@@ -40,6 +40,35 @@ export async function createSession(userId: string): Promise<{ token: string; se
   );
 
   return { token, sessionId: result.rows[0]!.id };
+}
+
+/** Serialize login against password rotation so a verified old password cannot mint a new session. */
+export async function createSessionIfPasswordUnchanged(
+  userId: string, verifiedHash: string,
+): Promise<{ token: string; sessionId: string } | null> {
+  const client = await requirePool().connect();
+  try {
+    await client.query("BEGIN");
+    const user = await client.query<{ password_hash: string; status: string }>(
+      "SELECT password_hash,status FROM users WHERE id=$1::uuid FOR UPDATE", [userId],
+    );
+    if (user.rows[0]?.status !== "active" || user.rows[0]?.password_hash !== verifiedHash) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const token = createOpaqueToken();
+    const session = await client.query<{ id: string }>(
+      "INSERT INTO sessions(user_id,token_hash,expires_at) VALUES($1,$2,$3) RETURNING id",
+      [userId, sha256Hex(token), new Date(Date.now() + SESSION_TTL_MS).toISOString()],
+    );
+    await client.query("COMMIT");
+    return { token, sessionId: session.rows[0]!.id };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function revokeSession(sessionId: string): Promise<void> {
