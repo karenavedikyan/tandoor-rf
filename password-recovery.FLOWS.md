@@ -32,7 +32,9 @@ No production migration, publication, real messages or deployment without separa
 - Stopped/rebound bot, disabled account, changed credentials, revoked initiating admin session and stale code fail closed.
 - Delivery uses existing bounded bot transports synchronously; no plaintext code in DB, audit, outbox or API.
 - No reserved offline keys, new credentials, scheduled jobs, real-user messages or production migration in this patch.
-- Before release configure PASSWORD_RECOVERY_ADMIN_USER_ID with the separately approved administrator account ID.
+- Before release pin the approved administrator ID in password_recovery_settings using the operator console.
+- Optional PASSWORD_RECOVERY_ADMIN_USER_ID overrides the DB pin; malformed nonempty values fail closed.
+- Public clients cannot mutate either routing source; no provider secrets need to be read or replaced.
 
 ## QA
 - Synthetic integration tests cover transactions, rollback on audit failure, authorization,

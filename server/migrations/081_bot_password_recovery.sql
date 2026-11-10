@@ -1,4 +1,9 @@
 -- Additive. No plaintext codes, passwords, messenger payloads or credentials are persisted.
+CREATE TABLE IF NOT EXISTS password_recovery_settings (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+  admin_user_id UUID REFERENCES users(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS password_recovery_challenges (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

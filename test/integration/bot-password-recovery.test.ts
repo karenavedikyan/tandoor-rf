@@ -35,6 +35,17 @@ describe("bot password recovery", { concurrency: false }, () => {
   after(async () => { await closePool(); await pool?.end(); });
 
   for (const channel of ["max", "telegram"] as const) {
+    it(`operator-pinned DB recipient receives ${channel} employee recovery without any routing environment variable`, async () => {
+      delete process.env.PASSWORD_RECOVERY_ADMIN_USER_ID;
+      await pool.query("INSERT INTO password_recovery_settings(singleton,admin_user_id) VALUES(TRUE,$1)", [fixture.adminId]);
+      await pool.query("DELETE FROM tanbot_max_accounts WHERE user_id=$1", [fixture.employeeId]);
+      await pool.query("DELETE FROM tanbot_telegram_accounts WHERE user_id=$1", [fixture.employeeId]);
+      assert.equal(await issue(channel, false), true);
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0]!.userId, channel === "max" ? "33003" : "11001");
+      assert.match(messages[0]!.text, /Для кого: Тестовый Сотрудник/);
+      assert.ok(await loginWithRecoveryCode(pool, EMPLOYEE, codeFromMessage(messages[0]!)));
+    });
     it(`employee forgot-password request sends labeled ${channel} code only to configured admin, without employee bot or admin login`, async () => {
       await pool.query("DELETE FROM tanbot_max_accounts WHERE user_id=$1", [fixture.employeeId]);
       await pool.query("DELETE FROM tanbot_telegram_accounts WHERE user_id=$1", [fixture.employeeId]);
@@ -119,6 +130,21 @@ describe("bot password recovery", { concurrency: false }, () => {
     const audit = (await pool.query("SELECT * FROM access_audit_log WHERE action='user.password_recovery_login'")).rows[0];
     assert.equal(audit.actor_user_id, fixture.employeeId);
     assert.equal(audit.after_json.issued_by_admin_user_id, fixture.adminId);
+  });
+  it("DB recipient removal blocks pending employee code; malformed explicit environment cannot fall back to DB", async () => {
+    delete process.env.PASSWORD_RECOVERY_ADMIN_USER_ID;
+    await pool.query("INSERT INTO password_recovery_settings(singleton,admin_user_id) VALUES(TRUE,$1)", [fixture.adminId]);
+    await issue("max", false);
+    const code = codeFromMessage(messages[0]!);
+    await pool.query("UPDATE password_recovery_settings SET admin_user_id=NULL");
+    assert.equal(await loginWithRecoveryCode(pool, EMPLOYEE, code), null);
+    assert.ok(await resolveSessionUser(fixture.employeeSession.token));
+    await pool.query("UPDATE password_recovery_settings SET admin_user_id=$1", [fixture.adminId]);
+    process.env.PASSWORD_RECOVERY_ADMIN_USER_ID = "invalid-uuid";
+    assert.equal(await loginWithRecoveryCode(pool, EMPLOYEE, code), null);
+    await pool.query("UPDATE password_recovery_challenges SET created_at=NOW()-INTERVAL '61 seconds'");
+    assert.equal(await issue("telegram", false), false);
+    assert.equal(messages.length, 1);
   });
   it("concurrent redemption yields exactly one session and one audit event", async () => {
     await issue(); const code = codeFromMessage(messages[0]!);

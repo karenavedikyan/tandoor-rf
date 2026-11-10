@@ -21,6 +21,13 @@ export function getRecoveryAdminUserId(): string | null {
   const id = process.env.PASSWORD_RECOVERY_ADMIN_USER_ID?.trim().toLowerCase();
   return id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : null;
 }
+/** Operator-managed DB setting avoids replacing a provider's masked environment map. */
+async function resolveRecoveryAdminUserId(c: PoolClient): Promise<string | null> {
+  if (process.env.PASSWORD_RECOVERY_ADMIN_USER_ID?.trim()) return getRecoveryAdminUserId();
+  return (await c.query<{ admin_user_id: string | null }>(
+    "SELECT admin_user_id FROM password_recovery_settings WHERE singleton=TRUE",
+  )).rows[0]?.admin_user_id ?? null;
+}
 export function matchesRecoveryCode(id: string, code: string, stored: string | null): boolean {
   if (!stored || !/^\d{8}$/.test(code)) return false;
   const expected = Buffer.from(stored, "hex"), actual = Buffer.from(hashRecoveryCode(id, code), "hex");
@@ -77,7 +84,7 @@ export async function requestPasswordRecovery(
     throw new RecoveryError(400, "VALIDATION_ERROR", "Укажите корректный логин и выберите MAX или Telegram.");
   }
   return atomic(pool, async c => {
-    const configuredAdminId = getRecoveryAdminUserId();
+    const configuredAdminId = input.admin ? null : await resolveRecoveryAdminUserId(c);
     const r = await c.query<User>(
       `SELECT id,email,full_name,role,status,password_hash,password_must_change FROM users
        WHERE LOWER(BTRIM(email))=$1 OR id=$2::uuid ORDER BY id FOR UPDATE`,
@@ -182,7 +189,7 @@ export async function loginWithRecoveryCode(pool: Pool, emailRaw: string, code: 
       if (recipient.role !== "admin" || recipient.password_must_change || target.role === "admin") return null;
       if (row.request_kind === "admin-issued") {
         if (!row.initiated_session_id || !await liveSession(c, row.initiated_session_id, recipient.id)) return null;
-      } else if (row.request_kind !== "employee-requested" || recipient.id !== getRecoveryAdminUserId()) return null;
+      } else if (row.request_kind !== "employee-requested" || recipient.id !== await resolveRecoveryAdminUserId(c)) return null;
     } else if (row.request_kind !== "admin-self" || target.role !== "admin") return null;
     const route = await destination(c, row.channel, recipient.id);
     if (!route || route.messenger_user_id !== row.messenger_user_id ||

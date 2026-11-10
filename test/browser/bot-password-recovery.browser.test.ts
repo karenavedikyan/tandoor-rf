@@ -93,6 +93,8 @@ describe("bot password recovery browser flows", { concurrency: false }, () => {
     await context.close();
   });
   it("employee clicks forgot-password without own bot and receives code from configured admin before changing password", async () => {
+    delete process.env.PASSWORD_RECOVERY_ADMIN_USER_ID;
+    await pool.query("INSERT INTO password_recovery_settings(singleton,admin_user_id) VALUES(TRUE,$1)", [fixture.adminId]);
     await pool.query("DELETE FROM tanbot_max_accounts WHERE user_id=$1", [fixture.employeeId]);
     await pool.query("DELETE FROM tanbot_telegram_accounts WHERE user_id=$1", [fixture.employeeId]);
     await page.goto(origin + "/login");
