@@ -6,6 +6,7 @@ import { loadExternalPersonOrders, loadExternalHistoricalSummaries } from "./ext
 import { listEligibleStaffForExternalParty } from "../external-request/intake-handlers";
 import { signExternalPersonCapability } from "./session-token";
 import type { ResolvedExternalPerson } from "./resolve-auth";
+import { partyToContact, type PartyRowWithEmployee } from "../repository";
 
 export async function buildExternalPersonBootstrapPayload(
   pool: Pool,
@@ -63,6 +64,25 @@ export async function buildExternalPersonBootstrapPayload(
       team: null,
       userId: s.userId,
     } as TanTrackerContactDto & { userId: string });
+  }
+  // Resolve route/history labels only for shared tracks assigned to this recipient.
+  // Do not turn the general party directory or timeline-only history into a contact source.
+  const participantIds = new Set<string>();
+  for (const order of orders) {
+    if (![order.holderId, order.pendingId, order.finalRecipientId].includes(resolved.partyId)) continue;
+    for (const id of [order.createdById, order.holderId, order.pendingId, order.finalRecipientId,
+      ...order.timeline.flatMap(event => [event.from, event.to])]) {
+      if (id) participantIds.add(id);
+    }
+  }
+  for (const contact of contacts) participantIds.delete(contact.id);
+  if (participantIds.size) {
+    const participants = await pool.query<PartyRowWithEmployee>(
+      `SELECT id,kind,user_id,display_name,phone_e164,NULL::text AS linked_employee_id
+       FROM tt_parties WHERE id=ANY($1::uuid[])`,
+      [[...participantIds]],
+    );
+    contacts.push(...participants.rows.map(partyToContact));
   }
   const holderAccessTokensByOrderId: Record<string, string> = {};
   for (const o of orders) {

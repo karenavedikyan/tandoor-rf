@@ -4,6 +4,7 @@ import { setNoStore } from "../../http/no-store";
 import { apiError, ERROR_CODES } from "../../shared/errors";
 import { resolveExternalPersonAuth } from "./resolve-auth";
 import { loadExternalPersonOrders } from "./external-person-orders";
+import { contentDispositionFilename, resolveAttachmentContentDisposition } from "../attachments";
 
 export async function publicExternalAttachmentHandler(req: Request, res: Response): Promise<void> {
   const pool = getPool();
@@ -33,8 +34,9 @@ export async function publicExternalAttachmentHandler(req: Request, res: Respons
   }
   const row = (
     await pool.query<{ storage_key: string; original_name: string; mime_type: string }>(
-      `SELECT storage_key, original_name, mime_type FROM tt_transfer_attachments
-       WHERE id = $1::uuid AND transfer_id = $2 AND uploaded_by_user_id IS NULL LIMIT 1`,
+      `SELECT a.storage_key, a.original_name, a.mime_type
+       FROM tt_transfer_attachments a JOIN tt_transfers t ON t.id = a.transfer_id
+       WHERE a.id = $1::uuid AND t.public_code = $2 LIMIT 1`,
       [attId, transferId],
     )
   ).rows[0];
@@ -44,12 +46,12 @@ export async function publicExternalAttachmentHandler(req: Request, res: Respons
     return;
   }
   const { loadAttachmentServePayload } = await import("../attachment-preview");
-  const { resolveAttachmentContentDisposition } = await import("../attachments");
   const query = req.query as Record<string, unknown>;
   const { buffer, contentType } = await loadAttachmentServePayload(row.storage_key, row.mime_type, query, pool);
   const disposition = resolveAttachmentContentDisposition(row.mime_type, query);
   setNoStore(res);
   res.setHeader("Content-Type", contentType);
-  res.setHeader("Content-Disposition", disposition);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Disposition", contentDispositionFilename(row.original_name, disposition));
   res.status(200).send(buffer);
 }

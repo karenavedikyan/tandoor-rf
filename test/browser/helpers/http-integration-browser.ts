@@ -50,7 +50,12 @@ export async function startBrowserHttpFixture(opts: {
   process.env.APP_ORIGIN = baseUrl;
 
   // Requires Playwright browser install in the environment (e.g. chromium); not an app lifecycle workaround.
-  const browser = await chromium.launch({ headless: true, channel: "chromium" });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.CHROMIUM_EXECUTABLE_PATH }
+      : { channel: "chromium" }),
+  });
 
   return { browser, baseUrl, server, databaseUrl, password };
 }
