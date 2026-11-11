@@ -98,12 +98,7 @@ test("independent: Telegram invitation → own contact → sender verifies → o
     assert.ok(holder.searchParams.get("cap"));
     assert.ok(holder.searchParams.get("tt_hat"));
     const preview = receipt.body.link_preview_options as { is_disabled?: boolean; url?: string };
-    assert.equal(preview.is_disabled, false);
-    const safe = new URL(preview.url!);
-    assert.equal(safe.origin, origin);
-    assert.equal(safe.pathname.replace(/\/$/, ""), "/tan-tracker");
-    assert.equal(safe.search, "");
-    assert.equal(safe.hash, "");
+    assert.deepEqual(preview, { is_disabled: true });
     const sentCount = sink.calls.length;
     await runTanbotOutboxWorkerOnce(pool, config.config, transport);
     assert.equal(sink.calls.length, sentCount, "repeated worker tick must not duplicate receipt or private replies");
