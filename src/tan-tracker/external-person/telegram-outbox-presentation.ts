@@ -1,7 +1,4 @@
-import {
-  parseOpenLineHolderPresentation,
-  publicTanTrackerBrandPreviewUrl,
-} from "./open-line-holder-presentation";
+import { parseOpenLineHolderPresentation } from "./open-line-holder-presentation";
 import { receivedTrackMenuCallback } from "../received-track-actions";
 
 type ReplyMarkup = { inline_keyboard: Array<Array<
@@ -15,9 +12,7 @@ export type TelegramExternalPersonOutboxPresentation =
       holderUrl: string;
       replyMarkup: ReplyMarkup;
       linkPreviewOptions: {
-        is_disabled: false;
-        url: string;
-        prefer_large_media: true;
+        is_disabled: true;
       };
     }
   | {
@@ -39,11 +34,6 @@ export function buildTelegramExternalPersonOutboxPresentation(
     return { mode: "plain", text: parsed.text, disableWebPagePreview: true, ...(replyMarkup ? { replyMarkup } : {}) };
   }
 
-  const previewUrl = publicTanTrackerBrandPreviewUrl(appOrigin);
-  if (!previewUrl) {
-    return { mode: "plain", text: storedBody.replace(/\r\n/g, "\n"), disableWebPagePreview: true, ...(replyMarkup ? { replyMarkup } : {}) };
-  }
-
   return {
     mode: "rich",
     text: parsed.text,
@@ -51,10 +41,11 @@ export function buildTelegramExternalPersonOutboxPresentation(
     replyMarkup: replyMarkup ?? {
       inline_keyboard: [[{ text: "Открыть передачу", url: parsed.holderUrl }]],
     },
+    // A generic /tan-tracker/ preview is clickable and opens staff login.
+    // Do not use the private holder URL for previews either: keep capability
+    // tokens out of preview requests. The button is the only navigation action.
     linkPreviewOptions: {
-      is_disabled: false,
-      url: previewUrl,
-      prefer_large_media: true,
+      is_disabled: true,
     },
   };
 }

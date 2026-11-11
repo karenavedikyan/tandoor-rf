@@ -7,7 +7,7 @@ const ORIGIN = "http://127.0.0.1:3000";
 const HOLDER = `${ORIGIN}/tan-tracker/?cap=abc&tt_hat=def`;
 
 describe("buildTelegramExternalPersonOutboxPresentation", () => {
-  it("rich mode: clean text, URL button, branded public preview URL only", () => {
+  it("rich mode: clean text and external URL button without a staff-login preview", () => {
     const stored = `Вы получили «Box».\n\nПередача TT-1.\nОткрыть: ${HOLDER}`;
     const pres = buildTelegramExternalPersonOutboxPresentation(stored, ORIGIN);
     assert.equal(pres.mode, "rich");
@@ -15,10 +15,20 @@ describe("buildTelegramExternalPersonOutboxPresentation", () => {
     assert.ok(!pres.text.includes("Открыть:"));
     assert.ok(!pres.text.includes("cap="));
     assert.equal(pres.replyMarkup.inline_keyboard[0]![0]!.url, HOLDER);
-    assert.equal(pres.linkPreviewOptions.url, `${ORIGIN}/tan-tracker/`);
-    assert.equal(pres.linkPreviewOptions.is_disabled, false);
-    assert.equal(pres.linkPreviewOptions.prefer_large_media, true);
-    assert.notEqual(pres.linkPreviewOptions.url, HOLDER);
+    assert.deepEqual(pres.linkPreviewOptions, { is_disabled: true });
+  });
+
+  it("received-track notice keeps the fresh-session menu callback without a staff-login preview", () => {
+    const stored = `ГОТОВО ✅\n\nВам передали «Box».\nПередача TT-2026-123\nОткрыть: ${HOLDER}`;
+    const pres = buildTelegramExternalPersonOutboxPresentation(stored, ORIGIN);
+    assert.equal(pres.mode, "rich");
+    if (pres.mode !== "rich") return;
+    const action = pres.replyMarkup.inline_keyboard[0]![0]!;
+    assert.equal(action.text, "Мои передачи");
+    assert.ok(action.callback_data);
+    assert.equal(action.url, undefined);
+    assert.ok(!pres.text.includes("cap="));
+    assert.deepEqual(pres.linkPreviewOptions, { is_disabled: true });
   });
 
   it("plain mode matches MAX plain decision for foreign URL", () => {

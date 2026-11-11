@@ -24,3 +24,17 @@
 ## Rollout
 
 Enable flag in staging after migrations; configure Telegram bot webhook only via existing ops process (Cursor does not change live webhooks).
+
+## Telegram external-notice navigation
+
+External-person notices disable link previews, including in rich mode. A preview
+of the generic `/tan-tracker/` page is a separate clickable destination without
+external credentials and opens staff login. Do not replace it with a preview of
+the private capability URL: preview requests must not carry capability tokens.
+Keep the existing external URL button or the “Мои передачи” callback, which
+issues a fresh external session after checking the messenger identity.
+
+This presentation change does not change external authorization, session TTLs,
+bot bindings, roles, OTP, or MAX delivery. A reported production incident still
+needs live confirmation; finding this navigation path does not establish which
+link a particular user clicked.

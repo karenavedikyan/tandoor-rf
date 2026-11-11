@@ -47,7 +47,7 @@ describe("external person Telegram rich notice presentation (PostgreSQL)", { con
     await closePool();
   });
 
-  it("sends received-track actions and branded preview without raw holder URL in text", async () => {
+  it("sends received-track actions without a staff-login preview or raw holder URL in text", async () => {
     await resetPoolForTests();
     const pool = getPool();
     assert.ok(pool);
@@ -115,8 +115,7 @@ describe("external person Telegram rich notice presentation (PostgreSQL)", { con
     assert.equal(action?.url, undefined);
     assert.equal(parseNativeCreateCallback(action!.callback_data!)?.action, "menu_my");
     const preview = send!.body.link_preview_options as { url?: string; is_disabled?: boolean };
-    assert.equal(preview.url, `${ORIGIN}/tan-tracker/`);
-    assert.equal(preview.is_disabled, false);
+    assert.deepEqual(preview, { is_disabled: true });
 
     const row = await pool.query(`SELECT status FROM tt_external_person_message_outbox WHERE id = $1::uuid`, [
       outboxId,
