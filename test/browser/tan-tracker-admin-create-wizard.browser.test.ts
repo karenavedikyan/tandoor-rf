@@ -58,9 +58,9 @@ describe("tan-tracker admin full create wizard (browser + real PG)", { concurren
     await page.click('[data-tt="create-wizard-next"]');
     await page.waitForSelector('[data-create-phase="recipient"]', { timeout: 10000 });
 
-    await page.click('[data-tt="create-recipient-browse"]');
-    await page.waitForSelector('[data-tt="contact-pick"]', { timeout: 10000 });
-    await page.locator('[data-tt-pick]').filter({ hasText: "Browser Fresh Recipient" }).first().click();
+    assert.equal(await page.locator('[data-tt="create-recipient-browse"]').count(), 0);
+    await page.fill('[data-tt-field="newPhone"]', "+79990001122");
+    await page.fill('[data-tt-field="newName"]', "Browser Fresh Recipient");
     await page.click('[data-tt="create-wizard-next"]');
     await page.waitForSelector('[data-create-phase="review"]', { timeout: 10000 });
 
@@ -143,8 +143,8 @@ describe("tan-tracker admin full create wizard (browser + real PG)", { concurren
     await page.fill('[data-tt-field="item"]', "No duplicate click");
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-skip-files"]');
-    await page.click('[data-tt="create-recipient-browse"]');
-    await page.locator('[data-tt-pick]').filter({ hasText: "Browser Fresh Recipient" }).first().click();
+    await page.fill('[data-tt-field="newPhone"]', "+79990001122");
+    await page.fill('[data-tt-field="newName"]', "Browser Fresh Recipient");
     await page.click('[data-tt="create-wizard-next"]');
     const submit = page.locator('[data-tt="create-wizard-submit"]');
     const createResponsePromise = page.waitForResponse(
@@ -171,5 +171,59 @@ describe("tan-tracker admin full create wizard (browser + real PG)", { concurren
       "saved transfer visible after double-click attempt",
     );
     await context.close();
+  });
+
+  it("mobile unified phone entry validates, edits personal names and assigns the canonical staff account", async () => {
+    const context = await fixture.browser.newContext({ viewport: { width: 375, height: 812 }, baseURL: fixture.baseUrl });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await login(page, "tt-browser-admin@test.local");
+    await page.goto(`${fixture.baseUrl}/tan-tracker`);
+    await page.waitForSelector('[data-testid="tan-tracker"]');
+    await page.locator('[data-tt="create-fab"]:visible, [data-tt="create"]:visible').first().click();
+    await page.fill('[data-tt-field="item"]', "Mobile phone-first agreement");
+    await page.click('[data-tt="create-wizard-next"]');
+    await page.click('[data-tt="create-skip-files"]');
+    assert.equal(await page.locator('[data-tt="create-recipient-browse"]').count(), 0);
+    await page.click('[data-tt="create-wizard-next"]');
+    assert.equal(await page.locator('[data-create-phase="recipient"]').count(), 1);
+    await page.fill('[data-tt-field="newPhone"]', "8 (999) 000-11-22");
+    await page.fill('[data-tt-field="newName"]', "Мой Антон на складе");
+    await page.click('[data-tt="create-wizard-next"]');
+    await page.waitForSelector('[data-create-phase="review"]');
+    assert.match(await page.locator('[data-tt="create-wizard"]').innerText(), /Мой Антон на складе/);
+    await page.click('[data-tt="create-edit-recipient"]');
+    assert.equal(await page.inputValue('[data-tt-field="newName"]'), "Мой Антон на складе");
+    await page.locator('[data-tt-field="newPhone"]').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: "/home/user/workspace/tandor-phone-entry-mobile.png" });
+    await page.fill('[data-tt-field="newName"]', "Мой сотрудник");
+    await page.click('[data-tt="create-wizard-next"]');
+    const pending = page.waitForResponse(r => r.request().method() === "POST" &&
+      r.url().endsWith("/api/tan-tracker/transfers") && r.status() === 201);
+    await page.click('[data-tt="create-wizard-submit"]');
+    const created = await (await pending).json();
+    await page.waitForSelector('[data-tt="detail"]');
+    assert.match(await page.locator('[data-tt="detail"]').innerText(), /Мой сотрудник/);
+    const own = await (await page.request.get("/api/tan-tracker/bootstrap")).json();
+    const order = own.orders.find((o: { id: string }) => o.id === created.publicCode);
+    assert.ok(order);
+    const recipient = own.contacts.find((c: { id: string }) => c.id === order.finalRecipientId);
+    assert.equal(recipient.kind, "user");
+    assert.equal(recipient.name, "Мой сотрудник");
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.reload();
+    await page.waitForSelector('[data-tt="detail"]');
+    assert.match(await page.locator('[data-tt="detail"]').innerText(), /Мой сотрудник/);
+    await page.screenshot({ path: "/home/user/workspace/tandor-phone-detail-desktop.png", fullPage: true });
+    assert.deepEqual(errors, []);
+    await context.close();
+    const recipientContext = await fixture.browser.newContext({ baseURL: fixture.baseUrl });
+    const recipientPage = await recipientContext.newPage();
+    await login(recipientPage, "tt-browser-fresh@test.local");
+    const theirs = await (await recipientPage.request.get("/api/tan-tracker/bootstrap")).json();
+    assert.ok(theirs.orders.some((o: { id: string }) => o.id === created.publicCode));
+    assert.equal(theirs.contacts.find((c: { id: string }) => c.id === recipient.id).name, "Browser Fresh Recipient");
+    await recipientContext.close();
   });
 });

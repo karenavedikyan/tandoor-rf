@@ -18,6 +18,7 @@ import {
 } from "./attachment-mutations";
 import { loadTanTrackerTeamEmployeeGuids } from "./team-scope";
 import type { AccessContext } from "../access/types";
+import { saveContactAlias } from "./contact-aliases";
 
 type DraftEditBody = {
   item?: string;
@@ -139,6 +140,8 @@ export async function editTransferDraftHandler(req: AccessRequest, res: Response
       if (finalId === party.id || pendingId === party.id) {
         return { ok: false as const, code: 400, message: "Нельзя назначить себя получателем." };
       }
+      await saveContactAlias(client, party.id, auditUserId, finalId, body.finalRecipientExternal?.name);
+      if (relayId) await saveContactAlias(client, party.id, auditUserId, relayId, body.relayExternal?.name);
 
       const dueAt = parseDueAt(body.dueAt);
       const qty = body.qty?.trim()?.slice(0, 120) || null;
@@ -246,7 +249,7 @@ export async function editTransferDraftHandler(req: AccessRequest, res: Response
   } catch (err: unknown) {
     const http = (err as { http?: number }).http;
     const message = err instanceof Error ? err.message : "Не удалось сохранить изменения.";
-    if (http === 400 || http === 403 || http === 404) {
+    if (http === 400 || http === 403 || http === 404 || http === 409) {
       setNoStore(res);
       res
         .status(http)

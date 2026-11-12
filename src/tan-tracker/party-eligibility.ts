@@ -13,8 +13,11 @@ import {
   resolveAdminRecipientRef,
   assertAdminSelectablePartyId,
   loadEligibleUserRowForRecipient,
+  resolveEligibleUserRecipientPartyId,
   userIdFromPendingUserPartyRef,
 } from "./recipient-catalog";
+import { findStaffRecipientByPhone } from "./staff-phone-recipient";
+import { PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME } from "./contact-aliases";
 
 type Db = Pool | PoolClient;
 
@@ -169,7 +172,16 @@ export async function resolveRecipientPartyId(
   external: ExternalRecipientInput | undefined,
 ): Promise<string> {
   if (external && (external.name || external.phone)) {
-    const id = await resolveExternalRecipientPartyId(client, userId, external);
+    const { phoneE164 } = normalizeExternalRecipientInput(external);
+    const staff = await findStaffRecipientByPhone(client, phoneE164);
+    if (staff) {
+      // A phone-addressed internal handoff may cross teams; arbitrary UUID picks
+      // retain their existing scope checks below. No role/client access is granted.
+      return resolveEligibleUserRecipientPartyId(client, userId, staff.id);
+    }
+    const id = await resolveExternalRecipientPartyId(client, userId, {
+      ...external, name: PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME,
+    });
     await assertPartyEligibleAsRecipient(client, access, userId, id);
     return id;
   }

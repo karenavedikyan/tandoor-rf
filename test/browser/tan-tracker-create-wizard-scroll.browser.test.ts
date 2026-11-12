@@ -25,12 +25,8 @@ async function launchRequired(engine: BrowserType<Browser>, t: { skip: (message?
 }
 
 async function clickCreateEntry(page: Page) {
-  const fab = page.locator('[data-tt="create-fab"]');
-  if ((await fab.count()) && (await fab.first().isVisible())) {
-    await fab.first().click();
-    return;
-  }
-  await page.locator('[data-tt="create"]').first().click();
+  await page.waitForSelector('[data-testid="tan-tracker"]');
+  await page.locator('[data-tt="create-fab"]:visible, [data-tt="create"]:visible').first().click();
 }
 
 async function loginStaff(page: Page, fixture: BrowserHttpFixture) {
@@ -51,9 +47,8 @@ async function openInternalCreateReview(page: Page) {
   await page.waitForSelector('[data-create-phase="files"]', { timeout: 10000 });
   await page.click('[data-tt="create-skip-files"]');
   await page.waitForSelector('[data-create-phase="recipient"]', { timeout: 10000 });
-  await page.click('[data-tt="create-recipient-browse"]');
-  await page.waitForSelector('[data-tt-field="pickQ"]', { timeout: 10000 });
-  await page.locator('[data-tt-pick]').filter({ hasText: "Browser Fresh Recipient" }).first().click();
+  await page.fill('[data-tt-field="newPhone"]', "+79990001122");
+  await page.fill('[data-tt-field="newName"]', "Browser Fresh Recipient");
   await page.click('[data-tt="create-wizard-next"]');
   await page.waitForSelector('[data-create-phase="review"]', { timeout: 15000 });
 }
@@ -187,7 +182,7 @@ describe("internal create wizard scroll follow (browser)", { concurrency: false 
     });
   });
 
-  it("recipient browse reveals search field (Chromium mobile)", async () => {
+  it("unified recipient entry reveals phone field without a list toggle (Chromium mobile)", async () => {
     await withPage(fixture.browser, { width: 390, height: 700 }, async (page) => {
       await page.goto("/tan-tracker");
       await clickCreateEntry(page);
@@ -195,9 +190,9 @@ describe("internal create wizard scroll follow (browser)", { concurrency: false 
       await page.click('[data-tt="create-wizard-next"]');
       await page.click('[data-tt="create-skip-files"]');
       await page.waitForSelector('[data-create-phase="recipient"]');
-      await page.click('[data-tt="create-recipient-browse"]');
-      await page.waitForSelector('[data-tt-field="pickQ"]', { timeout: 10000 });
-      await anchorInViewport(page, '[data-tt-field="pickQ"]', "recipient search");
+      assert.equal(await page.locator('[data-tt="create-recipient-browse"]').count(), 0);
+      await page.waitForSelector('[data-tt-field="newPhone"]', { timeout: 10000 });
+      await anchorInViewport(page, '[data-tt-field="newPhone"]', "recipient phone");
     });
   });
 

@@ -1496,6 +1496,7 @@
 
   function createWizardPhaseRevealSelector(phase) {
     const f = state.form || defaultCreateForm();
+    if (usesPhoneRecipientEntry() && (phase === "recipient" || phase === "relay-pick")) return '[data-tt-field="newPhone"]';
     if (phase === "item") return '[data-tt-field="item"]';
     if (phase === "files") return ".tt-att-picker, [data-tt=\"create-wizard-next\"]";
     if (phase === "edit-comment") return '[data-tt-field="comment"]';
@@ -1513,6 +1514,7 @@
   }
 
   function createWizardPhaseShouldFocus(phase) {
+    if (usesPhoneRecipientEntry() && (phase === "recipient" || phase === "relay-pick")) return true;
     if (phase === "files" || phase === "review") return false;
     if (phase === "recipient") {
       const step = state.form?.recipientStep;
@@ -2229,12 +2231,32 @@
     </div>`;
   }
 
+  function usesPhoneRecipientEntry() {
+    return TT_LK && !window.__TT_EXTERNAL_PERSON__ && !state.recipientMode;
+  }
+
+  function wizardPhoneRecipientBody(f, relay) {
+    const target = relay ? "relay" : "final";
+    if (f.phoneEntryTarget !== target) {
+      const selected = contactById(relay ? f.relayId : f.finalRecipientId || f.recipientId);
+      f.newPhone = selected?.phone || "";
+      f.newName = selected?.name || "";
+      f.phoneEntryTarget = target;
+    }
+    return `<div data-tt="phone-recipient-entry">
+      <label class="tt-wizard-field">Телефон получателя<input type="tel" inputmode="tel" autocomplete="tel" data-tt-field="newPhone" value="${E(f.newPhone || "")}" placeholder="+7 900 000 00 00"></label>
+      <p class="tt-muted">По номеру используем существующий контакт. Если это сотрудник, передача будет назначена его профилю в ЛК и подключённом боте.</p>
+      <label class="tt-wizard-field">Имя для вас<input autocomplete="off" maxlength="200" data-tt-field="newName" value="${E(f.newName || "")}" placeholder="Например: Антон склад"></label>
+      <p class="tt-muted">Это название сохранится только у вас. Имя в общем справочнике не изменится.</p>
+    </div>`;
+  }
+
   function wizardRouteConnectorLi() {
     return `<li class="tt-wizard-route-connector" role="presentation" aria-hidden="true"><span class="tt-wizard-route-arrow"></span></li>`;
   }
 
   function wizardReviewRouteNav(f, finContact, finSummary, relay) {
-    const sender = contactById(state.actingContactId) || employeeContact(state.employeeId);
+    const sender = contactById(actorContactId()) || employeeContact(state.employeeId);
     const directHint = "Отдайте предмет этому получателю напрямую, без посредника.";
     const relayHint = finContact
       ? `Должен передать предмет дальше: ${finContact.name} · ${fmtPhone(finContact.phone)}.`
@@ -2247,7 +2269,7 @@
       ${
         sender
           ? `<div class="tt-wizard-route-person">${reviewPersonHtml(sender)}</div>`
-          : `<p class="tt-wizard-route-missing">Текущий участник не определён в демо.</p>`
+          : `<p class="tt-wizard-route-missing">${TT_LK ? "Вы отправляете эту передачу." : "Текущий участник не определён в демо."}</p>`
       }
     </li>`;
     const finalLi = `<li class="tt-wizard-route-stop" data-tt="route-stop-final">
@@ -2379,6 +2401,11 @@
 
   function wizardValidate(phase) {
     const f = state.form || defaultCreateForm();
+    if (usesPhoneRecipientEntry() && (phase === "recipient" || phase === "relay-pick")) {
+      if (!normPhone(f.newPhone || "")) return "Введите телефон: 10 цифр после +7.";
+      if (!f.newName?.trim()) return "Введите имя получателя для себя.";
+      return "";
+    }
     if (phase === "item") {
       if (!f.item.trim()) return "Напишите, что передаёте. Это обязательное поле.";
     }
@@ -2414,6 +2441,23 @@
     state.error = wizardValidate(state.createPhase);
     if (state.error) return false;
     const p = state.createPhase;
+    if (usesPhoneRecipientEntry() && (p === "recipient" || p === "relay-pick")) {
+      const phone = normPhone(state.form.newPhone);
+      const id = `draft-${phone}`;
+      const contact = { id, kind: "external", name: state.form.newName.trim(), phone: `+${phone}`, draft: true };
+      const old = contacts.findIndex(c => c.id === id);
+      if (old >= 0) contacts[old] = contact;
+      else contacts.push(contact);
+      if (p === "relay-pick") state.form.relayId = id;
+      else {
+        state.form.finalRecipientId = id;
+        state.form.recipientId = id;
+        state.form.recipientStep = "confirmed";
+      }
+      state.createPhase = "review";
+      state.createReturnPhase = null;
+      return true;
+    }
     if (state.createReturnPhase === "review" && (p === "item" || p === "files")) {
       state.createPhase = "review";
       state.createReturnPhase = null;
@@ -3946,6 +3990,11 @@
       );
     }
     if (phase === "recipient") {
+      if (usesPhoneRecipientEntry()) {
+        return wizardShell(phase, "Кому нужно доставить", "Введите номер: сотрудника или внешний контакт определим автоматически.",
+          wizardPhoneRecipientBody(f, false),
+          `${wizardBtn("Далее", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`);
+      }
       ensureRecipientStep(f);
       const sel = f.finalRecipientId || f.recipientId;
       let body = "";
@@ -3969,6 +4018,11 @@
       );
     }
     if (phase === "relay-pick") {
+      if (usesPhoneRecipientEntry()) {
+        return wizardShell(phase, "Кому отдадите для дальнейшей передачи", "Введите номер первого получателя.",
+          wizardPhoneRecipientBody(f, true),
+          `${wizardBtn("Готово", "create-wizard-next", true)}${wizardBtn("Назад", "create-wizard-back")}`);
+      }
       const finPick = contactById(f.finalRecipientId || f.recipientId);
       const relayHint = finPick
         ? `Шаг 3 из 4 · водитель или коллега примет предмет. Доставить нужно получателю: ${finPick.name}.`
@@ -5501,6 +5555,7 @@
       state.createReviewScrollAnchor = "recipient";
       state.createPhase = "recipient";
       if (!state.form) state.form = defaultCreateForm();
+      state.form.phoneEntryTarget = null;
       state.form.recipientStep =
         state.form.finalRecipientId || state.form.recipientId ? "confirmed" : "choose";
       state.error = "";
@@ -5513,6 +5568,7 @@
       state.createReturnPhase = "review";
       state.createReviewScrollAnchor = "relay";
       state.createPhase = "relay-pick";
+      if (state.form) state.form.phoneEntryTarget = null;
       state.error = "";
       writeUrl();
       queueCreateWizardNav({ type: "phase-enter", phase: "relay-pick" });

@@ -21,6 +21,7 @@ describe("tan-tracker edit before first handoff (browser)", { concurrency: false
       email: "tt-browser-peer@test.local",
       password: fixture.password,
       fullName: "Browser Manager Peer",
+      phone: "+79990001133",
       role: "manager",
     });
   });
@@ -39,7 +40,7 @@ describe("tan-tracker edit before first handoff (browser)", { concurrency: false
 
   it("create → code → edit recipient/title → same id, old code fails", async () => {
     const { chromium } = await import("playwright");
-    const browser = await chromium.launch();
+    const browser = await chromium.launch({ channel: "chromium" });
     try {
     const page = await browser.newPage();
 
@@ -50,8 +51,8 @@ describe("tan-tracker edit before first handoff (browser)", { concurrency: false
     await page.fill('[data-tt-field="item"]', "Edit-before-handoff item");
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-skip-files"]');
-    await page.click('[data-tt="create-recipient-browse"]');
-    await page.locator('[data-tt-pick]').filter({ hasText: "Browser Fresh Recipient" }).first().click();
+    await page.fill('[data-tt-field="newPhone"]', "+79990001122");
+    await page.fill('[data-tt-field="newName"]', "Browser Fresh Recipient");
     await page.click('[data-tt="create-wizard-next"]');
     const createResp = page.waitForResponse(
       (r) => r.request().method() === "POST" && r.url().includes("/api/tan-tracker/transfers") && r.status() === 201,
@@ -89,12 +90,8 @@ describe("tan-tracker edit before first handoff (browser)", { concurrency: false
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-edit-recipient"]');
     await page.waitForSelector('[data-create-phase="recipient"]', { timeout: 15000 });
-    if (await page.locator('[data-tt="create-recipient-change"]').isVisible()) {
-      await page.click('[data-tt="create-recipient-change"]');
-    } else {
-      await page.click('[data-tt="create-recipient-browse"]');
-    }
-    await page.locator('[data-tt-pick]').filter({ hasText: "Browser Manager Peer" }).first().click();
+    await page.fill('[data-tt-field="newPhone"]', "+79990001133");
+    await page.fill('[data-tt-field="newName"]', "Browser Manager Peer");
     await page.click('[data-tt="create-wizard-next"]');
 
     const editResp = page.waitForResponse(

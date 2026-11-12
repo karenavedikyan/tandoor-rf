@@ -84,6 +84,7 @@ export async function seedTanTrackerBrowserUsers(databaseUrl: string, password: 
       email: "tt-browser-fresh@test.local",
       password,
       fullName: "Browser Fresh Recipient",
+      phone: "+79990001122",
       role: "manager",
     });
   } finally {

@@ -12,6 +12,8 @@ import {
 import { externalRequestDueAtFromMode } from "../../tan-tracker/external-request/due-at-msk";
 import { nextPublicTransferCode } from "../../tan-tracker/repository";
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
+import { saveContactAlias, loadContactAliases, PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME } from "../../tan-tracker/contact-aliases";
+import { findPartyByUserId } from "../../tan-tracker/repository";
 import { tanTrackerCanWrite } from "../../tan-tracker/guards";
 import type { NativeCreateDraftPayload } from "./draft-scope";
 import { prepareNativeRecipientCodeDelivery } from "./invitation-handoff";
@@ -106,6 +108,21 @@ export async function confirmNativeStaffDraft(
   let finalRecipientExternal: { name: string; phone: string } | undefined;
   if (input.payload.recipientPartyId) {
     finalRecipientPartyId = input.payload.recipientPartyId;
+    // A phone-based pick may still reference a historical external shadow.
+    // Re-resolve that exact number at confirmation; never rewrite old tracks.
+    const phone = normalizeRuPhoneE164(input.payload.recipientSearchQuery ?? "");
+    if (phone) {
+      const pick = (await client.query<{ display_name: string; phone_e164: string | null }>(
+        `SELECT display_name,phone_e164 FROM tt_parties WHERE id::text=$1 AND kind='external'`,
+        [finalRecipientPartyId],
+      )).rows[0];
+      if (pick?.phone_e164 === phone) {
+        const viewer = await findPartyByUserId(client, input.staffUserId);
+        const aliases = await loadContactAliases(client, viewer?.id ?? null);
+        finalRecipientExternal = { name: aliases.get(finalRecipientPartyId) ?? pick.display_name, phone };
+        finalRecipientPartyId = undefined;
+      }
+    }
   } else if (input.payload.recipientExternal?.name && input.payload.recipientExternal.phone) {
     finalRecipientExternal = input.payload.recipientExternal;
   } else {
@@ -156,7 +173,8 @@ export async function confirmNativeStaffDraft(
     [publicCode],
   );
   const pRow = pending.rows[0];
-  const status = formatNotificationTransferState(await buildNotificationTransferState(client, publicCode));
+  const viewer = await findPartyByUserId(client, input.staffUserId);
+  const status = formatNotificationTransferState(await buildNotificationTransferState(client, publicCode, viewer?.id));
   if (pRow?.pending_party_id) {
     const delivery = await prepareNativeRecipientCodeDelivery(client, {
       transferId: publicCode,
@@ -289,7 +307,7 @@ export async function confirmNativeExternalToExternalDraft(
     {
       senderExternalPartyId: input.externalPartyId,
       phoneE164: phoneRaw,
-      externalRecipient: name ? { name, phone: phoneRaw } : undefined,
+      externalRecipient: name ? { name: PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME, phone: phoneRaw } : undefined,
     },
   );
 
@@ -297,6 +315,7 @@ export async function confirmNativeExternalToExternalDraft(
   const dueAt = externalRequestDueAtFromMode(
     payload.dueMode === "none" ? undefined : payload.dueMode,
   );
+  await saveContactAlias(client, input.externalPartyId, null, recipientPartyId, name);
   await client.query(
     `INSERT INTO tt_transfers (
        id, public_code, item_title, comment_text, status, from_external,

@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { saveContactAlias, PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME } from "../../tan-tracker/contact-aliases";
 import type { NativeCreateContext, NativeCreateReply } from "./engine";
 import { renderDraftPrompt } from "./engine";
 import { bumpDraftRevision, ensureNativeBotDraft, loadNativeBotDraft, type NativeCreateDraftPayload } from "./draft-scope";
@@ -110,7 +111,8 @@ export async function confirmNativeHolderAction(
         const resolved = await resolveNativeExternalPendingPartyByPhone(client, {
           senderExternalPartyId: partyId, phoneE164: payload.externalRecipientPhone ?? "",
           externalRecipient: {
-            name: payload.externalRecipientDisplayName ?? "", phone: payload.externalRecipientPhone ?? "",
+            name: payload.externalRecipientDisplayName?.trim() ? PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME : "",
+            phone: payload.externalRecipientPhone ?? "",
           },
         });
         pendingPartyId = resolved.pendingPartyId;
@@ -125,6 +127,8 @@ export async function confirmNativeHolderAction(
         expectedHandoffVersion: action.handoffVersion, expectedRowVersion: action.rowVersion,
         requireNoPending: action.kind === "forward", replaceUnreceivedFinal: action.kind === "replace",
       });
+      await saveContactAlias(client, partyId, ctx.isLinkedStaff ? ctx.staffUserId : null, pendingPartyId,
+        ctx.isLinkedStaff ? payload.recipientExternal?.name : payload.externalRecipientDisplayName);
       if (action.kind === "replace") {
         await client.query("DELETE FROM tt_bot_receipt_code_entries WHERE transfer_id=$1", [row.id]);
       }
