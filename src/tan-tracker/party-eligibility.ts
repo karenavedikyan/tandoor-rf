@@ -179,11 +179,12 @@ export async function resolveRecipientPartyId(
       // retain their existing scope checks below. No role/client access is granted.
       return resolveEligibleUserRecipientPartyId(client, userId, staff.id);
     }
-    const id = await resolveExternalRecipientPartyId(client, userId, {
+    // An explicitly addressed phone may reuse a global external regardless of creator.
+    // The resolver checks canonical mappings and employee/duplicate conflicts.
+    // Creator/scope checks remain below for opaque party-ID selections.
+    return resolveExternalRecipientPartyId(client, userId, {
       ...external, name: PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME,
     });
-    await assertPartyEligibleAsRecipient(client, access, userId, id);
-    return id;
   }
   const resolved = String(partyId ?? "").trim();
   if (!resolved) {
