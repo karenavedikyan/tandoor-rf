@@ -23,14 +23,14 @@ const databaseUrl = getIntegrationDatabaseUrl();
 const pool = () => getPool()!;
 let seq = 0;
 const phone = () => `+799944${String(++seq).padStart(5, "0")}`;
-async function employee(number = phone(), withParty = false, status = "active") {
+async function employee(number = phone(), withParty = false, status = "active", role: "manager" | "admin" = "manager") {
   const name = `Synthetic staff ${++seq}`;
   const { id } = await createTestUser({
     databaseUrl, email: `phone-first-${seq}@test.invalid`, password: "SyntheticPass123!",
-    fullName: name, phone: number, role: "manager", status,
+    fullName: name, phone: number, role, status,
   });
   const party = withParty ? await tx(c => ensurePartyForUserOnWrite(c, id, name, number)) : null;
-  const user = { id, fullName: name, phone: number, role: "manager" as const, status: "active" as const,
+  const user = { id, fullName: name, phone: number, role, status: "active" as const,
     email: `phone-first-${seq}@test.invalid`, lastLoginAt: null };
   const access = await loadAccessContext(id);
   return { id, name, phone: number, partyId: party?.id ?? null, user, access };
@@ -80,20 +80,68 @@ describe("phone-first create: canonical identity and personal labels", { concurr
     });
   }
 
-  it("reuses an external party globally and isolates aliases between creators", async () => {
-    const number = phone(), other = await employee();
-    const first = await create(sender, number, "My warehouse");
-    const second = await create(other, number, "My client");
-    assert.equal((await row(first)).pending_party_id, (await row(second)).pending_party_id);
+  for (const role of ["manager", "admin"] as const) {
+    it(`reuses an external party globally for ${role} and isolates aliases between creators`, async () => {
+      const number = phone(), other = await employee(phone(), false, "active", role);
+      const first = await create(sender, number, "My warehouse");
+      const second = await create(other, number, "My client");
+      assert.equal((await row(first)).pending_party_id, (await row(second)).pending_party_id);
+      assert.equal(await externalCount(number), 1);
+      const pid = (await row(first)).pending_party_id;
+      const a = await buildTanTrackerBootstrap(sender.user, sender.access);
+      const b = await buildTanTrackerBootstrap(other.user, other.access);
+      assert.equal(a.contacts.find(c => c.id === pid)?.name, "My warehouse");
+      assert.equal(b.contacts.find(c => c.id === pid)?.name, "My client");
+      assert.equal((await pool().query("SELECT display_name FROM tt_parties WHERE id=$1", [pid])).rows[0].display_name, "Внешний получатель");
+      assert.equal((await pool().query("SELECT created_by_user_id FROM tt_parties WHERE id=$1", [pid])).rows[0].created_by_user_id, sender.id);
+      assert.equal((await tx(c => findExistingExternalByPhone(c, sender.id, number)))?.name, "My warehouse");
+      assert.equal(await tx(c => findExistingExternalByPhone(c, other.id, number)), null);
+    });
+  }
+
+  it("admin reuses an ownerless external by phone for final, relay and draft edit without enabling UUID selection", async () => {
+    const admin = await employee(phone(), false, "active", "admin"), number = phone();
+    const pid = (await pool().query(
+      "INSERT INTO tt_parties(kind,display_name,phone_e164) VALUES('external','Historical private label',$1) RETURNING id",
+      [number])).rows[0].id;
+    await assert.rejects(tx(c => createTransferInTransaction(c, { user: admin.user, access: admin.access }, {
+      item: "Synthetic forbidden UUID", finalRecipientPartyId: pid,
+    })), /недоступен/);
+    const { createApp } = await import("../../src/server");
+    const app = createApp();
+    const login = await request(app).post("/api/auth/login").set("Origin", "http://127.0.0.1:3000")
+      .send({ email: admin.user.email, password: "SyntheticPass123!" });
+    assert.equal(login.status, 200);
+    const cookie = login.headers["set-cookie"][0].split(";")[0];
+    const headers = { Cookie: cookie, Origin: "http://127.0.0.1:3000" };
+    const created = await request(app).post("/api/tan-tracker/transfers").set(headers).send({
+      item: "Synthetic admin phone create",
+      finalRecipientExternal: { phone: number, name: "My direct contact" },
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const direct = created.body.publicCode as string;
+    const relay = await create(admin, phone(), "My final contact", {
+      relayExternal: { phone: number, name: "My relay contact" },
+    });
+    assert.equal((await row(direct)).final_recipient_party_id, pid);
+    assert.equal((await row(relay)).pending_party_id, pid);
+    assert.notEqual((await row(relay)).final_recipient_party_id, pid);
+    const edit = await request(app).post(`/api/tan-tracker/transfers/${direct}/draft-edit`)
+      .set(headers).send({
+        item: "Edited admin synthetic agreement", rowVersion: 1,
+        finalRecipientExternal: { phone: number, name: "My edited contact" },
+      });
+    assert.equal(edit.status, 200, JSON.stringify(edit.body));
+    assert.equal((await row(direct)).pending_party_id, pid);
     assert.equal(await externalCount(number), 1);
-    const pid = (await row(first)).pending_party_id;
-    const a = await buildTanTrackerBootstrap(sender.user, sender.access);
-    const b = await buildTanTrackerBootstrap(other.user, other.access);
-    assert.equal(a.contacts.find(c => c.id === pid)?.name, "My warehouse");
-    assert.equal(b.contacts.find(c => c.id === pid)?.name, "My client");
-    assert.equal((await pool().query("SELECT display_name FROM tt_parties WHERE id=$1", [pid])).rows[0].display_name, "Внешний получатель");
-    assert.equal((await tx(c => findExistingExternalByPhone(c, sender.id, number)))?.name, "My warehouse");
-    assert.equal(await tx(c => findExistingExternalByPhone(c, other.id, number)), null);
+    const original = (await pool().query("SELECT display_name,created_by_user_id FROM tt_parties WHERE id=$1", [pid])).rows[0];
+    assert.equal(original.display_name, "Historical private label");
+    assert.equal(original.created_by_user_id, null);
+    const aliases = await loadContactAliases(pool(), (await partyFor(admin.id)).id);
+    assert.equal(aliases.get(pid), "My edited contact");
+    await assert.rejects(tx(c => createTransferInTransaction(c, { user: admin.user, access: admin.access }, {
+      item: "Synthetic still forbidden UUID", finalRecipientPartyId: pid,
+    })), /недоступен/);
   });
 
   it("prefers staff over an existing external shadow but leaves old history and bindings intact", async () => {

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
+import { getPool } from "../../src/db/pool";
 import type { Page } from "playwright";
 import {
   seedTanTrackerBrowserUsers,
@@ -19,7 +20,10 @@ describe("tan-tracker admin full create wizard (browser + real PG)", { concurren
 
   before(async () => {
     pngBytes = await fs.readFile(FIXTURE_PNG);
-    fixture = await startBrowserHttpFixture({ attachmentsDir: "var/tt-admin-wizard-browser" });
+    fixture = await startBrowserHttpFixture({
+      attachmentsDir: "var/tt-admin-wizard-browser",
+      extraEnv: { TANBOT_MAX_ENABLED: "false" },
+    });
     await seedTanTrackerBrowserUsers(fixture.databaseUrl, fixture.password);
   });
 
@@ -171,6 +175,59 @@ describe("tan-tracker admin full create wizard (browser + real PG)", { concurren
       "saved transfer visible after double-click attempt",
     );
     await context.close();
+  });
+
+  it("admin wizard reuses another creator's external phone and preserves its private label after reload", { timeout: 60000 }, async () => {
+    const number = "+79990005577", alias = "Мой получатель по номеру";
+    const pool = getPool()!;
+    const old = (await pool.query(
+      `INSERT INTO tt_parties(kind,display_name,phone_e164,created_by_user_id)
+       SELECT 'external','Other creator original label',$1,id FROM users WHERE email='tt-browser-fresh@test.local'
+       RETURNING id,created_by_user_id`,
+      [number])).rows[0];
+    const context = await fixture.browser.newContext({ viewport: { width: 1280, height: 900 }, baseURL: fixture.baseUrl });
+    await context.route("**/*", route => new URL(route.request().url()).origin === fixture.baseUrl
+      ? route.continue() : route.abort());
+    try {
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", error => errors.push(error.message));
+      await login(page, "tt-browser-admin@test.local");
+      await page.goto(`${fixture.baseUrl}/tan-tracker`);
+      await page.click('[data-tt="create"]');
+      await page.fill('[data-tt-field="item"]', "Existing phone admin regression");
+      await page.click('[data-tt="create-wizard-next"]');
+      await page.click('[data-tt="create-skip-files"]');
+      await page.fill('[data-tt-field="newPhone"]', number);
+      await page.fill('[data-tt-field="newName"]', alias);
+      await page.click('[data-tt="create-wizard-next"]');
+      const pending = page.waitForResponse(r => r.request().method() === "POST" &&
+        new URL(r.url()).pathname === "/api/tan-tracker/transfers");
+      await page.click('[data-tt="create-wizard-submit"]');
+      const response = await pending;
+      assert.equal(response.status(), 201, await response.text());
+      const created = await response.json();
+      await page.waitForSelector('[data-tt="detail"]');
+      await page.reload();
+      await page.waitForSelector('[data-tt="detail"]');
+      const detail = await page.locator('[data-tt="detail"]').innerText();
+      assert.match(detail, /Мой получатель по номеру/);
+      assert.doesNotMatch(detail, /Other creator original label/);
+      const transfer = (await pool.query("SELECT pending_party_id,final_recipient_party_id FROM tt_transfers WHERE id=$1",
+        [created.publicCode])).rows[0];
+      assert.equal(transfer.pending_party_id, old.id);
+      assert.equal(transfer.final_recipient_party_id, old.id);
+      const contacts = (await pool.query(
+        "SELECT id,display_name,created_by_user_id FROM tt_parties WHERE kind='external' AND phone_e164=$1",
+        [number])).rows;
+      assert.equal(contacts.length, 1);
+      assert.equal(contacts[0].id, old.id);
+      assert.equal(contacts[0].created_by_user_id, old.created_by_user_id);
+      assert.equal(contacts[0].display_name, "Other creator original label");
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
   });
 
   it("mobile unified phone entry validates, edits personal names and assigns the canonical staff account", async () => {
