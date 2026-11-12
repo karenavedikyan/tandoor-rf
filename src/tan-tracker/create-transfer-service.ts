@@ -8,6 +8,7 @@ import { linkStagedAttachmentsToTransfer } from "./attachments";
 import { tanTrackerCanWrite } from "./guards";
 import { notifyAdminsOfNewTrack } from "./admin-overview";
 import { enqueueAutomaticReceiptCode } from "./automatic-receipt-codes";
+import { saveContactAlias } from "./contact-aliases";
 
 export type CreateTransferInput = {
   item: string;
@@ -74,6 +75,8 @@ export async function createTransferInTransaction(
   if (finalId === holderParty.id || pendingId === holderParty.id) {
     throw Object.assign(new Error("Нельзя назначить себя получателем."), { http: 400 });
   }
+  await saveContactAlias(client, holderParty.id, auditUserId, finalId, body.finalRecipientExternal?.name);
+  if (relayId) await saveContactAlias(client, holderParty.id, auditUserId, relayId, body.relayExternal?.name);
   const dueAt = parseDueAt(body.dueAt ?? null);
   const publicCode = await nextPublicTransferCode(client);
   await client.query(

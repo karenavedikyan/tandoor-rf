@@ -34,6 +34,7 @@ import { isExternalMessengerFeatureEnabled } from "./external-messenger/config";
 import { loadPersonalRegistryLists } from "./registry-cleanup/personal-flags";
 import type { TanTrackerRegistryPersonalBootstrap } from "./types";
 import { loadAdminOverview } from "./admin-overview";
+import { personalizeContacts } from "./contact-aliases";
 
 function mapRoleToPrototype(role: string): string {
   if (role === "regional_manager") return "regional";
@@ -150,6 +151,7 @@ export async function buildTanTrackerBootstrap(
     const catalog = await listTanTrackerRecipientCatalog(pool, user.id);
     contacts = mergeTanTrackerContactLists(contacts, catalog);
   }
+  contacts = await personalizeContacts(pool, actorPartyId, contacts);
 
   const auditConfirmedIds = await transferIdsWithConfirmedFirstCustodyAudit(
     pool,

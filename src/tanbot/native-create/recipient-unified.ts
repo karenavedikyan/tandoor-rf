@@ -12,6 +12,13 @@ import type { AccessContext } from "../../access/types";
 import { isUuid, normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
 import type { NativeCreateContext } from "./engine";
 import type { NativeCreateDraftPayload } from "./draft-scope";
+import { findPartyByUserId } from "../../tan-tracker/repository";
+import { loadContactAliases } from "../../tan-tracker/contact-aliases";
+
+async function staffContactAliases(client: PoolClient, staffUserId: string) {
+  const party = await findPartyByUserId(client, staffUserId);
+  return loadContactAliases(client, party?.id ?? null);
+}
 
 export const RECIPIENT_PAGE_SIZE = 5;
 export const RECIPIENT_MIN_NAME_QUERY_LEN = 2;
@@ -66,7 +73,8 @@ async function staffAccessibleExternalParties(
      ORDER BY display_name ASC`,
     [staffUserId],
   );
-  return res.rows;
+  const aliases = res.rows.length ? await staffContactAliases(client, staffUserId) : new Map<string, string>();
+  return res.rows.map(row => ({ ...row, display_name: aliases.get(row.id) ?? row.display_name }));
 }
 
 async function phoneE164ForCatalogUser(client: PoolClient, userId: string): Promise<string | null> {
@@ -186,7 +194,8 @@ export async function findExistingExternalByPhone(
   );
   const hit = row.rows[0];
   if (!hit) return null;
-  return { partyId: hit.id, name: hit.display_name, phone: hit.phone_e164 };
+  const aliases = await staffContactAliases(client, staffUserId);
+  return { partyId: hit.id, name: aliases.get(hit.id) ?? hit.display_name, phone: hit.phone_e164 };
 }
 
 export async function revalidateStaffRecipientPick(
@@ -228,7 +237,8 @@ export async function revalidateStaffRecipientPick(
       return null;
     }
   }
-  return { ref, fullName: p.display_name, phone: p.phone_e164 };
+  const aliases = await staffContactAliases(client, staffUserId);
+  return { ref, fullName: aliases.get(ref) ?? p.display_name, phone: p.phone_e164 };
 }
 
 export async function revalidateExternalStaffPick(

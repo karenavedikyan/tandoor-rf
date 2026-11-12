@@ -137,7 +137,7 @@ export async function trackStatusReply(
       || !["completed", "obsolete"].includes(row.status)))) {
       return { text: NOT_AVAILABLE, ...ui(ctx, [back, menuButton()]) };
     }
-    const state = await buildNotificationTransferState(client, row.id);
+    const state = await buildNotificationTransferState(client, row.id, actor.partyId);
     return { text: formatTrackStatus(row, state), ...ui(ctx, [
       ...holderTransferActionButtons(row, actor.partyId),
       { text: "Обновить статус", data: buildTrackStatusCallback(request)! },
@@ -154,7 +154,7 @@ export async function trackStatusReply(
     const data = buildTrackStatusCallback({ action: "view", transferId: row.id });
     if (!data) continue;
     if (!holderNames.has(row.holder_party_id)) {
-      holderNames.set(row.holder_party_id, await resolvePartyDisplayNameForNotification(client, row.holder_party_id));
+      holderNames.set(row.holder_party_id, await resolvePartyDisplayNameForNotification(client, row.holder_party_id, actor.partyId));
     }
     buttons.push({ text: formatTrackStatusListLabel(row, holderNames.get(row.holder_party_id)), data });
   }

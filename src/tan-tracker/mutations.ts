@@ -64,7 +64,7 @@ export async function createTransferHandler(req: AccessRequest, res: Response): 
   } catch (err: unknown) {
     const http = (err as { http?: number }).http;
     const message = err instanceof Error ? err.message : "Не удалось создать передачу.";
-    if (http === 400 || http === 403 || http === 404) {
+    if (http === 400 || http === 403 || http === 404 || http === 409) {
       setNoStore(res);
       res
         .status(http)

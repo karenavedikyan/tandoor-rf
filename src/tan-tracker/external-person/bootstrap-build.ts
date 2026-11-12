@@ -7,6 +7,7 @@ import { listEligibleStaffForExternalParty } from "../external-request/intake-ha
 import { signExternalPersonCapability } from "./session-token";
 import type { ResolvedExternalPerson } from "./resolve-auth";
 import { partyToContact, type PartyRowWithEmployee } from "../repository";
+import { personalizeContacts } from "../contact-aliases";
 
 export async function buildExternalPersonBootstrapPayload(
   pool: Pool,
@@ -109,7 +110,7 @@ export async function buildExternalPersonBootstrapPayload(
     appOrigin: getAppOrigin() ?? null,
     actorPartyId: resolved.partyId,
     actorContact: { id: resolved.partyId, kind: "external", employeeId: null },
-    contacts,
+    contacts: await personalizeContacts(pool, resolved.partyId, contacts),
     orders,
     historicalSummaries,
     holderAccessToken,

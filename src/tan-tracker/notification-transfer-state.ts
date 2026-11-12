@@ -10,7 +10,7 @@ export type NotificationTransferState = {
 
 /** A frozen event-time snapshot. Delivery must never re-read today's holder for an old event. */
 export async function buildNotificationTransferState(
-  client: PoolClient, transferId: string,
+  client: PoolClient, transferId: string, viewerPartyId?: string | null,
 ): Promise<NotificationTransferState | undefined> {
   const row = (await client.query<{
     id: string; status: string; holder_party_id: string; pending_party_id: string | null; first_custody_at: Date | null;
@@ -22,9 +22,9 @@ export async function buildNotificationTransferState(
   const phase = row.status === "obsolete" ? "obsolete" : row.status === "completed" ? "done" : row.pending_party_id ? "waiting" :
     row.status === "delivered" || row.first_custody_at != null ||
     (await transferIdsWithConfirmedFirstCustodyAudit(client, [row.id])).has(row.id) ? "received" : "ready";
-  const holderName = await resolvePartyDisplayNameForNotification(client, row.holder_party_id);
+  const holderName = await resolvePartyDisplayNameForNotification(client, row.holder_party_id, viewerPartyId);
   const pendingName = phase === "waiting"
-    ? await resolvePartyDisplayNameForNotification(client, row.pending_party_id) : null;
+    ? await resolvePartyDisplayNameForNotification(client, row.pending_party_id, viewerPartyId) : null;
   return { phase, ...(holderName ? { holderName } : {}), ...(pendingName ? { pendingName } : {}) };
 }
 

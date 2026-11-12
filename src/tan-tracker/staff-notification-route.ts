@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { loadContactAliases } from "./contact-aliases";
 
 const MAX_DISPLAY_NAME_LEN = 80;
 
@@ -30,8 +31,13 @@ export function sanitizeNotificationDisplayName(raw: string | null | undefined):
 export async function resolvePartyDisplayNameForNotification(
   client: PoolClient,
   partyId: string | null | undefined,
+  viewerPartyId?: string | null,
 ): Promise<string | null> {
   if (!partyId) return null;
+  if (viewerPartyId) {
+    const alias = (await loadContactAliases(client, viewerPartyId)).get(partyId);
+    if (alias) return sanitizeNotificationDisplayName(alias);
+  }
   const row = await client.query<{ display_name: string | null; full_name: string | null; kind: string }>(
     `SELECT p.display_name, u.full_name, p.kind
      FROM tt_parties p

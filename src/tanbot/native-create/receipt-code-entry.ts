@@ -17,6 +17,7 @@ import { formatReceiptConfirmation } from "../../tan-tracker/receipt-confirmatio
 import { buildExternalPendingInviteMessage } from "./invitation-handoff";
 import { holderCompletionPermission, startNativeHolderAction, type HolderActionTransfer } from "./holder-actions";
 import { holderTransferActionButtons } from "./holder-transfer-buttons";
+import { loadContactAliases } from "../../tan-tracker/contact-aliases";
 
 type ReceiptTransfer = LockedReceiptTransfer & HolderActionTransfer & {
   public_code: string; item_title: string; sender_name: string; recipient_name: string;
@@ -130,13 +131,19 @@ function transferDetailUi(
   };
 }
 async function loadTransfer(client: PoolClient, id: string, partyId: string): Promise<ReceiptTransfer | null> {
-  return (await client.query<ReceiptTransfer>(
+  const row = (await client.query<ReceiptTransfer>(
     `SELECT t.*,h.display_name AS sender_name,p.display_name AS recipient_name
      FROM tt_transfers t JOIN tt_parties h ON h.id=t.holder_party_id
      LEFT JOIN tt_parties p ON p.id=t.pending_party_id
      WHERE t.id=$1 AND t.holder_party_id=$2::uuid AND t.status IN ('waiting','active','delivered')
        AND t.deleted_at IS NULL AND t.general_archived_at IS NULL
      FOR UPDATE OF t`, [id, partyId])).rows[0] ?? null;
+  if (row) {
+    const aliases = await loadContactAliases(client, partyId);
+    row.sender_name = aliases.get(row.holder_party_id) ?? row.sender_name;
+    row.recipient_name = (row.pending_party_id && aliases.get(row.pending_party_id)) || row.recipient_name;
+  }
+  return row;
 }
 /** Current holder's active choices or separate read-only closed archive, never another user's list. */
 export async function appendReceiptEntryChoices(
