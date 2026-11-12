@@ -42,7 +42,7 @@ describe("admin employee preview browser", { concurrency: false }, () => {
   before(async () => {
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
     databaseUrl = getIntegrationDatabaseUrl();
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: "chromium" });
   });
 
   after(async () => {
@@ -214,8 +214,11 @@ describe("admin employee preview browser", { concurrency: false }, () => {
       (r) => r.url().includes("/api/admin/access/preview/candidates") && r.status() === 200,
     );
     await page.waitForSelector('[data-preview-id="' + managerUserId + '"]', { timeout: 20000 });
-    await page.click('[data-preview-id="' + managerUserId + '"]');
-    await page.waitForURL(/\/clients/, { timeout: 15000 });
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/api/admin/access/preview/start") && r.status() === 200),
+      page.click('[data-preview-id="' + managerUserId + '"]'),
+    ]);
+    await page.waitForSelector(".clients-preview-banner", { timeout: 20000 });
 
     const pool = new Pool({ connectionString: databaseUrl, max: 1 });
     await pool.query(
@@ -224,12 +227,13 @@ describe("admin employee preview browser", { concurrency: false }, () => {
     );
     await pool.end();
 
-    const meAfterRevoke = page.waitForResponse(
-      (r) => r.url().includes("/api/auth/me") && r.status() === 200,
-      { timeout: 20000 },
-    );
-    await page.goto("/clients", { waitUntil: "domcontentloaded" });
-    await meAfterRevoke;
+    await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes("/api/auth/me") && r.status() === 200,
+        { timeout: 20000 },
+      ),
+      page.goto("/clients", { waitUntil: "domcontentloaded" }),
+    ]);
     await page.waitForSelector(".clients-preview-banner--error", { timeout: 20000 });
     assert.match(await page.locator(".clients-preview-banner--error").innerText(), /Manager A/);
     assert.match(await page.locator(".clients-preview-banner--error").innerText(), /связ/i);

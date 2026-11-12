@@ -244,7 +244,7 @@ describe("tanbot telegram stage2", { concurrency: false }, () => {
     assert.equal(sink.calls.length, 1);
     for (const call of sink.calls) {
       assert.equal(String(call.body.chat_id), "777001");
-      assert.match(String(call.body.text), /^Передача PUB1\nTest item/);
+      assert.match(String(call.body.text), /Вам передали «Test item»\.\nПередача PUB1\n/);
       assert.match(String(call.body.text), /От: Holder User/);
       assert.match(String(call.body.text), /Кому: Recipient User/);
       assert.match(String(call.body.text), /PUB1/);

@@ -6,7 +6,7 @@ import { after, before, describe, it } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import { createApp } from "../../src/server";
 
-const SCREENSHOT_DIR = "/cursor/stores/self/media";
+const SCREENSHOT_DIR = process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ?? "/cursor/stores/self/media";
 const MANAGER_ID = "11111111-1111-4111-8111-111111111111";
 const PROTOTYPE_SUBSTITUTION_PATHS = [
   "m2 9 3-3 3 3",
@@ -240,7 +240,7 @@ describe("assignment nav icon browser smoke", { concurrency: false }, () => {
 
   before(async () => {
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: "chromium" });
     server = startServer();
     await new Promise<void>((resolve) => {
       server.on("listening", () => {

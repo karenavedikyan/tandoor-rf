@@ -16,10 +16,13 @@
     host.innerHTML='<button type="button" class="an-bell" id="an-bell" aria-label="Уведомления" aria-expanded="false" aria-controls="an-inbox">'+
       '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span class="an-count" id="an-count" hidden></span></button>'+
       '<dialog class="an-inbox" id="an-inbox" aria-labelledby="an-heading"><header><div><h2 id="an-heading">Уведомления</h2><p class="an-person">'+enc(user.fullName||user.full_name||"")+" · "+roles[user.role]+'</p></div><button type="button" data-an="close">Закрыть</button></header>'+
+      '<div data-messenger-settings></div>'+
       '<div class="an-filters"><button type="button" data-an="all" aria-pressed="true">Все</button><button type="button" data-an="unread" aria-pressed="false">Непрочитанные</button><button type="button" data-an="read-all">Прочитать все</button></div>'+
       '<p id="an-error" role="alert"></p><div id="an-items" class="an-items" tabindex="0" aria-label="Лента уведомлений"><p>Загружаем…</p></div>'+
-      '<footer><span id="an-page"></span><div><button type="button" data-an="prev">Назад</button><button type="button" data-an="next">Далее</button></div></footer><p class="an-footnote">Внутри личного кабинета. Внешняя отправка не подключена.</p></dialog>';
+      '<footer><span id="an-page"></span><div><button type="button" data-an="prev">Назад</button><button type="button" data-an="next">Далее</button></div></footer><p class="an-footnote">Лента назначений отображается в личном кабинете. Каналы выше используются для кодов и уведомлений Тан-трекера.</p></dialog>';
     var bell=host.querySelector("#an-bell"),panel=host.querySelector("#an-inbox");
+    var messengerSettings=host.querySelector("[data-messenger-settings]");
+    if(window.mountMessengerNotificationSettings)window.mountMessengerNotificationSettings(messengerSettings);
     var reminder=document.createElement("aside");reminder.id="assignment-review-obligation";reminder.className="an-required";reminder.hidden=true;
     reminder.setAttribute("aria-label","Обязательная оценка завершённой работы");document.body.appendChild(reminder);
     function close(){inboxOpen=false;if(panel.open)panel.close();bell.setAttribute("aria-expanded","false");}
@@ -79,7 +82,7 @@
       var b=ev.target.closest("[data-an],#an-bell"),link=ev.target.closest("[data-an-link]");
       if(link){ev.preventDefault();if(preview){window.location.assign(link.href);return;}void read("/"+link.dataset.anLink+"/read").catch(function(){}).finally(function(){window.location.assign(link.href);});return;}
       if(!b)return;
-      if(b.id==="an-bell"){if(inboxOpen){close();return;}inboxOpen=true;panel.showModal();bell.setAttribute("aria-expanded","true");void load();return;}
+      if(b.id==="an-bell"){if(inboxOpen){close();return;}inboxOpen=true;panel.showModal();bell.setAttribute("aria-expanded","true");if(messengerSettings.refreshMessengerSettings)messengerSettings.refreshMessengerSettings();void load();return;}
       var a=b.dataset.an;
       if(a==="close"){close();return;}
       if(a==="all"||a==="unread"){unreadOnly=a==="unread";currentPage=1;void load();return;}

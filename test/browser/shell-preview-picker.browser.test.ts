@@ -34,7 +34,7 @@ describe("shell preview picker browser", { concurrency: false }, () => {
   before(async () => {
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
     databaseUrl = getIntegrationDatabaseUrl();
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: "chromium" });
   });
 
   after(async () => {

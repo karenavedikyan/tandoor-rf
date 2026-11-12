@@ -450,8 +450,10 @@
   }
 
   function scheduleTanbotRefresh() {
+    if (!profileUser || (shell.getPreviewState && shell.getPreviewState().active)) return;
     if (tanbotRefreshTimer) window.clearTimeout(tanbotRefreshTimer);
     tanbotRefreshTimer = window.setTimeout(function () {
+      if (shell.getPreviewState && shell.getPreviewState().active) return;
       loadTanbotTelegram();
       loadTanbotMax();
     }, 400);
@@ -576,6 +578,7 @@
 
   window.addEventListener("focus", scheduleTanbotRefresh);
   window.addEventListener("pageshow", scheduleTanbotRefresh);
+  window.addEventListener("tandoor:messenger-notifications-refresh", scheduleTanbotRefresh);
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible") scheduleTanbotRefresh();
   });
@@ -587,6 +590,11 @@
     }
     if (!user) {
       redirectToLogin();
+      return;
+    }
+    if (shell.getPreviewState && shell.getPreviewState().active) {
+      form.hidden = true;
+      api.setStatus(statusEl, "Настройки профиля и привязки MAX / Telegram недоступны в режиме «Войти как». Сотрудник проверяет и подключает их из своей учётной записи.", "");
       return;
     }
     loadProfile().catch(function (err) {
