@@ -1,4 +1,5 @@
-/* Profile tanbot blocks: .field { display: grid } overrides native [hidden] on labels. */
+/* Profile grids must respect [hidden], including the read-only preview form. */
+#profile-form[hidden],
 #tanbot-telegram-section[hidden],
 #tanbot-max-section[hidden],
 #tt-external-intake-section[hidden],
