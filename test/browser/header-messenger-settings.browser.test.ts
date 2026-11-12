@@ -124,6 +124,7 @@ describe("header messenger settings (local synthetic API only)", { concurrency: 
       assert.equal(await links.first().getAttribute("rel"), "noopener noreferrer");
       assert.equal(state.calls.filter((c) => c.path.endsWith("/link/start")).length, 2);
       await page.getByText("Тестовое назначение", { exact: true }).waitFor();
+      assert.equal(await page.locator("#profile-form").isVisible(), true);
       await Promise.all([
         page.waitForRequest((r) => r.url().includes("page=1&unread=1")),
         page.getByRole("button", { name: "Непрочитанные", exact: true }).click(),
@@ -183,6 +184,7 @@ describe("header messenger settings (local synthetic API only)", { concurrency: 
     const state = await mock(page, { preview: true });
     await openSettings(page, baseUrl);
     await roots(page).getByText(/В режиме «Войти как» статус привязки недоступен/).waitFor();
+    assert.equal(await page.locator("#profile-form").isHidden(), true);
     assert.equal(await roots(page).getByRole("checkbox").count(), 0);
     assert.equal(await roots(page).getByRole("button").count(), 0);
     assert.equal(state.calls.filter((c) => c.path.startsWith("/api/profile/")).length, 0);
