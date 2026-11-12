@@ -7,18 +7,28 @@
     if (!host || !api || !api.apiRequest) return;
     host.innerHTML =
       '<button type="button" class="tt-notif-bell" id="tt-notif-bell" aria-label="Уведомления Тан-трекера"><span id="tt-notif-count" hidden></span></button>' +
-      '<div id="tt-notif-panel" class="tt-notif-panel" hidden></div>';
+      '<div id="tt-notif-panel" class="tt-notif-panel" hidden><div data-messenger-settings></div><div id="tt-notif-items"></div></div>';
     var bell = document.getElementById("tt-notif-bell");
     var panel = document.getElementById("tt-notif-panel");
     var countEl = document.getElementById("tt-notif-count");
+    var itemsEl = host.querySelector("#tt-notif-items");
+    var settings = host.querySelector("[data-messenger-settings]");
+    function mountSettings() {
+      if (window.mountMessengerNotificationSettings) {
+        window.mountMessengerNotificationSettings(settings);
+        if (!panel.hidden) settings.refreshMessengerSettings();
+      }
+    }
+    mountSettings();
+    window.addEventListener("tandoor:messenger-settings-ready", mountSettings, { once: true });
 
     function render(items) {
       if (!panel) return;
       if (!items.length) {
-        panel.innerHTML = "<p class=\"tt-muted\">Нет уведомлений.</p>";
+        itemsEl.innerHTML = "<p class=\"tt-muted\">Нет уведомлений.</p>";
         return;
       }
-      panel.innerHTML = items
+      itemsEl.innerHTML = items
         .map(function (it) {
           return (
             "<article class=\"tt-notif-item\" data-id=\"" +
@@ -52,7 +62,9 @@
     if (bell && panel) {
       bell.addEventListener("click", function () {
         panel.hidden = !panel.hidden;
+        bell.setAttribute("aria-expanded", String(!panel.hidden));
         if (!panel.hidden) {
+          if (settings.refreshMessengerSettings) settings.refreshMessengerSettings();
           void api
             .apiRequest("/api/tan-tracker/notifications", { method: "GET" })
             .then(function (result) {

@@ -789,12 +789,31 @@
     bindViewportSync();
     syncSidebarLayout();
     syncPreviewBanner();
-    if (actorUser && !document.querySelector('script[data-assignment-notifications]')) {
+    function mountHeaderNotifications() {
+      if (window.mountAssignmentNotifications) window.mountAssignmentNotifications(getEffectiveUser(actorUser));
+      if (window.mountMessengerNotificationBell) window.mountMessengerNotificationBell(document.getElementById("assignment-notifications-mount"));
+    }
+    function loadAssignmentNotifications() {
+      if (document.querySelector('script[data-assignment-notifications]')) {
+        mountHeaderNotifications();
+        return;
+      }
       var notifications = document.createElement("script");
-      notifications.src = "/assignment-notifications.js?v=reviews1";
-      notifications.onload = function () { if (window.mountAssignmentNotifications) window.mountAssignmentNotifications(getEffectiveUser(actorUser)); };
+      notifications.src = "/assignment-notifications.js?v=messengers1";
+      notifications.onload = mountHeaderNotifications;
+      notifications.onerror = mountHeaderNotifications;
       notifications.setAttribute("data-assignment-notifications", "");
       document.head.appendChild(notifications);
+    }
+    if (actorUser && !document.querySelector('script[data-messenger-notifications]')) {
+      var messengers = document.createElement("script");
+      messengers.src = "/messenger-notification-settings.js?v=1";
+      messengers.onload = loadAssignmentNotifications;
+      messengers.onerror = loadAssignmentNotifications;
+      messengers.setAttribute("data-messenger-notifications", "");
+      document.head.appendChild(messengers);
+    } else if (actorUser && window.mountMessengerNotificationSettings) {
+      loadAssignmentNotifications();
     }
   }
 
