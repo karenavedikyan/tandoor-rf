@@ -1350,27 +1350,31 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
         await send(a, "", button(saved, "Передать дальше"));
         assert.equal((await state(bound.id)).pending_party_id, null);
       });
-      if (!staff) it(`${channel}: external forwards to an existing staff participant by phone without widening holder permissions`, async () => {
+      if (!staff) it(`${channel}: external forwards by phone to new or existing staff while preserving current custody`, async () => {
         const a = await actor(channel, false), creator = await actor(channel, true), other = await actor(channel, true);
-        const t = await seedReceived(a);
         const creatorPhone = `+7977${String(++seq).padStart(7, "0")}`;
         const otherPhone = `+7977${String(++seq).padStart(7, "0")}`;
         await p().query("UPDATE users SET phone=$2 WHERE id=$1", [creator.user, creatorPhone]);
         await p().query("UPDATE users SET phone=$2 WHERE id=$1", [other.user, otherPhone]);
-        await p().query("UPDATE tt_transfers SET creator_party_id=$2 WHERE id=$1", [t.id, creator.party]);
-        let start = await send(a, "", buildReceiptEntryCallback("forward", t.id, 1)!);
-        assert.match(start.text, /Передать дальше/);
-        let reply = await send(a, otherPhone);
-        reply = await send(a, "Synthetic other");
-        await send(a, "", button(reply, "Передать дальше"));
-        assert.equal((await state(t.id)).pending_party_id, null, "unknown staff on staff-created route remains forbidden");
-        await send(a, "", button(reply, "Отмена"));
-        start = await send(a, "", buildReceiptEntryCallback("forward", t.id, 1)!);
-        reply = await send(a, creatorPhone);
-        reply = await send(a, "Synthetic creator");
-        await send(a, "", button(reply, "Передать дальше"));
-        assert.equal((await state(t.id)).pending_party_id, creator.party);
-        assert.equal((await state(t.id)).holder_party_id, a.party);
+        for (const [recipient, recipientPhone] of [[other, otherPhone], [creator, creatorPhone]] as const) {
+          const t = await seedReceived(a);
+          await p().query("UPDATE tt_transfers SET creator_party_id=$2 WHERE id=$1", [t.id, creator.party]);
+          const before = await state(t.id);
+          const start = await send(a, "", buildReceiptEntryCallback("forward", t.id, 1)!);
+          assert.match(start.text, /Передать дальше/);
+          let reply = await send(a, recipientPhone);
+          reply = await send(a, "Synthetic recipient name must not overwrite staff");
+          await send(a, "", button(reply, "Передать дальше"));
+          const after = await state(t.id);
+          assert.equal(after.pending_party_id, recipient.party, "phone selects the canonical employee account");
+          assert.equal(after.holder_party_id, a.party, "custody still requires the recipient OTP");
+          assert.equal(after.final_recipient_party_id, before.final_recipient_party_id);
+          assert.equal((await p().query("SELECT display_name FROM tt_parties WHERE id=$1", [recipient.party])).rows[0].display_name,
+            "Synthetic sender");
+          assert.equal((await p().query(
+            "SELECT COUNT(*)::int AS n FROM tt_parties WHERE kind='external' AND phone_e164=$1", [recipientPhone],
+          )).rows[0].n, 0, "no external shadow is created for an employee");
+        }
       });
       it(`${channel}: ${staff ? "staff" : "external"} holder refreshes invitation without creating a new track; foreign and stale callbacks cannot`, async () => {
         const a = await actor(channel, staff), foreign = await actor(channel, staff), t = await seed(a);

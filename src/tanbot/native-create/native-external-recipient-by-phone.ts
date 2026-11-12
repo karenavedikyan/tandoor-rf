@@ -1,6 +1,10 @@
 import type { Pool, PoolClient } from "pg";
 import { ensurePartyForUserOnWrite } from "../../tan-tracker/repository";
-import { resolveExternalRecipientPartyIdForExternalActor, type ExternalRecipientInput } from "../../tan-tracker/party-eligibility";
+import {
+  resolveExternalRecipientPartyId,
+  resolveExternalRecipientPartyIdForExternalActor,
+  type ExternalRecipientInput,
+} from "../../tan-tracker/party-eligibility";
 import { lockPhonePartyResolution, PhonePartyConflictError } from "../../tan-tracker/phone-party-resolver";
 import { normalizeRuPhoneE164, ruPhoneNational10 } from "../../tan-tracker/phone-normalize";
 import { externalUnavailableMessage } from "./recipient-unified";
@@ -127,6 +131,8 @@ export async function resolveNativeExternalPendingPartyByPhone(
     senderExternalPartyId: string;
     phoneE164: string;
     externalRecipient?: ExternalRecipientInput;
+    /** Preserve existing public-holder contact provenance; never supplied by the external caller. */
+    externalRecipientCreatedByUserId?: string;
   },
 ): Promise<NativeExternalPhonePendingResolution> {
   const phoneE164 = normalizeRuPhoneE164(input.phoneE164);
@@ -187,10 +193,10 @@ export async function resolveNativeExternalPendingPartyByPhone(
   }
 
   try {
-    const pendingPartyId = await resolveExternalRecipientPartyIdForExternalActor(client, {
-      name: extInput.name,
-      phone: phoneE164,
-    });
+    const recipient = { name: extInput.name, phone: phoneE164 };
+    const pendingPartyId = input.externalRecipientCreatedByUserId
+      ? await resolveExternalRecipientPartyId(client, input.externalRecipientCreatedByUserId, recipient)
+      : await resolveExternalRecipientPartyIdForExternalActor(client, recipient);
     if (pendingPartyId === input.senderExternalPartyId) {
       throw Object.assign(new Error("Нельзя назначить себя получателем."), { http: 400 });
     }
@@ -203,19 +209,21 @@ export async function resolveNativeExternalPendingPartyByPhone(
   }
 }
 
-/** Public holder (null staff creator): same phone rules as native create. */
+/** Public holder: same canonical phone rules regardless of the track creator. */
 export async function resolvePublicHolderPendingPartyByPhoneForExternalActor(
   client: Db,
   input: {
     holderPartyId: string;
     phoneE164: string;
     externalRecipient: ExternalRecipientInput;
+    externalRecipientCreatedByUserId?: string;
   },
 ): Promise<string> {
   const resolved = await resolveNativeExternalPendingPartyByPhone(client, {
     senderExternalPartyId: input.holderPartyId,
     phoneE164: input.phoneE164,
     externalRecipient: input.externalRecipient,
+    externalRecipientCreatedByUserId: input.externalRecipientCreatedByUserId,
   });
   return resolved.pendingPartyId;
 }

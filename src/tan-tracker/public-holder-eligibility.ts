@@ -1,9 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { isUuid } from "./phone-normalize";
-import {
-  resolveExternalRecipientPartyId,
-  type ExternalRecipientInput,
-} from "./party-eligibility";
+import type { ExternalRecipientInput } from "./party-eligibility";
 import { resolvePublicHolderPendingPartyByPhoneForExternalActor } from "../tanbot/native-create/native-external-recipient-by-phone";
 
 type Db = Pool | PoolClient;
@@ -80,8 +77,8 @@ export async function assertPublicHolderPendingEligible(
   throw Object.assign(new Error("Получатель недоступен для этой передачи."), { http: 403 });
 }
 
-/** After phone resolver for external creator (no staff user): pending from scoped phone match only. */
-export async function assertNullCreatorPhoneResolvedPending(
+/** Only after canonical phone resolution, never for an arbitrary caller-supplied party UUID. */
+export async function assertPhoneResolvedHolderPending(
   client: Db,
   holderPartyId: string,
   pendingPartyId: string,
@@ -112,18 +109,15 @@ export async function resolvePublicHolderPendingPartyId(
 ): Promise<string> {
   if (external && (external.name || external.phone)) {
     const creatorUserId = await loadPublicHolderCreatorUserId(client, transferId);
-    const id = creatorUserId
-      ? await resolveExternalRecipientPartyId(client, creatorUserId, external)
-      : await resolvePublicHolderPendingPartyByPhoneForExternalActor(client, {
-          holderPartyId,
-          phoneE164: external.phone,
-          externalRecipient: external,
-        });
-    if (creatorUserId) {
-      await assertPublicHolderPendingEligible(client, transferId, holderPartyId, id);
-    } else {
-      await assertNullCreatorPhoneResolvedPending(client, holderPartyId, id);
-    }
+    // A phone-matched active employee need not be a previous route participant.
+    // Keep UUID-only selection restricted to the existing route below.
+    const id = await resolvePublicHolderPendingPartyByPhoneForExternalActor(client, {
+      holderPartyId,
+      phoneE164: external.phone,
+      externalRecipient: external,
+      externalRecipientCreatedByUserId: creatorUserId ?? undefined,
+    });
+    await assertPhoneResolvedHolderPending(client, holderPartyId, id);
     return id;
   }
   const resolved = String(pendingPartyId ?? "").trim();

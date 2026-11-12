@@ -7,9 +7,7 @@ import { buildNativeMainMenuReply } from "./main-menu";
 import { checkTransferCompletionAccess, completeTransferInTransaction } from "../../tan-tracker/legacy-complete-mutation";
 import { assignPendingRecipientInTransaction } from "../../tan-tracker/pending-mutations";
 import { resolveRecipientPartyId } from "../../tan-tracker/party-eligibility";
-import {
-  assertNullCreatorPhoneResolvedPending, assertPublicHolderPendingEligible, loadPublicHolderCreatorUserId,
-} from "../../tan-tracker/public-holder-eligibility";
+import { assertPhoneResolvedHolderPending } from "../../tan-tracker/public-holder-eligibility";
 import { resolveNativeExternalPendingPartyByPhone } from "./native-external-recipient-by-phone";
 import { loadAccessContext } from "../../access/context";
 import type { UserRole } from "../../shared/user";
@@ -116,11 +114,7 @@ export async function confirmNativeHolderAction(
           },
         });
         pendingPartyId = resolved.pendingPartyId;
-        if (await loadPublicHolderCreatorUserId(client, row.id)) {
-          await assertPublicHolderPendingEligible(client, row.id, partyId, pendingPartyId);
-        } else {
-          await assertNullCreatorPhoneResolvedPending(client, partyId, pendingPartyId);
-        }
+        await assertPhoneResolvedHolderPending(client, partyId, pendingPartyId);
       }
       if (action.kind === "replace" && pendingPartyId === row.pending_party_id) {
         throw Object.assign(new Error("Выбран прежний получатель. Выберите другого или отмените изменение."), { http: 400 });
