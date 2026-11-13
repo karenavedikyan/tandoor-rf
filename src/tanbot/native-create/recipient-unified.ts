@@ -14,6 +14,7 @@ import type { NativeCreateContext } from "./engine";
 import type { NativeCreateDraftPayload } from "./draft-scope";
 import { findPartyByUserId } from "../../tan-tracker/repository";
 import { loadContactAliases } from "../../tan-tracker/contact-aliases";
+import { findProfilesByPhone } from "../../tan-tracker/profile-phone";
 
 async function staffContactAliases(client: PoolClient, staffUserId: string) {
   const party = await findPartyByUserId(client, staffUserId);
@@ -78,15 +79,14 @@ async function staffAccessibleExternalParties(
 }
 
 async function phoneE164ForCatalogUser(client: PoolClient, userId: string): Promise<string | null> {
-  const row = await client.query<{ phone: string | null; phone_e164: string | null }>(
-    `SELECT u.phone, p.phone_e164
+  const row = await client.query<{ phone: string | null }>(
+    `SELECT COALESCE(u.phone,u.additional_phone) AS phone
      FROM users u
-     LEFT JOIN tt_parties p ON p.user_id = u.id AND p.kind = 'user'
      WHERE u.id = $1::uuid
      LIMIT 1`,
     [userId],
   );
-  const raw = row.rows[0]?.phone?.trim() || row.rows[0]?.phone_e164?.trim() || "";
+  const raw = row.rows[0]?.phone?.trim() || "";
   return raw ? normalizeRuPhoneE164(raw) : null;
 }
 
@@ -99,15 +99,15 @@ async function phoneForCatalogEntry(
   const pending = userIdFromPendingUserPartyRef(entry.id);
   if (pending) return phoneE164ForCatalogUser(client, pending);
   if (isUuid(entry.id)) {
-    const row = await client.query<{ phone: string | null; phone_e164: string | null }>(
-      `SELECT u.phone, p.phone_e164
+    const row = await client.query<{ phone: string | null }>(
+      `SELECT COALESCE(u.phone,u.additional_phone) AS phone
        FROM tt_parties p
        JOIN users u ON u.id = p.user_id
        WHERE p.id = $1::uuid AND p.kind = 'user'
        LIMIT 1`,
       [entry.id],
     );
-    const raw = row.rows[0]?.phone?.trim() || row.rows[0]?.phone_e164?.trim() || "";
+    const raw = row.rows[0]?.phone?.trim() || "";
     return raw ? normalizeRuPhoneE164(raw) : null;
   }
   return null;
@@ -147,9 +147,14 @@ export async function searchStaffRecipientHits(
   const hits: RecipientSearchHit[] = [];
 
   if (phone) {
+    const profiles = await findProfilesByPhone(client, phone);
+    const ids = profiles.map(profile => profile.id);
+    const parties = ids.length ? (await client.query<{ id: string }>(
+      `SELECT id::text FROM tt_parties WHERE kind='user' AND user_id=ANY($1::uuid[])`, [ids],
+    )).rows : [];
+    const refs = new Set([...ids.map(id => `tt-user:${id}`), ...parties.map(party => party.id)]);
     for (const c of internal) {
-      const p = c.phone ? normalizeRuPhoneE164(c.phone) : null;
-      if (p === phone) hits.push(c);
+      if (refs.has(c.ref)) hits.push({ ...c, phone });
     }
     for (const e of external) {
       const p = e.phone_e164 ? normalizeRuPhoneE164(e.phone_e164) : null;
@@ -238,7 +243,9 @@ export async function revalidateStaffRecipientPick(
     }
   }
   const aliases = await staffContactAliases(client, staffUserId);
-  return { ref, fullName: aliases.get(ref) ?? p.display_name, phone: p.phone_e164 };
+  const phone = p.kind === "user" && p.user_id
+    ? await phoneE164ForCatalogUser(client, p.user_id) : p.phone_e164;
+  return { ref, fullName: aliases.get(ref) ?? p.display_name, phone };
 }
 
 export async function revalidateExternalStaffPick(

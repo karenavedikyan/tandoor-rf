@@ -8,7 +8,7 @@ import { resolveTanTrackerAuditUserId } from "./effective-user";
 import { ensurePartyForUserOnWrite } from "./repository";
 import { buildTanTrackerBootstrap } from "./service";
 import { requireTanTrackerMutationAccess } from "./guards";
-import { assertPartyEligibleAsRecipient } from "./party-eligibility";
+import { resolveRecipientPartyId } from "./party-eligibility";
 import { invalidateOpenHandoffArtifacts } from "./handoff-invalidation";
 import { notifyPendingCancelled, notifyReturnToCreator, notifyRouteContinued } from "./transfer-lk-notify";
 import { transferWriteBlocked } from "./transfer-write-guard";
@@ -191,9 +191,9 @@ export async function changePendingHandler(req: AccessRequest, res: Response): P
     if (row.holder_party_id !== party.id) return { ok: false as const, code: 403 };
     if (pendingPartyId === row.holder_party_id) return { ok: false as const, code: 400 };
     if (row.status === "completed" || row.status === "obsolete") return { ok: false as const, code: 400 };
-    await assertPartyEligibleAsRecipient(client, access, user.id, pendingPartyId);
+    const resolvedPendingPartyId = await resolveRecipientPartyId(client, access, user.id, pendingPartyId, undefined);
     await assignPendingRecipientInTransaction(client, {
-      transferId: row.id, holderPartyId: party.id, pendingPartyId, auditUserId,
+      transferId: row.id, holderPartyId: party.id, pendingPartyId: resolvedPendingPartyId, auditUserId,
     });
     return { ok: true as const };
     });

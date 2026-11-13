@@ -239,11 +239,13 @@ for (const channel of ["max", "telegram"] as const) {
     staffPrompt(await start(a));
     const prior = await counts();
     r = await send(a, { text: phone });
-    r = await send(a, { callback: button(r, new RegExp(name, "u")) });
-    assert.deepEqual(await counts(), prior, "party-phone fallback is lookup, not a new external identity");
+    assert.doesNotMatch(r.text, new RegExp(name, "u"));
+    r = await send(a, { text: "Новый внешний" });
+    r = await advanceToDue(a, r);
+    assert.deepEqual(await counts(), prior, "phone lookup never materializes an identity before Create");
     const second = await create(a, r);
     assert.equal((await getPool()!.query(`SELECT p.user_id FROM tt_parties p JOIN tt_transfers t
-      ON t.pending_party_id=p.id WHERE t.id=$1`, [second])).rows[0].user_id, u.id);
+      ON t.pending_party_id=p.id WHERE t.id=$1`, [second])).rows[0].user_id, null);
   });
   it(`${channel}: staff pagination is query-bound and target eligibility is rechecked on selection`, async () => {
     const a = await actor(channel); staffPrompt(await start(a));
@@ -347,7 +349,7 @@ for (const channel of ["max", "telegram"] as const) {
     assert.doesNotMatch(JSON.stringify(r), /Иван Петров|Поиск Тестовый|Без Карточки/u);
     assert.deepEqual(await counts(), before);
   });
-  it(`${channel}: external recipient cards are private DATA, preserve suggested name and match canonical party-phone fallback`, async () => {
+  it(`${channel}: external recipient cards remain private DATA and do not use historical staff phone aliases`, async () => {
     const known = await actor(channel, false), unknown = await actor(channel, false);
     await start(known); await start(unknown);
     await getPool()!.query("UPDATE users SET phone=NULL WHERE id=$1", [targetId]);
@@ -363,7 +365,10 @@ for (const channel of ["max", "telegram"] as const) {
       r = await advanceToDue(known, r);
       assert.deepEqual(await counts(), before, "recipient card is data, never identity proof or early canonical write");
       const id = await create(known, r, name);
-      assert.equal((await getPool()!.query("SELECT pending_party_id FROM tt_transfers WHERE id=$1", [id])).rows[0].pending_party_id, targetPartyId);
+      const pending = (await getPool()!.query(`SELECT p.id,p.kind FROM tt_transfers t
+        JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.id=$1`, [id])).rows[0];
+      assert.notEqual(pending.id, targetPartyId);
+      assert.equal(pending.kind, "external");
     } finally {
       await getPool()!.query("UPDATE users SET phone=$2 WHERE id=$1", [targetId, privatePhone]);
     }

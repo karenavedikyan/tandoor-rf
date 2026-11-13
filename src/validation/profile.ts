@@ -46,6 +46,6 @@ export function normalizePhone(raw: unknown): string | null | undefined {
 }
 
 export function hasUnknownProfilePatchKeys(body: Record<string, unknown>): boolean {
-  const allowed = new Set(["fullName", "phone"]);
+  const allowed = new Set(["fullName", "phone", "additionalPhone"]);
   return Object.keys(body).some((key) => !allowed.has(key));
 }

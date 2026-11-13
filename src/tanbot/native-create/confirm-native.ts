@@ -12,6 +12,7 @@ import {
 import { externalRequestDueAtFromMode } from "../../tan-tracker/external-request/due-at-msk";
 import { nextPublicTransferCode } from "../../tan-tracker/repository";
 import { normalizeRuPhoneE164 } from "../../tan-tracker/phone-normalize";
+import { isPendingUserPartyRef } from "../../tan-tracker/recipient-catalog";
 import { saveContactAlias, loadContactAliases, PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME } from "../../tan-tracker/contact-aliases";
 import { findPartyByUserId } from "../../tan-tracker/repository";
 import { tanTrackerCanWrite } from "../../tan-tracker/guards";
@@ -108,18 +109,20 @@ export async function confirmNativeStaffDraft(
   let finalRecipientExternal: { name: string; phone: string } | undefined;
   if (input.payload.recipientPartyId) {
     finalRecipientPartyId = input.payload.recipientPartyId;
-    // A phone-based pick may still reference a historical external shadow.
-    // Re-resolve that exact number at confirmation; never rewrite old tracks.
+    // Re-resolve every phone-based pick at confirmation, including staff picks.
+    // Profile edits/duplicate phones since selection must not bypass identity guards.
     const phone = normalizeRuPhoneE164(input.payload.recipientSearchQuery ?? "");
     if (phone) {
       const pick = (await client.query<{ display_name: string; phone_e164: string | null }>(
-        `SELECT display_name,phone_e164 FROM tt_parties WHERE id::text=$1 AND kind='external'`,
+        `SELECT display_name,phone_e164 FROM tt_parties WHERE id::text=$1`,
         [finalRecipientPartyId],
       )).rows[0];
-      if (pick?.phone_e164 === phone) {
+      if (pick || isPendingUserPartyRef(finalRecipientPartyId)) {
         const viewer = await findPartyByUserId(client, input.staffUserId);
         const aliases = await loadContactAliases(client, viewer?.id ?? null);
-        finalRecipientExternal = { name: aliases.get(finalRecipientPartyId) ?? pick.display_name, phone };
+        finalRecipientExternal = {
+          name: aliases.get(finalRecipientPartyId) ?? pick?.display_name ?? "Получатель", phone,
+        };
         finalRecipientPartyId = undefined;
       }
     }

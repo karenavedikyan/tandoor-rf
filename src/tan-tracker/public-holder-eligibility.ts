@@ -125,5 +125,18 @@ export async function resolvePublicHolderPendingPartyId(
     throw Object.assign(new Error("Выберите получателя."), { http: 400 });
   }
   await assertPublicHolderPendingEligible(client, transferId, holderPartyId, resolved);
+  const saved = (await client.query<{ phone_e164: string | null; display_name: string }>(
+    `SELECT phone_e164,display_name FROM tt_parties WHERE id=$1::uuid AND kind='external'`, [resolved],
+  )).rows[0];
+  if (saved?.phone_e164) {
+    const creatorUserId = await loadPublicHolderCreatorUserId(client, transferId);
+    const id = await resolvePublicHolderPendingPartyByPhoneForExternalActor(client, {
+      holderPartyId, phoneE164: saved.phone_e164,
+      externalRecipient: { name: saved.display_name, phone: saved.phone_e164 },
+      externalRecipientCreatedByUserId: creatorUserId ?? undefined,
+    });
+    await assertPhoneResolvedHolderPending(client, holderPartyId, id);
+    return id;
+  }
   return resolved;
 }

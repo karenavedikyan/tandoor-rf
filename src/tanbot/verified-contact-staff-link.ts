@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { normalizeRuPhoneE164 } from "../tan-tracker/phone-normalize";
 import { lockPhonePartyResolution } from "../tan-tracker/phone-party-resolver";
+import { findProfilesByPhone, profilePhoneNumbers } from "../tan-tracker/profile-phone";
 import {
   lockTanbotMaxLkUser, lockTanbotMaxMessenger,
   lockTanbotTelegramLkUser, lockTanbotTelegramMessenger,
@@ -14,23 +15,14 @@ import {
   insertLinkAudit as auditTelegram,
 } from "../tanbot-telegram/link-repository";
 
-type StaffCandidate = { id: string; phone: string | null; status: string };
+type StaffCandidate = { id: string; phone: string | null; additional_phone?: string | null; status: string };
 export type VerifiedContactStaffLink =
   | { kind: "external" }
   | { kind: "staff"; userId: string }
   | { kind: "rejected"; text: string };
 
 async function candidates(client: PoolClient, phone: string, lock = false): Promise<StaffCandidate[]> {
-  // users.phone is canonical E164 (DB constraint). A historical party alias
-  // blocks external fallback, but must NEVER authenticate a different current phone.
-  return (await client.query<StaffCandidate>(
-    `SELECT u.id::text, u.phone, u.status FROM users u
-     WHERE u.phone = $1 OR EXISTS (
-       SELECT 1 FROM tt_parties p WHERE p.kind = 'user' AND p.user_id = u.id AND p.phone_e164 = $1
-     )
-     ORDER BY u.id LIMIT 3 ${lock ? "FOR UPDATE OF u" : ""}`,
-    [phone],
-  )).rows;
+  return findProfilesByPhone(client, phone, lock ? "update" : undefined);
 }
 
 const rejected = (text: string): VerifiedContactStaffLink => ({ kind: "rejected", text });
@@ -90,7 +82,7 @@ export async function linkStaffByVerifiedContact(
   if (user.status !== "active") {
     return rejected("Не удалось подтвердить номер: аккаунт недоступен. Обратитесь к администратору.");
   }
-  if (user.phone !== phone) return conflict();
+  if (!profilePhoneNumbers(user).includes(phone)) return conflict();
   if (accounts.some(a => a.user_id !== user.id || a.messenger_user_id !== messengerId ||
     a.messenger_chat_id !== chatId)) return conflict();
   const external = await client.query(

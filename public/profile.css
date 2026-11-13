@@ -2,6 +2,12 @@
   gap: 8px;
 }
 
+#additional-phone-hint {
+  color: var(--rf-text-muted, #596774);
+  font-size: var(--rf-ui-small, 14px);
+  line-height: 1.5;
+}
+
 .profile-save-icon {
   display: none;
   flex-shrink: 0;

@@ -837,7 +837,7 @@ describe("native external sender to external recipient (both channels)", { concu
       });
     });
 
-    it(`${channel}: active staff resolved via user party phone when profile phone empty`, async () => {
+    it(`${channel}: party phone alone does not identify staff when profile phone is empty`, async () => {
       const national = `5${String(++seq).padStart(9, "0")}`.slice(0, 10);
       const e164 = `+7${national}`;
       const staff = await createTestUser({
@@ -853,14 +853,14 @@ describe("native external sender to external recipient (both channels)", { concu
         `SELECT pending_party_id::text FROM tt_transfers WHERE creator_party_id=$1::uuid ORDER BY created_at DESC LIMIT 1`,
         [sender.partyId],
       )).rows[0].pending_party_id;
-      assert.equal(pending, party.id);
+      assert.notEqual(pending, party.id);
       assert.equal(
         (await getPool()!.query(`SELECT count(*)::int AS n FROM tt_parties WHERE kind='external' AND phone_e164=$1`, [e164])).rows[0].n,
-        0,
+        1,
       );
     });
 
-    it(`${channel}: stale party phone alias neutral rollback without leaking current phone`, async () => {
+    it(`${channel}: stale party alias routes externally without leaking current profile phone`, async () => {
       const oldNational = `7${String(++seq).padStart(9, "0")}`.slice(0, 10);
       const newNational = `6${String(++seq).padStart(9, "0")}`.slice(0, 10);
       const oldE164 = `+7${oldNational}`;
@@ -875,12 +875,14 @@ describe("native external sender to external recipient (both channels)", { concu
       const sender = await externalActor(channel);
       const summary = await wizardToSummary(sender, oldE164, "Old Alias");
       const draft = await draftRow(sender);
-      const before = await bizSnapshot(draft.id);
       const r = await confirmSummary(sender, summary);
-      assert.match(r.text, /Получатель недоступен/u);
       assert.doesNotMatch(r.text, new RegExp(newNational));
-      assert.equal((await draftRow(sender)).confirmed_transfer_id, null);
-      assert.deepEqual(await bizSnapshot(draft.id), before);
+      const id = (await draftRow(sender)).confirmed_transfer_id;
+      assert.ok(id);
+      const target = (await getPool()!.query(`SELECT p.kind,p.phone_e164 FROM tt_transfers t
+        JOIN tt_parties p ON p.id=t.pending_party_id WHERE t.id=$1`, [id])).rows[0];
+      assert.equal(target.kind, "external");
+      assert.equal(target.phone_e164, oldE164);
       assert.equal(
         (await getPool()!.query(`SELECT phone_e164 FROM tt_parties WHERE id=$1`, [party.id])).rows[0].phone_e164,
         oldE164,
