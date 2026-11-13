@@ -8,6 +8,7 @@ export type Property = Section & { value: string };
 export type SourceFile = Section & { path: string };
 export type Product = {
   guid: string; name: string; chapter: Section[]; properties: Property[]; files: SourceFile[];
+  guid_group?: string; name_group?: string;
 };
 export type Summary = {
   products: number; sections: Section[]; brands: string[]; propertyValues: number;
@@ -74,7 +75,7 @@ export function parseProductsJson(bytes: Buffer): ParsedSnapshot {
   }
   const products = unique(rows.map(raw => {
     const row = object(raw);
-    keys(row, ["guid", "name", "chapter", "properties", "files"]);
+    keys(row, ["guid", "name", "chapter", "properties", "files", "guid_group", "name_group"]);
     const chapter = unique(array(row.chapter, 1000).map(x => {
       keys(object(x), ["guid", "name"]);
       return named(x, sectionNames);
@@ -89,7 +90,9 @@ export function parseProductsJson(bytes: Buffer): ParsedSnapshot {
       if (!safeImagePath(path)) throw new Error("UNSAFE_IMAGE_PATH");
       return { ...named(x), path };
     }));
-    return { guid: identifier(row.guid), name: text(row.name, 5000), chapter, properties, files };
+    return { guid: identifier(row.guid), name: text(row.name, 5000), chapter, properties, files,
+      ...(row.guid_group === undefined ? {} : { guid_group: identifier(row.guid_group) }),
+      ...(row.name_group === undefined ? {} : { name_group: text(row.name_group, 2000, true) }) };
   }));
   const sort = (a: string, b: string) => a.localeCompare(b, "ru");
   const summary: Summary = {

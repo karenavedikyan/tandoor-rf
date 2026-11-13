@@ -36,6 +36,11 @@ export type RegularUpdateResult = {
     employeesUnchanged?: number;
   };
   applyRunId?: string;
+  manualSummary?: {
+    batchId: string | null;
+    files: Record<string, number>;
+    issueCount: number;
+  };
   errorCode?: string;
   /** Worker/admin diagnostics: where the failure occurred without exposing secrets. */
   stage?: import("../onec-import/job-failure").ImportJobFailureStage;

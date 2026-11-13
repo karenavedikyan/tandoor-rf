@@ -28,6 +28,7 @@ export type AdminOnecUpdateJobDto = {
   exportBatchId: string | null;
   failureStage: string | null;
   diagnosticId: string | null;
+  manualSummary?: { batchId: string | null; files: Record<string, number>; issueCount: number };
 };
 
 export type AdminOnecUpdateStatusResponse = {

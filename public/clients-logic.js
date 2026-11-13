@@ -2020,7 +2020,8 @@
     if (job.phase === "pending" || job.phase === "running") {
       statusClass = "clients-onec-update__status--running";
     } else if (job.phase === "completed" || job.phase === "no_changes") {
-      statusClass = "clients-onec-update__status--success";
+      statusClass = job.manualSummary && job.manualSummary.issueCount > 0 ?
+        "clients-onec-update__status--warning" : "clients-onec-update__status--success";
     } else if (job.phase === "rejected") {
       statusClass = "clients-onec-update__status--warning";
     } else if (job.phase === "uncertain") {
@@ -2045,6 +2046,16 @@
     }
     var lines = [];
     var job = data.job;
+    if (job.requestedByUserId) lines.push({ label: "Инициатор", value: job.requestedByUserId });
+    if (job.manualSummary) {
+      var labels = { holdings: "Холдинги", clients: "Юрлица", retail: "Торговые точки", employees: "Сотрудники",
+        sales: "Продажи", saleItems: "Продажи по товарам", returns: "Возвраты", returnItems: "Возвраты по товарам",
+        products: "Товары", groups: "Группы товаров", prices: "Цены", stocks: "Остатки" };
+      Object.keys(job.manualSummary.files || {}).forEach(function (file) {
+        lines.push({ label: labels[file] || file, value: "Сохранено исходных строк: " + job.manualSummary.files[file] });
+      });
+      lines.push({ label: "Замечания", value: String(job.manualSummary.issueCount) });
+    }
     lines.push({
       label: "Источник",
       value: job.jobSourceLabel || "—",

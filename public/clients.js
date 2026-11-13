@@ -4740,6 +4740,13 @@
             return "<dt>" + shell.escapeHtml(line.label) + "</dt><dd>" + shell.escapeHtml(line.value) + "</dd>";
           })
           .join("");
+        if (data.job && data.job.manualSummary && data.job.manualSummary.batchId) {
+          onecUpdateMetaEl.insertAdjacentHTML("beforeend",
+            '<dt>Проверка данных</dt><dd><button type="button" id="onec-open-report">Открыть построчный отчёт</button></dd>');
+          document.getElementById("onec-open-report").onclick = function () {
+            if (window.OnecManualReport) window.OnecManualReport.open(data.job.manualSummary.batchId);
+          };
+        }
       }
     }
   }
@@ -4789,8 +4796,8 @@
       return;
     }
     var confirmed = window.confirm(
-      "Запустить обновление клиентов из последнего готового комплекта 1С?\n\n" +
-        "Будет загружен подтверждённый комплект с FTP и применён в ЛК. Формирование новой выгрузки в 1С не запускается.",
+      "Запустить ручное обновление из 12 файлов 1С?\n\n" +
+        "Исходные строки и дубли будут сохранены, замечания выделены красным. При технической ошибке прежние данные сохранятся. Формирование новой выгрузки в 1С и автообновление не запускаются.",
     );
     if (!confirmed) {
       return;

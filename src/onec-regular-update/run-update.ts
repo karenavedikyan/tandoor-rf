@@ -6,8 +6,9 @@ import type { RegularUpdateConfig } from "./config";
 import type { RegularUpdateResult } from "./types";
 import type { ExportManifestReader } from "./export-manifest";
 import { runExchangeV3RegularUpdate } from "../onec-exchange-v3/run-update";
+import { runManualUpdate, type ManualUpdateOptions } from "../onec-manual/run-update";
 
-export type RunRegularUpdateOptions = {
+export type RunRegularUpdateOptions = ManualUpdateOptions & {
   env?: NodeJS.ProcessEnv;
   argv?: string[];
   config?: RegularUpdateConfig;
@@ -28,6 +29,13 @@ export type RunRegularUpdateOptions = {
 
 /** Regular «Обновить из 1С» path — exchange v3 (4 files). Legacy 2-file import removed. */
 export async function runRegularUpdate(options: RunRegularUpdateOptions = {}): Promise<RegularUpdateResult> {
+  // Manual production path: all 12 files. Existing explicitly injected v3 fixtures and
+  // the separate nightly implementation keep their contract; no scheduler is enabled here.
+  if (options.manualFiles || options.manualReader || options.directory ||
+      (!options.holdingsBytes && !options.clientsBytes && !options.bundleDir &&
+       options.importTriggerSource !== "regular_update_nightly")) {
+    return runManualUpdate(options);
+  }
   return runExchangeV3RegularUpdate({
     env: options.env,
     argv: options.argv,

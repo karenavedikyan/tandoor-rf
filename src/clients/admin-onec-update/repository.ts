@@ -174,6 +174,7 @@ export function mapJobRowToDto(
     exportBatchId: row.result?.exportBatchId ?? null,
     failureStage: row.result?.stage ?? null,
     diagnosticId: row.result?.diagnosticId ?? null,
+    ...(row.result?.manualSummary ? { manualSummary: row.result.manualSummary } : {}),
   };
 }
 
@@ -313,7 +314,9 @@ export async function countRunningImportRuns(client?: PoolClient): Promise<numbe
 }
 
 export async function isExchangeApplyBlocked(client?: PoolClient): Promise<boolean> {
-  const query = `SELECT apply_blocked FROM onec_exchange_state WHERE id = 1`;
+  const query = `SELECT (apply_blocked OR COALESCE(
+    (SELECT apply_blocked FROM onec_v3_exchange_state WHERE id=1),FALSE)) AS apply_blocked
+    FROM onec_exchange_state WHERE id = 1`;
   if (client) {
     const result = await client.query<{ apply_blocked: boolean }>(query);
     return result.rows[0]?.apply_blocked === true;
@@ -332,7 +335,9 @@ export async function loadLastSuccessfulUpdateAt(): Promise<Date | null> {
     return null;
   }
   const exchange = await pool.query<{ last_successful_apply_at: Date | null }>(
-    `SELECT last_successful_apply_at FROM onec_exchange_state WHERE id = 1`,
+    `SELECT GREATEST(last_successful_apply_at,
+      (SELECT last_successful_apply_at FROM onec_v3_exchange_state WHERE id=1))
+      AS last_successful_apply_at FROM onec_exchange_state WHERE id = 1`,
   );
   if (exchange.rows[0]?.last_successful_apply_at) {
     return exchange.rows[0].last_successful_apply_at;

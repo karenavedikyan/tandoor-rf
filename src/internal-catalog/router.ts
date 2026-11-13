@@ -1,4 +1,6 @@
 import express from "express";
+import { qualityForVisibleTargets } from "../onec-manual/quality";
+import { query } from "../db/pool";
 import { csrfOriginProtection } from "../middleware/csrf";
 import { requirePool } from "../db/pool";
 import { internalCatalogAccess } from "./access";
@@ -67,7 +69,9 @@ export function createInternalCatalogRouter(): express.Router {
     const current = await snapshot(req, res);
     if (current === undefined) return;
     if (!current) { res.json({ snapshotId: null, total: 0, page: 1, pageSize: 24, items: [] }); return; }
-    res.json(await searchProducts(requirePool(), current.id, { q, section, brand, page: Number(page || 1), pageSize: 24 }));
+    const result = await searchProducts(requirePool(), current.id, { q, section, brand, page: Number(page || 1), pageSize: 24 });
+    const quality = await qualityForVisibleTargets(result.items.map(item => ({ kind: "product", guid: item.guid })));
+    res.json({ ...result, items: result.items.map(item => ({ ...item, _onecQuality: quality.get("product:" + item.guid) ?? null })) });
   }));
   router.get("/products/:guid", wrap(async (req, res) => {
     const guid = req.params.guid;
@@ -79,7 +83,18 @@ export function createInternalCatalogRouter(): express.Router {
       res.status(404).json({ error: { code: "PRODUCT_NOT_FOUND", message: "Товар не найден в этой версии каталога." } });
       return;
     }
-    res.json({ snapshotId: current!.id, importedAt: current!.importedAt, product });
+    const quality = await qualityForVisibleTargets([{ kind: "product", guid }]);
+    let sourceValues: unknown[] = [];
+    try {
+      sourceValues = (await query(`SELECT r.file_key,r.row_index,r.record,b.imported_at
+        FROM onec_manual_object_versions v JOIN onec_manual_records r
+          ON r.batch_id=v.batch_id AND r.entity_kind=v.entity_kind AND r.entity_guid=v.entity_guid AND r.file_key=v.file_key
+        JOIN onec_manual_batches b ON b.id=v.batch_id
+        WHERE v.entity_kind='product' AND v.entity_guid=$1::uuid AND v.file_key IN ('prices','stocks')
+        ORDER BY r.file_key,r.row_index`, [guid])).rows;
+    } catch (error) { if ((error as { code?: string }).code !== "42P01") throw error; }
+    res.json({ snapshotId: current!.id, importedAt: current!.importedAt, product,
+      _onecQuality: quality.get("product:" + guid) ?? null, sourceValues });
   }));
   router.get("/products/:guid/images/:fileGuid", wrap(async (req, res) => {
     const { guid, fileGuid } = req.params;

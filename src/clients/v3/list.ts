@@ -1,4 +1,5 @@
 import { query } from "../../db/pool";
+import { qualityExistsSql } from "../../onec-manual/quality";
 import type { AccessContext } from "../../access/types";
 import { v3EntityAssignmentScope, v3HoldingVisibilityScope } from "./access-scope";
 import { v3CategoryGuidSql, v3JsonManagerField, v3TypeGuidSql } from "./json-paths";
@@ -53,6 +54,7 @@ export type V3ListQuery = {
   salesMin?: string;
   salesMax?: string;
   salesInsights?: boolean;
+  qualityOnly?: boolean;
   /** Server-resolved only; never accepted as a request parameter. */
   salesRanking?: import("./sales-ranking").SalesRanking;
 };
@@ -301,7 +303,7 @@ async function listV3EntitiesBase(
     const scope = v3HoldingVisibilityScope(context, "h");
     const params = [...scope.params];
     const search = qPattern ? ` AND h.name_holding ILIKE $${params.push(qPattern)} ESCAPE '\\'` : "";
-    const filters = appendAssignmentFilters(input, "h", params) +
+    const filters = (input.qualityOnly ? ` AND ${qualityExistsSql("holding", "h.guid_holding")}` : "") + appendAssignmentFilters(input, "h", params) +
       salesRangeSql(input, params, "'holding:' || h.guid_holding::text");
     const countParams = [...params];
     const salesOrder = salesOrderSql(input, params, "'holding:' || h.guid_holding::text");
@@ -337,6 +339,7 @@ async function listV3EntitiesBase(
     const rulesApplied = appendV3FieldRulesSql(filters, params, input.entity, "le", input.fieldRules);
     filters = rulesApplied.sql;
     filters += salesRangeSql(input, params, "'legal:' || le.guid_client::text");
+    if (input.qualityOnly) filters += ` AND ${qualityExistsSql("legal", "le.guid_client")}`;
     const countParams = [...params];
     const salesOrder = salesOrderSql(input, params, "'legal:' || le.guid_client::text");
     params.push(input.pageSize, offset);
@@ -380,6 +383,7 @@ async function listV3EntitiesBase(
     appendAssignmentFilters(input, "ro", params) + appendV3ColumnFilters(input, "retail", params);
   const rulesApplied = appendV3FieldRulesSql(filters, params, input.entity, "ro", input.fieldRules);
   filters = rulesApplied.sql;
+  if (input.qualityOnly) filters += ` AND ${qualityExistsSql("retail", "ro.guid_store")}`;
   const holdingJoin = " LEFT JOIN onec_v3_holdings h ON h.guid_holding = ro.guid_holding";
   const fromSql = `FROM onec_v3_retail_outlets ro${holdingJoin}`;
   const countParams = [...params];

@@ -1,5 +1,7 @@
 import type { Response } from "express";
 import type { AccessRequest } from "../../access/middleware";
+import { qualityForVisibleTargets, visibleHoldingMemberQuality } from "../../onec-manual/quality";
+import type { Kind } from "../../onec-manual/model";
 import { setNoStore } from "../../http/no-store";
 import { apiError, ERROR_CODES } from "../../shared/errors";
 import { isValidUuidParam } from "../uuid-param";
@@ -238,6 +240,7 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     salesMin: salesMin as string | undefined,
     salesMax: salesMax as string | undefined,
     salesInsights: req.query.salesInsights === "1",
+    qualityOnly: req.query.qualityOnly === "1",
   });
   } catch (error) {
     if (!(error instanceof SalesRankingUnavailable)) throw error;
@@ -246,6 +249,23 @@ export async function v3ClientsListHandler(req: AccessRequest, res: Response): P
     return;
   }
   setNoStore(res);
+  const targets = result.items.map(item => ({
+    kind: (item.detail_entity ?? (entityRaw === "holdings" ? "holding" :
+      entityRaw === "retail" || entityRaw === "orphan_retail" ? "retail" : "legal")) as Kind,
+    guid: String(item.guid),
+  }));
+  const quality = await qualityForVisibleTargets(targets);
+  if (entityRaw === "legal_grouped") {
+    const parents = await visibleHoldingMemberQuality(context, targets.filter(t => t.kind === "holding").map(t => t.guid));
+    for (const parent of parents) {
+      const key = "holding:" + parent.guid, value = quality.get(key) ??
+        { batchId: parent.batch_id, checkedAt: parent.checked_at.toISOString(), issues: [] };
+      value.issues.push({ code: "MEMBER_DATA_QUALITY", field: "legal_entities",
+        message: "У доступных юрлиц этого холдинга есть замечания. Откройте состав и карточки для проверки." });
+      quality.set(key, value);
+    }
+  }
+  result.items.forEach((item, index) => { item._onecQuality = quality.get(targets[index].kind + ":" + targets[index].guid) ?? null; });
   res.json({ entity: entityRaw, page, pageSize, total: result.total, items: result.items, salesMonth: result.salesMonth });
 }
 
@@ -436,7 +456,10 @@ export async function v3ClientsDetailHandler(req: AccessRequest, res: Response):
   }
 
   setNoStore(res);
-  res.json({ entity, ...detail });
+  const quality = await qualityForVisibleTargets([{ kind: entity, guid }]);
+  res.json({ entity, ...detail, ...(detail.entity ? { entity: {
+    ...detail.entity, _onecQuality: quality.get(entity + ":" + guid) ?? null,
+  } } : {}) });
 }
 
 export async function v3FieldCatalogHandler(_req: AccessRequest, res: Response): Promise<void> {
