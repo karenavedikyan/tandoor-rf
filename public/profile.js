@@ -10,6 +10,8 @@
   var roleInput = document.getElementById("role");
   var statusInput = document.getElementById("status");
   var saveButton = document.getElementById("save-button");
+  var saveButtonLabel = document.getElementById("save-button-label") || saveButton;
+  var saveStatusEl = document.getElementById("profile-save-status");
   var statusEl = document.getElementById("status-message");
   var saving = false;
   var tanbotSection = document.getElementById("tanbot-telegram-section");
@@ -522,14 +524,38 @@
     });
   }
 
+  function setSaveFeedback(text, kind) {
+    api.setStatus(saveStatusEl, text, kind);
+    if (saveStatusEl) saveStatusEl.scrollIntoView({ block: "nearest" });
+  }
+
+  function setSaveButtonState(state, label) {
+    saveButton.setAttribute("data-save-state", state);
+    saveButtonLabel.textContent = label;
+  }
+
+  function clearSaveFeedback() {
+    if (saving) return;
+    setSaveButtonState("idle", "Сохранить");
+    api.setStatus(saveStatusEl, "", "");
+  }
+
+  fullNameInput.addEventListener("input", clearSaveFeedback);
+  phoneInput.addEventListener("input", clearSaveFeedback);
+
   form.addEventListener("submit", function (event) {
     event.preventDefault();
     if (saving) {
       return;
     }
     saving = true;
+    var saveSucceeded = false;
     saveButton.disabled = true;
-    api.setStatus(statusEl, "Сохранение…", "loading");
+    setSaveButtonState("saving", "Сохраняем…");
+    fullNameInput.readOnly = true;
+    phoneInput.readOnly = true;
+    form.setAttribute("aria-busy", "true");
+    setSaveFeedback("Сохранение профиля…", "loading");
 
     api
       .apiRequest("/api/profile/self", {
@@ -545,34 +571,36 @@
           return;
         }
         if (result.response.status === 503) {
-          api.setStatus(
-            statusEl,
-            api.extractErrorMessage(result.data, "Вход временно недоступен."),
+          setSaveFeedback(
+            api.extractErrorMessage(result.data, "Не удалось сохранить профиль. Попробуйте позже."),
             "error",
           );
           return;
         }
         if (result.response.status !== 200 || !result.data || !result.data.user) {
-          api.setStatus(
-            statusEl,
+          setSaveFeedback(
             api.extractErrorMessage(result.data, "Не удалось сохранить профиль."),
             "error",
           );
           return;
         }
         fillForm(result.data.user);
-        api.setStatus(statusEl, "Профиль сохранён.", "success");
+        saveSucceeded = true;
+        setSaveFeedback("Профиль сохранён.", "success");
       })
       .catch(function (err) {
-        api.setStatus(
-          statusEl,
-          api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
+        setSaveFeedback(
+          "Не удалось подтвердить сохранение. " + api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
           "error",
         );
       })
       .finally(function () {
         saving = false;
         saveButton.disabled = false;
+        setSaveButtonState(saveSucceeded ? "saved" : "idle", saveSucceeded ? "Сохранено" : "Сохранить");
+        fullNameInput.readOnly = false;
+        phoneInput.readOnly = false;
+        form.setAttribute("aria-busy", "false");
       });
   });
 
