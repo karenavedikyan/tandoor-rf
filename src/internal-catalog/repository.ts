@@ -23,9 +23,15 @@ export async function importSnapshot(pool: Pool, parsed: ParsedSnapshot, sourceN
     if (firstOnly && (await client.query("SELECT id FROM internal_catalog_snapshots LIMIT 1")).rowCount) {
       throw new Error("CATALOG_NOT_EMPTY");
     }
+    const result = await writeSnapshot(client, parsed, sourceName);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+}
+/** Caller owns transaction and activation. No nested transaction/commit. */
+export async function writeSnapshot(client: PoolClient, parsed: ParsedSnapshot, sourceName: string) {
     const existing = await client.query<{ id: string }>("SELECT id FROM internal_catalog_snapshots WHERE sha256=$1", [parsed.sha256]);
     if (existing.rows[0]) {
-      await client.query("COMMIT");
       return { status: "unchanged", snapshotId: existing.rows[0].id, products: parsed.products.length };
     }
     const id = (await client.query<{ id: string }>(`INSERT INTO internal_catalog_snapshots
@@ -41,9 +47,7 @@ export async function importSnapshot(pool: Pool, parsed: ParsedSnapshot, sourceN
         FROM jsonb_to_recordset($2::jsonb)
         AS x(guid uuid,name text,brand text,section_guids uuid[],search_text text,record jsonb)`, [id, JSON.stringify(batch)]);
     }
-    await client.query("COMMIT");
     return { status: "imported", snapshotId: id, products: parsed.products.length };
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 }
 export type Search = { q: string; section: string; brand: string; page: number; pageSize: number };
 export function listItem(product: Product) {

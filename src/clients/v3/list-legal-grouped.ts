@@ -193,6 +193,13 @@ function appendEligibilityFilters(
     params,
   );
   sql += appendV3ColumnFilters(input, "legal", params);
+  if (input.qualityOnly) {
+    const key = readableGroupKey(context, params);
+    sql += ` AND EXISTS(SELECT 1 FROM onec_manual_object_versions qv
+      JOIN onec_manual_issues qi ON qi.batch_id=qv.batch_id AND qi.entity_kind=qv.entity_kind AND qi.entity_guid=qv.entity_guid AND qi.file_key=qv.file_key
+      WHERE qv.entity_kind || ':' || qv.entity_guid::text = (${key})
+        OR (qv.entity_kind='legal' AND qv.entity_guid=le.guid_client))`;
+  }
   const topTypeRules = (input.fieldRules || []).filter((rule) => rule.field === "typeGuid");
   const categoryRules = (input.fieldRules || []).filter((rule) => rule.field === "categoryGuid");
   const legalNameRules = (input.fieldRules || []).filter((rule) => rule.field === "legalName");

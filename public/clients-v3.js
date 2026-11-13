@@ -108,6 +108,7 @@
       v3entity: entity,
       page: Math.max(1, Number(params.get("page") || "1")),
       q: params.get("q") || "",
+      qualityOnly: params.get("qualityOnly") === "1",
       closed: params.get("closed") || "",
       v3manager: params.get("v3manager") || "",
       v3type: params.get("v3type") || "",
@@ -332,6 +333,7 @@
           ? dom.v3categories.slice()
           : urlCategoryTokens,
       missingManager: url.missingManager,
+      qualityOnly: url.qualityOnly,
       ropEmployee: url.ropEmployee,
       orgTeamGuid: url.orgTeamGuid,
       orgCatalogEntry: url.orgCatalogEntry,
@@ -628,6 +630,7 @@
     else params.delete("v3cols");
     if (state.v3dense) params.set("v3dense", "1");
     else params.delete("v3dense");
+    if (state.qualityOnly) params.set("qualityOnly", "1"); else params.delete("qualityOnly");
     if (state.city) params.set("v3city", state.city);
     else params.delete("v3city");
     ["colManager", "colRegional", "colRop", "colCity", "colStatus"].forEach(function (key) {
@@ -1397,6 +1400,19 @@
       }
       var params = new URLSearchParams();
       params.set("entity", state.v3entity);
+      if (state.qualityOnly) params.set("qualityOnly", "1");
+      var qualityFilter = document.getElementById("onec-quality-filter");
+      if (!qualityFilter && ctx.resultCountEl && ctx.resultCountEl.parentNode) {
+        var label = document.createElement("label");
+        label.className = "onec-quality-filter";
+        label.innerHTML = '<input id="onec-quality-filter" type="checkbox">Требуют проверки';
+        ctx.resultCountEl.parentNode.appendChild(label);
+        qualityFilter = label.querySelector("input");
+        qualityFilter.addEventListener("change", function () {
+          window.ClientsV3.loadList(ctx, mergeListStateForUserAction({ qualityOnly: this.checked, page: 1 }), false);
+        });
+      }
+      if (qualityFilter) qualityFilter.checked = !!state.qualityOnly;
       params.set("page", String(state.page));
       params.set("pageSize", String(state.pageSize || 50));
       if (state.v3entity !== "retail" && state.v3entity !== "orphan_retail") {
@@ -1689,7 +1705,7 @@
                       href +
                       '">' +
                       shell.escapeHtml(String(titleText)) +
-                      "</a></td>"
+                      "</a>" + (window.OnecQuality ? window.OnecQuality.render(item._onecQuality) : "") + "</td>"
                     );
                   }
                   return (
@@ -1722,7 +1738,7 @@
                 href +
                 '">' +
                 shell.escapeHtml(item.name || item.guid) +
-                "</a></h2>" +
+                "</a></h2>" + (window.OnecQuality ? window.OnecQuality.render(item._onecQuality) : "") +
                 (metaLine
                   ? '<p class="clients-card__line"><span class="clients-card__meta">' +
                     shell.escapeHtml(metaLine) +
@@ -2217,7 +2233,7 @@
         if (!card) {
           return;
         }
-        if (event.target.closest("a")) {
+        if (event.target.closest("a, details, summary, button, input")) {
           return;
         }
         var href = card.getAttribute("data-list-href");

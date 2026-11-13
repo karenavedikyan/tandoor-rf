@@ -367,6 +367,7 @@
       (category
         ? '<span class="x7-badge">' + shell.escapeHtml(String(category)) + "</span>"
         : "") +
+      (window.OnecQuality ? window.OnecQuality.render(item._onecQuality) : "") +
       (fieldsHtml ? '<span class="x13-mobile-fields">' + fieldsHtml + "</span>" : "") +
       '<span class="x13-open-card">Открыть карточку клиента</span></article>'
     );

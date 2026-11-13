@@ -1199,6 +1199,7 @@
       '<p class="pc-subtitle v3-detail-subtitle" data-testid="v3-detail-subtitle">' +
       esc(shell, addrLine || subtitleParts.join(" · ")) +
       "</p></div>" +
+      (window.OnecQuality ? window.OnecQuality.render(ent._onecQuality) : "") +
       renderTabsMarkup(initialTab, entityType) +
       panels +
       "</div>"

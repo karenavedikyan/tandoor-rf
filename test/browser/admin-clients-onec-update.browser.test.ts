@@ -58,6 +58,8 @@ async function openClientsPage(
   assert.equal(page.url().includes("/login"), false);
   await page.waitForSelector("#clients-app:not(.clients-hidden)", { timeout: 60_000 });
   await page.waitForSelector("#onec-update-panel:not(.clients-hidden)", { timeout: 60_000 });
+  if (!(await page.locator("#onec-update-panel").evaluate(el => (el as HTMLDetailsElement).open)))
+    await page.locator("#onec-update-panel summary").click();
   await page.waitForSelector("[data-testid='onec-update-button']", { timeout: 60_000 });
 }
 
@@ -77,7 +79,7 @@ describe("admin clients onec update button browser", () => {
     const address = server.address();
     assert.ok(address && typeof address === "object");
     baseUrl = `http://127.0.0.1:${address.port}`;
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: "chromium" });
   });
 
   after(async () => {

@@ -103,7 +103,7 @@
     });
   }
   function renderCard(item) {
-    return '<article class="ic-card">' +
+    return '<article class="ic-card">' + (window.OnecQuality ? window.OnecQuality.render(item._onecQuality) : "") +
       (imagesConfigured && item.coverFileGuid ? photo(item.guid, { guid: item.coverFileGuid }, item.name, true) : "") +
       '<div class="ic-card-head"><span class="ic-brand">' +
       esc(item.brand || "Бренд не указан") + '</span><span class="ic-photo-note">' +
@@ -160,6 +160,10 @@
     return found && found.value.trim() ? found.value.trim() : "";
   }
   function renderDetail(data) {
+    var sourceHtml = (data.sourceValues || []).map(function (row) {
+      return '<details class="onec-report-row"><summary>' + (row.file_key === "prices" ? "Цены" : "Остатки") +
+        ' из 1С, строка ' + (row.row_index + 1) + '</summary><pre>' + esc(JSON.stringify(row.record, null, 2)) + '</pre></details>';
+    }).join("");
     var p = data.product;
     function technical(x) { return /^(Главная|СсылкаНаГлавную(?:NEW)?|Название для сайта|сайт Тандор|АкцияДействует(?:До|С)_.+)$/.test(x.name.trim()); }
     function row(x) {
@@ -169,7 +173,8 @@
     var technicalRows = p.properties.filter(technical);
     return '<h2 id="ic-detail-title" tabindex="-1">' + esc(p.name) + "</h2>" +
       '<p class="ic-card-meta">' + esc([property(p, "Бренд"), property(p, "Артикул") ? "Артикул: " + property(p, "Артикул") : ""].filter(Boolean).join(" · ") || "Артикул и бренд не указаны") + "</p>" +
-      tags(p.chapter) + '<h3>Фотографии</h3>' +
+      (window.OnecQuality ? window.OnecQuality.render(data._onecQuality) : "") +
+      tags(p.chapter) + sourceHtml + '<h3>Фотографии</h3>' +
       (imagesConfigured && p.files.length ? '<p class="ic-card-meta">Нажмите на фотографию, чтобы открыть крупнее.</p><div class="ic-gallery">' +
         p.files.map(function (file) { return photo(p.guid, file, file.name || p.name, false); }).join("") + "</div>" :
         '<p class="ic-notice">' + (p.files.length ? "В 1С указано файлов изображений: " + p.files.length + ". Сами фотографии не входят в JSON. Они появятся после подключения папки с изображениями." :

@@ -1,4 +1,5 @@
 import express from "express";
+import { manualReport } from "../onec-manual/report";
 import { csrfProtection } from "../middleware/csrf";
 import { requireAuth } from "../middleware/auth";
 import { requireAdmin } from "../middleware/require-admin";
@@ -13,6 +14,7 @@ import {
 export function createAdminClientsRouter(): express.Router {
   const router = express.Router();
   const adminChain = [requireDatabaseReady, requireAuth, requireAdmin] as const;
+  router.get("/onec-update/report", ...adminChain, (req, res, next) => { void manualReport(req, res).catch(next); });
 
   router.get("/onec-update/status", ...adminChain, (req, res, next) => {
     void adminOnecUpdateStatusHandler(req, res).catch(next);

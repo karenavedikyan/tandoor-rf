@@ -1143,14 +1143,15 @@
                 var cellHtml = listUi ? listUi.cellDisplay(item, col.id, shell, state, isGrouped) : "—";
                 if (index === 0) {
                   if (cellHtml.indexOf("<a ") !== -1) {
-                    return '<td><span class="x14-cell-content">' + cellHtml + "</span></td>";
+                    return '<td><span class="x14-cell-content">' + cellHtml + "</span>" +
+                      (window.OnecQuality ? window.OnecQuality.render(item._onecQuality) : "") + "</td>";
                   }
                   return (
                     '<td><a class="clients-link x14-cell-content" href="' +
                     shell.escapeHtml(href) +
                     '">' +
                     cellHtml.replace(/<[^>]+>/g, "") +
-                    "</a></td>"
+                    "</a>" + (window.OnecQuality ? window.OnecQuality.render(item._onecQuality) : "") + "</td>"
                   );
                 }
                 return '<td' + (col.id === "sales_income_total" ? ' data-sales-cell' : "") + '><span class="x14-cell-content">' + cellHtml + "</span></td>";
