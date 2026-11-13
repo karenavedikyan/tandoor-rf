@@ -57,8 +57,14 @@
               </label>
 
               <div class="button-row">
-                <button id="save-button" type="submit" class="primary-button">Сохранить</button>
+                <button id="save-button" type="submit" class="primary-button" aria-describedby="profile-save-status" data-save-state="idle">
+                  <svg class="profile-save-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                    <path d="m5 12 4 4 10-10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <span id="save-button-label">Сохранить</span>
+                </button>
               </div>
+              <p id="profile-save-status" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
             </form>
 
             <section id="tanbot-max-section" class="profile-card profile-card--nested" hidden>
