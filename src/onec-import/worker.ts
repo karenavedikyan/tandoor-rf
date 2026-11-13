@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { acquireWorkerLease, releaseWorkerLease } from "./worker-lease";
 import { EMPLOYEES_RELATIVE_PATH, parseWholesaleEmployeeRosterBytes } from "../onec-clients/employee-roster";
 import { prepareRegularUpdateWorkerQueue } from "../clients/admin-onec-update/nightly-job-lifecycle";
 import {
@@ -200,6 +201,9 @@ export async function runOneImportJob(
   const kinds = workerOptions?.kinds ?? [IMPORT_JOB_KIND, REGULAR_UPDATE_JOB_KIND];
   const db = await pool.connect();
   let jobId: string | undefined;
+  let leaseJobId: string | undefined;
+  let claiming = false;
+  let discardConnection = false;
   try {
     await db.query("BEGIN");
     await prepareRegularUpdateWorkerQueue(db, {
@@ -207,6 +211,8 @@ export async function runOneImportJob(
     });
     await db.query("COMMIT");
 
+    await db.query("BEGIN");
+    claiming = true;
     const claimed = await db.query<ImportJobRow>(
       `
       UPDATE onec_import_jobs
@@ -242,10 +248,27 @@ export async function runOneImportJob(
       [kinds],
     );
     const job = claimed.rows[0];
-    jobId = job?.id;
     if (!job) {
+      await db.query("COMMIT");
+      claiming = false;
       return "idle";
     }
+    // Publish the lease marker atomically with running status. A status reader can
+    // never see a marked running job before this session owns its lease.
+    if (job.kind === REGULAR_UPDATE_JOB_KIND && job.job_source === "admin_manual") {
+      if (!(await acquireWorkerLease(db, job.id))) {
+        await db.query("ROLLBACK");
+        claiming = false;
+        return "idle";
+      }
+      leaseJobId = job.id;
+      await db.query(`UPDATE onec_import_jobs SET result =
+        jsonb_build_object('workerLeaseVersion',1,'mode',mode,
+          'message','Обновление из 1С выполняется.') WHERE id=$1::uuid`, [job.id]);
+    }
+    await db.query("COMMIT");
+    claiming = false;
+    jobId = job.id;
 
     if (
       job.job_source === REGULAR_UPDATE_JOB_SOURCE_NIGHTLY &&
@@ -325,6 +348,10 @@ export async function runOneImportJob(
     );
     return "failed";
   } catch (error) {
+    if (claiming) {
+      await db.query("ROLLBACK").catch(() => { discardConnection = true; });
+      claiming = false;
+    }
     if (jobId) {
       const failedJob = (
         await db.query<{ mode: "dry_run" | "apply" }>(
@@ -360,6 +387,9 @@ export async function runOneImportJob(
     }
     return "failed";
   } finally {
-    db.release();
+    if (leaseJobId) {
+      await releaseWorkerLease(db, leaseJobId).catch(() => { discardConnection = true; });
+    }
+    db.release(discardConnection);
   }
 }
