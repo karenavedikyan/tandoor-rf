@@ -4764,6 +4764,23 @@
     }, 2000);
   }
 
+  function retryOnecUpdateStatus() {
+    renderOnecUpdateStatus(null);
+    if (onecUpdatePollTimer) {
+      clearTimeout(onecUpdatePollTimer);
+      onecUpdatePollTimer = null;
+    }
+    if (!shouldShowOnecUpdatePanel()) {
+      return;
+    }
+    if (onecUpdateStatusEl) {
+      onecUpdateStatusEl.textContent += " Повторная проверка через несколько секунд. Не запускайте обновление повторно.";
+    }
+    onecUpdatePollTimer = setTimeout(function () {
+      loadOnecUpdateStatus(false);
+    }, 5000);
+  }
+
   function loadOnecUpdateStatus(refreshSync) {
     applyOnecUpdatePanelVisibility();
     if (!shouldShowOnecUpdatePanel()) {
@@ -4773,7 +4790,11 @@
       .apiRequest("/api/admin/clients/onec-update/status")
       .then(function (result) {
         if (result.response.status !== 200 || !result.data) {
-          renderOnecUpdateStatus(null);
+          if (result.response.status >= 500 || result.response.status === 408 || result.response.status === 429) {
+            retryOnecUpdateStatus();
+          } else {
+            renderOnecUpdateStatus(null);
+          }
           return { ok: false };
         }
         renderOnecUpdateStatus(result.data);
@@ -4786,7 +4807,7 @@
         return { ok: true };
       })
       .catch(function () {
-        renderOnecUpdateStatus(null);
+        retryOnecUpdateStatus();
         return { ok: false };
       });
   }

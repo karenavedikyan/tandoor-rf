@@ -94,7 +94,9 @@ export async function finalizeStaleRegularUpdateJobs(client: PoolClient): Promis
       FROM onec_import_jobs
       WHERE kind = $1
         AND status = 'running'
-      FOR UPDATE
+      -- An active importer holds this row until COMMIT. Status must remain readable;
+      -- defer reconciliation of locked jobs instead of waiting for the import.
+      FOR UPDATE SKIP LOCKED
     `,
     [REGULAR_UPDATE_JOB_KIND],
   );
