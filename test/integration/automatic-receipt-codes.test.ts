@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { before, beforeEach, after, describe, it } from "node:test";
 import type { PoolClient } from "pg";
 import {
@@ -32,6 +32,13 @@ import { loadTanbotMaxStage2Config } from "../../src/tanbot-max/stage2-config";
 import request from "supertest";
 import { createApp } from "../../src/server";
 import { signHolderAccess } from "../../src/tan-tracker/holder-access";
+import { automaticReceiptTargets } from "../../src/tan-tracker/automatic-receipt-target";
+import { externalMessengerProofWouldConflict, hasExternalMessengerIdentityConflict } from "../../src/tan-tracker/external-person/identity-conflict";
+import { resolveExternalPersonOutboxDeliveryTarget } from "../../src/tan-tracker/external-person/outbox-worker";
+import { createPersonBrowserSession, findPersonByMessenger, revokeAllExternalPersonSessions, upsertVerifiedPerson } from "../../src/tan-tracker/external-person/person-service";
+import { repairConflictingExternalProof } from "../../src/tan-tracker/external-person/repair-conflicting-proof";
+import { resolveExternalPersonAuth } from "../../src/tan-tracker/external-person/resolve-auth";
+import { signExternalPersonCapability } from "../../src/tan-tracker/external-person/session-token";
 
 type Channel = "telegram" | "max";
 type Actor = {
@@ -46,6 +53,10 @@ type Actor = {
 const db = getIntegrationDatabaseUrl();
 let sequence = 650000;
 const p = () => getPool()!;
+function legacyCapability(personId: string) {
+  const body = Buffer.from(JSON.stringify({ personId, exp: Date.now()+60000 })).toString("base64url");
+  return `${body}.${createHmac("sha256", requireHandoffOtpPepper()).update(`ext-cap:${body}`).digest("base64url")}`;
+}
 async function tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
   const c = await p().connect();
   try {
@@ -183,6 +194,142 @@ const collect =
     messages.push(m);
     return { ok: true };
   };
+
+for (const channel of ["max", "telegram"] as const) {
+  it(`${channel}: explicit repair preserves staff accounts, parties and history, revokes the incorrect proof and old artifacts`, async () => {
+    const to = await actor(channel), wrong = await actor(channel, true), correct = await actor(channel, true);
+    await p().query("UPDATE users SET phone=NULL WHERE id=$1", [correct.staff]);
+    await p().query(`UPDATE tt_external_person_verifications SET messenger_user_id=$2,messenger_chat_id=$3
+      WHERE person_id=$1`, [to.person, wrong.user, wrong.chat]);
+    await p().query(`INSERT INTO tt_external_person_verifications(person_id,channel,messenger_user_id,messenger_chat_id)
+      VALUES($1,$2,$3,$4)`, [to.person, channel, correct.user, correct.chat]);
+    const t = await transfer(to);
+    await p().query(`INSERT INTO tt_automatic_receipt_codes
+      (id,transfer_id,handoff_version,pending_party_id,channel,messenger_user_id,messenger_chat_id,status,encrypted_code)
+      VALUES($1,$2,1,$3,$4,$5,$6,'sent','synthetic-only')`,
+      [randomUUID(), t.id, to.party, channel, wrong.user, wrong.chat]);
+    await p().query(`INSERT INTO tt_handoff_codes(transfer_id,handoff_version,pending_party_id,code_hash,expires_at)
+      VALUES($1,1,$2,'synthetic-only',NOW()+interval '10 minutes')`, [t.id, to.party]);
+    const staffSql = "SELECT user_id,"+channel+"_user_id,"+channel+"_chat_id FROM tanbot_"+channel+"_accounts ORDER BY user_id";
+    const staffBefore = (await p().query(staffSql)).rows;
+    const stateBefore = (await p().query("SELECT creator_party_id,holder_party_id,pending_party_id,status FROM tt_transfers WHERE id=$1", [t.id])).rows;
+    const repairInput = { publicCode: t.id, expectedPhone: to.phone, channel,
+      incorrectMessengerUserId: wrong.user, confirmedMessengerUserId: correct.user, actorUserId: t.from.staff! };
+    const est = await tx(c => createPersonBrowserSession(c, to.person!, channel));
+    const legacyCap = legacyCapability(to.person!);
+    const oldCap = signExternalPersonCapability(to.person!, 60000, 1);
+    assert.equal(await resolveExternalPersonAuth(p(), { est }), null, "ambiguous identity cannot open external LK");
+    await assert.rejects(tx(c => repairConflictingExternalProof(c, { ...repairInput, expectedPhone: "+79990000000" })),
+      /EXPECTED_OPEN_EXTERNAL/);
+    const counts = await tx(c => repairConflictingExternalProof(c, repairInput));
+    assert.equal(counts.removedProofs, 1);
+    assert.equal(counts.newInvitation, 1);
+    const audit = (await p().query("SELECT detail FROM tt_audit_log WHERE transfer_id=$1 AND action='external_identity_conflict_repaired'", [t.id])).rows;
+    assert.equal(audit.length, 1);
+    assert.ok(audit[0].detail.removedProof.verified_at, "audit preserves the original verification timestamp");
+    assert.equal((await p().query("SELECT handoff_version FROM tt_transfers WHERE id=$1", [t.id])).rows[0].handoff_version, 2);
+    assert.deepEqual((await p().query(staffSql)).rows, staffBefore);
+    assert.deepEqual((await p().query("SELECT creator_party_id,holder_party_id,pending_party_id,status FROM tt_transfers WHERE id=$1", [t.id])).rows, stateBefore);
+    assert.deepEqual((await p().query("SELECT messenger_user_id FROM tt_external_person_verifications WHERE person_id=$1", [to.person])).rows,
+      [{ messenger_user_id: correct.user }]);
+    assert.equal((await jobs(t.id))[0].status, "cancelled");
+    assert.equal((await jobs(t.id))[0].encrypted_code, null);
+    assert.equal((await p().query("SELECT COUNT(*)::int AS n FROM tt_handoff_codes WHERE transfer_id=$1 AND expires_at>NOW()", [t.id])).rows[0].n, 0);
+    assert.equal(await resolveExternalPersonAuth(p(), { est }), null);
+    assert.equal(await resolveExternalPersonAuth(p(), { cap: oldCap }), null);
+    assert.equal(await resolveExternalPersonAuth(p(), { cap: legacyCap }), null);
+    const newEst = await tx(c => createPersonBrowserSession(c, to.person!, channel));
+    assert.equal((await resolveExternalPersonAuth(p(), { est: newEst }))?.personId, to.person);
+    await tx(async c => {
+      assert.equal(await hasExternalMessengerIdentityConflict(c, { personId: to.person! }), false);
+      assert.equal((await findPersonByMessenger(c, channel, BigInt(correct.user)))?.id, to.person);
+      assert.equal(await findPersonByMessenger(c, channel, BigInt(wrong.user)), null);
+      assert.equal((await automaticReceiptTargets(c, to.party))[0]?.userId, correct.user);
+    });
+    await assert.rejects(tx(c => repairConflictingExternalProof(c, repairInput)), /EXPECTED_TWO_PROOFS/);
+  });
+
+  it(`${channel}: logout-all revokes both epoch-less legacy and current external capabilities`, async () => {
+    const to = await actor(channel);
+    const legacy = legacyCapability(to.person!), current = signExternalPersonCapability(to.person!, 60000, 1);
+    const est = await tx(c => createPersonBrowserSession(c, to.person!, channel));
+    for (const auth of [{ cap: legacy }, { cap: current }, { est }]) {
+      assert.equal((await resolveExternalPersonAuth(p(), auth))?.personId, to.person);
+    }
+    await tx(c => revokeAllExternalPersonSessions(c, to.person!));
+    for (const auth of [{ cap: legacy }, { cap: current }, { est }]) {
+      assert.equal(await resolveExternalPersonAuth(p(), auth), null);
+    }
+    assert.equal((await resolveExternalPersonAuth(p(), { cap: signExternalPersonCapability(to.person!, 60000, 2) }))?.personId, to.person);
+  });
+
+  it(`${channel}: two external identities fail closed before and after automatic queueing`, async () => {
+    const to = await actor(channel);
+    const t = await queued(to);
+    const other = await actor(channel);
+    await p().query("DELETE FROM tt_external_person_verifications WHERE person_id=$1", [other.person]);
+    await p().query(
+      `INSERT INTO tt_external_person_verifications(person_id,channel,messenger_user_id,messenger_chat_id)
+       VALUES($1,$2,$3,$4)`, [to.person, channel, other.user, other.chat],
+    );
+    await tx(async c => {
+      assert.equal(await hasExternalMessengerIdentityConflict(c, { personId: to.person! }), true);
+      assert.deepEqual(await automaticReceiptTargets(c, to.party), []);
+      assert.equal(await enqueueAutomaticReceiptCode(c, t.id, channel), false);
+      assert.deepEqual(await resolveExternalPersonOutboxDeliveryTarget(c, to.person!, channel, to.chat),
+        { ok: false, code: "NO_VERIFICATION" });
+      assert.equal(await findPersonByMessenger(c, channel, BigInt(to.user)), null);
+    });
+    const messages: Parameters<AutomaticReceiptTransport>[0][] = [];
+    await processAutomaticReceiptCodes(p(), { channel, transport: collect(messages), deliveryEnabled: true });
+    assert.equal(messages.length, 0);
+    assert.equal((await jobs(t.id))[0].status, "cancelled");
+    await assert.rejects(tx(c => upsertVerifiedPerson(c, {
+      channel, messengerUserId: BigInt(other.user), messengerChatId: BigInt(other.chat),
+      phoneRaw: other.phone, displayName: "Synthetic", allowSelfRegistration: true,
+    })), /уже привязан к другому номеру/);
+    await p().query(`UPDATE tt_external_person_verifications
+      SET notifications_enabled=FALSE,opted_out_at=NOW() WHERE person_id=$1 AND messenger_user_id=$2`,
+      [to.person, other.user]);
+    await tx(async c => {
+      assert.equal(await hasExternalMessengerIdentityConflict(c, { personId: to.person! }), true,
+        "turning notifications off does not resolve conflicting identity ownership");
+      assert.equal(await findPersonByMessenger(c, channel, BigInt(other.user)), null);
+    });
+  });
+
+  it(`${channel}: a staff messenger linked to another phone is not an external delivery target`, async () => {
+    const to = await actor(channel), staff = await actor(channel, true);
+    await p().query(
+      "UPDATE tt_external_person_verifications SET messenger_user_id=$2,messenger_chat_id=$3 WHERE person_id=$1",
+      [to.person, staff.user, staff.chat],
+    );
+    const t = await transfer(to);
+    await tx(async c => {
+      assert.deepEqual(await automaticReceiptTargets(c, to.party), []);
+      assert.equal(await enqueueAutomaticReceiptCode(c, t.id, channel), false);
+      assert.equal(await externalMessengerProofWouldConflict(c, {
+        phone: to.phone, channel, userId: staff.user, chatId: staff.chat,
+      }), true);
+    });
+    assert.equal((await jobs(t.id)).length, 0);
+  });
+
+  it(`${channel}: registering a second messenger on an existing external phone is rejected atomically`, async () => {
+    const to = await actor(channel), other = await actor(channel);
+    await p().query("DELETE FROM tt_external_person_verifications WHERE person_id=$1", [other.person]);
+    const before = (await p().query(
+      "SELECT messenger_user_id,messenger_chat_id FROM tt_external_person_verifications WHERE person_id=$1", [to.person],
+    )).rows;
+    await assert.rejects(tx(c => upsertVerifiedPerson(c, {
+      channel, messengerUserId: BigInt(other.user), messengerChatId: BigInt(other.chat),
+      phoneRaw: to.phone, displayName: "Synthetic different identity",
+    })), /Конфликт привязок/);
+    assert.deepEqual((await p().query(
+      "SELECT messenger_user_id,messenger_chat_id FROM tt_external_person_verifications WHERE person_id=$1", [to.person],
+    )).rows, before);
+  });
+}
 
 before(async () => {
   setIntegrationEnv(db);

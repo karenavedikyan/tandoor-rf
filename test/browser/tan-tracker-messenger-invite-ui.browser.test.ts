@@ -34,9 +34,7 @@ describe("tan-tracker invitation preview and explicit copy", () => {
     await page.fill('[data-tt-field="item"]', "Single invite action box");
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-skip-files"]');
-    await page.click('[data-tt="create-new-recipient"]');
     await page.fill('[data-tt-field="newPhone"]', `+799911122${++phone}`);
-    await page.click('[data-tt="create-wizard-next"]');
     await page.fill('[data-tt-field="newName"]', "Invite recipient");
     await page.click('[data-tt="create-wizard-next"]');
     await page.click('[data-tt="create-wizard-submit"]');
@@ -61,13 +59,37 @@ describe("tan-tracker invitation preview and explicit copy", () => {
       });
     })()`);
   }
-  for (const width of [1366, 375]) {
-    it(`${width}px: shows text without native sharing or auto-copy, then copies the exact invitation`, async () => {
+  for (const width of [1366, 375]) for (const deliveryStatus of [null, "pending", "sent"] as const) {
+    it(`${width}px/${deliveryStatus ?? "manual"}: visible primary invitation and explicit exact copy`, async () => {
       const context = await fixture.browser.newContext({ viewport: { width, height: 900 } });
       try {
         const page = await context.newPage(), errors: string[] = [];
         page.on("pageerror", error => errors.push(error.message));
-        await create(page); await observe(page);
+        if (deliveryStatus) {
+          await page.route("**/api/tan-tracker/bootstrap", async route => {
+            const response = await route.fetch(), body = await response.json();
+            // Render both server delivery statuses without starting a transport.
+            body.orders = body.orders.map((order: object) => ({ ...order, automaticReceiptStatus: deliveryStatus }));
+            await route.fulfill({ response, json: body });
+          });
+        }
+        await create(page);
+        if (deliveryStatus) {
+          await page.reload();
+          await page.waitForSelector('[data-tt="detail"]');
+        }
+        await observe(page);
+        const primary = page.getByRole("button", { name: "Получить код от получателя", exact: true });
+        assert.equal(await primary.isVisible(), true);
+        assert.match(await primary.getAttribute("class") ?? "", /tt-primary/);
+        if (deliveryStatus) {
+          assert.equal(await page.locator('[data-tt="automatic-receipt-status"]').isVisible(), true);
+          assert.equal(await page.locator('[data-tt="automatic-receipt-status"] details').count(), 0);
+        }
+        if (process.env.TT_QA_SCREENSHOT_DIR && deliveryStatus === "sent") {
+          await primary.scrollIntoViewIfNeeded();
+          await page.screenshot({ path: `${process.env.TT_QA_SCREENSHOT_DIR}/recipient-invitation-${width}.png`, fullPage: true });
+        }
         let posts = 0;
         page.on("request", req => { if (req.method() === "POST" && req.url().includes("/messenger-invite")) posts++; });
         await page.click('[data-tt="messenger-invite-action"]');

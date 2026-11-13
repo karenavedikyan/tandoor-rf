@@ -6,6 +6,7 @@ import { resolveKnownExternalPartyByPhone } from "./known-party";
 import { assertPersonHasVerificationChannel, type ExternalMessengerChannel } from "./messenger-provenance";
 import { lockPhonePartyResolution, resolveOrCreateGlobalExternalPartyByPhone } from "../phone-party-resolver";
 import { lockTanbotMaxMessenger, lockTanbotTelegramMessenger } from "../../tanbot/link-advisory-locks";
+import { externalMessengerProofWouldConflict, hasExternalMessengerIdentityConflict } from "./identity-conflict";
 
 export type ExternalPersonRow = {
   id: string;
@@ -14,7 +15,7 @@ export type ExternalPersonRow = {
   party_id: string;
 };
 
-export async function findPersonByMessenger(
+async function loadPersonByMessenger(
   client: PoolClient,
   channel: "telegram" | "max",
   messengerUserId: bigint,
@@ -28,6 +29,16 @@ export async function findPersonByMessenger(
     [channel, messengerUserId.toString()],
   );
   return row.rows[0] ?? null;
+}
+
+export async function findPersonByMessenger(
+  client: PoolClient,
+  channel: "telegram" | "max",
+  messengerUserId: bigint,
+): Promise<ExternalPersonRow | null> {
+  const person = await loadPersonByMessenger(client, channel, messengerUserId);
+  if (!person || await hasExternalMessengerIdentityConflict(client, { personId: person.id })) return null;
+  return person;
 }
 
 export async function upsertVerifiedPerson(
@@ -52,7 +63,14 @@ export async function upsertVerifiedPerson(
     client, input.messengerUserId,
   );
   await lockPhonePartyResolution(client, phone);
-  const existingByMessenger = await findPersonByMessenger(client, input.channel, input.messengerUserId);
+  if (await externalMessengerProofWouldConflict(client, {
+    phone, channel: input.channel, userId: input.messengerUserId.toString(), chatId: input.messengerChatId.toString(),
+  })) {
+    throw Object.assign(new Error("Конфликт привязок номера к мессенджеру. Обратитесь к администратору."), { http: 409 });
+  }
+  // A conflicted old proof still reserves its messenger: hiding it from auth
+  // must not make it available to register against a different phone.
+  const existingByMessenger = await loadPersonByMessenger(client, input.channel, input.messengerUserId);
   if (existingByMessenger && existingByMessenger.phone_e164 !== phone) {
     throw Object.assign(new Error("Этот мессенджер уже привязан к другому номеру."), { http: 409 });
   }

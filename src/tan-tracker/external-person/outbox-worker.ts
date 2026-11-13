@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { hasExternalMessengerIdentityConflict } from "./identity-conflict";
 import {
   transferInternalIdFromExternalPersonOutboxKey,
   transferStillExists,
@@ -36,6 +37,9 @@ export async function resolveExternalPersonOutboxDeliveryTarget(
   channel: string,
   queuedChatId: string,
 ): Promise<ExternalPersonVerificationTarget> {
+  if (await hasExternalMessengerIdentityConflict(client, { personId })) {
+    return { ok: false, code: "NO_VERIFICATION" };
+  }
   const row = await client.query<{ messenger_user_id: string; messenger_chat_id: string }>(
     `SELECT messenger_user_id, messenger_chat_id FROM tt_external_person_verifications
      WHERE person_id = $1::uuid AND channel = $2 AND messenger_chat_id = $3

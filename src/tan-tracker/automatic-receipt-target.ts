@@ -3,6 +3,7 @@ import { isExternalMessengerFeatureEnabled } from "./external-messenger/config";
 import { recipientBotLinks } from "./external-messenger/direct-invitation";
 import { isTanbotTelegramDeliveryEnabled } from "../tanbot-telegram/stage2-config";
 import { isTanbotMaxDeliveryEnabled } from "../tanbot-max/stage2-config";
+import { hasExternalMessengerIdentityConflict } from "./external-person/identity-conflict";
 
 export type ReceiptChannel = "telegram" | "max";
 export type ReceiptTarget = {
@@ -18,6 +19,7 @@ export async function automaticReceiptTargets(
   partyId: string,
 ): Promise<ReceiptTarget[]> {
   if (!isExternalMessengerFeatureEnabled()) return [];
+  if (await hasExternalMessengerIdentityConflict(client, { partyId })) return [];
   const available = recipientBotLinks(`er${"x".repeat(43)}`);
   const rows = await client.query<{
     channel: ReceiptChannel;
