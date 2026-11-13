@@ -106,6 +106,7 @@ function mapUiPhase(status: JobRow["status"], result: RegularUpdateResult | null
 }
 
 const DATA_PRESERVED_REJECTION_CODES = new Set([
+  "WORKER_INTERRUPTED",
   "CONFIG_INVALID",
   "CONFIG_ERROR",
   "FTP_ERROR",

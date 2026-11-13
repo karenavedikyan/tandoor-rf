@@ -120,6 +120,36 @@ describe("admin clients onec update button browser", () => {
     await context.close();
   });
 
+  it("recovers status polling after a temporary error without starting another import", async () => {
+    const { page, context } = await openPage();
+    let reads = 0;
+    let starts = 0;
+    page.on("request", req => {
+      if (req.method() === "POST" && new URL(req.url()).pathname === "/api/admin/clients/onec-update") starts++;
+    });
+    await page.route("**/api/admin/clients/onec-update/status", async route => {
+      reads++;
+      if (reads === 1) {
+        await route.fulfill({ status: 200, contentType: "application/json",
+          body: JSON.stringify({ canStart: false, job: { id: "existing-job", phase: "running", message: "Импорт выполняется" } }) });
+      } else if (reads === 2) {
+        await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      } else {
+        await route.fallback();
+      }
+    });
+    try {
+      await openClientsPage(page, baseUrl, { width: 375, height: 844 });
+      await page.waitForFunction(() => document.getElementById("onec-update-status")?.textContent?.includes("Повторная проверка"), undefined, { timeout: 10000 });
+      assert.equal(await page.locator("#onec-update-button").isDisabled(), true);
+      await page.waitForFunction(() => document.getElementById("onec-update-status")?.textContent?.includes("Завершено"), undefined, { timeout: 12000 });
+      assert.ok(reads >= 3);
+      assert.equal(starts, 0);
+    } finally {
+      await context.close();
+    }
+  });
+
   it("hides update panel for manager and admin preview", async () => {
     const managerCtx = await browser.newContext();
     const managerPage = await managerCtx.newPage();

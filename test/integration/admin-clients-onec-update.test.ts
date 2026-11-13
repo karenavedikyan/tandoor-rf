@@ -533,6 +533,30 @@ describe("admin clients onec update", { concurrency: false }, () => {
     assert.equal(clientRow.rows[0]?.name_client, "Recovered Apply");
   });
 
+  it("returns running status without waiting for the import transaction job-row lock", async () => {
+    const app = await loadApp();
+    const inserted = await pool.query<{ id: string }>(`
+      INSERT INTO onec_import_jobs(kind,mode,status,requested_at,started_at,expires_at,requested_by_user_id)
+      VALUES('regular_update_bundle','apply','running',NOW(),NOW(),NOW()+INTERVAL '2 hours',$1::uuid)
+      RETURNING id::text`, [adminUserId]);
+    const jobId = inserted.rows[0]!.id;
+    const importer = await pool.connect();
+    try {
+      await importer.query("BEGIN");
+      await importer.query("SELECT id FROM onec_import_jobs WHERE id=$1::uuid FOR UPDATE", [jobId]);
+      const status = await request(app).get("/api/admin/clients/onec-update/status")
+        .set(authHeaders(adminCookie)).timeout({ deadline: 1500 });
+      assert.equal(status.status, 200);
+      assert.equal(status.body.job.id, jobId);
+      assert.equal(status.body.job.phase, "running");
+      assert.equal(status.body.canStart, false);
+      assert.equal((await importer.query("SELECT status FROM onec_import_jobs WHERE id=$1::uuid", [jobId])).rows[0].status, "running");
+    } finally {
+      await importer.query("ROLLBACK");
+      importer.release();
+    }
+  });
+
   it("reconciles running job from successful import run after commit", async () => {
     const app = await loadApp();
     const runInsert = await pool.query<{ id: string }>(

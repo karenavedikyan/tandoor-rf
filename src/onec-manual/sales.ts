@@ -45,17 +45,24 @@ export function prepareSales(p: Prepared) {
   }
   // Conflicting totals are not overwritten by first/last. Exact duplicate aggregate lines count once.
   sales = [...byKey].filter(([k]) => !unsafe.has(k)).map(([, lines]) => lines[0]);
-  const roster = <T>(file: FileKey, lines: T[]) => ({ sourceSha256: hash(p.files[file].bytes), lines, lineCount: lines.length });
+  // Each immutable source is hashed once, not once per legal entity below.
+  const sourceHashes = new Map<FileKey, string>();
+  const roster = <T>(file: FileKey, lines: T[]) => {
+    const sha = sourceHashes.get(file) ?? hash(p.files[file].bytes);
+    sourceHashes.set(file, sha);
+    return { sourceSha256: sha, lines, lineCount: lines.length };
+  };
   const result = { sales: roster("sales", sales), saleItems: roster("saleItems", saleItems),
     returns: roster("returns", returns), returnItems: roster("returnItems", returnItems) };
   const ids = new Set([...sales, ...saleItems, ...returns, ...returnItems].map(l => l.legalGuid));
+  const knownCatalogLegalGuids = new Set(p.groups.clients.keys());
   for (const id of ids) {
     const report = analyzeSalesBundle({
       salesAggregate: roster("sales", sales.filter(l => l.legalGuid === id)),
       salesItems: roster("saleItems", saleItems.filter(l => l.legalGuid === id)),
       returnsAggregate: roster("returns", returns.filter(l => l.legalGuid === id)),
       returnsItems: roster("returnItems", returnItems.filter(l => l.legalGuid === id)),
-      knownCatalogLegalGuids: new Set(p.groups.clients.keys()),
+      knownCatalogLegalGuids,
     });
     if (!isBundleParityOk(report)) {
       const row = p.records.find(row => row.guid === id && ["sales", "saleItems", "returns", "returnItems"].includes(row.file))!;

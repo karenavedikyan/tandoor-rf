@@ -9,6 +9,16 @@ import { projectClients, projectEmployees, persistEvidence } from "./project";
 import { prepareSales, projectSales } from "./sales";
 import { projectCatalog } from "./catalog";
 import { checkOperatorImportJobRunnable } from "../onec-clients/import-job-guard";
+import type { PoolClient } from "pg";
+
+async function finishOperatorJob(db: PoolClient, jobId: string | undefined, outcome: RegularUpdateResult) {
+  if (!jobId) return;
+  // Commit the result with its projection, including NO_CHANGES and A→B→A.
+  // A crash after COMMIT must not depend on the first owner of a reused batch.
+  await db.query(`UPDATE onec_import_jobs SET status='success',finished_at=NOW(),
+    result=$2::jsonb,error_code=NULL WHERE id=$1::uuid AND status='running'`,
+  [jobId, JSON.stringify(outcome)]);
+}
 
 export type ManualUpdateOptions = {
   env?: NodeJS.ProcessEnv; argv?: string[]; directory?: string;
@@ -72,10 +82,12 @@ export async function runManualUpdate(options: ManualUpdateOptions): Promise<Reg
       FROM onec_manual_state s JOIN onec_manual_batches b ON b.id=s.batch_id WHERE s.id=1 FOR UPDATE OF s`);
     if (active.rows[0]?.fingerprint === p.fingerprint) {
       await db.query("UPDATE onec_manual_state SET checked_at=NOW() WHERE id=1");
-      committing = true; await db.query("COMMIT"); committing = false;
-      return result({ ...common, status: "NO_CHANGES", exportBatchId: active.rows[0].id,
+      const outcome = result({ ...common, status: "NO_CHANGES", exportBatchId: active.rows[0].id,
         manualSummary: { ...common.manualSummary, batchId: active.rows[0].id, issueCount: active.rows[0].issue_count },
         message: `Нет изменений. Замечаний: ${active.rows[0].issue_count}.` });
+      await finishOperatorJob(db, options.operatorImportJobId, outcome);
+      committing = true; await db.query("COMMIT"); committing = false;
+      return outcome;
     }
     // A previously seen bundle can become active again. Projection + diagnostics are recomputed.
     const batch = (await db.query<{ id: string }>(`INSERT INTO onec_manual_batches(fingerprint,operator_job_id,counts)
@@ -96,10 +108,12 @@ export async function runManualUpdate(options: ManualUpdateOptions): Promise<Reg
       if (env.NODE_ENV !== "test" || env.TEST_DATABASE_URL !== url) throw new Error("TEST_HOOK_FORBIDDEN");
       await options.beforeManualCommit();
     }
-    committing = true; await db.query("COMMIT"); committing = false;
-    return result({ ...common, status: "SUCCESS", exportBatchId: batch,
+    const outcome = result({ ...common, status: "SUCCESS", exportBatchId: batch,
       manualSummary: { ...common.manualSummary, batchId: batch, issueCount: p.issues.length },
       message: p.issues.length ? `Обновлено с замечаниями. Требуют проверки: ${p.issues.length}.` : "Обновлено. Замечаний не обнаружено." });
+    await finishOperatorJob(db, options.operatorImportJobId, outcome);
+    committing = true; await db.query("COMMIT"); committing = false;
+    return outcome;
   } catch (error) {
     await db.query("ROLLBACK").catch(() => {});
     if (error instanceof Error && error.message === "APPLY_BLOCKED")
