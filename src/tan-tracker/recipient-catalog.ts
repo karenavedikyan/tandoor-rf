@@ -77,7 +77,7 @@ export function mergeTanTrackerContactLists(
 
 export async function loadEligibleUserRowForRecipient(client: Db, userId: string, actorUserId: string) {
   const res = await client.query<{ id: string; full_name: string; phone: string | null; role: string; status: string }>(
-    `SELECT id::text, full_name, phone, role, status FROM users WHERE id = $1::uuid LIMIT 1`,
+    `SELECT id::text, full_name, COALESCE(phone,additional_phone) AS phone, role, status FROM users WHERE id = $1::uuid LIMIT 1`,
     [userId],
   );
   const row = res.rows[0];

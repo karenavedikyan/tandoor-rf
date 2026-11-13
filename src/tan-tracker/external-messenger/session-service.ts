@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { normalizeRuPhoneE164 } from "../phone-normalize";
+import { findStaffRecipientByPhone } from "../staff-phone-recipient";
 import {
   generateExternalMessengerStartToken,
   hashExternalMessengerStartToken,
@@ -296,4 +297,38 @@ export async function recordCodeIssue(
 
 export function phonesMatch(expectedE164: string, gotE164: string): boolean {
   return expectedE164 === gotE164;
+}
+
+/** Own-contact proof may match either CURRENT profile phone of this exact recipient.
+ * Never derive staff access from a historical party alias or a different bot account.
+ */
+export async function sessionRecipientPhoneMatches(
+  client: PoolClient,
+  session: ExternalMessengerSessionRow,
+  got: string,
+  messenger: { channel: "max" | "telegram"; userId: bigint; chatId: bigint },
+): Promise<boolean> {
+  const party = (await client.query<{ kind: string; user_id: string | null; phone_e164: string | null }>(
+    `SELECT kind,user_id::text,phone_e164 FROM tt_parties WHERE id=$1::uuid`, [session.pending_party_id],
+  )).rows[0];
+  if (!party) return false;
+  if (party.kind === "external") return !!party.phone_e164 && phonesMatch(party.phone_e164, got);
+  if (party.kind !== "user" || !party.user_id) return false;
+  try {
+    const staff = await findStaffRecipientByPhone(client, got);
+    if (staff?.id !== party.user_id) return false;
+  } catch (err) {
+    if ([400, 403, 409].includes((err as { http?: number }).http ?? 0)) return false;
+    throw err;
+  }
+  const prefix = messenger.channel; // closed server-owned identifiers
+  const accounts = (await client.query<{ user_id: string; messenger_user_id: string; messenger_chat_id: string }>(
+    `SELECT user_id::text,${prefix}_user_id::text AS messenger_user_id,${prefix}_chat_id::text AS messenger_chat_id
+     FROM tanbot_${prefix}_accounts
+     WHERE user_id=$1::uuid OR ${prefix}_user_id::text=$2 OR ${prefix}_chat_id::text=$3`,
+    [party.user_id, messenger.userId.toString(), messenger.chatId.toString()],
+  )).rows;
+  return accounts.every(account => account.user_id === party.user_id
+    && account.messenger_user_id === messenger.userId.toString()
+    && account.messenger_chat_id === messenger.chatId.toString());
 }

@@ -288,15 +288,12 @@ describe("external current holder selects unrelated employee by phone", { concur
     await assertEmployeePending(f, staff);
   });
 
-  for (const conflict of ["inactive", "ambiguous", "stale-alias"] as const) {
+  for (const conflict of ["inactive", "ambiguous"] as const) {
     it(`public holder: rejects ${conflict} employee phone without a shadow external party`, async () => {
       const f = await fixture();
       const number = phone();
       const staff = await employee(number, true, conflict === "inactive" ? "disabled" : "active");
       if (conflict === "ambiguous") await employee(number);
-      if (conflict === "stale-alias") {
-        await pool().query(`UPDATE users SET phone=$2 WHERE id=$1`, [staff.userId, phone()]);
-      }
       const before = await state(f);
       const response = await web(f, { external: { name: "Synthetic recipient", phone: number } });
       assert.equal(response.status, 403, JSON.stringify(response.body));
@@ -304,6 +301,20 @@ describe("external current holder selects unrelated employee by phone", { concur
       assert.equal((await pool().query(
         `SELECT count(*)::int n FROM tt_parties WHERE kind='external' AND phone_e164=$1`, [number],
       )).rows[0].n, 0);
+      await assertPreserved(f);
+    });
+  }
+
+  for (const profile of ["empty", "changed"] as const) {
+    it(`public holder: ignores historical staff alias with ${profile} profile phone`, async () => {
+      const f = await fixture(), number = phone();
+      const staff = await employee(number);
+      await pool().query(`UPDATE users SET phone=$2 WHERE id=$1`, [staff.userId, profile === "empty" ? null : phone()]);
+      const response = await web(f, { external: { name: "Synthetic external", phone: number } });
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      const pending = (await pool().query(`SELECT kind FROM tt_parties WHERE id=$1`, [(await state(f)).pending_party_id])).rows[0];
+      assert.equal(pending.kind, "external");
+      assert.notEqual((await state(f)).pending_party_id, staff.partyId);
       await assertPreserved(f);
     });
   }

@@ -38,6 +38,7 @@ export type UserDto = {
   email: string;
   fullName: string;
   phone: string | null;
+  additionalPhone?: string | null;
   role: UserRole;
   status: UserStatus;
   lastLoginAt: string | null;
@@ -50,6 +51,7 @@ export function toUserDto(row: {
   email: string;
   full_name: string;
   phone: string | null;
+  additional_phone?: string | null;
   role: string;
   status: string;
   last_login_at: Date | string | null;
@@ -71,5 +73,6 @@ export function toUserDto(row: {
   if (row.password_must_change) {
     dto.mustChangePassword = true;
   }
+  if ("additional_phone" in row) dto.additionalPhone = row.additional_phone ?? null;
   return dto;
 }

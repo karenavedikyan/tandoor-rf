@@ -189,16 +189,13 @@ describe("phone-first create: canonical identity and personal labels", { concurr
     assert.equal(await externalCount(number), 1);
   });
 
-  it("rejects self, invalid, inactive, ambiguous, stale and excluded-role phones without a new track", async () => {
+  it("rejects self, invalid, inactive, ambiguous and excluded-role phones without a new track", async () => {
     const inactive = await employee(phone(), false, "disabled");
     const first = await employee(), second = await employee(first.phone);
-    const stale = await employee(phone(), true);
-    const oldNumber = stale.phone;
-    await pool().query("UPDATE users SET phone=$2 WHERE id=$1", [stale.id, phone()]);
     const excluded = await employee();
     await pool().query("UPDATE users SET role='analyst' WHERE id=$1", [excluded.id]);
     const before = (await pool().query("SELECT count(*)::int n FROM tt_transfers")).rows[0].n;
-    for (const n of [sender.phone, "123", inactive.phone, first.phone, oldNumber, excluded.phone]) {
+    for (const n of [sender.phone, "123", inactive.phone, first.phone, excluded.phone]) {
       await assert.rejects(create(sender, n));
     }
     assert.equal((await pool().query("SELECT count(*)::int n FROM tt_transfers")).rows[0].n, before);

@@ -17,7 +17,8 @@ import {
   userIdFromPendingUserPartyRef,
 } from "./recipient-catalog";
 import { findStaffRecipientByPhone } from "./staff-phone-recipient";
-import { PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME } from "./contact-aliases";
+import { PRIVATE_EXTERNAL_RECIPIENT_DISPLAY_NAME, loadContactAliases, saveContactAlias } from "./contact-aliases";
+import { findPartyByUserId } from "./repository";
 
 type Db = Pool | PoolClient;
 
@@ -191,7 +192,8 @@ export async function resolveRecipientPartyId(
     throw Object.assign(new Error("Выберите конечного получателя."), { http: 400 });
   }
   if (access.role === "admin") {
-    return resolveAdminRecipientRef(client, access, userId, resolved);
+    const authorized = await resolveAdminRecipientRef(client, access, userId, resolved);
+    return resolveAuthorizedSavedRecipient(client, userId, authorized);
   }
   if (isPendingUserPartyRef(resolved)) {
     throw Object.assign(new Error("Выберите получателя из каталога или добавьте новый контакт."), {
@@ -204,5 +206,25 @@ export async function resolveRecipientPartyId(
     });
   }
   await assertPartyEligibleAsRecipient(client, access, userId, resolved);
-  return resolved;
+  return resolveAuthorizedSavedRecipient(client, userId, resolved);
+}
+
+/** Recheck a saved external contact only AFTER the original UUID passes its scope guard.
+ * Applies to this new assignment, never to existing transfers or external history.
+ */
+async function resolveAuthorizedSavedRecipient(client: Db, actorUserId: string, partyId: string): Promise<string> {
+  const source = (await client.query<{ phone_e164: string | null }>(
+    `SELECT phone_e164 FROM tt_parties WHERE id=$1::uuid AND kind='external'`, [partyId],
+  )).rows[0];
+  const phone = source?.phone_e164 && normalizeRuPhoneE164(source.phone_e164);
+  if (!phone) return partyId;
+  const staff = await findStaffRecipientByPhone(client, phone);
+  if (!staff) return partyId;
+  const targetId = await resolveEligibleUserRecipientPartyId(client, actorUserId, staff.id);
+  const viewer = await findPartyByUserId(client, actorUserId);
+  if (viewer) {
+    const alias = (await loadContactAliases(client, viewer.id)).get(partyId);
+    if (alias) await saveContactAlias(client, viewer.id, actorUserId, targetId, alias);
+  }
+  return targetId;
 }

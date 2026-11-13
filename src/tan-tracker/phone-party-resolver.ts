@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { loadCanonicalExternalPartyForPhone } from "./phone-canonical-validation";
 import { upsertPhoneDedupeConflictForPhone } from "./phone-dedupe";
+import { findProfilesByPhone } from "./profile-phone";
 
 type Db = Pool | PoolClient;
 
@@ -30,20 +31,8 @@ export async function lockPhonePartyResolution(client: Db, phoneE164: string): P
 }
 
 export async function assertNoEmployeePhoneCollision(client: Db, phoneE164: string): Promise<void> {
-  const employeeCollision = await client.query(
-    `SELECT 1 FROM users u
-     WHERE u.status = 'active'
-       AND (
-         regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g') = regexp_replace($1, '\\D', '', 'g')
-         OR EXISTS (
-           SELECT 1 FROM tt_parties p
-           WHERE p.user_id = u.id AND p.kind = 'user' AND p.phone_e164 = $1
-         )
-       )
-     LIMIT 1`,
-    [phoneE164],
-  );
-  if ((employeeCollision.rowCount ?? 0) > 0) {
+  // Inactive/ambiguous profiles remain reserved: never bypass them via external registration.
+  if ((await findProfilesByPhone(client, phoneE164, "share")).length > 0) {
     throw new EmployeePhoneCollisionError();
   }
 }

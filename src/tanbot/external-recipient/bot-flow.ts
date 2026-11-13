@@ -9,7 +9,7 @@ import {
   lockSessionByTelegramChat,
   lockSessionByMaxChat,
   markPhoneVerified,
-  phonesMatch,
+  sessionRecipientPhoneMatches,
   recordCodeIssue,
   recordContactAttempt,
 } from "../../tan-tracker/external-messenger/session-service";
@@ -152,7 +152,9 @@ export async function handleExternalRecipientTelegramContact(
   if (!attempt.allowed) return { text: "Слишком много попыток. Попросите отправителя обновить ссылку." };
 
   const got = normalizeRuPhoneE164(input.phoneRaw);
-  if (!got || !phonesMatch(open.expectedPhoneE164, got)) {
+  if (!got || !(await sessionRecipientPhoneMatches(client, session, got, {
+    channel: "telegram", userId: input.telegramUserId, chatId: input.telegramChatId,
+  }))) {
     return { text: "Номер не совпадает с указанным отправителем. Проверьте SIM и попробуйте снова." };
   }
 
@@ -211,7 +213,9 @@ export async function handleExternalRecipientMaxContact(
         : `+7${phoneDigits.slice(-10)}`
     : "";
   const got = e164Guess ? normalizeRuPhoneE164(e164Guess) : null;
-  if (!got || !phonesMatch(open.expectedPhoneE164, got)) {
+  if (!got || !(await sessionRecipientPhoneMatches(client, session, got, {
+    channel: "max", userId: input.maxUserId, chatId: input.maxChatId,
+  }))) {
     return { text: "Номер не совпадает с указанным отправителем. Проверьте SIM и попробуйте снова." };
   }
 

@@ -7,6 +7,7 @@
   var fullNameInput = document.getElementById("full-name");
   var emailInput = document.getElementById("email");
   var phoneInput = document.getElementById("phone");
+  var additionalPhoneInput = document.getElementById("additional-phone");
   var roleInput = document.getElementById("role");
   var statusInput = document.getElementById("status");
   var saveButton = document.getElementById("save-button");
@@ -79,6 +80,7 @@
     fullNameInput.value = user.fullName || "";
     emailInput.value = user.email || "";
     phoneInput.value = user.phone || "";
+    additionalPhoneInput.value = user.additionalPhone || "";
     roleInput.value = ROLE_LABELS[user.role] || user.role || "";
     statusInput.value = STATUS_LABELS[user.status] || user.status || "";
     form.hidden = false;
@@ -542,6 +544,7 @@
 
   fullNameInput.addEventListener("input", clearSaveFeedback);
   phoneInput.addEventListener("input", clearSaveFeedback);
+  additionalPhoneInput.addEventListener("input", clearSaveFeedback);
 
   form.addEventListener("submit", function (event) {
     event.preventDefault();
@@ -554,6 +557,7 @@
     setSaveButtonState("saving", "Сохраняем…");
     fullNameInput.readOnly = true;
     phoneInput.readOnly = true;
+    additionalPhoneInput.readOnly = true;
     form.setAttribute("aria-busy", "true");
     setSaveFeedback("Сохранение профиля…", "loading");
 
@@ -563,6 +567,7 @@
         body: {
           fullName: fullNameInput.value,
           phone: phoneInput.value,
+          additionalPhone: additionalPhoneInput.value,
         },
       })
       .then(function (result) {
@@ -600,6 +605,7 @@
         setSaveButtonState(saveSucceeded ? "saved" : "idle", saveSucceeded ? "Сохранено" : "Сохранить");
         fullNameInput.readOnly = false;
         phoneInput.readOnly = false;
+        additionalPhoneInput.readOnly = false;
         form.setAttribute("aria-busy", "false");
       });
   });

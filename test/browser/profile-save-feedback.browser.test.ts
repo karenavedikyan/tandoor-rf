@@ -15,6 +15,14 @@ const syntheticUser = {
 const evidence = process.env.TANDOOR_BROWSER_SCREENSHOT_DIR ??
   path.join(tmpdir(), "tandoor-profile-save-qa");
 
+function colorLuminance(color: string) {
+  const values = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(n => {
+    const value = n / 255;
+    return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+  });
+  return values[0] * .2126 + values[1] * .7152 + values[2] * .0722;
+}
+
 async function fixture(page: Page, options: { preview?: boolean } = {}) {
   const state = {
     user: { ...syntheticUser }, patches: [] as unknown[], profileReads: 0,
@@ -87,6 +95,32 @@ for (const engine of [chromium, webkit]) {
       await new Promise<void>((resolve) => server?.close(() => resolve()));
     });
 
+    it("additional phone survives reload, resets the saved state on edit and can be cleared independently", async () => {
+      const page = await browser.newPage({ viewport: { width: 375, height: 812 } });
+      const state = await fixture(page);
+      await page.goto(baseUrl + "/profile");
+      await page.locator("#profile-form:not([hidden])").waitFor();
+      await page.locator("#additional-phone").fill("+79000000009");
+      await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+      await page.getByRole("button", { name: "Сохранено", exact: true }).waitFor();
+      await page.reload();
+      await page.locator("#profile-form:not([hidden])").waitFor();
+      assert.equal(await page.locator("#additional-phone").inputValue(), "+79000000009");
+      assert.equal(await page.locator("#phone").inputValue(), syntheticUser.phone);
+      await page.locator("#additional-phone").fill("");
+      await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+      await page.getByRole("button", { name: "Сохранено", exact: true }).waitFor();
+      await page.locator("#additional-phone").fill("+79000000008");
+      assert.equal(await page.locator("#save-button").getAttribute("data-save-state"), "idle");
+      assert.equal(await page.locator(".profile-save-icon").isVisible(), false);
+      await page.reload();
+      await page.locator("#profile-form:not([hidden])").waitFor();
+      assert.equal(await page.locator("#additional-phone").inputValue(), "");
+      assert.equal(await page.locator("#phone").inputValue(), syntheticUser.phone);
+      assert.equal(state.patches.length, 2);
+      await page.close();
+    });
+
     for (const viewport of [{ width: 1366, height: 768 }, { width: 1366, height: 600 }, { width: 375, height: 812 }]) {
       for (const theme of ["light", "dark"]) {
         it(`busy, success, next edit and keyboard submit at ${viewport.width}x${viewport.height}, ${theme}`, async () => {
@@ -102,11 +136,18 @@ for (const engine of [chromium, webkit]) {
             await page.locator("[data-theme-toggle]").click();
           }
           assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
+          const hintColors = await page.locator("#additional-phone-hint").evaluate(el => [
+            getComputedStyle(el).color, getComputedStyle(el.closest(".profile-card")!).backgroundColor,
+          ]);
+          const [a, b] = hintColors.map(colorLuminance);
+          const hintContrast = (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+          assert.ok(hintContrast >= 4.5, `additional phone hint contrast: ${hintContrast}`);
           const initialColor = await page.locator("#save-button").evaluate(el => getComputedStyle(el).backgroundColor);
           assert.equal(await page.locator(".profile-save-icon").isVisible(), false);
           assert.equal(await page.locator("#email").getAttribute("readonly"), "");
           await page.locator("#full-name").fill("  Новое тестовое имя  ");
           await page.locator("#phone").fill("+79000000002");
+          await page.locator("#additional-phone").fill("+79000000003");
           let release!: () => void;
           state.gate = new Promise<void>(resolve => { release = resolve; });
           await page.getByRole("button", { name: "Сохранить", exact: true }).click();
@@ -114,15 +155,19 @@ for (const engine of [chromium, webkit]) {
           assert.equal(await page.locator("#save-button").isDisabled(), true);
           assert.equal(await page.locator("#profile-form").getAttribute("aria-busy"), "true");
           assert.equal(await page.locator("#phone").isEditable(), false);
+          assert.equal(await page.locator("#additional-phone").isEditable(), false);
           await page.locator("#full-name").focus();
           await page.keyboard.press("Enter");
           release();
           await page.getByRole("button", { name: "Сохранено", exact: true }).waitFor();
           assert.equal(await page.locator(".profile-save-icon").isVisible(), true);
           assert.notEqual(await page.locator("#save-button").evaluate(el => getComputedStyle(el).backgroundColor), initialColor);
-          assert.deepEqual(state.patches, [{ fullName: "  Новое тестовое имя  ", phone: "+79000000002" }]);
+          assert.deepEqual(state.patches, [{
+            fullName: "  Новое тестовое имя  ", phone: "+79000000002", additionalPhone: "+79000000003",
+          }]);
           assert.equal(await page.locator("#full-name").inputValue(), "Новое тестовое имя");
           assert.equal(await page.locator("#phone").isEditable(), true);
+          assert.equal(await page.locator("#additional-phone").inputValue(), "+79000000003");
           assert.equal(await page.locator("#profile-form").getAttribute("aria-busy"), "false");
           assert.equal(await page.locator("#profile-save-status").textContent(), "Профиль сохранён.");
           assert.equal(await page.locator("#status-message").textContent(), "");
