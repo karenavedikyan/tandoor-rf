@@ -30,21 +30,18 @@ it("creation and continuation use the same private recipient delivery and curren
     } else assert.match(text, /Передача создана/);
   }
 });
-it("holder sees queued versus delivered copy, never digits, with invitation only as fallback", () => {
+it("holder sees delivery status with the recipient invitation immediately available", () => {
   assert.match(render("pending"), /Код будет отправлен/);
   assert.doesNotMatch(render("pending"), /Код отправлен/);
   assert.match(render("sent"), /Код отправлен/);
-  assert.match(
-    render("sent"),
-    /<details><summary>Если сообщение с кодом не пришло<\/summary>FALLBACK<\/details>/,
-  );
-  assert.match(render("sent"), /Пересылать приглашение не нужно/);
+  assert.match(render("sent"), /FALLBACK/);
+  assert.doesNotMatch(render("sent"), /<details|Пересылать приглашение не нужно/);
   for (const s of [undefined, "failed", "cancelled"])
     assert.equal(render(s), "FALLBACK");
 });
-it("keeps the automatic-delivery fallback expanded while its invitation text is open", () => {
+it("never hides the recipient invitation behind an automatic-delivery disclosure", () => {
   context.state.messengerInviteManualVisible = true;
   context.state.messengerInviteManualKey = "fixture";
-  try { assert.match(render("sent"), /<details open>/); }
+  try { assert.match(render("sent"), /FALLBACK/); assert.doesNotMatch(render("sent"), /<details/); }
   finally { context.state.messengerInviteManualVisible = false; }
 });

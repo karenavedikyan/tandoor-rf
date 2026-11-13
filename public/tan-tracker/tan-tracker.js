@@ -648,7 +648,7 @@
   }
 
   function messengerInvitePrimaryLabel() {
-    return "Поделиться приглашением";
+    return "Получить код от получателя";
   }
 
   function messengerPortalUrlValid(o) {
@@ -818,7 +818,7 @@
     const block = `<div class="tt-messenger-invite" data-tt="messenger-invite-block">
       <p class="tt-muted">Отправьте внешнему получателю приглашение в мессенджере (Telegram / MAX).</p>
       <div class="tt-messenger-invite-actions">
-        ${btn(actionLabel, actionAttr, "tt-detail-alt-action")}
+        ${btn(actionLabel, actionAttr, "tt-primary tt-btn-block")}
       </div>
       ${manual}
       ${err}
@@ -829,14 +829,10 @@
   function automaticReceiptHandoffHtml(o,fallback) {
     if (!["pending","sent"].includes(o.automaticReceiptStatus)) return fallback;
     const status=o.automaticReceiptStatus==="sent"?"Код отправлен получателю в подключённый бот.":"Код будет отправлен получателю в подключённый бот.";
-    const url = messengerPortalUrlValid(o) ? o.messengerPortalUrl : recipientCodeInvitationUrl(o);
-    const previewOpen = url && state.messengerInviteManualVisible &&
-      state.messengerInviteManualKey === messengerInviteContextKey(o, url);
-    const preparing = state.messengerInviteBusy && state.messengerInviteOrderId === o.id;
     return `<div data-tt="automatic-receipt-status">
-      <p>${E(status)} Пересылать приглашение не нужно.</p>
+      <p>${E(status)}</p>
       <p class="tt-muted">При получении предмета попросите получателя назвать код и введите его в этой передаче.</p>
-      <details${previewOpen || preparing ? " open" : ""}><summary>Если сообщение с кодом не пришло</summary>${fallback}</details>
+      ${fallback}
     </div>`;
   }
 
@@ -856,7 +852,7 @@
     if (!url) return "";
     const preview = messengerInviteManualFallbackHtml(o, url);
     const block = `<div class="tt-recipient-invite" data-tt="recipient-invite-block">
-      ${btn(preview ? "Скрыть приглашение" : "Поделиться приглашением", `data-tt="recipient-invite-share" aria-expanded="${preview ? "true" : "false"}" aria-controls="tt-invitation-preview"`, "tt-detail-alt-action tt-btn-block")}
+      ${btn(preview ? "Скрыть приглашение" : messengerInvitePrimaryLabel(), `data-tt="recipient-invite-share" aria-expanded="${preview ? "true" : "false"}" aria-controls="tt-invitation-preview"`, "tt-primary tt-btn-block")}
       ${preview}
     </div>`;
     return automaticReceiptHandoffHtml(o,block);
@@ -2031,7 +2027,7 @@
     document.querySelectorAll('[data-tt="qr-host"]').forEach((host) => {
       const payload = host.getAttribute("data-payload");
       const fail = () => {
-        host.innerHTML = '<p class="tt-qr-error" role="status">Не удалось показать QR-код. Воспользуйтесь кнопкой «Поделиться приглашением».</p>';
+        host.innerHTML = '<p class="tt-qr-error" role="status">Не удалось показать QR-код. Воспользуйтесь кнопкой «Получить код от получателя».</p>';
       };
       try {
         const markup = payload ? qrImageHtml(payload) : "";

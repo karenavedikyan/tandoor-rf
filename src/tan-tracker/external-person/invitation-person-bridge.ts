@@ -1,4 +1,7 @@
 import type { PoolClient } from "pg";
+import { externalMessengerProofWouldConflict } from "./identity-conflict";
+import { lockPhonePartyResolution } from "../phone-party-resolver";
+import { lockTanbotMaxMessenger, lockTanbotTelegramMessenger } from "../../tanbot/link-advisory-locks";
 import { normalizeRuPhoneE164 } from "../phone-normalize";
 import type { ExternalMessengerChannel } from "./messenger-provenance";
 
@@ -127,6 +130,14 @@ async function materializePersonFromInvitationProof(
   if (p?.kind !== "external") return { ok: false, channel: proof.channel };
   const phone = normalizeRuPhoneE164(p.phone_e164 ?? "");
   if (!phone) return { ok: false, channel: proof.channel };
+  if (!/^\d+$/.test(proof.messengerUserId)) return { ok: false, channel: proof.channel };
+  await (proof.channel === "max" ? lockTanbotMaxMessenger : lockTanbotTelegramMessenger)(
+    client, BigInt(proof.messengerUserId),
+  );
+  await lockPhonePartyResolution(client, phone);
+  if (await externalMessengerProofWouldConflict(client, {
+    phone, channel: proof.channel, userId: proof.messengerUserId, chatId: proof.messengerChatId,
+  })) return { ok: false, channel: proof.channel };
 
   const existingPerson = await client.query<{ id: string }>(
     `SELECT id::text FROM tt_external_persons WHERE party_id = $1::uuid LIMIT 1`,

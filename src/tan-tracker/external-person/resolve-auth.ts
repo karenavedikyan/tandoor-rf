@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { hashExternalPersonSessionToken, verifyExternalPersonCapability } from "./session-token";
 import { requireHandoffOtpPepper } from "../otp-config";
+import { hasExternalMessengerIdentityConflict } from "./identity-conflict";
 
 export type ResolvedExternalPerson = {
   personId: string;
@@ -52,7 +53,10 @@ export async function resolveExternalPersonAuth(
   );
   const p = person.rows[0];
   if (!p) return null;
-  if (cap && capEpoch != null && capEpoch !== p.access_epoch) return null;
+  if (await hasExternalMessengerIdentityConflict(pool, { personId })) return null;
+  // Epoch-less legacy capabilities belong to the initial epoch only; logout-all
+  // must revoke these too, rather than silently accepting them forever.
+  if (cap && (capEpoch ?? 1) !== p.access_epoch) return null;
   return {
     personId,
     partyId: p.party_id,

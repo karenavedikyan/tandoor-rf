@@ -56,7 +56,7 @@ describe("current external holder shares a recipient invitation and mobile QR", 
       const result = page.waitForResponse(r => r.url().endsWith("/public/holder/pending/change") && r.request().method() === "POST");
       await page.getByRole("button", { name: "Назначить получателя", exact: true }).click();
       assert.equal((await result).status(), 200);
-      await page.getByRole("button", { name: "Поделиться приглашением", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Получить код от получателя", exact: true }).waitFor();
       baseline = (await pool.query(stateSql)).rows;
     } finally { await context.close(); }
     safari = await webkit.launch({ headless: true });
@@ -85,7 +85,7 @@ describe("current external holder shares a recipient invitation and mobile QR", 
         page.on("pageerror", e => errors.push(e.message));
         await page.goto(detailUrl());
         assert.equal(await page.locator('[data-tt="messenger-invite-message-text"]').count(), 0);
-        await page.getByRole("button", { name: "Поделиться приглашением", exact: true }).click();
+        await page.getByRole("button", { name: "Получить код от получателя", exact: true }).click();
         await page.getByRole("button", { name: "Скопировать приглашение", exact: true }).click();
         await page.waitForFunction(() => Boolean((window as any).__copiedInvite));
         const text = await page.evaluate(() => (window as any).__copiedInvite as string);
@@ -107,7 +107,7 @@ describe("current external holder shares a recipient invitation and mobile QR", 
         assert.equal(await page.locator(".tt-qr-wrap svg").count(), 0);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         await page.reload();
-        await page.getByRole("button", { name: "Поделиться приглашением", exact: true }).waitFor();
+        await page.getByRole("button", { name: "Получить код от получателя", exact: true }).waitFor();
         await page.getByRole("button", { name: "QR-код", exact: true }).click();
         await page.locator(".tt-qr-image").evaluate((img: HTMLImageElement) => img.decode());
         // A fresh recipient context must not inherit the sender's session.
@@ -153,7 +153,7 @@ describe("current external holder shares a recipient invitation and mobile QR", 
         })()`);
         const page = await context.newPage();
         await page.goto(detailUrl());
-        await page.getByRole("button", { name: "Поделиться приглашением", exact: true }).click();
+        await page.getByRole("button", { name: "Получить код от получателя", exact: true }).click();
         await page.getByRole("button", { name: "Скопировать приглашение", exact: true }).click();
         await page.waitForFunction(() => (window as any).__copyCalls.length === 1);
         const calls = await page.evaluate(() => ({ share: (window as any).__shareCalls, copy: (window as any).__copyCalls }));
@@ -185,7 +185,7 @@ describe("current external holder shares a recipient invitation and mobile QR", 
         await page.getByRole("button", { name: "QR-код", exact: true }).click();
         await page.locator(".tt-qr-error").waitFor();
         assert.match(await page.locator(".tt-qr-error").innerText(), /Не удалось показать QR-код/);
-        assert.equal(await page.getByRole("button", { name: "Поделиться приглашением", exact: true }).isEnabled(), true);
+        assert.equal(await page.getByRole("button", { name: "Получить код от получателя", exact: true }).isEnabled(), true);
         assert.deepEqual((await pool.query(stateSql)).rows, baseline);
       } finally { await context.close(); }
     });
