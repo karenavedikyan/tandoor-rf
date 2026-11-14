@@ -30,11 +30,13 @@ export function photoForm(bytes: Buffer, field: string): FormData {
 
 /** Upload URL comes only from the authenticated MAX API, not from a callback.
  * Bot authorization is sent ONLY to the API origin, never to a CDN/upload URL.
+ * Keep the transports separate: the API's custom CA replaces Node's trust
+ * store and must not be applied to globally trusted upload/CDN certificates.
  */
-export async function uploadMaxCatalogPhoto(fetchImpl: typeof fetch, input: {
+export async function uploadMaxCatalogPhoto(transports: { api: typeof fetch; upload: typeof fetch }, input: {
   token: string; bytes: Buffer; signal: AbortSignal; maxResponseBytes: number;
 }): Promise<string | null> {
-  const init = await fetchImpl(`${MAX_API_ORIGIN}/uploads?type=image`, {
+  const init = await transports.api(`${MAX_API_ORIGIN}/uploads?type=image`, {
     method: "POST", headers: { Authorization: input.token, Accept: "application/json" },
     signal: input.signal, redirect: "error",
   });
@@ -44,7 +46,7 @@ export async function uploadMaxCatalogPhoto(fetchImpl: typeof fetch, input: {
   if (typeof data.url !== "string") return null;
   const checked = validateMaxMediaDownloadUrl(data.url);
   if (!checked.ok) return null;
-  const upload = await fetchImpl(checked.url, { method: "POST", body: photoForm(input.bytes, "data"),
+  const upload = await transports.upload(checked.url, { method: "POST", body: photoForm(input.bytes, "data"),
     signal: input.signal, redirect: "error" });
   const uploadBody = await readBoundedResponseBody(upload, input.maxResponseBytes);
   if (!upload.ok || !uploadBody.ok) return null;
