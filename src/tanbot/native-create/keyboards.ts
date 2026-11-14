@@ -34,18 +34,19 @@ export function maxContactWithMenuInline(): NativeCreateUi {
   };
 }
 
-/** Primary home reply keyboard (Telegram). */
+/** Tracker-only reply keyboard (Telegram); the root chooser is separate. */
 export function menuReplyKeyboard(options: { showContinue?: boolean } = {}): Record<string, unknown> {
   const rows: Array<Array<{ text: string }>> = [
     [{ text: "Создать передачу" }],
     [{ text: "Мои передачи" }],
     [{ text: "Статус трека" }],
-    [{ text: "Каталог" }],
+    [{ text: "Получить код приёма" }],
+    [{ text: "Настройки" }],
   ];
   if (options.showContinue) {
     rows.push([{ text: "Продолжить оформление" }]);
   }
-  rows.push([{ text: "Меню" }]);
+  rows.push([{ text: "Главное меню" }]);
   return {
     keyboard: rows,
     resize_keyboard: true,
@@ -103,7 +104,21 @@ function buildNavUi(
     : { maxInlineButtons: [maxRow(draftId, revision, nav)] };
 }
 
-/** MAX inline for home screen; Telegram home uses reply keyboard only. */
+/** Exactly two first-level sections, with no tracker-specific actions. */
+export function buildRootMenuInline(channel: "telegram" | "max"): NativeCreateUi {
+  const tracker = cbOrThrow("menu_tracker", NATIVE_MENU_DRAFT_HEX, MENU_REVISION);
+  return channel === "telegram"
+    ? { telegramInlineKeyboard: [
+      [{ text: "ТанТрекер", callback_data: tracker }],
+      [{ text: "Каталог", callback_data: "cat:root" }],
+    ] }
+    : { maxInlineButtons: [
+      [{ type: "callback", text: "ТанТрекер", payload: tracker }],
+      [{ type: "callback", text: "Каталог", payload: "cat:root" }],
+    ] };
+}
+
+/** Tracker submenu; Telegram normally uses its tracker-only reply keyboard. */
 export function buildMainMenuInline(
   channel: "telegram" | "max",
   resume?: { draftId: string; revision: number },
@@ -113,24 +128,23 @@ export function buildMainMenuInline(
     { label: "Создать передачу", action: "menu_create" },
     { label: "Мои передачи", action: "menu_my" },
     { label: "Статус трека", action: "menu_status" },
+    { label: "Получить код приёма", action: "menu_receive" },
+    { label: "Настройки", action: "menu_settings" },
   ];
   if (channel === "telegram") {
-    const rows: BtnDef[][] = [primary, [{ label: "Меню", action: "menu" }]];
     return { telegramInlineKeyboard: [
-      ...rows.slice(0, 1).map((row) => tgRow(draftId, MENU_REVISION, row)),
-      [{ text: "Каталог", callback_data: "cat:root" }],
-      ...rows.slice(1).map((row) => tgRow(draftId, MENU_REVISION, row)),
+      ...primary.map(button => tgRow(draftId, MENU_REVISION, [button])),
+      tgRow(draftId, MENU_REVISION, [{ label: "Главное меню", action: "menu_home" }]),
     ] };
   }
   const maxRows: MaxInlineButton[][] = primary.map((button) => maxRow(draftId, MENU_REVISION, [button]));
-  maxRows.push([{ type: "callback", text: "Каталог", payload: "cat:root" }]);
   if (resume) {
     const resumePayload = buildNativeCreateCallback("menu_resume", resume.draftId, resume.revision);
     if (resumePayload) {
       maxRows.unshift([{ type: "callback", text: "Продолжить оформление", payload: resumePayload }]);
     }
   }
-  maxRows.push(maxRow(draftId, MENU_REVISION, [{ label: "Меню", action: "menu" }]));
+  maxRows.push(maxRow(draftId, MENU_REVISION, [{ label: "Главное меню", action: "menu_home" }]));
   return { maxInlineButtons: maxRows };
 }
 
@@ -142,7 +156,8 @@ export function buildCompactMenuInline(
   const draftId = NATIVE_MENU_DRAFT_HEX;
   const rows: BtnDef[][] = [
     [{ label: "Получить код приёма", action: "menu_receive" }, { label: "Настройки", action: "menu_settings" }],
-    [{ label: "К основным действиям", action: "menu_home" }],
+    [{ label: "К основным действиям", action: "menu_tracker" }],
+    [{ label: "Главное меню", action: "menu_home" }],
   ];
   if (channel === "telegram") {
     const tgRows = rows.map((row) => tgRow(draftId, MENU_REVISION, row));

@@ -28,6 +28,7 @@ let app: ReturnType<typeof import("../../src/server").createApp>;
 let seq = 6700000;
 let realFetch: typeof fetch;
 let unexpected = 0;
+const telegramKeyboards = new Map<number, unknown>();
 const PDF = Buffer.from("%PDF-1.7\nSynthetic menu draft preservation fixture\n%%EOF\n");
 
 before(async () => {
@@ -103,6 +104,8 @@ async function drain(a: Actor): Promise<Reply[]> {
       assert.equal(String(p.body.chat_id), String(a.id));
       if (p.method === "sendMessage") {
         const markup = p.body.reply_markup as Record<string, unknown> | undefined;
+        if (markup?.remove_keyboard) telegramKeyboards.delete(a.id);
+        if (markup?.keyboard) telegramKeyboards.set(a.id, markup.keyboard);
         assert.ok(!(markup?.inline_keyboard && markup?.keyboard), "Telegram supports one keyboard type per message");
         replies.push({ text: String(p.body.text), markup,
           buttons: ((markup?.inline_keyboard ?? markup?.keyboard ?? []) as Button[][]).flat() });
@@ -171,11 +174,12 @@ async function send(a: Actor, input: Input): Promise<Reply> {
   if (a.channel === "max" && visible[0]!.buttons.length > 0) {
     const labels = visible[0]!.buttons.map(b => b.text);
     const footerCount = labels.filter(t => t === "Главное меню").length;
-    const hasInlineHomeNav = labels.some(t => t === "Меню" || t === "К основным действиям");
+    const hasInlineHomeNav = labels.some(t => t === "Меню");
+    const isSectionChooser = labels.length === 2 && labels[0] === "ТанТрекер" && labels[1] === "Каталог";
     const isPostCreatePair = labels.length === 2 && labels[0] === "Ввести код"
       && labels[1] === "Запросить код повторно";
     assert.ok(footerCount <= 1, labels.join(", "));
-    assert.ok(hasInlineHomeNav || isPostCreatePair ? footerCount === 0 : footerCount === 1, labels.join(", "));
+    assert.ok(hasInlineHomeNav || isPostCreatePair || isSectionChooser ? footerCount === 0 : footerCount === 1, labels.join(", "));
   }
   for (const b of visible[0]!.buttons) {
     const callback = b.callback_data ?? b.payload;
@@ -193,8 +197,13 @@ async function click(a: Actor, r: Reply, pattern: RegExp): Promise<Reply> {
   return send(a, callback ? { callback } : { text: b.text });
 }
 function homeScreen(a: Actor, r: Reply, resume: boolean) {
+  assert.match(r.text, /^ТанТрекер\n/mu);
   button(r, /^Создать передачу$/u);
   button(r, /^Мои передачи$/u);
+  button(r, /^Получить код приёма$/u);
+  button(r, /^Настройки$/u);
+  button(r, /^Главное меню$/u);
+  assert.ok(!r.buttons.some(b => b.text === "Каталог"));
   assert.equal(r.buttons.some(b => /^Продолжить оформление$/u.test(b.text)), resume);
   assert.doesNotMatch(JSON.stringify(r), /Private Menu Directory Target|79995550707|external-person\/session|person_session=/u);
   if (a.channel === "telegram") {
@@ -202,9 +211,14 @@ function homeScreen(a: Actor, r: Reply, resume: boolean) {
     assert.equal(r.markup?.is_persistent, true);
     assert.notEqual(r.markup?.one_time_keyboard, true);
     const labels = (r.markup!.keyboard as Array<Array<{ text: string }>>).flat().map((b) => b.text);
-    assert.ok(!labels.includes("Получить код приёма"));
-    assert.ok(!labels.includes("Настройки"));
+    assert.ok(labels.includes("Получить код приёма"));
+    assert.ok(labels.includes("Настройки"));
   }
+}
+function rootScreen(r: Reply) {
+  assert.deepEqual(r.buttons.map(b => b.text), ["ТанТрекер", "Каталог"]);
+  assert.match(r.text, /ТанТрекер: создание и отслеживание передач/u);
+  assert.match(r.text, /Каталог: входные и межкомнатные двери, фурнитура/u);
 }
 function compactMenu(r: Reply) {
   button(r, /^Получить код приёма$/u);
@@ -316,9 +330,9 @@ for (const role of ["staff", "external"] as const) {
   it(`telegram ${role}: obsolete contact keyboard replaced, no new verification or session`, async () => {
     const a = await actor("telegram", role), beforeCounts = await counts();
     let r = await send(a, { contact: { phone_number: "+79995550999", first_name: "Свой контакт", user_id: a.id } });
-    homeScreen(a, r, false);
+    rootScreen(r);
     r = await send(a, { start: true });
-    homeScreen(a, r, false);
+    rootScreen(r);
     assert.ok(!r.buttons.some(b => b.request_contact));
     assert.doesNotMatch(r.text, /Контакт не принят/u);
     assert.deepEqual(await counts(), beforeCounts);
@@ -346,7 +360,15 @@ for (const channel of ["max", "telegram"] as const) {
   for (const role of ["staff", "external", "unknown"] as const) {
     it(`${channel} ${role}: Start opens usable menu without creating identity, draft, session or business state`, async () => {
       const a = await actor(channel, role), beforeCounts = await counts();
-      const r = await send(a, { start: true });
+      let r = await send(a, { start: true });
+      rootScreen(r);
+      assert.equal(telegramKeyboards.has(a.id), false);
+      r = await click(a, r, /^Каталог$/u);
+      assert.match(r.text, /^Каталог/u);
+      assert.ok(!r.buttons.some(b => /Создать передачу|Мои передачи|Настройки|код приёма/u.test(b.text)));
+      r = await click(a, r, /^Главное меню$/u);
+      rootScreen(r);
+      r = await click(a, r, /^ТанТрекер$/u);
       homeScreen(a, r, false);
       assert.deepEqual(await counts(), beforeCounts);
       assert.equal(await draft(a), undefined);
@@ -359,6 +381,28 @@ for (const channel of ["max", "telegram"] as const) {
     });
   }
   for (const role of ["staff", "external"] as const) {
+    it(`${channel} ${role}: switching sections preserves draft and files and removes the Telegram tracker keyboard`, async () => {
+      const a = await actor(channel, role);
+      await send(a, { text: "Создать передачу" });
+      await send(a, { text: "Черновик сохраняется при просмотре каталога" });
+      await send(a, { file: true });
+      const frozen = await snapshot(a), beforeCounts = await counts();
+      let r = await send(a, { text: "ТанТрекер" });
+      homeScreen(a, r, true);
+      if (channel === "telegram") assert.equal(telegramKeyboards.has(a.id), true);
+      // Legacy catalogue text from a previously delivered keyboard remains usable.
+      r = await send(a, { text: "Каталог" });
+      assert.match(r.text, /^Каталог/u);
+      assert.equal(telegramKeyboards.has(a.id), false);
+      assert.ok(!r.buttons.some(b => /Создать передачу|Мои передачи|Настройки|код приёма/u.test(b.text)));
+      r = await click(a, r, /^Главное меню$/u);
+      rootScreen(r);
+      assert.equal(telegramKeyboards.has(a.id), false);
+      r = await click(a, r, /^ТанТрекер$/u);
+      homeScreen(a, r, true);
+      assert.deepEqual(await snapshot(a), frozen);
+      assert.deepEqual(await counts(), beforeCounts);
+    });
     it(`${channel} ${role}: rebound draft ownership is checked again before Menu or Continue`, async () => {
       const a = await actor(channel, role);
       await send(a, { text: "Создать передачу" });
@@ -383,6 +427,8 @@ for (const channel of ["max", "telegram"] as const) {
     it(`${channel} ${role}: Menu and Start preserve files, revision and exact step; Continue resumes; cancel removes Continue`, async () => {
       const a = await actor(channel, role);
       let r = await send(a, { start: true });
+      rootScreen(r);
+      r = await click(a, r, /^ТанТрекер$/u);
       r = await click(a, r, /^Создать передачу$/u);
       assert.equal((await draft(a))?.step, "item");
       r = await send(a, { text: "Не потерять документы меню" });
@@ -393,12 +439,17 @@ for (const channel of ["max", "telegram"] as const) {
       compactMenu(r);
       assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
       r = await send(a, { start: true });
+      rootScreen(r);
+      r = await click(a, r, /^ТанТрекер$/u);
       homeScreen(a, r, true);
       assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
       for (const command of ["/start", "/menu", "Меню"]) {
         r = await send(a, { text: command });
-        if (command === "/start") homeScreen(a, r, true);
-        else compactMenu(r);
+        if (command === "/start" || command === "/menu") {
+          rootScreen(r);
+          r = await click(a, r, /^ТанТрекер$/u);
+          homeScreen(a, r, true);
+        } else compactMenu(r);
         assert.deepEqual(await snapshot(a), frozen); assert.deepEqual(await counts(), beforeCounts);
       }
       const oldResume = button(r, /^Продолжить оформление$/u);
@@ -414,6 +465,8 @@ for (const channel of ["max", "telegram"] as const) {
       r = await send(a, { text: "Сохранённый комментарий" });
       const recipient = await snapshot(a);
       r = await send(a, { text: "/start" });
+      rootScreen(r);
+      r = await click(a, r, /^ТанТрекер$/u);
       homeScreen(a, r, true);
       assert.deepEqual(await snapshot(a), recipient, "Start must not become recipient search/phone");
       r = await send(a, { callback: oldWizardMenu.callback_data ?? oldWizardMenu.payload });
@@ -467,6 +520,8 @@ for (const channel of ["max", "telegram"] as const) {
         "post-create has exactly the two requested actions in actual delivery");
       const confirmedCounts = await counts();
       r = await send(a, { start: true });
+      rootScreen(r);
+      r = await click(a, r, /^ТанТрекер$/u);
       homeScreen(a, r, false);
       assert.deepEqual(await counts(), confirmedCounts);
     });

@@ -6,7 +6,7 @@ import { buildCatalogBotReply, catalogCallback, isCatalogRequest, parseCatalogCa
 import { catalogJpeg, uploadMaxCatalogPhoto } from "../../src/tanbot/catalog-media";
 import { createDefaultTelegramDeliveryTransport } from "../../src/tanbot-telegram/delivery-transport";
 import { createDefaultMaxDeliveryTransport, parseMaxSendResult } from "../../src/tanbot-max/delivery-transport";
-import { buildMainMenuInline, menuReplyKeyboard } from "../../src/tanbot/native-create/keyboards";
+import { buildMainMenuInline, buildRootMenuInline, menuReplyKeyboard } from "../../src/tanbot/native-create/keyboards";
 import { parseMaxReplyExtra, parseTelegramReplyExtra } from "../../src/tanbot/webhook-reply-extra";
 import { type Product } from "../../src/internal-catalog/model";
 
@@ -134,11 +134,18 @@ describe("bot catalogue: public photo-only projection", () => {
       assert.equal(readCatalogPhoto(buildCatalogBotReply(channel, v, variant.data).replyExtra)?.productGuid, id(2));
     });
   }
-  it("both menu entry points expose catalogue without changing transfer callbacks", () => {
-    assert.ok(JSON.stringify(menuReplyKeyboard()).includes("Каталог"));
+  it("only the first-level section chooser exposes catalogue, not tracker menus", () => {
+    assert.ok(!JSON.stringify(menuReplyKeyboard()).includes("Каталог"));
     for (const channel of ["telegram", "max"] as const) {
-      assert.ok(JSON.stringify(buildMainMenuInline(channel)).includes("cat:root"));
+      assert.ok(!JSON.stringify(buildMainMenuInline(channel)).includes("cat:root"));
+      assert.ok(JSON.stringify(buildRootMenuInline(channel)).includes("cat:root"));
     }
+  });
+  it("Telegram catalogue entry clears the old tracker keyboard, but each subsequent photo does not", () => {
+    assert.equal(buildCatalogBotReply("telegram", view(1)).replyExtra?.replyKeyboardClear, true);
+    assert.equal(buildCatalogBotReply("telegram", null).replyExtra?.replyKeyboardClear, true);
+    assert.equal(buildCatalogBotReply("telegram", view(1), catalogCallback("p", snapshot, id(1)))
+      .replyExtra?.replyKeyboardClear, undefined);
   });
   it("stored extras retain photo references and MAX upload token through retry parsers", () => {
     const r = buildCatalogBotReply("max", view(1), catalogCallback("p", snapshot, id(1)));

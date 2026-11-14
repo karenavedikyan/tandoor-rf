@@ -9,7 +9,7 @@ import { parseHandoffCodePaste } from "../../tan-tracker/handoff-code-paste-pars
 import { verifyPendingReceiptCode, type LockedReceiptTransfer } from "../../tan-tracker/verify-pending-receipt-code";
 import { HANDOFF_CODE_TTL_MS } from "../../tan-tracker/otp-config";
 import { buildNativeMainMenuReply, parseNativeBotSlashCommand, isNativeMainMenuText,
-  isNativeCreateMenuText, isNativeContinueDraftText } from "./main-menu";
+  isNativeCreateMenuText, isNativeContinueDraftText, isNativeTrackerMenuText } from "./main-menu";
 import { buildNativeCreateCallback } from "./callback-codec";
 import { NATIVE_MENU_DRAFT_HEX } from "./menu-sentinel";
 import { removeTelegramReplyKeyboard } from "./keyboards";
@@ -311,7 +311,7 @@ export async function handleReceiptEntryText(
   await lockNativeCreateMessenger(client, ctx);
   const trimmed = text.trim();
   const navigation = parseNativeBotSlashCommand(trimmed) || isNativeMainMenuText(trimmed)
-    || isNativeCreateMenuText(trimmed) || isNativeContinueDraftText(trimmed)
+    || isNativeCreateMenuText(trimmed) || isNativeContinueDraftText(trimmed) || isNativeTrackerMenuText(trimmed)
     || ["мои передачи", "настройки", "получить код приёма", "получить код приема", "/status", "/stop", "/code"].includes(trimmed.toLowerCase());
   if (navigation) { await clearReceiptEntry(client, ctx); return null; }
   const entry = (await client.query<Entry>(
