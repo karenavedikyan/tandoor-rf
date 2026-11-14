@@ -5,7 +5,7 @@ import { csrfOriginProtection } from "../middleware/csrf";
 import { requirePool } from "../db/pool";
 import { internalCatalogAccess } from "./access";
 import { GUID, normalizeSearch, MAX_JSON_BYTES, parseProductsJson } from "./model";
-import { importSnapshot, loadProduct, loadSnapshot, searchProducts } from "./repository";
+import { importSnapshot, loadProduct, loadProductVariants, loadSnapshot, searchProducts } from "./repository";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "./images";
 import { loadCatalogContext, loadCatalogFacets } from "./context";
 import { CATALOG_FACETS, commerceFor } from "./presentation";
@@ -100,8 +100,10 @@ export function createInternalCatalogRouter(): express.Router {
     const result = await searchProducts(requirePool(), current.id, { q, section, brand, page: Number(page || 1), pageSize: 24,
       group: group?.toLowerCase(), priceType: priceType?.toLowerCase(), properties, min: min ? Number(min) : undefined,
       max: max ? Number(max) : undefined, availability, flag, sort }, context);
-    const quality = await qualityForVisibleTargets(result.items.map(item => ({ kind: "product", guid: item.guid })));
-    res.json({ ...result, items: result.items.map(item => ({ ...item, _onecQuality: quality.get("product:" + item.guid) ?? null })) });
+    const guids = new Set(result.items.flatMap(item => [item.guid, ...item.variants.map(v => v.guid)]));
+    const quality = await qualityForVisibleTargets([...guids].map(guid => ({ kind: "product", guid })));
+    res.json({ ...result, items: result.items.map(item => ({ ...item, _onecQuality: quality.get("product:" + item.guid) ?? null,
+      variants: item.variants.map(v => ({ ...v, _onecQuality: quality.get("product:" + v.guid) ?? null })) })) });
   }));
   router.get("/products/:guid", wrap(async (req, res) => {
     const guid = req.params.guid;
@@ -124,8 +126,13 @@ export function createInternalCatalogRouter(): express.Router {
         ORDER BY r.file_key,r.row_index`, [guid])).rows;
     } catch (error) { if ((error as { code?: string }).code !== "42P01") throw error; }
     const context = await loadCatalogContext(requirePool());
+    const priceType = field(req, "priceType", 36);
+    if (priceType === null || (priceType && !GUID.test(priceType))) { invalid(res); return; }
+    const selectedPrice = req.query.priceType === undefined ?
+      context.priceTypes.find(x => x.name === "РРЦ Тандор")?.guid || "" : priceType.toLowerCase();
+    const variants = await loadProductVariants(requirePool(), current!.id, guid.toLowerCase(), context, selectedPrice);
     res.json({ snapshotId: current!.id, importedAt: current!.importedAt, product,
-      commerce: commerceFor(context, guid.toLowerCase()), _onecQuality: quality.get("product:" + guid) ?? null, sourceValues });
+      variants, commerce: commerceFor(context, guid.toLowerCase()), _onecQuality: quality.get("product:" + guid) ?? null, sourceValues });
   }));
   router.get("/products/:guid/images/:fileGuid", wrap(async (req, res) => {
     const { guid, fileGuid } = req.params;

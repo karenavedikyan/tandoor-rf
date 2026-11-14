@@ -105,6 +105,12 @@
 .ic-copy-dialog svg{width:18px;height:18px}
 .ic-copy-dialog p{font-size:var(--text-xs);color:var(--muted)}
 .ic-conflict{color:var(--bad)}
+.ic-sizes{margin:8px 0;min-width:0}
+.ic-sizes .row{display:flex;flex-wrap:wrap;min-width:0}
+#catalog-root .ic-sizes .cat-opt,.cat-panel .ic-sizes .cat-opt{font-size:var(--text-xs);min-height:32px;padding:4px 10px;overflow-wrap:anywhere;white-space:normal}
+#catalog-root .ic-sizes .cat-opt.active,.cat-panel .ic-sizes .cat-opt.active{border-color:var(--green);background:var(--green);color:#fff}
+[data-theme=dark] #catalog-root .ic-sizes .cat-opt.active,[data-theme=dark] .cat-panel .ic-sizes .cat-opt.active{color:#172019}
+.ic-sizes .cat-opt[title]{border-style:dashed}
 .ic-client-mask .ic-private{display:none!important}
 body.internal-catalog-page.cat-fullscreen :is(#workspace-sidebar,#workspace-topbar,.ic-heading){display:none!important}
 body.internal-catalog-page.cat-fullscreen .legacy-frame{margin:0!important;padding:0!important}
@@ -120,6 +126,7 @@ body.internal-catalog-page:has(dialog[open]){overflow:hidden}
   #catalog-root .cat-quick{display:none}
 }
 @media(max-width:600px){
+  #catalog-root .ic-sizes .cat-opt,.cat-panel .ic-sizes .cat-opt{min-height:44px}
   .internal-catalog-page .ic-main{padding:20px 16px}
   .ic-main .ic-heading h1{font-size:22px}
   #catalog-root .cat-seg button{padding:8px 10px}

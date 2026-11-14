@@ -13,8 +13,9 @@ import sharp from "sharp";
 import request from "supertest";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { parseProductsJson } from "../../src/internal-catalog/model";
-import { importSnapshot, loadSnapshot } from "../../src/internal-catalog/repository";
-import { catalogueFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
+import { importSnapshot, loadSnapshot, searchProducts } from "../../src/internal-catalog/repository";
+import { loadCatalogContext } from "../../src/internal-catalog/context";
+import { catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 const ORIGIN = "http://127.0.0.1:3000";
@@ -357,5 +358,43 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     assert.equal(result.body.snapshot, undefined);
     assert.equal((await request(app).get("/api/internal-catalog/products/" + fixtureGuid(1) +
       "/images/" + fixtureGuid(300)).set("Cookie", session)).status, 401);
+  });
+  it("groups before pagination, selects a matching SKU, keeps all siblings and makes no writes on reads", async () => {
+    const parsed = parseProductsJson(Buffer.from(JSON.stringify(sizeVariantsFixture())));
+    const version = (await importSnapshot(pool, parsed, "sizes.json", parsed.sha256)).snapshotId;
+    const batch = fixtureGuid(880), type = fixtureGuid(800);
+    await pool.query("INSERT INTO onec_manual_batches(id,fingerprint) VALUES($1,$2)", [batch, "d".repeat(64)]);
+    for (let n = 1; n <= 4; n++) {
+      await pool.query(`INSERT INTO onec_manual_records(batch_id,file_key,row_index,entity_kind,entity_guid,record)
+        VALUES($1,'prices',$2,'product',$3,$4)`, [batch, n, fixtureGuid(n), {
+        guid: fixtureGuid(n), type_price: [{ guid: type, name: "РРЦ Тандор", price: n === 4 ? 200 : 100 }],
+      }]);
+      await pool.query(`INSERT INTO onec_manual_object_versions(entity_kind,entity_guid,file_key,batch_id)
+        VALUES('product',$1,'prices',$2) ON CONFLICT(entity_kind,entity_guid,file_key) DO UPDATE SET batch_id=$2`, [fixtureGuid(n), batch]);
+    }
+    const fingerprint = async () => (await pool.query(`SELECT md5(string_agg(record::text,'' ORDER BY guid)) AS hash,
+      count(*)::int AS count FROM internal_catalog_products WHERE snapshot_id=$1`, [version])).rows;
+    const before = await fingerprint();
+    const response = await get("/products").query({ version, priceType: type });
+    assert.equal(response.status, 200); assert.equal(response.body.total, 2); assert.equal(response.body.matchedProducts, 4);
+    assert.deepEqual(response.body.items.map(x => x.variants.length), [3, 0]);
+    const filtered = await get("/products").query({ version, priceType: type, q: "2000*800", page: 999 });
+    assert.equal(filtered.body.total, 1); assert.equal(filtered.body.page, 1);
+    assert.equal(filtered.body.items[0].guid, fixtureGuid(3));
+    assert.equal(filtered.body.items[0].variants.length, 3);
+    assert.equal(filtered.body.items[0].variants.filter(x => x.matchesFilters).length, 1);
+    const detail = await get("/products/" + fixtureGuid(2)).query({ version, priceType: type });
+    assert.equal(detail.body.product.guid, fixtureGuid(2)); assert.equal(detail.body.variants.length, 3);
+    assert.equal((await get("/products/" + fixtureGuid(4)).query({ version, priceType: type })).body.variants.length, 0);
+    assert.equal((await get("/products/" + fixtureGuid(2)).query({ version, priceType: "" })).body.variants.length, 0);
+    const context = await loadCatalogContext(pool);
+    const search = { q: "", section: "", brand: "", page: 1, pageSize: 1, priceType: type };
+    const first = await searchProducts(pool, version, search, context);
+    const second = await searchProducts(pool, version, { ...search, page: 2 }, context);
+    assert.equal(first.total, 2); assert.equal(first.items[0].variants.length, 3);
+    assert.equal(second.items[0].guid, fixtureGuid(4)); assert.equal(second.items[0].variants.length, 0);
+    const bySize = await get("/products").query({ version, priceType: type, filters: JSON.stringify({ "Размер, мм": ["2000х700"] }) });
+    assert.equal(bySize.body.items[0].guid, fixtureGuid(2)); assert.equal(bySize.body.items[0].variants.length, 3);
+    assert.deepEqual(await fingerprint(), before);
   });
 });

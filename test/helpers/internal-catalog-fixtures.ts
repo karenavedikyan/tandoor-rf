@@ -13,3 +13,17 @@ export function catalogueFixture(count = 30): Product[] {
     files: index === 0 ? [{ guid: fixtureGuid(300), name: "Фото товара", path: "20240626\\photo.jpg" }] : [],
   }));
 }
+export function sizeVariantsFixture(): Product[] {
+  return [600, 700, 800, 900].map((width, index) => ({
+    guid: fixtureGuid(index + 1), name: `400 белый ПЭТ ДГ 2000*${width}`,
+    guid_group: fixtureGuid(810), chapter: [{ guid: fixtureGuid(100), name: "Двери" }],
+    properties: [
+      { guid: fixtureGuid(201), name: "Артикул", value: "SIZE-" + width },
+      { guid: fixtureGuid(202), name: "Размер, мм", value: "2000х" + width },
+      { guid: fixtureGuid(203), name: "СсылкаНаГлавную", value: "model-400-white" },
+      { guid: fixtureGuid(204), name: "Цвет", value: "Белый" },
+      { guid: fixtureGuid(205), name: "Покрытие двери", value: "ПЭТ" },
+    ],
+    files: [{ guid: fixtureGuid(300 + index), name: "Фото " + width, path: width + ".jpg" }],
+  }));
+}

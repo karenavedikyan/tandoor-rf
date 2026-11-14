@@ -60,16 +60,39 @@
     productCache.set(p.guid, p);
     if (productCache.size > 200) productCache.delete(productCache.keys().next().value);
   }
+  function sizes(p, panel) {
+    var variants = p.variants || [];
+    if (variants.length < 2) return "";
+    return '<div class="cat-options ic-sizes" role="group" aria-label="Размер модели"><div class="row"><span>Размер, мм</span>' +
+      variants.map(function (v) {
+        return '<button type="button" class="cat-opt' + (v.guid === p.guid ? " active" : "") +
+          '" data-action="' + (panel ? "detail-size" : "size") + '" data-guid="' + esc(v.guid) +
+          '" data-family="' + esc(p.guid) + '" aria-pressed="' + (v.guid === p.guid) + '"' +
+          (v.matchesFilters === false ? ' title="Этот размер не соответствует текущим фильтрам"' : "") + ">" +
+          esc(v.size || prop(v, "Размер, мм")) + (v.matchesFilters === false ? " · вне фильтра" : "") + "</button>";
+      }).join("") + "</div></div>";
+  }
+  function selectSize(guid, familyGuid) {
+    if (!lastList) return;
+    lastList.items = lastList.items.map(function (p) {
+      if (p.guid !== familyGuid) return p;
+      var variant = (p.variants || []).find(function (v) { return v.guid === guid; });
+      return variant ? Object.assign({}, variant, { variants: p.variants, modelName: p.modelName }) : p;
+    });
+    $("results").innerHTML = renderResults(lastList); icons();
+    var selected = document.querySelector('#ic-results [data-action="size"][data-guid="' + guid + '"]');
+    if (selected) selected.focus();
+  }
   function card(p) {
     cache(p);
-    var name = '<div class="cat-name" title="' + esc(p.name) + '">' + esc(p.name) + '</div><div class="cat-color">' +
+    var name = '<div class="cat-name" title="' + esc(p.name) + '">' + esc(p.modelName || p.name) + '</div><div class="cat-color">' +
       esc([prop(p, "Цвет"), (p.sections || []).map(function (x) { return x.name; }).join(" · ")].filter(Boolean).join(" · ")) + "</div>";
     var specs = (p.properties || []).filter(function (x) { return ["Покрытие", "Размер, мм", "Вид двери"].includes(x.name.trim()); });
     return '<article class="cat-card" data-product="' + esc(p.guid) + '" tabindex="0" role="button" aria-label="Открыть карточку: ' + esc(p.name) + '">' +
       badges(p) + (s.view === "site" ? '<div class="cat-head">' + name + "</div>" : "") + photo(p, false) +
       '<div class="cat-body">' + (s.view === "site" ? "" : name) +
       (specs.length && s.view !== "site" ? '<div class="cat-meta">' + specs.slice(0, 3).map(function (x) { return "<span>" + esc(x.value) + "</span>"; }).join("") + "</div>" : "") +
-      quality(p) + priceHtml(p) + stockHtml(p, s.view === "site") + "</div>" +
+      sizes(p, false) + quality(p) + priceHtml(p) + stockHtml(p, s.view === "site") + "</div>" +
       (s.view === "site" ? '<button type="button" class="cat-cta" data-product="' + esc(p.guid) + '">' + icon("arrow-up-right") + "Открыть карточку</button>" :
         (!s.client ? '<div class="cat-quick"><button type="button" data-action="reply" data-guid="' + esc(p.guid) + '">' + icon("copy") + "Ответ клиенту</button></div>" : "")) + "</article>";
   }
@@ -80,7 +103,7 @@
         cache(p); var list = files(p), v = price(p);
         return '<tr data-product="' + esc(p.guid) + '" tabindex="0"><td><div class="cat-thumb">' +
           (list.length ? '<img src="' + esc(imageUrl(p, list[0])) + '" alt="" loading="lazy">' : "") +
-          '</div></td><td><div class="cat-name">' + esc(p.name) + '</div><span class="small">' + esc(p.article || p.guid) + "</span>" + quality(p) +
+          '</div></td><td><div class="cat-name">' + esc(p.modelName || p.name) + '</div><span class="small">' + esc(p.article || p.guid) + "</span>" + sizes(p, false) + quality(p) +
           '</td><td class="cat-hide-m"><span class="small">' + esc((p.sections || []).map(function (x) { return x.name; }).join(", ")) +
           '</span></td><td class="cat-hide-m cat-hide-l"><span class="small">' + esc(prop(p, "Размер, мм")) + "</span></td>" +
           (!s.client ? '<td class="num"><strong>' + money(v ? v.value : null) + '</strong><span class="small">' + esc(v ? v.name : "") + "</span></td>" : "") +
@@ -181,14 +204,14 @@
   function date(value) { return value ? new Date(value).toLocaleString("ru-RU") : "Не передано"; }
   function detailsHtml(data) {
     detail = data; galleryIndex = 0;
-    var p = Object.assign({}, data.product, { commerce: data.commerce, _onecQuality: data._onecQuality });
+    var p = Object.assign({}, data.product, { commerce: data.commerce, _onecQuality: data._onecQuality, variants: data.variants || [] });
     cache(p); detail.item = p;
     var technical = function (x) { return /^(Главная|СсылкаНаГлавную(?:NEW)?|Название для сайта|сайт Тандор|АкцияДействует(?:До|С)_.+)$/.test(x.name.trim()); };
     function fields(rows) { return rows.map(function (x) { return '<div class="field"><div class="small">' + esc(x.name) + "</div><div>" + esc(x.value.trim() || "Не указано в выгрузке") + "</div></div>"; }).join(""); }
     var c = commerce(p);
     return '<div class="cat-panel-head"><div><div class="cat-crumbs">' + esc(p.guid) + '</div><h2 id="ic-detail-title">' + esc(p.name) +
       '</h2><div class="sub">' + esc([prop(p, "Цвет"), prop(p, "Размер, мм"), prop(p, "Бренд")].filter(Boolean).join(" / ")) + "</div></div></div>" +
-      '<div class="cat-panel-body"><div class="cat-gallery" id="ic-product-gallery">' + galleryHtml(p) + '</div><div class="cat-info">' + quality(p) +
+      '<div class="cat-panel-body"><div class="cat-gallery" id="ic-product-gallery">' + galleryHtml(p) + '</div><div class="cat-info">' + sizes(p, true) + quality(p) +
       (!s.client ? '<div><div class="cat-h3row"><span class="small">Цены из 1С</span></div><div class="cat-pricebox">' + (c.prices.length ? c.prices.map(function (v) {
         return '<div class="tile"><div class="small">' + esc(v.name) + '</div><span class="cat-price' + (v.conflict ? " ic-conflict" : "") + '">' + (v.conflict ? "Проверить" : money(v.value)) + "</span></div>";
       }).join("") : '<div class="tile">Цены не переданы</div>') + '</div><p class="small">Загрузка: ' + esc(date(c.pricesImportedAt)) + "</p></div>" : "") +
@@ -198,7 +221,7 @@
       '<div><div class="cat-h3row"><h3>Характеристики</h3></div><div class="cat-specs">' + fields(p.properties.filter(function (x) { return !technical(x); })) + "</div></div>" +
       '<div class="cat-actions"><button type="button" class="primary" data-action="reply" data-guid="' + esc(p.guid) + '">' + icon("copy") +
       'Ответ клиенту</button></div><p class="cat-copy-hint">Копирование вручную. Сообщения клиентам не отправляются.</p>' +
-      '<p class="small">Варианты, аналоги и совместимость не определяются по названию. Доступны после передачи связей из 1С.</p></div></div>' +
+      '<p class="small">Размеры сгруппированы только при совпадении связи модели, исполнения и цены. Аналоги и совместимость не определяются по названию.</p></div></div>' +
       '<details class="ic-raw"><summary>Источник и служебные поля 1С</summary><div class="cat-specs">' + fields(p.properties.filter(technical)) + "</div>" +
       (!s.client ? (data.sourceValues || []).map(function (x) { return "<pre>" + esc(JSON.stringify(x.record, null, 2)) + "</pre>"; }).join("") : "") +
       '<p>Источник: ' + esc(bridge.snapshot().sourceName) + " · загружен " + esc(date(data.importedAt)) + "</p></details>";
@@ -256,6 +279,8 @@
         $("availability").value = s.availability; quick(); icons(); bridge.changed(); return;
       }
       var action = button.dataset.action, p = productCache.get(button.dataset.guid);
+      if (action === "size") { selectSize(button.dataset.guid, button.dataset.family); return; }
+      if (action === "detail-size") { bridge.openProduct(button.dataset.guid, "replace"); return; }
       if (action === "nav-back") { navParent = (group(navParent) || {}).parent || ""; renderTree(); return; }
       if (action === "photo" && p) {
         var inPanel = !!button.closest("#ic-detail"), list = files(p), current = inPanel ? galleryIndex : photoIndexes[p.guid] || 0;

@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import type { ParsedSnapshot, Product, Summary } from "./model";
 import { normalizeSearch, propertyValue, searchText } from "./model";
 import { commerceFor, groupDescendants, productPresentation, type CatalogContext } from "./presentation";
+import { productFamilies, productSize } from "./variants";
 
 export type Snapshot = { id: string; sha256: string; sourceName: string; importedAt: string; summary: Summary };
 type DbSnapshot = { id: string; sha256: string; source_name: string; imported_at: Date; summary: Summary };
@@ -58,6 +59,27 @@ export function listItem(product: Product) {
     article: propertyValue(product, "Артикул"), imagePathCount: product.files.length,
     coverFileGuid: product.files[0]?.guid ?? null, ...productPresentation(product) };
 }
+// Snapshots are immutable. Bound memory and lifetime; never cache rights or commerce.
+const productRecords = new WeakMap<object, Map<string, { until: number; products: Product[] }>>();
+async function snapshotProducts(db: Pool | PoolClient, snapshotId: string): Promise<Product[]> {
+  const cache = productRecords.get(db) ?? new Map();
+  productRecords.set(db, cache);
+  const hit = cache.get(snapshotId);
+  if (process.env.NODE_ENV !== "test" && hit && hit.until > Date.now()) return hit.products;
+  const products = (await db.query<{ record: Product }>(
+    "SELECT record FROM internal_catalog_products WHERE snapshot_id=$1::uuid ORDER BY name,guid", [snapshotId])).rows.map(x => x.record);
+  if (cache.size >= 2) cache.delete(cache.keys().next().value!);
+  cache.set(snapshotId, { until: Date.now() + 60_000, products });
+  return products;
+}
+export async function loadProductVariants(db: Pool | PoolClient, snapshotId: string, guid: string,
+  context: CatalogContext, priceType: string) {
+  const family = productFamilies(await snapshotProducts(db, snapshotId), context, priceType)
+    .find(x => x.products.some(p => p.guid === guid));
+  return family && family.products.length > 1 ? family.products.map(p => ({
+    ...listItem(p), size: productSize(p), commerce: commerceFor(context, p.guid),
+  })) : [];
+}
 export async function searchProducts(db: Pool | PoolClient, snapshotId: string, search: Search, context?: CatalogContext) {
   const values: unknown[] = [snapshotId], clauses = ["snapshot_id=$1::uuid"];
   function where(sql: string, value: unknown) { values.push(value); clauses.push(sql.replace("?", `$${values.length}`)); }
@@ -95,6 +117,27 @@ export async function searchProducts(db: Pool | PoolClient, snapshotId: string, 
       WHERE btrim(prop->>'name')=? AND translate(lower(btrim(prop->>'value')),'ДАИСТН','даистн') IN ('да','истина','true','1'))`, name);
   }
   const predicate = clauses.join(" AND ");
+  if (context) {
+    // Filter individual SKUs first, then paginate families, not raw products.
+    // Keep every sibling available and mark which sizes match current filters.
+    const order = { asc: "commerce.price ASC NULLS LAST,", desc: "commerce.price DESC NULLS LAST,",
+      stock: "commerce.quantity DESC NULLS LAST," }[search.sort ?? ""] ?? "";
+    const matches = (await db.query<{ guid: string }>(`SELECT c.guid FROM ${from}
+      WHERE ${predicate} ORDER BY ${order}name,c.guid`, values)).rows.map(x => x.guid);
+    const rank = new Map(matches.map((guid, index) => [guid, index]));
+    const families = productFamilies(await snapshotProducts(db, snapshotId), context, search.priceType ?? "")
+      .map(family => ({ ...family, matching: family.products.filter(p => rank.has(p.guid))
+        .sort((a, b) => rank.get(a.guid)! - rank.get(b.guid)!) }))
+      .filter(family => family.matching.length)
+      .sort((a, b) => rank.get(a.matching[0].guid)! - rank.get(b.matching[0].guid)!);
+    const total = families.length, page = Math.min(search.page, Math.max(1, Math.ceil(total / search.pageSize)));
+    return { snapshotId, total, matchedProducts: matches.length, page, pageSize: search.pageSize,
+      items: families.slice((page - 1) * search.pageSize, page * search.pageSize).map(family => {
+        const item = (p: Product) => ({ ...listItem(p), size: productSize(p), commerce: commerceFor(context, p.guid) });
+        return { ...item(family.matching[0]), modelName: family.modelName,
+          variants: family.products.length > 1 ? family.products.map(p => ({ ...item(p), matchesFilters: rank.has(p.guid) })) : [] };
+      }) };
+  }
   const total = Number((await db.query<{ count: string }>(
     `SELECT COUNT(*) FROM ${from} WHERE ${predicate}`, values)).rows[0].count);
   const page = Math.min(search.page, Math.max(1, Math.ceil(total / search.pageSize)));
@@ -103,8 +146,8 @@ export async function searchProducts(db: Pool | PoolClient, snapshotId: string, 
   const records = await db.query<{ record: Product }>(`SELECT record FROM ${from}
     WHERE ${predicate} ORDER BY ${order}name,guid LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
     [...values, search.pageSize, (page - 1) * search.pageSize]);
-  return { snapshotId, total, page, pageSize: search.pageSize, items: records.rows.map(x => ({
-    ...listItem(x.record), ...(context ? { commerce: commerceFor(context, x.record.guid) } : {}),
+  return { snapshotId, total, matchedProducts: total, page, pageSize: search.pageSize, items: records.rows.map(x => ({
+    ...listItem(x.record), variants: [], modelName: null, size: productSize(x.record),
   })) };
 }
 export async function loadProduct(db: Pool | PoolClient, snapshotId: string, guid: string): Promise<Product | null> {

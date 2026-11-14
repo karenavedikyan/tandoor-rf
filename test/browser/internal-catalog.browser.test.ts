@@ -7,7 +7,9 @@ import { chromium, type Browser, type Page } from "playwright";
 import { createApp } from "../../src/server";
 import { normalizeSearch, parseProductsJson, type Product } from "../../src/internal-catalog/model";
 import { listItem } from "../../src/internal-catalog/repository";
-import { catalogueFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
+import { catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
+import { productFamilies, productSize } from "../../src/internal-catalog/variants";
+import type { CatalogContext } from "../../src/internal-catalog/presentation";
 import { resolveMockResponse } from "./helpers/clients-api-mocks";
 import sharp from "sharp";
 
@@ -23,7 +25,7 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     photoBytes = await sharp({ create: { width: 20, height: 10, channels: 3, background: "#426428" } }).webp().toBuffer();
   });
   after(async () => { await browser?.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  async function open(options: { products?: Product[]; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string; images?: boolean; brokenImages?: boolean; role?: "admin" | "manager"; forbidden?: boolean; workspace?: boolean } = {}) {
+  async function open(options: { products?: Product[]; variants?: boolean; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string; images?: boolean; brokenImages?: boolean; role?: "admin" | "manager"; forbidden?: boolean; workspace?: boolean } = {}) {
     const context = await browser.newContext({ viewport: options.mobile ? { width: 375, height: 812 } : { width: 1440, height: 1000 } });
     const page = await context.newPage();
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
@@ -32,6 +34,11 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     const commerce = { prices: [{ guid: fixtureGuid(800), name: "РРЦ Тандор", value: 12500, conflict: false }],
       warehouses: [{ guid: fixtureGuid(801), name: "Склад 1С", value: 12, conflict: false }], quantity: 12,
       pricesImportedAt: "2026-11-14T08:00:00Z", stocksImportedAt: "2026-11-14T08:00:00Z" };
+    const commerceFor = (p: Product) => options.variants ? { ...commerce, quantity: 12 + products.indexOf(p),
+      warehouses: [{ ...commerce.warehouses[0], value: 12 + products.indexOf(p) }] } : commerce;
+    const catalogContext: CatalogContext = { groups: [], priceTypes: [], commerce: new Map(products.map(p => [p.guid, commerceFor(p)])) };
+    const families = () => productFamilies(products, catalogContext, fixtureGuid(800));
+    const variant = (p: Product) => ({ ...listItem(p), size: productSize(p), commerce: commerceFor(p) });
     const control = { failList: false, hold: "", release: null as (() => void) | null,
       imported: false, uploadCalls: 0, uploadHash: "", failUpload: false };
     // Synthetic UI only. Real HTML/admin authorization is covered in integration.
@@ -66,11 +73,21 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
               (!url.searchParams.get("section") || p.chapter.some(x => x.guid === url.searchParams.get("section"))) &&
               (!url.searchParams.get("brand") || item.brand === url.searchParams.get("brand"));
           }).sort((a, b) => a.name.localeCompare(b.name, "ru"));
+          if (options.variants) {
+            const matches = new Set(filtered.map(p => p.guid));
+            const items = families().map(f => ({ ...f, selected: f.products.find(p => matches.has(p.guid)) }))
+              .filter(f => f.selected).map(f => ({ ...variant(f.selected!), modelName: f.modelName,
+                variants: f.products.map(p => ({ ...variant(p), matchesFilters: matches.has(p.guid) })) }));
+            const pageNumber = Math.min(Number(url.searchParams.get("page") || 1), Math.max(1, Math.ceil(items.length / 24)));
+            data = { snapshotId: fixtureGuid(900), total: items.length, matchedProducts: filtered.length, page: pageNumber, pageSize: 24,
+              items: items.slice((pageNumber - 1) * 24, pageNumber * 24) };
+          } else {
           const pageNumber = Math.min(Number(url.searchParams.get("page") || 1), Math.max(1, Math.ceil(filtered.length / 24)));
           data = { snapshotId: fixtureGuid(900), total: filtered.length, page: pageNumber, pageSize: 24,
             items: filtered.slice((pageNumber - 1) * 24, pageNumber * 24).map(p => ({
               ...listItem(p), ...(options.workspace ? { commerce } : {}),
             })) };
+          }
         }
       } else if (pathname.includes("/images/")) {
         await route.fulfill(options.brokenImages ? { status: 404, body: "unavailable" } :
@@ -80,7 +97,8 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
         const product = products.find(x => x.guid === pathname.split("/").pop());
         status = product ? 200 : 404;
         data = product ? { snapshotId: fixtureGuid(900), importedAt: "2026-10-31T08:00:00Z", product,
-          ...(options.workspace ? { commerce } : {}) } : { error: { message: "Товар не найден" } };
+          ...(options.workspace ? { commerce: commerceFor(product), ...(options.variants ?
+            { variants: families().find(f => f.products.some(p => p.guid === product.guid))?.products.map(variant) } : {}) } : {}) } : { error: { message: "Товар не найден" } };
       } else {
         const mock = resolveMockResponse(url, { role: options.role ?? "admin" }, { listCalls: 0, catalogProductsCalls: 0 }, route.request().method());
         if (mock) { await route.fulfill(mock); return; }
@@ -96,6 +114,51 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     await page.waitForFunction(expected => document.querySelector("#ic-count")?.textContent === `Найдено: ${expected} из 30` &&
       document.querySelector("#ic-results")?.getAttribute("aria-busy") === "false", count);
   }
+  for (const mobile of [false, true]) it(`selects real size-specific data in every view and detail (${mobile ? "mobile" : "desktop"})`, async () => {
+    const { page, context, errors } = await open({ products: sizeVariantsFixture(), workspace: true, variants: true, images: true, mobile });
+    try {
+      assert.equal(await page.locator(".cat-card").count(), 1);
+      assert.match(await page.locator("#ic-count").textContent() ?? "", /карточек: 1.*товаров: 4/);
+      for (const view of ["show", "site", "table"]) {
+        await page.locator(`[data-view="${view}"]`).click();
+        const button = page.locator('#ic-results [data-action="size"]').filter({ hasText: "2000×800" });
+        await button.click();
+        assert.equal(await button.getAttribute("aria-pressed"), "true");
+        assert.match(await page.locator("#ic-results .cat-stock").textContent() ?? "", /14/);
+        assert.match(await page.locator("#ic-results img").first().getAttribute("src") ?? "", new RegExp(fixtureGuid(3)));
+      }
+      await page.locator('[data-view="show"]').click();
+      await page.locator(".cat-name").first().click();
+      await page.locator('#ic-detail [data-action="detail-size"]').last().waitFor();
+      assert.match(await page.locator("#ic-detail-title").textContent() ?? "", /2000\*800/);
+      await page.locator('#ic-detail [data-action="detail-size"]').filter({ hasText: "2000×900" }).click();
+      await page.waitForFunction(() => document.querySelector("#ic-detail-title")?.textContent?.includes("2000*900"));
+      assert.match(page.url(), new RegExp("product=" + fixtureGuid(4)));
+      assert.match(await page.locator(".cat-stocktable").textContent() ?? "", /15/);
+      await page.locator('#ic-detail [data-action="reply"]').click();
+      assert.match(await page.locator("#ic-copy-text").inputValue(), /2000\*900/);
+      await page.locator('[data-close="copy"]').click();
+      await page.locator("#ic-close").click();
+      await page.waitForURL(url => !url.searchParams.has("product"));
+      await page.locator("#ic-query").fill("2000*800");
+      await page.waitForFunction(() => document.querySelector("#ic-results")?.getAttribute("aria-busy") === "false" &&
+        document.querySelector('#ic-results [data-action="size"][aria-pressed="true"]')?.textContent === "2000×800" &&
+        document.querySelectorAll('#ic-results [data-action="size"][title]').length === 3);
+      assert.equal(await page.locator('#ic-results [data-action="size"][title]').count(), 3);
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.screenshot({ path: `/home/user/workspace/catalog-sizes-${mobile ? "mobile" : "desktop"}.png`, fullPage: true });
+      await page.goto(base + "/internal-catalog?product=" + fixtureGuid(2));
+      await page.locator('#ic-detail [data-action="detail-size"]').last().waitFor();
+      assert.match(await page.locator("#ic-detail-title").textContent() ?? "", /2000\*700/);
+      await page.locator('#ic-detail [data-action="detail-size"]').filter({ hasText: "2000×600" }).click();
+      await page.waitForFunction(() => document.querySelector("#ic-detail-title")?.textContent?.includes("2000*600"));
+      await page.locator("#ic-close").click();
+      await page.waitForURL(url => !url.searchParams.has("product"));
+      assert.equal(await page.locator("#ic-detail").evaluate((d: HTMLDialogElement) => d.open), false);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
   it("uploads only after explicit confirmation and removes the form after success", async () => {
     const { page, context, errors, control } = await open({ empty: true, mobile: true });
     try {
