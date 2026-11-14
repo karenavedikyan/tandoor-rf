@@ -31,16 +31,17 @@
         return "<span>" + esc(w.name) + " <b>" + (w.value == null ? "Проверить" : num(w.value)) + "</b></span>";
       }).join("") + "</div>" : "");
   }
-  function imageUrl(p, file) {
+  function imageUrl(p, file, preview) {
     return "/api/internal-catalog/products/" + encodeURIComponent(p.guid) + "/images/" +
-      encodeURIComponent(file.guid) + "?version=" + encodeURIComponent(bridge.snapshot().id);
+      encodeURIComponent(file.guid) + "?version=" + encodeURIComponent(bridge.snapshot().id) +
+      (preview && meta.thumbnailsReady === true ? "&preview=" + preview : "");
   }
   function files(p) { return photoConfigured ? p.files || (p.coverFileGuid ? [{ guid: p.coverFileGuid, name: p.name }] : []) : []; }
   function photo(p, panel) {
     var list = files(p), i = panel ? galleryIndex : photoIndexes[p.guid] || 0;
     i = Math.max(0, Math.min(i, list.length - 1));
     return '<div class="cat-img' + (list.length > 1 ? " has-gallery" : "") + '" data-gallery="' + esc(p.guid) + '">' +
-      (list.length ? '<img src="' + esc(imageUrl(p, list[i])) + '" data-action="light" data-guid="' + esc(p.guid) + '" data-index="' + i + '" alt="' + esc(p.name + " · " + (list[i].name || "Фото " + (i + 1))) + '" loading="lazy" decoding="async">' +
+      (list.length ? '<img src="' + esc(imageUrl(p, list[i], panel ? "" : "list")) + '" data-action="light" data-guid="' + esc(p.guid) + '" data-index="' + i + '" alt="' + esc(p.name + " · " + (list[i].name || "Фото " + (i + 1))) + '" loading="lazy" decoding="async">' +
         '<button type="button" class="cat-zoom" data-action="light" data-guid="' + esc(p.guid) + '" data-index="' + i + '" aria-label="Увеличить фото ' + esc(p.name) + '">' + icon("zoom-in") + "</button>" +
         (list.length > 1 ? '<button type="button" class="cat-arr prev" data-action="photo" data-dir="-1" data-guid="' + esc(p.guid) + '" aria-label="Предыдущее фото">' + icon("chevron-left") + '</button><button type="button" class="cat-arr next" data-action="photo" data-dir="1" data-guid="' + esc(p.guid) + '" aria-label="Следующее фото">' + icon("chevron-right") + '</button><div class="cat-dots" aria-hidden="true">' +
           list.slice(0, 8).map(function (_, k) { return '<i class="' + (i === k ? "on" : "") + '"></i>'; }).join("") + "</div>" : "") : "") +
@@ -102,7 +103,7 @@
       items.map(function (p) {
         cache(p); var list = files(p), v = price(p);
         return '<tr role="row" data-product="' + esc(p.guid) + '" tabindex="0"><td role="cell"><div class="cat-thumb">' +
-          (list.length ? '<img src="' + esc(imageUrl(p, list[0])) + '" alt="" loading="lazy">' : "") +
+          (list.length ? '<img src="' + esc(imageUrl(p, list[0], "small")) + '" alt="" loading="lazy" decoding="async">' : "") +
           '</div></td><td role="cell"><div class="cat-name">' + esc(p.modelName || p.name) + '</div><span class="small ic-product-code' + (p.article ? "" : " ic-source-guid") + '">' + esc(p.article || p.guid) + "</span>" + sizes(p, false) + quality(p) +
           '</td><td role="cell" class="cat-hide-m"><span class="small">' + esc((p.sections || []).map(function (x) { return x.name; }).join(", ")) +
           '</span></td><td role="cell" class="cat-hide-m cat-hide-l"><span class="small">' + esc(prop(p, "Размер, мм")) + "</span></td>" +
@@ -230,7 +231,7 @@
     var list = files(p);
     return photo(p, true) + (list.length > 1 ? '<div class="cat-thumbs" aria-label="Фото товара">' +
       list.map(function (f, i) { return '<button type="button" class="' + (galleryIndex === i ? "active" : "") + '" data-action="thumb" data-index="' + i +
-        '" aria-label="Фото ' + (i + 1) + '" aria-pressed="' + (galleryIndex === i) + '"><img src="' + esc(imageUrl(p, f)) + '" alt="" loading="lazy"></button>'; }).join("") + "</div>" : "") +
+        '" aria-label="Фото ' + (i + 1) + '" aria-pressed="' + (galleryIndex === i) + '"><img src="' + esc(imageUrl(p, f, "small")) + '" alt="" loading="lazy"></button>'; }).join("") + "</div>" : "") +
       '<small>Нажмите на фото, чтобы увеличить' + (list.length ? " · " + list.length + " фото" : "") + "</small>";
   }
   function renderLight() {

@@ -10,7 +10,7 @@ import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { Pool } from "pg";
 import sharp from "sharp";
 import { processImageToPreview, processCatalogReferenceToPreview } from "../../src/catalog/image-storage";
-import { readFtpPhoto } from "../../src/internal-catalog/ftp-image";
+import { createFtpPhotoSession, readFtpPhoto } from "../../src/internal-catalog/ftp-image";
 import { createPhotoCache, readExistingCatalogPhoto } from "../../src/internal-catalog/shared-images";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "../../src/internal-catalog/images";
 
@@ -57,6 +57,20 @@ describe("internal catalogue shared photo source", { concurrency: false }, () =>
     const meta = await sharp(bytes).metadata();
     assert.equal(meta.format, "webp"); assert.equal(meta.width, 20); assert.equal(meta.exif, undefined);
     assert.equal(ftp.closed(), true);
+  });
+  it("manual preparation reuses its FTP connection and reconnects after errors", async () => {
+    let accesses = 0, clients = 0;
+    const first = fake(), second = fake();
+    for (const item of [first, second]) item.client.access = async () => { accesses++; };
+    const session = createFtpPhotoSession(() => clients++ === 0 ? first.client : second.client);
+    assert.ok(await session.read("a.jpg")); assert.ok(await session.read("b.jpg"));
+    assert.equal(accesses, 1); assert.equal(first.closed(), false);
+    first.client.size = async () => { throw new Error("private upstream"); };
+    assert.equal(await session.read("missing.jpg"), null);
+    assert.equal(first.closed(), true);
+    assert.ok(await session.read("c.jpg")); assert.equal(accesses, 2);
+    assert.equal(session.sourceBytes, jpeg.length * 3);
+    session.close(); assert.equal(second.closed(), true);
   });
   it("rejects unsafe paths before opening a connection, including FTP command injection", async () => {
     let clients = 0;

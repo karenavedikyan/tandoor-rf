@@ -9,6 +9,7 @@ import { auditSnapshot, importSnapshot, loadProduct, loadProductVariants, loadSn
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "./images";
 import { loadCatalogContext, loadCatalogFacets } from "./context";
 import { CATALOG_FACETS, commerceFor } from "./presentation";
+import { readThumbnail, thumbnailStatus } from "./thumbnails";
 
 export function createInternalCatalogRouter(): express.Router {
   const router = express.Router();
@@ -65,7 +66,9 @@ export function createInternalCatalogRouter(): express.Router {
     const [context, facets, counts] = await Promise.all([loadCatalogContext(db), loadCatalogFacets(db, current.id),
       db.query<{ guid: string; count: string }>(`SELECT record->>'guid_group' AS guid,count(*) AS count
         FROM internal_catalog_products WHERE snapshot_id=$1 GROUP BY record->>'guid_group'`, [current.id])]);
-    res.json({ snapshot: current, imagesConfigured: internalCatalogImagesConfigured(),
+    const thumbnails = await thumbnailStatus(db, current.id);
+    res.json({ snapshot: current, imagesConfigured: internalCatalogImagesConfigured() || thumbnails.enabled,
+      thumbnailsReady: thumbnails.enabled,
       groups: context.groups, groupCounts: counts.rows, facets, priceTypes: context.priceTypes });
   }));
   router.get("/audit", wrap(async (req, res) => {
@@ -146,12 +149,15 @@ export function createInternalCatalogRouter(): express.Router {
   }));
   router.get("/products/:guid/images/:fileGuid", wrap(async (req, res) => {
     const { guid, fileGuid } = req.params;
+    const preview = req.query.preview;
+    if (preview !== undefined && preview !== "small" && preview !== "list") { invalid(res); return; }
     if (!GUID.test(guid) || !GUID.test(fileGuid)) { invalid(res, "Некорректная ссылка на фотографию."); return; }
     const current = await snapshot(req, res);
     if (current === undefined) return;
     const product = current ? await loadProduct(requirePool(), current.id, guid) : null;
     const file = product?.files.find(item => item.guid === fileGuid.toLowerCase());
-    const bytes = file ? await readInternalCatalogImage(file, requirePool(), current!.id) : null;
+    const bytes = file ? preview ? await readThumbnail(requirePool(), current!.id, file.path, preview) :
+      await readInternalCatalogImage(file, requirePool(), current!.id) : null;
     if (!bytes) {
       res.status(404).json({ error: { code: "IMAGE_UNAVAILABLE", message: "Фотография пока недоступна." } });
       return;

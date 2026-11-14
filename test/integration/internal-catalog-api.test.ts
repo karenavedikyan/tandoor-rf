@@ -75,6 +75,8 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     for (const session of nonAdminCookies) {
       assert.equal((await request(app).get("/api/internal-catalog/audit")
         .query({ priceType: fixtureGuid(800) }).set("Cookie", session)).status, 403);
+      assert.equal((await request(app).get("/api/internal-catalog/products/" + fixtureGuid(1) +
+        "/images/" + fixtureGuid(300) + "?preview=small").set("Cookie", session)).status, 403);
     }
   });
   it("rejects unauthorized, cross-origin, malformed and oversized initial uploads without writes", async () => {
@@ -125,6 +127,7 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     try {
       for (const path of ["/internal-catalog", "/internal-catalog.html", "/api/internal-catalog/meta",
         "/api/internal-catalog/audit?priceType=" + fixtureGuid(800),
+        "/api/internal-catalog/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300) + "?preview=small",
         "/api/internal-catalog/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300)]) {
         assert.equal((await request(app).get(path).set("Cookie", cookie)).status, 403, path);
       }
