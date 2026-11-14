@@ -33,6 +33,7 @@ import {
 } from "../tanbot/external-person/telegram-bot-flow";
 import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
 import { menuReplyKeyboard } from "../tanbot/native-create/keyboards";
+import { isCatalogRequest, loadCatalogBotView, buildCatalogBotReply } from "../tanbot/catalog";
 
 export type WebhookReply = {
   chatId: bigint;
@@ -59,6 +60,27 @@ async function processParsedUpdate(
   config: TanbotTelegramStage2Config,
   parsed: ParsedTelegramWebhookUpdate,
 ): Promise<WebhookReply> {
+  if ((parsed.kind === "message" || parsed.kind === "callback") &&
+      isCatalogRequest(parsed.kind === "message" ? parsed.update.text : null,
+        parsed.kind === "callback" ? parsed.update.callbackData : null)) {
+    const update = parsed.update;
+    const claim = await claimTelegramUpdate(client, update.updateId);
+    if (claim.kind === "ignore") return null;
+    if (claim.kind === "resend") return claim.reply;
+    try {
+      const callback = parsed.kind === "callback" ? parsed.update.callbackData : null;
+      const answerCallbackQueryId = parsed.kind === "callback" ? parsed.update.callbackQueryId : undefined;
+      const catalog = buildCatalogBotReply("telegram", await loadCatalogBotView(client),
+        callback === "cat:root" ? null : callback);
+      const reply: WebhookReply = { chatId: update.chatId, text: catalog.text, replyMarkup: catalog.replyMarkup,
+        answerCallbackQueryId, replyExtra: { ...catalog.replyExtra, ...(answerCallbackQueryId ? { answerCallbackQueryId } : {}) } };
+      await commitTelegramUpdateReply(client, update.updateId, reply);
+      return reply;
+    } catch (error) {
+      await markTelegramUpdateFailed(client, update.updateId);
+      throw error;
+    }
+  }
   if (parsed.kind === "contact") {
     const update = parsed.update;
     const claim = await claimTelegramUpdate(client, update.updateId);

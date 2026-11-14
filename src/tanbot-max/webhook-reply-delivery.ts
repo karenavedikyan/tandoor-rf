@@ -13,6 +13,8 @@ import {
 import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
 import { deliverMaxNativeMediaFromExtra } from "../tanbot/native-create/media-delivery";
 import { withMaxMainMenuButton } from "./main-menu-button";
+import { readCatalogPhoto, catalogPhotoBytes } from "../tanbot/catalog";
+import { catalogJpeg } from "../tanbot/catalog-media";
 
 async function deliverMaxWebhookReplyUnderLock(
   client: import("pg").PoolClient,
@@ -39,14 +41,24 @@ async function deliverMaxWebhookReplyUnderLock(
     if (step === "done") break;
 
     if (step === "primary") {
+      const catalogPhoto = readCatalogPhoto(extra);
+      const storedPhoto = catalogPhoto ? await catalogPhotoBytes(client, catalogPhoto) : null;
+      const photoBytes = storedPhoto ? await catalogJpeg(storedPhoto) : null;
       lastResult = await transport({
         token: config.botToken,
         userId: reply.userId,
-        text: primaryText,
+        text: catalogPhoto && !photoBytes
+          ? "Фотография сейчас недоступна. Откройте каталог заново или выберите другую модель."
+          : primaryText,
         timeoutMs: config.requestTimeoutMs,
         maxResponseBytes: config.maxResponseBytes,
         inlineButtons: withMaxMainMenuButton(extra.inlineButtons ?? reply.inlineButtons),
+        photoBytes: photoBytes ?? undefined,
+        maxImageToken: photoBytes && typeof extra.catalogImageToken === "string" ? extra.catalogImageToken : undefined,
       });
+      if (catalogPhoto && lastResult.uploadedImageToken) {
+        await updateMaxReplyExtra(client, dedupKey, { ...extra, catalogImageToken: lastResult.uploadedImageToken });
+      }
       if (!lastResult.ok) return lastResult;
       await mergeMaxReplyDeliveryProgress(client, dedupKey, "primary");
       continue;

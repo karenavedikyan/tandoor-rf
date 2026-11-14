@@ -40,6 +40,7 @@ export function menuReplyKeyboard(options: { showContinue?: boolean } = {}): Rec
     [{ text: "Создать передачу" }],
     [{ text: "Мои передачи" }],
     [{ text: "Статус трека" }],
+    [{ text: "Каталог" }],
   ];
   if (options.showContinue) {
     rows.push([{ text: "Продолжить оформление" }]);
@@ -115,9 +116,14 @@ export function buildMainMenuInline(
   ];
   if (channel === "telegram") {
     const rows: BtnDef[][] = [primary, [{ label: "Меню", action: "menu" }]];
-    return { telegramInlineKeyboard: rows.map((row) => tgRow(draftId, MENU_REVISION, row)) };
+    return { telegramInlineKeyboard: [
+      ...rows.slice(0, 1).map((row) => tgRow(draftId, MENU_REVISION, row)),
+      [{ text: "Каталог", callback_data: "cat:root" }],
+      ...rows.slice(1).map((row) => tgRow(draftId, MENU_REVISION, row)),
+    ] };
   }
   const maxRows: MaxInlineButton[][] = primary.map((button) => maxRow(draftId, MENU_REVISION, [button]));
+  maxRows.push([{ type: "callback", text: "Каталог", payload: "cat:root" }]);
   if (resume) {
     const resumePayload = buildNativeCreateCallback("menu_resume", resume.draftId, resume.revision);
     if (resumePayload) {

@@ -33,6 +33,7 @@ import {
   markMaxUpdateFailed,
 } from "./webhook-inbox";
 import { deliverMaxWebhookReply } from "./webhook-reply-delivery";
+import { isCatalogRequest, loadCatalogBotView, buildCatalogBotReply } from "../tanbot/catalog";
 
 export type WebhookReply = {
   userId: bigint;
@@ -94,6 +95,19 @@ async function processUpdateInTransaction(
   const lkUrl = `${config.appOrigin}/profile`;
 
   try {
+    if (isCatalogRequest(commandText, callbackPayload)) {
+      // MAX dialog IDs differ from user IDs; never treat a group as a dialog.
+      if (recipientChatType !== "dialog") {
+        reply = { userId: update.maxUserId, chatId: update.chatId,
+          text: "Каталог доступен в личном диалоге с ботом." };
+      } else {
+        const catalog = buildCatalogBotReply("max", await loadCatalogBotView(client),
+          callbackPayload === "cat:root" ? null : callbackPayload);
+        reply = { userId: update.maxUserId, chatId: update.chatId, ...catalog };
+      }
+      await commitMaxUpdateReply(client, update.dedupKey, reply);
+      return reply;
+    }
     if (unsignedVcfInfo !== undefined) {
       const { tryNativeCreateMaxRecipientContact } = await import("../tanbot/native-create/adapters");
       const native = await tryNativeCreateMaxRecipientContact(client, {

@@ -1,8 +1,8 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { CATALOG_FACETS, buildCatalogContext, type SourceRow } from "./presentation";
 
 /** Read-only projection of already imported evidence. No FTP, imports, writes or global data cache. */
-export async function loadCatalogContext(db: Pool) {
+export async function loadCatalogContext(db: Pool | PoolClient) {
   const rows = await db.query<SourceRow>(`SELECT r.file_key,r.record,b.imported_at
     FROM onec_manual_object_versions v JOIN onec_manual_records r
       ON r.batch_id=v.batch_id AND r.entity_kind=v.entity_kind AND r.entity_guid=v.entity_guid AND r.file_key=v.file_key

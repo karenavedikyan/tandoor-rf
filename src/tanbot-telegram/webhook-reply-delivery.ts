@@ -14,6 +14,8 @@ import {
 import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
 import { deliverTelegramNativeMediaFromExtra } from "../tanbot/native-create/media-delivery";
 import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../tanbot/native-create/telegram-reply-markup";
+import { readCatalogPhoto, catalogPhotoBytes } from "../tanbot/catalog";
+import { catalogJpeg } from "../tanbot/catalog-media";
 
 export function buildTelegramSendMessagePayload(input: {
   chatId: bigint;
@@ -116,10 +118,23 @@ async function deliverTelegramWebhookReplyUnderLock(
         text: primaryText,
         replyMarkup: extra.replyMarkup ?? reply.replyMarkup,
       });
+      const catalogPhoto = readCatalogPhoto(extra);
+      const storedPhoto = catalogPhoto ? await catalogPhotoBytes(client, catalogPhoto) : null;
+      const photoBytes = storedPhoto ? await catalogJpeg(storedPhoto) : null;
+      if (catalogPhoto) {
+        if (photoBytes) {
+          delete body.text;
+          delete body.link_preview_options;
+          body.caption = primaryText;
+        } else {
+          body.text = "Фотография сейчас недоступна. Откройте каталог заново или выберите другую модель.";
+        }
+      }
       lastResult = await transport({
-        method: "sendMessage",
+        method: photoBytes ? "sendPhoto" : "sendMessage",
         token: config.botToken,
         body,
+        photoBytes: photoBytes ?? undefined,
         timeoutMs: config.requestTimeoutMs,
         maxResponseBytes: config.maxResponseBytes,
       });
