@@ -67,3 +67,20 @@ it("never uses an unknown attribute to bridge conflicting known configurations, 
     assert.equal(families.find(f => f.products.some(p => p.guid === g(2)))!.products.length, 1);
   }
 });
+it("keeps per-SKU stock, arrivals, promotions, warranty and operating text out of physical identity", () => {
+  const products = sizeVariantsFixture();
+  products.forEach((p, i) => {
+    ["Актуальный остаток", "Дата ожидаемого поступления", "Количество ожидаемого поступления",
+      "Гарантийный срок", "Условия эксплуатации", "Новинка", "Хит продаж", "Акция",
+      "АкцияДействуетС_Тандор_ОПТ", "АкцияДействуетДо_Оптовик"].forEach((name, n) =>
+      p.properties.push({ guid: g(950 + n), name, value: "Исходное значение SKU " + i }));
+  });
+  const before = JSON.stringify(products);
+  assert.equal(productFamilies(products, context(), g(800)).length, 1);
+  assert.equal(JSON.stringify(products), before);
+  for (const name of ["Сторона открывания", "Вид утеплителя", "Комплектующие", "Глазок", "ВХ. Стеклопакет"]) {
+    const copy = structuredClone(products);
+    copy.forEach((p, i) => p.properties.push({ guid: g(980), name, value: i < 2 ? "Исполнение А" : "Исполнение Б" }));
+    assert.equal(productFamilies(copy, context(), g(800)).length, 2, name);
+  }
+});

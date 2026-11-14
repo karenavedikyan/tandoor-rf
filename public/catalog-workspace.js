@@ -311,6 +311,11 @@
     document.addEventListener("error", function (event) {
       var image = event.target;
       if (!(image instanceof HTMLImageElement)) return;
+      var thumb = image.closest(".cat-thumb");
+      if (thumb) {
+        image.hidden = true; thumb.classList.add("ic-photo-unavailable");
+        thumb.setAttribute("aria-label", "Фото пока недоступно"); thumb.setAttribute("role", "img");
+      }
       var box = image.closest(".cat-img");
       if (box) { image.hidden = true; var msg = box.querySelector(".cat-img-missing"); if (msg) msg.hidden = false; }
       if (image.closest("#ic-light")) { image.alt = "Фото пока недоступно"; }

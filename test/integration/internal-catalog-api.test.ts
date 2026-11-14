@@ -65,12 +65,16 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     assert.equal((await get("/products")).body.total, 0);
   });
   it("does not leak catalogue existence or metadata to anonymous/unlinked external users", async () => {
-    for (const path of ["/meta", "/products", "/products/" + fixtureGuid(1),
+    for (const path of ["/meta", "/audit?priceType=" + fixtureGuid(800), "/products", "/products/" + fixtureGuid(1),
       "/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300)]) {
       assert.equal((await request(app).get("/api/internal-catalog" + path)).status, 401);
       const denied = await request(app).get("/api/internal-catalog" + path).set("Cookie", deniedCookie);
       assert.equal(denied.status, 403);
       assert.equal(denied.body.snapshot, undefined);
+    }
+    for (const session of nonAdminCookies) {
+      assert.equal((await request(app).get("/api/internal-catalog/audit")
+        .query({ priceType: fixtureGuid(800) }).set("Cookie", session)).status, 403);
     }
   });
   it("rejects unauthorized, cross-origin, malformed and oversized initial uploads without writes", async () => {
@@ -120,6 +124,7 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     await setSessionPreviewUser(session.sessionId, staffId);
     try {
       for (const path of ["/internal-catalog", "/internal-catalog.html", "/api/internal-catalog/meta",
+        "/api/internal-catalog/audit?priceType=" + fixtureGuid(800),
         "/api/internal-catalog/products/" + fixtureGuid(1) + "/images/" + fixtureGuid(300)]) {
         assert.equal((await request(app).get(path).set("Cookie", cookie)).status, 403, path);
       }
@@ -391,6 +396,15 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     const detail = await get("/products/" + fixtureGuid(2)).query({ version, priceType: type });
     assert.equal(detail.body.product.guid, fixtureGuid(2)); assert.equal(detail.body.variants.length, 3);
     assert.equal(detail.body.product.properties.some(p => p.name === "Стекло"), false);
+    const audit = await get("/audit").query({ version, priceType: type, q: "does-not-limit-the-audit", page: 999 });
+    assert.equal(audit.status, 200);
+    assert.equal(audit.body.products, 4); assert.equal(audit.body.cards, 2);
+    assert.deepEqual(audit.body.coverage, { assigned: 4, unique: 4, ok: true });
+    assert.equal(audit.body.unexplainedModels, 0);
+    assert.deepEqual(audit.body.unresolved[0].reasons, ["different_price"]);
+    assert.equal((await get("/audit")).status, 400);
+    assert.equal((await get("/audit").query({ priceType: "invalid" })).status, 400);
+    assert.equal((await get("/audit").query({ priceType: fixtureGuid(999) })).status, 400);
     assert.equal((await get("/products/" + fixtureGuid(4)).query({ version, priceType: type })).body.variants.length, 0);
     assert.equal((await get("/products/" + fixtureGuid(2)).query({ version, priceType: "" })).body.variants.length, 0);
     const context = await loadCatalogContext(pool);
