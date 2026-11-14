@@ -157,6 +157,14 @@ function categories(view: CatalogView): Group[] {
  * are ever copied to replies/captions. Existing name+RRP family rules are reused.
  */
 export function buildCatalogBotReply(channel: Channel, view: CatalogView | null, callback?: string | null): CatalogBotReply {
+  const result = buildCatalogBotContent(channel, view, callback);
+  if (channel === "telegram" && (!callback || callback === "cat:root")) {
+    result.replyExtra = { ...result.replyExtra, replyKeyboardClear: true };
+  }
+  return result;
+}
+
+function buildCatalogBotContent(channel: Channel, view: CatalogView | null, callback?: string | null): CatalogBotReply {
   if (view) view = restrictCatalogBotView(view);
   if (!view || !view.products.length) {
     return reply(channel, "Каталог\n\nМодели с готовыми фотографиями пока недоступны. Попробуйте позднее.", []);
@@ -187,7 +195,9 @@ export function buildCatalogBotReply(channel: Channel, view: CatalogView | null,
     buttons.push(...pageButtons(children.length, "g", id, current));
     if (id !== ROOT) buttons.push({ text: "Все модели раздела", data: catalogCallback("l", view.snapshotId, id) });
     if (id !== ROOT) buttons.push({ text: "К разделам", data: catalogCallback("g", view.snapshotId, group?.parent ?? ROOT) });
-    return reply(channel, `Каталог · ${label(group?.name ?? "Категории", 200)}\n\nВыберите категорию. Показываем только модели с готовыми фото.`, buttons);
+    return reply(channel, `Каталог · ${label(group?.name ?? "Категории", 200)}\n\n` +
+      (id === ROOT ? "Входные и межкомнатные двери, фурнитура.\n" : "") +
+      "Выберите категорию. Показываем только модели с готовыми фото.", buttons);
   }
   if (action === "l") {
     const descendants = new Set(id === ROOT ? [] : groupDescendants(groups, id));

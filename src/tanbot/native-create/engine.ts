@@ -629,13 +629,11 @@ export async function handleNativeCreateCallback(
       ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
   }
 
-  if (parsed.action === "menu_home") {
-    if (!isNativeMenuDraftHex(parsed.draftIdHex) || parsed.revision !== 1) return null;
-    try {
-      await assertNativeCreateContext(client, ctx);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Действие недоступно.";
-      return buildNativeMainMenuReply(client, ctx, { prefix: message, lock: false });
+  if (parsed.action === "menu_home" || parsed.action === "menu_tracker") {
+    if (!isNativeMenuDraftHex(parsed.draftIdHex) || parsed.revision !== 1 || parsed.arg) return null;
+    if (parsed.action === "menu_home") {
+      const { buildNativeRootMenuReply } = await import("./main-menu");
+      return buildNativeRootMenuReply(ctx);
     }
     return buildNativeMainMenuReply(client, ctx, { lock: false });
   }
@@ -1039,9 +1037,11 @@ export async function handleNativeCreateMessage(
   const {
     parseNativeBotSlashCommand,
     isNativeMainMenuText,
+    isNativeTrackerMenuText,
     isNativeContinueDraftText,
     isNativeCreateMenuText,
     buildNativeMainMenuReply,
+    buildNativeRootMenuReply,
     buildNativeCompactMenuReply,
   } = await import("./main-menu");
 
@@ -1052,11 +1052,11 @@ export async function handleNativeCreateMessage(
     return ctx.channel === "telegram" && reply.telegramInlineKeyboard
       ? { ...reply, replyMarkup: removeTelegramReplyKeyboard() } : reply;
   }
-  if (slash === "start") {
-    return buildNativeMainMenuReply(client, ctx);
+  if (slash === "start" || slash === "menu" || lower === "главное меню" || lower === "main menu") {
+    return buildNativeRootMenuReply(ctx);
   }
-  if (slash === "menu") {
-    return buildNativeCompactMenuReply(client, ctx);
+  if (isNativeTrackerMenuText(trimmed)) {
+    return buildNativeMainMenuReply(client, ctx);
   }
   if (lower === "мои передачи" || slash === "my") {
     await lockNativeCreateMessenger(client, ctx);

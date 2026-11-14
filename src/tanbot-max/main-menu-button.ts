@@ -19,6 +19,9 @@ export function withMaxMainMenuButton(buttons?: MaxInlineButton[][]): MaxInlineB
   const source = (buttons ?? []).map((row) => [...row]).filter((row) => row.length > 0);
   const flat = source.flat();
   if (flat.length === 2 && flat.every(button => button.type === "callback")) {
+    const isSectionChooser = flat.some(button => button.payload === "cat:root")
+      && flat.some(button => parseNativeCreateCallback(button.payload ?? "")?.action === "menu_tracker");
+    if (isSectionChooser) return source;
     const actions = flat.map(button => parseReceiptEntryCallback(
       button.type === "callback" ? button.payload : "",
     ));

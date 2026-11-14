@@ -16,7 +16,7 @@ describe("contextual bot keyboards", () => {
   it("home reply keyboard keeps primary actions only", () => {
     const keyboard = menuReplyKeyboard({ showContinue: true }).keyboard as Array<Array<{ text: string }>>;
     const labels = keyboard.flat().map((b) => b.text);
-    assert.deepEqual(labels, ["Создать передачу", "Мои передачи", "Статус трека", "Каталог", "Продолжить оформление", "Меню"]);
+    assert.deepEqual(labels, ["Создать передачу", "Мои передачи", "Статус трека", "Получить код приёма", "Настройки", "Продолжить оформление", "Главное меню"]);
   });
 
   for (const channel of ["max", "telegram"] as const) {
@@ -56,8 +56,10 @@ describe("contextual bot keyboards", () => {
     const labels = buildMainMenuInline("max").maxInlineButtons!.flat().map(b => b.text);
     assert.ok(labels.includes("Создать передачу"));
     assert.ok(labels.includes("Мои передачи"));
-    assert.ok(labels.includes("Меню"));
-    assert.ok(!labels.includes("Получить код приёма"));
+    assert.ok(labels.includes("Главное меню"));
+    assert.ok(labels.includes("Получить код приёма"));
+    assert.ok(labels.includes("Настройки"));
+    assert.ok(!labels.includes("Каталог"));
   });
 
   it("MAX footer defers to contextual menu buttons", () => {

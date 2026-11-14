@@ -12,7 +12,11 @@ import {
   nativeMainMenuText,
   isNativeCreateMenuText,
   nativeVerifiedContactRequiredReply,
+  buildNativeRootMenuReply,
 } from "../../src/tanbot/native-create/main-menu";
+import { nativeReplyToTelegram } from "../../src/tanbot/native-create/adapters";
+import { withMaxMainMenuButton } from "../../src/tanbot-max/main-menu-button";
+import { parseNativeCreateCallback } from "../../src/tanbot/native-create/callback-codec";
 
 describe("native main menu helpers", () => {
   it("own-phone gate explains the trusted contact requirement with provider-native buttons", () => {
@@ -62,8 +66,31 @@ describe("native main menu helpers", () => {
       staffUserId: null,
       personId: null,
     });
-    assert.match(text, /^Тандор\n/u);
+    assert.match(text, /^ТанТрекер\n/u);
     assert.match(text, new RegExp(NATIVE_MAIN_MENU_ACTION_PROMPT));
+  });
+
+  it("root has exactly two sections and clears Telegram tracker keyboard without a third MAX footer", () => {
+    for (const channel of ["max", "telegram"] as const) {
+      const reply = buildNativeRootMenuReply({
+        channel, messengerChatId: "1", messengerUserId: 1n, privateDialogOk: true,
+        isLinkedStaff: false, staffUserId: null, personId: null,
+      });
+      assert.match(reply.text, /ТанТрекер: создание и отслеживание передач/u);
+      assert.match(reply.text, /Каталог: входные и межкомнатные двери, фурнитура/u);
+      assert.doesNotMatch(reply.text, /подтвердите|Номер телефона подтверждён/u);
+      const rows = channel === "max" ? withMaxMainMenuButton(reply.maxInlineButtons) : reply.telegramInlineKeyboard!;
+      assert.deepEqual(rows.flat().map(b => b.text), ["ТанТрекер", "Каталог"]);
+      const first = rows[0]![0]!;
+      const payload = "payload" in first ? first.payload : "callback_data" in first ? first.callback_data : "";
+      assert.equal(parseNativeCreateCallback(payload ?? "")?.action, "menu_tracker");
+      if (channel === "telegram") {
+        const packed = nativeReplyToTelegram(reply);
+        assert.equal(packed.replyKeyboardClear, true);
+        assert.ok(packed.replyMarkup?.inline_keyboard);
+        assert.equal(packed.replyKeyboardRestore, undefined);
+      }
+    }
   });
 
   it("confirmed staff and external identities have the same user-facing greeting", () => {

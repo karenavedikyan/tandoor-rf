@@ -22,6 +22,7 @@ export type NativeCreateCallbackAction =
   | "menu_receive"
   | "menu_settings"
   | "menu_home"
+  | "menu_tracker"
   | "notify_ask_off"
   | "notify_off"
   | "notify_on"
@@ -55,6 +56,7 @@ const ACTION_CODE: Record<NativeCreateCallbackAction, string> = {
   notify_off: "o",
   notify_on: "p",
   menu_home: "r",
+  menu_tracker: "t",
   recipient_ext_tel: "h",
   recipient_ext_next: "g",
   recipient_ext_keep: "i",

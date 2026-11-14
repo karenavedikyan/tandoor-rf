@@ -11,16 +11,37 @@ import type { ExternalRequestDraftRow } from "../../tan-tracker/external-request
 import {
   buildCompactMenuInline,
   buildMainMenuInline,
+  buildRootMenuInline,
   maxContactWithMenuInline,
   menuReplyKeyboard,
+  removeTelegramReplyKeyboard,
   telegramContactWithMenuKeyboard,
 } from "./keyboards";
 
 export const NATIVE_MAIN_MENU_ACTION_PROMPT = "Выберите действие.";
 export const NATIVE_COMPACT_MENU_PROMPT = "Дополнительные действия.";
 
+export const NATIVE_ROOT_MENU_TEXT = [
+  "Тандор",
+  "",
+  "Выберите раздел.",
+  "",
+  "ТанТрекер: создание и отслеживание передач, подтверждение получения, коды приёма и уведомления.",
+  "",
+  "Каталог: входные и межкомнатные двери, фурнитура. Выбор моделей и просмотр фото. Только модели с фотографиями.",
+].join("\n");
+
+/** Public section chooser: no draft, phone gate or identity-specific details. */
+export function buildNativeRootMenuReply(ctx: NativeCreateContext): NativeCreateReply {
+  return {
+    text: NATIVE_ROOT_MENU_TEXT,
+    ...buildRootMenuInline(ctx.channel),
+    replyMarkup: ctx.channel === "telegram" ? removeTelegramReplyKeyboard() : undefined,
+  };
+}
+
 export function nativeMainMenuGreetingLines(ctx: NativeCreateContext): string[] {
-  const lines = ["Тандор", "Посылки, документы и предметы с подтверждением получения.", ""];
+  const lines = ["ТанТрекер", "Посылки, документы и предметы с подтверждением получения.", ""];
   if (ctx.isLinkedStaff || ctx.personId) {
     lines.push("Номер телефона подтверждён.");
   } else {
@@ -50,6 +71,10 @@ const MENU_TEXT_TRIGGERS = new Set(["меню", "главное меню", "main
 
 export function isNativeMainMenuText(text: string): boolean {
   return MENU_TEXT_TRIGGERS.has(text.trim().toLowerCase());
+}
+
+export function isNativeTrackerMenuText(text: string): boolean {
+  return text.trim().toLowerCase() === "тантрекер";
 }
 
 export const NATIVE_CONTINUE_DRAFT_TEXT = "продолжить оформление";
