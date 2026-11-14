@@ -10,6 +10,7 @@ import { internalCatalogImagesConfigured, readInternalCatalogImage } from "./ima
 import { loadCatalogContext, loadCatalogFacets } from "./context";
 import { CATALOG_FACETS, commerceFor } from "./presentation";
 import { readThumbnail, thumbnailStatus } from "./thumbnails";
+import { CatalogImageDeferred } from "../catalog/image-deferred";
 
 export function createInternalCatalogRouter(): express.Router {
   const router = express.Router();
@@ -156,8 +157,17 @@ export function createInternalCatalogRouter(): express.Router {
     if (current === undefined) return;
     const product = current ? await loadProduct(requirePool(), current.id, guid) : null;
     const file = product?.files.find(item => item.guid === fileGuid.toLowerCase());
-    const bytes = file ? preview ? await readThumbnail(requirePool(), current!.id, file.path, preview) :
-      await readInternalCatalogImage(file, requirePool(), current!.id) : null;
+    let bytes: Buffer | null;
+    try {
+      bytes = file ? preview ? await readThumbnail(requirePool(), current!.id, file.path, preview) :
+        await readInternalCatalogImage(file, requirePool(), current!.id) : null;
+    } catch (error) {
+      if (!(error instanceof CatalogImageDeferred)) throw error;
+      res.set("Retry-After", "3").status(503).json({
+        error: { code: "IMAGE_RETRY_LATER", message: "Фотография временно недоступна. Повторите запрос позже." },
+      });
+      return;
+    }
     if (!bytes) {
       res.status(404).json({ error: { code: "IMAGE_UNAVAILABLE", message: "Фотография пока недоступна." } });
       return;

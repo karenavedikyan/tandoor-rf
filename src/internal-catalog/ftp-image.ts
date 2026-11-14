@@ -3,6 +3,7 @@ import { Client } from "basic-ftp";
 import { getMaxImageBytes, processCatalogReferenceToPreview } from "../catalog/image-storage";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { safeImagePath } from "./model";
+import { CatalogImageDeferred } from "../catalog/image-deferred";
 
 type PhotoClient = Pick<Client, "access" | "size" | "downloadTo" | "close">;
 
@@ -27,7 +28,8 @@ export function createFtpPhotoSession(
   function close() { client?.close(); client = undefined; connected = false; }
   async function read(sourcePath: string): Promise<Buffer | null> {
     const relative = safeImagePath(sourcePath), loaded = loadOnecFtpConfig();
-    if (!relative || !loaded.ok) return null;
+    if (!relative) return null;
+    if (!loaded.ok) throw new CatalogImageDeferred();
     const config = loaded.config;
     client ??= makeClient(Math.min(config.timeoutMs, deadlineMs));
     const current = client;
@@ -52,17 +54,20 @@ export function createFtpPhotoSession(
             if (seen > expected || seen > limit) { done(new Error("IMAGE_SIZE_LIMIT")); return; }
             chunks.push(Buffer.from(chunk)); done();
           } }), remote);
-          if (seen !== expected) return null;
+          if (seen !== expected) throw new CatalogImageDeferred();
           const result = await processCatalogReferenceToPreview(Buffer.concat(chunks));
           return result.ok ? result.previewBuffer : null;
         })(),
-        new Promise<null>(resolve => {
-          timer = setTimeout(() => { close(); resolve(null); }, deadlineMs);
+        new Promise<null>((_resolve, reject) => {
+          timer = setTimeout(() => { close(); reject(new CatalogImageDeferred()); }, deadlineMs);
         }),
       ]);
-    } catch {
+    } catch (error) {
       // No paths, credentials or raw upstream error messages enter the API.
-      close(); return null;
+      close();
+      // 550 is a completed FTP negative response, not a connection/timeout failure.
+      if ((error as { code?: number }).code === 550) return null;
+      throw new CatalogImageDeferred();
     } finally {
       if (timer) clearTimeout(timer);
     }

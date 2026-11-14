@@ -3,6 +3,7 @@ import sharp from "sharp";
 import type { Pool, PoolClient } from "pg";
 import { processCatalogReferenceToPreview } from "../catalog/image-storage";
 import { safeImagePath } from "./model";
+import { CatalogImageDeferred, isImageResourceError } from "../catalog/image-deferred";
 
 // Change the recipe when encoding parameters change; never silently reuse old bytes.
 export const THUMBNAIL_RECIPE = "webp-v1-240-640-q76";
@@ -22,7 +23,10 @@ export async function makeThumbnails(source: Buffer) {
     const small = await encode(240), list = await encode(640);
     if (!small.length || small.length > 32768 || !list.length || list.length > 131072) return null;
     return { small, list, smallHash: hash(small), listHash: hash(list) };
-  } catch { return null; }
+  } catch (error) {
+    if (isImageResourceError(error)) throw new CatalogImageDeferred();
+    return null;
+  }
 }
 
 /** Caller must authorize and bind the file to the requested product/snapshot first.

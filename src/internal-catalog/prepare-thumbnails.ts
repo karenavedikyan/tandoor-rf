@@ -12,6 +12,7 @@ export async function prepareThumbnails(pool: Pool, options: {
   apply: boolean; maxFiles: number; maxRunMs?: number; retryFailed?: boolean;
   readSource?: (path: string) => Promise<Buffer | null>;
   progress?: (value: Record<string, unknown>) => void;
+  beforeFile?: () => void;
 }) {
   if (!Number.isInteger(options.maxFiles) || options.maxFiles < 1 || options.maxFiles > 10000)
     throw new Error("INVALID_LIMIT");
@@ -61,6 +62,8 @@ export async function prepareThumbnails(pool: Pool, options: {
         if ((await loadSnapshot(db))?.id !== snapshot.id) {
           report.snapshotChanged = true; return { ...report, status: await thumbnailStatus(db, snapshot.id) };
         }
+        // Optional CLI-only reclamation between files, never within a decoder.
+        options.beforeFile?.();
         report.attempted++;
         const source = options.readSource ? await options.readSource(relative) :
           await readExistingCatalogPhoto(pool, relative) ?? await ftp.read(relative);

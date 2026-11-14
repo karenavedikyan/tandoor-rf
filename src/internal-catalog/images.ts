@@ -7,6 +7,7 @@ import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { createPhotoCache, readExistingCatalogPhoto } from "./shared-images";
 import { readFtpPhoto } from "./ftp-image";
 import { safeImagePath, type SourceFile } from "./model";
+import { CatalogImageDeferred } from "../catalog/image-deferred";
 
 const cachedPhoto = createPhotoCache();
 
@@ -44,7 +45,8 @@ export async function readInternalCatalogImage(file: SourceFile, pool?: Pool, ve
     const bytes = await readBoundedFile(source, getMaxImageBytes());
     const preview = await processCatalogReferenceToPreview(bytes);
     return preview.ok ? preview.previewBuffer : null;
-  } catch {
+  } catch (error) {
+    if (error instanceof CatalogImageDeferred) throw error;
     // Do not disclose private filesystem paths, decoder errors or file existence.
     return null;
   }

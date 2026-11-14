@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { getCatalogImageStorageDir, processCatalogReferenceToPreview, readStoredImage } from "../catalog/image-storage";
 import { safeImagePath } from "./model";
+import { CatalogImageDeferred } from "../catalog/image-deferred";
 
 /** Authorization and snapshot/file binding MUST be checked by the caller first. */
 export async function readExistingCatalogPhoto(pool: Pool, relative: string): Promise<Buffer | null> {
@@ -25,7 +26,10 @@ export async function readExistingCatalogPhoto(pool: Pool, relative: string): Pr
       const preview = await processCatalogReferenceToPreview(bytes);
       if (preview.ok) return preview.previewBuffer;
     }
-  } catch { /* Missing/unavailable storage is eligible for the read-only FTP fallback. */ }
+  } catch (error) {
+    if (error instanceof CatalogImageDeferred) throw error;
+    /* Missing/unavailable storage is eligible for the read-only FTP fallback. */
+  }
   return null;
 }
 
@@ -55,10 +59,13 @@ export function createPhotoCache(options: {
         }, options.waitMs ?? 20_000);
         queue.push(start);
       });
-      if (!admitted) return null;
+      if (!admitted) throw new CatalogImageDeferred();
     } else active++;
     try { return await read(); }
-    catch { return null; }
+    catch (error) {
+      if (error instanceof CatalogImageDeferred) throw error;
+      return null;
+    }
     finally { active--; queue.shift()?.(); }
   }
   return async (key: string, read: Read): Promise<Buffer | null> => {
@@ -70,7 +77,7 @@ export function createPhotoCache(options: {
     if (hit) { used -= hit.bytes?.length ?? 0; cache.delete(key); }
     const underway = pending.get(key);
     if (underway) return underway;
-    if (pending.size >= (options.maxPending ?? 64)) return null;
+    if (pending.size >= (options.maxPending ?? 64)) throw new CatalogImageDeferred();
     const operation = execute(read).then(bytes => {
       if (!bytes || bytes.length <= maxBytes) {
         cache.set(key, { bytes, expires: now() + (bytes ? options.ttlMs ?? 300_000 : options.negativeTtlMs ?? 15_000) });

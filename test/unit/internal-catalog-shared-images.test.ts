@@ -13,6 +13,7 @@ import { processImageToPreview, processCatalogReferenceToPreview } from "../../s
 import { createFtpPhotoSession, readFtpPhoto } from "../../src/internal-catalog/ftp-image";
 import { createPhotoCache, readExistingCatalogPhoto } from "../../src/internal-catalog/shared-images";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "../../src/internal-catalog/images";
+import { CatalogImageDeferred } from "../../src/catalog/image-deferred";
 
 describe("internal catalogue shared photo source", { concurrency: false }, () => {
   let saved: NodeJS.ProcessEnv, jpeg: Buffer, webp: Buffer, root: string;
@@ -66,7 +67,7 @@ describe("internal catalogue shared photo source", { concurrency: false }, () =>
     assert.ok(await session.read("a.jpg")); assert.ok(await session.read("b.jpg"));
     assert.equal(accesses, 1); assert.equal(first.closed(), false);
     first.client.size = async () => { throw new Error("private upstream"); };
-    assert.equal(await session.read("missing.jpg"), null);
+    await assert.rejects(session.read("missing.jpg"), CatalogImageDeferred);
     assert.equal(first.closed(), true);
     assert.ok(await session.read("c.jpg")); assert.equal(accesses, 2);
     assert.equal(session.sourceBytes, jpeg.length * 3);
@@ -80,7 +81,7 @@ describe("internal catalogue shared photo source", { concurrency: false }, () =>
     }
     assert.equal(clients, 0);
     process.env.ONEC_FTP_ENABLED = "false";
-    assert.equal(await readFtpPhoto("ok.jpg", () => { clients++; return fake().client; }), null);
+    await assert.rejects(readFtpPhoto("ok.jpg", () => { clients++; return fake().client; }), CatalogImageDeferred);
     assert.equal(clients, 0);
   });
   it("renders a 1912x4180 catalogue door photo without relaxing ordinary image validation", async () => {
@@ -120,20 +121,28 @@ describe("internal catalogue shared photo source", { concurrency: false }, () =>
     }
   });
   it("rejects corrupt, truncated and growing transfers without leaking upstream errors", async () => {
-    for (const ftp of [fake(Buffer.from("<html>private error</html>")), fake(jpeg, jpeg.length + 1),
-      fake(jpeg, jpeg.length - 1)]) {
-      assert.equal(await readFtpPhoto("photo.jpg", () => ftp.client), null);
+    const corrupt = fake(Buffer.from("<html>private error</html>"));
+    assert.equal(await readFtpPhoto("photo.jpg", () => corrupt.client), null);
+    assert.equal(corrupt.closed(), true);
+    for (const ftp of [fake(jpeg, jpeg.length + 1), fake(jpeg, jpeg.length - 1)]) {
+      await assert.rejects(readFtpPhoto("photo.jpg", () => ftp.client), CatalogImageDeferred);
       assert.equal(ftp.closed(), true);
     }
     const ftp = fake();
     ftp.client.access = async () => { throw new Error("synthetic-secret/private/path"); };
-    assert.equal(await readFtpPhoto("photo.jpg", () => ftp.client), null);
+    await assert.rejects(readFtpPhoto("photo.jpg", () => ftp.client), { message: "CATALOG_IMAGE_DEFERRED" });
     assert.equal(ftp.closed(), true);
   });
   it("enforces an overall transfer deadline and closes a stalled connection", async () => {
     const ftp = fake();
     ftp.client.access = () => new Promise(() => {});
-    assert.equal(await readFtpPhoto("photo.jpg", () => ftp.client, 10), null);
+    await assert.rejects(readFtpPhoto("photo.jpg", () => ftp.client, 10), CatalogImageDeferred);
+    assert.equal(ftp.closed(), true);
+  });
+  it("keeps a completed FTP 550 response distinct from a temporary connection failure", async () => {
+    const ftp = fake();
+    ftp.client.size = async () => { throw Object.assign(new Error("private"), { code: 550 }); };
+    assert.equal(await readFtpPhoto("absent.jpg", () => ftp.client), null);
     assert.equal(ftp.closed(), true);
   });
   function db(rows: unknown[]) {
@@ -244,7 +253,7 @@ describe("bounded photo preview cache", () => {
     const first = cache("a", async () => { active++; peak = Math.max(peak, active);
       const bytes = await new Promise<Buffer>(resolve => { release = resolve; }); active--; return bytes; });
     const second = cache("b", async () => { active++; peak = Math.max(peak, active); active--; throw new Error("private"); });
-    assert.equal(await cache("c", async () => { throw new Error("must not run"); }), null);
+    await assert.rejects(cache("c", async () => { throw new Error("must not run"); }), CatalogImageDeferred);
     release(Buffer.from("ok")); await first; assert.equal(await second, null);
     assert.equal(peak, 1); assert.ok(await cache("d", async () => Buffer.from("ok")));
   });
@@ -252,7 +261,7 @@ describe("bounded photo preview cache", () => {
     const cache = createPhotoCache({ concurrency: 1, waitMs: 10 });
     let release!: (value: null) => void, ran = false;
     const first = cache("a", () => new Promise(resolve => { release = resolve; }));
-    assert.equal(await cache("b", async () => { ran = true; return null; }), null);
+    await assert.rejects(cache("b", async () => { ran = true; return null; }), CatalogImageDeferred);
     assert.equal(ran, false); release(null); await first;
   });
 });

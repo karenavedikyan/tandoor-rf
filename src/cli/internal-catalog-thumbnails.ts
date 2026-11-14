@@ -1,15 +1,26 @@
+// Set before loading native modules: this one-shot sequential CLI does not need
+// multiple libuv worker arenas retaining decoder memory. Never imported by HTTP.
+process.env.UV_THREADPOOL_SIZE = "1";
+
 import { requirePool } from "../db/pool";
 import { prepareThumbnails } from "../internal-catalog/prepare-thumbnails";
+import sharp from "sharp";
 
 async function main() {
   const args = process.argv.slice(2);
   if (args.some(arg => !["--apply", "--retry-failed"].includes(arg) && !/^--max-files=[1-9]\d*$/.test(arg)))
     throw new Error("INVALID_ARGUMENT");
+  // Explicit only in the standalone process: do not force GC in HTTP or jobs.
+  if (typeof global.gc !== "function") throw new Error("THUMBNAIL_CLI_REQUIRES_EXPOSE_GC");
+  // One explicit CLI process only; do not change the HTTP server's global settings.
+  sharp.cache(false);
+  sharp.concurrency(1);
   const pool = requirePool();
   try {
     const result = await prepareThumbnails(pool, {
       apply: args.includes("--apply"), retryFailed: args.includes("--retry-failed"),
       maxFiles: Number(args.find(x => x.startsWith("--max-files="))?.split("=")[1] ?? 250),
+      beforeFile: () => global.gc!(),
       progress: value => console.log(JSON.stringify({ progress: true, ...value })),
     });
     console.log(JSON.stringify({ apply: args.includes("--apply"), ...result }));
