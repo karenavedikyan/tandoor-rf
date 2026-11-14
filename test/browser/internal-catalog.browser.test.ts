@@ -342,6 +342,40 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   });
+  it("handles many sizes, SKU-specific service fields and broken table photos on mobile and desktop", async () => {
+    const products = Array.from({ length: 12 }, (_, i) => {
+      const p = structuredClone(sizeVariantsFixture()[0]), size = "2000х" + (400 + i * 100);
+      p.guid = fixtureGuid(i + 1); p.name = "Каталоговая модель " + size + " правая";
+      p.files[0].guid = fixtureGuid(300 + i);
+      p.properties.find(x => x.name === "Размер, мм")!.value = size;
+      p.properties.push({ guid: fixtureGuid(990), name: "Гарантийный срок", value: "Исходная гарантия размера " + i },
+        { guid: fixtureGuid(991), name: "Количество ожидаемого поступления", value: String(i) });
+      return p;
+    });
+    const { page, context, errors } = await open({ products, variants: true, workspace: true, mobile: true, images: true, brokenImages: true });
+    try {
+      for (const width of [375, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        for (const view of ["show", "site", "table"]) {
+          await page.locator(`[data-view="${view}"]`).click();
+          assert.equal(await page.locator('#ic-results [data-action="size"]').count(), 12);
+          await page.locator('#ic-results [data-action="size"]').last().click();
+          assert.equal(await page.locator('#ic-results [data-action="size"][aria-pressed="true"]').textContent(), "2000×1500");
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+          if (view === "table") {
+            await page.locator(".cat-thumb.ic-photo-unavailable").waitFor({ state: "attached" });
+            assert.equal(await page.locator(".cat-thumb img").isVisible(), false);
+            if (width === 375) assert.equal(await page.locator(".cat-table td").first().isVisible(), false);
+            await page.screenshot({ path: `/home/user/workspace/catalog-audit-table-${width}.png`, fullPage: true });
+          }
+        }
+      }
+      await page.locator(".cat-table .cat-name").click();
+      await page.waitForFunction(() => document.querySelector("#ic-detail-title")?.textContent?.includes("2000х1500"));
+      assert.match((await page.locator(".cat-specs").allTextContents()).join(" "), /Исходная гарантия размера 11/);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
   it("fits 375px, opens/closes a full-height card, and remains usable in dark/large type", async () => {
     const { page, context, errors } = await open({ mobile: true });
     const overflow = () => page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);

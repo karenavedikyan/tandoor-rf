@@ -5,7 +5,7 @@ import { csrfOriginProtection } from "../middleware/csrf";
 import { requirePool } from "../db/pool";
 import { internalCatalogAccess } from "./access";
 import { GUID, normalizeSearch, MAX_JSON_BYTES, parseProductsJson } from "./model";
-import { importSnapshot, loadProduct, loadProductVariants, loadSnapshot, searchProducts } from "./repository";
+import { auditSnapshot, importSnapshot, loadProduct, loadProductVariants, loadSnapshot, searchProducts } from "./repository";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "./images";
 import { loadCatalogContext, loadCatalogFacets } from "./context";
 import { CATALOG_FACETS, commerceFor } from "./presentation";
@@ -67,6 +67,16 @@ export function createInternalCatalogRouter(): express.Router {
         FROM internal_catalog_products WHERE snapshot_id=$1 GROUP BY record->>'guid_group'`, [current.id])]);
     res.json({ snapshot: current, imagesConfigured: internalCatalogImagesConfigured(),
       groups: context.groups, groupCounts: counts.rows, facets, priceTypes: context.priceTypes });
+  }));
+  router.get("/audit", wrap(async (req, res) => {
+    const priceType = field(req, "priceType", 36);
+    if (!priceType || !GUID.test(priceType)) { invalid(res); return; }
+    const current = await snapshot(req, res);
+    if (current === undefined) return;
+    if (!current) { res.json({ snapshotId: null, products: 0 }); return; }
+    const db = requirePool(), context = await loadCatalogContext(db);
+    if (!context.priceTypes.some(p => p.guid === priceType.toLowerCase())) { invalid(res); return; }
+    res.json(await auditSnapshot(db, current.id, context, priceType.toLowerCase()));
   }));
   router.get("/products", wrap(async (req, res) => {
     const q = field(req, "q", 160), section = field(req, "section", 36),

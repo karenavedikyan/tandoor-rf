@@ -3,6 +3,7 @@ import type { ParsedSnapshot, Product, Summary } from "./model";
 import { normalizeSearch, propertyValue, searchText } from "./model";
 import { commerceFor, groupDescendants, productPresentation, type CatalogContext } from "./presentation";
 import { productFamilies, productSize } from "./variants";
+import { auditCatalog } from "./audit";
 
 export type Snapshot = { id: string; sha256: string; sourceName: string; importedAt: string; summary: Summary };
 type DbSnapshot = { id: string; sha256: string; source_name: string; imported_at: Date; summary: Summary };
@@ -79,6 +80,9 @@ export async function loadProductVariants(db: Pool | PoolClient, snapshotId: str
   return family && family.products.length > 1 ? family.products.map(p => ({
     ...listItem(p), size: productSize(p), commerce: commerceFor(context, p.guid),
   })) : [];
+}
+export async function auditSnapshot(db: Pool | PoolClient, snapshotId: string, context: CatalogContext, priceType: string) {
+  return { snapshotId, ...auditCatalog(await snapshotProducts(db, snapshotId), context, priceType) };
 }
 export async function searchProducts(db: Pool | PoolClient, snapshotId: string, search: Search, context?: CatalogContext) {
   const values: unknown[] = [snapshotId], clauses = ["snapshot_id=$1::uuid"];

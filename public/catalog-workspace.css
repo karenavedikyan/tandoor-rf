@@ -111,6 +111,7 @@
 #catalog-root .ic-sizes .cat-opt.active,.cat-panel .ic-sizes .cat-opt.active{border-color:var(--green);background:var(--green);color:#fff}
 [data-theme=dark] #catalog-root .ic-sizes .cat-opt.active,[data-theme=dark] .cat-panel .ic-sizes .cat-opt.active{color:#172019}
 .ic-sizes .cat-opt[title]{border-style:dashed}
+.cat-thumb.ic-photo-unavailable::after{content:"Нет фото";font-size:var(--text-xs);color:var(--muted);text-align:center}
 .ic-client-mask .ic-private{display:none!important}
 body.internal-catalog-page.cat-fullscreen :is(#workspace-sidebar,#workspace-topbar,.ic-heading){display:none!important}
 body.internal-catalog-page.cat-fullscreen .legacy-frame{margin:0!important;padding:0!important}
@@ -143,9 +144,9 @@ body.internal-catalog-page:has(dialog[open]){overflow:hidden}
   #catalog-root .cat-table .ic-sizes{margin:8px 0 0}
   #catalog-root .cat-table .ic-sizes .row{gap:6px}
   #catalog-root .cat-table .ic-sizes .row>span{flex-basis:100%}
-  #catalog-root .cat-table tr:has(.cat-thumb:empty){grid-template-columns:minmax(0,1fr)}
-  #catalog-root .cat-table tr:has(.cat-thumb:empty) td:first-child{display:none}
-  #catalog-root .cat-table tr:has(.cat-thumb:empty) :is(td:nth-child(2),.ic-table-price,.ic-table-stock){grid-column:1}
+  #catalog-root .cat-table tr:has(.cat-thumb:empty,.cat-thumb.ic-photo-unavailable){grid-template-columns:minmax(0,1fr)}
+  #catalog-root .cat-table tr:has(.cat-thumb:empty,.cat-thumb.ic-photo-unavailable) td:first-child{display:none}
+  #catalog-root .cat-table tr:has(.cat-thumb:empty,.cat-thumb.ic-photo-unavailable) :is(td:nth-child(2),.ic-table-price,.ic-table-stock){grid-column:1}
   .internal-catalog-page .ic-main{padding:20px 16px}
   .ic-main .ic-heading h1{font-size:22px}
   #catalog-root .cat-seg button{padding:8px 10px}

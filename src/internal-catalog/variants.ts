@@ -6,36 +6,50 @@ export function productSize(product: Product): string | null {
   const value = propertyValue(product, "Размер, мм");
   return value && /^\d+(?:[.,]\d+)?(?:×\d+(?:[.,]\d+)?){1,2}$/.test(dimensions(value)) ? dimensions(value) : null;
 }
-function identity(product: Product, context: CatalogContext, priceType: string) {
+export function sizeModelKey(product: Product): string | null {
   const size = productSize(product), link = propertyValue(product, "СсылкаНаГлавную");
-  const price = commerceFor(context, product.guid).prices.find(x => x.guid === priceType);
-  if (!size || !link || !price || price.conflict || price.value === null) return null;
+  if (!size || !link) return null;
   // The source relationship is necessary, but not sufficient: some source links
   // include samples, other models or finishes. Never infer a relationship from names.
   const name = dimensions(product.name), at = name.indexOf(size);
   if (at < 0 || (at > 0 && /\d/.test(name[at - 1])) || /\d/.test(name[at + size.length] ?? "")) return null;
   const modelName = name.slice(0, at) + "{size}" + name.slice(at + size.length);
-  return JSON.stringify([link, modelName, product.guid_group ?? "", product.chapter.map(x => x.guid).sort(),
-    priceType, price.value, price.name]);
+  return JSON.stringify([link, modelName, product.guid_group ?? "", product.chapter.map(x => x.guid).sort()]);
 }
-const presentationFields = new Set(["Размер, мм", "Артикул", "Главная", "главная (бот)", "Название для сайта"]);
+function identity(product: Product, context: CatalogContext, priceType: string) {
+  const model = sizeModelKey(product), price = commerceFor(context, product.guid).prices.find(x => x.guid === priceType);
+  return !model || !price || price.conflict || price.value === null ? null :
+    JSON.stringify([model, priceType, price.value, price.name]);
+}
+// These are SKU-specific commercial/service values, not physical configuration.
+// Never copy them between sizes: detail/reply still use the selected original SKU.
+const presentationFields = new Set(["Размер, мм", "Артикул", "Главная", "главная (бот)", "Название для сайта",
+  "Актуальный остаток", "Дата ожидаемого поступления", "Количество ожидаемого поступления",
+  "Гарантийный срок", "Условия эксплуатации", "Новинка", "Хит продаж", "Акция"]);
 function configuration(product: Product): Map<string, string> {
   const values = new Map<string, Set<string>>();
   for (const property of product.properties) {
     const name = property.name.trim(), value = property.value.trim();
-    if (!value || presentationFields.has(name)) continue;
+    if (!value || presentationFields.has(name) || /^АкцияДействует(?:С|До)_/.test(name)) continue;
     const entries = values.get(name) ?? new Set<string>();
     entries.add(JSON.stringify([property.guid, value])); values.set(name, entries);
   }
   return new Map([...values].map(([name, entries]) => [name, JSON.stringify([...entries].sort())]));
 }
-function compatibleConfigurations(products: Product[]): Product[][] {
+function configurationAnalysis(products: Product[]) {
   const configurations = products.map(configuration), observed = new Map<string, Set<string>>();
   for (const fields of configurations) for (const [name, value] of fields) {
     const values = observed.get(name) ?? new Set<string>();
     values.add(value); observed.set(name, values);
   }
   const conflicts = [...observed].filter(([, values]) => values.size > 1).map(([name]) => name).sort();
+  return { configurations, conflicts };
+}
+export function conflictingConfigurationFields(products: Product[]): string[] {
+  return configurationAnalysis(products).conflicts;
+}
+function compatibleConfigurations(products: Product[]): Product[][] {
+  const { configurations, conflicts } = configurationAnalysis(products);
   const groups = new Map<string, Product[]>();
   products.forEach((product, index) => {
     const fields = configurations[index];
