@@ -15,10 +15,37 @@ function identity(product: Product, context: CatalogContext, priceType: string) 
   const name = dimensions(product.name), at = name.indexOf(size);
   if (at < 0 || (at > 0 && /\d/.test(name[at - 1])) || /\d/.test(name[at + size.length] ?? "")) return null;
   const modelName = name.slice(0, at) + "{size}" + name.slice(at + size.length);
-  const properties = product.properties.filter(x => !["Размер, мм", "Артикул", "Главная", "главная (бот)"].includes(x.name.trim()))
-    .map(x => [x.guid, x.name.trim(), x.value.trim()]).sort((a, b) => a[0].localeCompare(b[0]));
   return JSON.stringify([link, modelName, product.guid_group ?? "", product.chapter.map(x => x.guid).sort(),
-    properties, priceType, price.value, price.name]);
+    priceType, price.value, price.name]);
+}
+const presentationFields = new Set(["Размер, мм", "Артикул", "Главная", "главная (бот)", "Название для сайта"]);
+function configuration(product: Product): Map<string, string> {
+  const values = new Map<string, Set<string>>();
+  for (const property of product.properties) {
+    const name = property.name.trim(), value = property.value.trim();
+    if (!value || presentationFields.has(name)) continue;
+    const entries = values.get(name) ?? new Set<string>();
+    entries.add(JSON.stringify([property.guid, value])); values.set(name, entries);
+  }
+  return new Map([...values].map(([name, entries]) => [name, JSON.stringify([...entries].sort())]));
+}
+function compatibleConfigurations(products: Product[]): Product[][] {
+  const configurations = products.map(configuration), observed = new Map<string, Set<string>>();
+  for (const fields of configurations) for (const [name, value] of fields) {
+    const values = observed.get(name) ?? new Set<string>();
+    values.add(value); observed.set(name, values);
+  }
+  const conflicts = [...observed].filter(([, values]) => values.size > 1).map(([name]) => name).sort();
+  const groups = new Map<string, Product[]>();
+  products.forEach((product, index) => {
+    const fields = configurations[index];
+    // Missing is unknown, never a fabricated value. When known values disagree,
+    // an unknown SKU must not bridge two incompatible configurations.
+    const key = conflicts.some(name => !fields.has(name)) ? product.guid :
+      JSON.stringify(conflicts.map(name => fields.get(name)));
+    const group = groups.get(key) ?? []; group.push(product); groups.set(key, group);
+  });
+  return [...groups.values()];
 }
 export type ProductFamily = { products: Product[]; modelName: string | null };
 /** Presentation only. Every original GUID, property, photo and stock stays separate. */
@@ -28,7 +55,7 @@ export function productFamilies(products: Product[], context: CatalogContext, pr
     const key = identity(product, context, priceType) ?? product.guid;
     const bucket = buckets.get(key) ?? []; bucket.push(product); buckets.set(key, bucket);
   }
-  return [...buckets.values()].flatMap<ProductFamily>(items => {
+  return [...buckets.values()].flatMap(compatibleConfigurations).flatMap<ProductFamily>(items => {
     // Two source products for the same size are ambiguous; hide neither.
     if (items.length < 2 || new Set(items.map(productSize)).size !== items.length) {
       return items.map(product => ({ products: [product], modelName: null }));

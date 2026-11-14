@@ -3,7 +3,7 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, webkit, type Browser, type Page } from "playwright";
 import { createApp } from "../../src/server";
 import { normalizeSearch, parseProductsJson, type Product } from "../../src/internal-catalog/model";
 import { listItem } from "../../src/internal-catalog/repository";
@@ -21,11 +21,12 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     const address = server.address(); assert.ok(address && typeof address === "object");
     base = `http://127.0.0.1:${address.port}`;
-    browser = await chromium.launch({ headless: true, channel: "chromium" });
+    browser = process.env.CATALOG_TEST_BROWSER === "webkit" ? await webkit.launch({ headless: true }) :
+      await chromium.launch({ headless: true, channel: "chromium" });
     photoBytes = await sharp({ create: { width: 20, height: 10, channels: 3, background: "#426428" } }).webp().toBuffer();
   });
   after(async () => { await browser?.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  async function open(options: { products?: Product[]; variants?: boolean; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string; images?: boolean; brokenImages?: boolean; role?: "admin" | "manager"; forbidden?: boolean; workspace?: boolean } = {}) {
+  async function open(options: { products?: Product[]; variants?: boolean; unknownStock?: boolean; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string; images?: boolean; brokenImages?: boolean; role?: "admin" | "manager"; forbidden?: boolean; workspace?: boolean } = {}) {
     const context = await browser.newContext({ viewport: options.mobile ? { width: 375, height: 812 } : { width: 1440, height: 1000 } });
     const page = await context.newPage();
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
@@ -34,7 +35,7 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     const commerce = { prices: [{ guid: fixtureGuid(800), name: "РРЦ Тандор", value: 12500, conflict: false }],
       warehouses: [{ guid: fixtureGuid(801), name: "Склад 1С", value: 12, conflict: false }], quantity: 12,
       pricesImportedAt: "2026-11-14T08:00:00Z", stocksImportedAt: "2026-11-14T08:00:00Z" };
-    const commerceFor = (p: Product) => options.variants ? { ...commerce, quantity: 12 + products.indexOf(p),
+    const commerceFor = (p: Product) => options.unknownStock ? { ...commerce, quantity: null, warehouses: [] } : options.variants ? { ...commerce, quantity: 12 + products.indexOf(p),
       warehouses: [{ ...commerce.warehouses[0], value: 12 + products.indexOf(p) }] } : commerce;
     const catalogContext: CatalogContext = { groups: [], priceTypes: [], commerce: new Map(products.map(p => [p.guid, commerceFor(p)])) };
     const families = () => productFamilies(products, catalogContext, fixtureGuid(800));
@@ -292,6 +293,54 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     await denied.page.getByRole("heading", { name: "Каталог недоступен" }).waitFor();
     assert.match(await denied.page.locator("#ic-state").textContent() ?? "", /только администратору/);
     assert.equal(await denied.page.locator("#ic-app").isVisible(), false); await denied.context.close();
+  });
+  for (const images of [true, false]) it(`keeps long mobile table rows, sizes and stock inside the viewport (images=${images})`, async () => {
+    const products = sizeVariantsFixture();
+    products.forEach((p, i) => {
+      p.name += " зеркало бронза фацет кромка хром с 4х сторон/замок хром";
+      if (i !== 1) p.properties.push({ guid: fixtureGuid(992), name: "Стекло", value: "Зеркало бронза фацет" });
+      p.properties.push({ guid: fixtureGuid(993), name: "Название для сайта", value: i === 2 ? "400/6" : "400" });
+    });
+    const { page, context, errors } = await open({ products, variants: true, workspace: true, mobile: true, images, unknownStock: !images });
+    try {
+      await page.locator('[data-view="table"]').click();
+      assert.equal(await page.locator(".cat-table tbody tr").count(), 1);
+      for (const width of [375, 430]) for (const dark of [false, true]) {
+        await page.setViewportSize({ width, height: 812 });
+        await page.evaluate(dark => { document.documentElement.dataset.theme = dark ? "dark" : "light"; }, dark);
+        const layout = await page.locator(".cat-table tbody tr").evaluate(row => {
+          const box = row.getBoundingClientRect(), model = row.children[1].getBoundingClientRect();
+          const buttons = [...row.querySelectorAll('[data-action="size"]')].map(b => b.getBoundingClientRect());
+          const stock = row.querySelector(".cat-stock")!, stockBox = stock.getBoundingClientRect();
+          const wrap = row.closest(".tablewrap")!;
+          return { height: box.height, modelWidth: model.width,
+            buttonRows: new Set(buttons.map(b => Math.round(b.y))).size,
+            buttonsFit: buttons.every(b => b.right <= box.right && b.height >= 44),
+            stockFits: stockBox.right <= box.right && stock.scrollWidth <= stock.clientWidth + 1,
+            wrapFits: wrap.scrollWidth <= wrap.clientWidth + 1,
+            pageFits: document.documentElement.scrollWidth <= innerWidth,
+          };
+        });
+        assert.ok(layout.height < 340, JSON.stringify(layout));
+        assert.ok(layout.modelWidth >= 180, JSON.stringify(layout));
+        if (!images) assert.ok(layout.modelWidth >= 280, JSON.stringify(layout));
+        assert.ok(layout.buttonRows <= 2, JSON.stringify(layout));
+        assert.equal(layout.buttonsFit && layout.stockFits && layout.wrapFits && layout.pageFits, true, JSON.stringify(layout));
+      }
+      assert.equal(await page.locator(".ic-source-guid").isVisible(), false);
+      await page.locator('#ic-results [data-action="size"]').filter({ hasText: "2000×700" }).click();
+      assert.equal(await page.locator(".cat-table tbody tr").getAttribute("data-product"), fixtureGuid(2));
+      await page.setViewportSize({ width: 375, height: 812 });
+      await page.screenshot({ path: `/home/user/workspace/catalog-mobile-table-${images ? "photos" : "no-photos"}.png`, fullPage: true });
+      await page.locator("#ic-client-view").check();
+      assert.equal(await page.locator(".ic-table-price").count(), 0);
+      assert.equal(await page.getByText("Остаток в 1С · 13", { exact: true }).count(), 0);
+      await page.locator(".cat-table tbody tr .cat-name").click();
+      await page.waitForFunction(() => document.querySelector("#ic-detail-title")?.textContent?.includes("2000*700"));
+      assert.match(await page.locator("#ic-detail-title").textContent() ?? "", /2000\*700/);
+      assert.equal(await page.locator(".cat-crumbs").last().textContent(), fixtureGuid(2));
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
   });
   it("fits 375px, opens/closes a full-height card, and remains usable in dark/large type", async () => {
     const { page, context, errors } = await open({ mobile: true });

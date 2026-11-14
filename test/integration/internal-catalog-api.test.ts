@@ -360,7 +360,12 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
       "/images/" + fixtureGuid(300)).set("Cookie", session)).status, 401);
   });
   it("groups before pagination, selects a matching SKU, keeps all siblings and makes no writes on reads", async () => {
-    const parsed = parseProductsJson(Buffer.from(JSON.stringify(sizeVariantsFixture())));
+    const products = sizeVariantsFixture();
+    products.forEach((p, i) => {
+      if (i !== 1) p.properties.push({ guid: fixtureGuid(992), name: "Стекло", value: "Зеркало бронза фацет" });
+      p.properties.push({ guid: fixtureGuid(993), name: "Название для сайта", value: i === 2 ? "400/6" : "400" });
+    });
+    const parsed = parseProductsJson(Buffer.from(JSON.stringify(products)));
     const version = (await importSnapshot(pool, parsed, "sizes.json", parsed.sha256)).snapshotId;
     const batch = fixtureGuid(880), type = fixtureGuid(800);
     await pool.query("INSERT INTO onec_manual_batches(id,fingerprint) VALUES($1,$2)", [batch, "d".repeat(64)]);
@@ -385,6 +390,7 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     assert.equal(filtered.body.items[0].variants.filter(x => x.matchesFilters).length, 1);
     const detail = await get("/products/" + fixtureGuid(2)).query({ version, priceType: type });
     assert.equal(detail.body.product.guid, fixtureGuid(2)); assert.equal(detail.body.variants.length, 3);
+    assert.equal(detail.body.product.properties.some(p => p.name === "Стекло"), false);
     assert.equal((await get("/products/" + fixtureGuid(4)).query({ version, priceType: type })).body.variants.length, 0);
     assert.equal((await get("/products/" + fixtureGuid(2)).query({ version, priceType: "" })).body.variants.length, 0);
     const context = await loadCatalogContext(pool);
