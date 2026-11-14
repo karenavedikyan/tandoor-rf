@@ -42,3 +42,11 @@ export function avallonSizeVariantsFixture(): Product[] {
     ]),
   }));
 }
+export function zefirSizeVariantsFixture(): Product[] {
+  return sizeVariantsFixture().map((p, i) => ({
+    ...p, name: `500 Зефир ДГ 2000*${600 + i * 100} кромка черная с 4х сторон/замок черный`,
+    properties: p.properties.concat([
+      { guid: fixtureGuid(999), name: "Комплектующие", value: "#plinth!" + (i === 3 ? 0 : 1) },
+    ]),
+  }));
+}
