@@ -64,13 +64,21 @@
   function sizes(p, panel) {
     var variants = p.variants || [];
     if (variants.length < 2) return "";
-    return '<div class="cat-options ic-sizes" role="group" aria-label="Размер модели"><div class="row"><span>Размер, мм</span>' +
+    var sizeOf = function (v) { return v.size || prop(v, "Размер, мм"); };
+    var hasVariants = variants.some(function (v) {
+      return !sizeOf(v) || variants.filter(function (other) { return sizeOf(other) === sizeOf(v); }).length > 1;
+    });
+    return '<div class="cat-options ic-sizes" role="group" aria-label="' + (hasVariants ? "Вариант модели" : "Размер модели") +
+      '"><div class="row"><span>' + (hasVariants ? "Вариант" : "Размер, мм") + '</span>' +
       variants.map(function (v) {
+        var size = sizeOf(v), duplicate = variants.filter(function (other) { return sizeOf(other) === size; }).length > 1;
+        var article = v.article && variants.filter(function (other) { return other.article === v.article; }).length === 1 ? v.article : v.guid;
+        var label = size ? size + (duplicate ? " · " + article : "") : "Вариант · " + article;
         return '<button type="button" class="cat-opt' + (v.guid === p.guid ? " active" : "") +
           '" data-action="' + (panel ? "detail-size" : "size") + '" data-guid="' + esc(v.guid) +
           '" data-family="' + esc(p.guid) + '" aria-pressed="' + (v.guid === p.guid) + '"' +
           (v.matchesFilters === false ? ' title="Этот размер не соответствует текущим фильтрам"' : "") + ">" +
-          esc(v.size || prop(v, "Размер, мм")) + (v.matchesFilters === false ? " · вне фильтра" : "") + "</button>";
+          esc(label) + (v.matchesFilters === false ? " · вне фильтра" : "") + "</button>";
       }).join("") + "</div></div>";
   }
   function selectSize(guid, familyGuid) {

@@ -6,21 +6,24 @@ export function productSize(product: Product): string | null {
   const value = propertyValue(product, "Размер, мм");
   return value && /^\d+(?:[.,]\d+)?(?:×\d+(?:[.,]\d+)?){1,2}$/.test(dimensions(value)) ? dimensions(value) : null;
 }
+/** Owner-approved presentation identity: name without dimensions, not source relationships.
+ * Keep model numbers, finish, handing and all other words. Never rewrite the source name. */
+export function productModelName(product: Product): string {
+  const original = product.name.normalize("NFKC");
+  const name = original
+    .replace(/(?<!\d)\d+(?:[.,]\d+)?(?:\s*[хХxX×*]\s*\d+(?:[.,]\d+)?){1,2}(?!\d)/g, "")
+    .replace(/\(\s*\)|\[\s*\]/g, "").replace(/\s+/g, " ").trim();
+  return name || original.trim();
+}
 export function sizeModelKey(product: Product): string | null {
-  const size = productSize(product), link = propertyValue(product, "СсылкаНаГлавную");
-  if (!size || !link) return null;
-  // The source relationship is necessary, but not sufficient: some source links
-  // include samples, other models or finishes. Never infer a relationship from names.
-  const name = dimensions(product.name), at = name.indexOf(size);
-  if (at < 0 || (at > 0 && /\d/.test(name[at - 1])) || /\d/.test(name[at + size.length] ?? "")) return null;
-  const modelName = name.slice(0, at) + "{size}" + name.slice(at + size.length);
-  return JSON.stringify([link, modelName, product.guid_group ?? "", product.chapter.map(x => x.guid).sort()]);
+  return normalizeSearch(productModelName(product)) || null;
 }
 function identity(product: Product, context: CatalogContext, priceType: string) {
   const model = sizeModelKey(product), price = commerceFor(context, product.guid).prices.find(x => x.guid === priceType);
-  return !model || !price || price.conflict || price.value === null ? null :
-    JSON.stringify([model, priceType, price.value, price.name]);
+  return !model || !price || price.conflict || price.value === null || !Number.isFinite(price.value) || price.value < 0 ? null :
+    JSON.stringify([model, priceType, price.value]);
 }
+// The following classification helpers are audit diagnostics only, not grouping gates.
 // These are SKU-specific commercial/service values, not physical configuration.
 // Never copy them between sizes: detail/reply still use the selected original SKU.
 const presentationFields = new Set(["Размер, мм", "Артикул", "Главная", "главная (бот)", "Название для сайта",
@@ -71,20 +74,8 @@ function configurationAnalysis(products: Product[]) {
   return { configurations, conflicts };
 }
 export function conflictingConfigurationFields(products: Product[]): string[] {
+  // Diagnostic information only. Attribute differences no longer split cards.
   return configurationAnalysis(products).conflicts;
-}
-function compatibleConfigurations(products: Product[]): Product[][] {
-  const { configurations, conflicts } = configurationAnalysis(products);
-  const groups = new Map<string, Product[]>();
-  products.forEach((product, index) => {
-    const fields = configurations[index];
-    // Missing is unknown, never a fabricated value. When known values disagree,
-    // an unknown SKU must not bridge two incompatible configurations.
-    const key = conflicts.some(name => !fields.has(name)) ? product.guid :
-      JSON.stringify(conflicts.map(name => fields.get(name)));
-    const group = groups.get(key) ?? []; group.push(product); groups.set(key, group);
-  });
-  return [...groups.values()];
 }
 export type ProductFamily = { products: Product[]; modelName: string | null };
 /** Presentation only. Every original GUID, property, photo and stock stays separate. */
@@ -94,17 +85,11 @@ export function productFamilies(products: Product[], context: CatalogContext, pr
     const key = identity(product, context, priceType) ?? product.guid;
     const bucket = buckets.get(key) ?? []; bucket.push(product); buckets.set(key, bucket);
   }
-  return [...buckets.values()].flatMap(compatibleConfigurations).flatMap<ProductFamily>(items => {
-    // Two source products for the same size are ambiguous; hide neither.
-    if (items.length < 2 || new Set(items.map(productSize)).size !== items.length) {
-      return items.map(product => ({ products: [product], modelName: null }));
-    }
-    items.sort((a, b) => productSize(a)!.localeCompare(productSize(b)!, "ru", { numeric: true }) || a.guid.localeCompare(b.guid));
-    const first = items[0], size = productSize(first)!;
-    // Preserve original case/spelling in the visible model title.
-    const original = first.name.normalize("NFKC").replace(/(\d)\s*[хx×*]\s*(?=\d)/g, "$1×").replace(/\s+/g, " ").trim();
-    const at = normalizeSearch(original).indexOf(size);
-    const modelName = at < 0 ? first.name : (original.slice(0, at) + original.slice(at + size.length)).replace(/\s+/g, " ").trim();
-    return [{ products: items, modelName }];
+  return [...buckets.values()].map<ProductFamily>(items => {
+    if (items.length < 2) return { products: items, modelName: null };
+    // Keep same-size and size-less source records selectable, with distinct GUIDs.
+    items.sort((a, b) => (productSize(a) ?? "").localeCompare(productSize(b) ?? "", "ru", { numeric: true }) ||
+      a.guid.localeCompare(b.guid));
+    return { products: items, modelName: productModelName(items[0]) };
   });
 }

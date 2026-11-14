@@ -7,7 +7,7 @@ import { chromium, webkit, type Browser, type Page } from "playwright";
 import { createApp } from "../../src/server";
 import { normalizeSearch, parseProductsJson, type Product } from "../../src/internal-catalog/model";
 import { listItem } from "../../src/internal-catalog/repository";
-import { avallonSizeVariantsFixture, catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
+import { avallonSizeVariantsFixture, zefirSizeVariantsFixture, catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
 import { productFamilies, productSize } from "../../src/internal-catalog/variants";
 import type { CatalogContext } from "../../src/internal-catalog/presentation";
 import { resolveMockResponse } from "./helpers/clients-api-mocks";
@@ -188,6 +188,56 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   });
+  for (const mobile of [false, true]) for (const kind of ["zefir", "same-size", "no-size"]) {
+    it(`selects every original name/price variant in all views (${kind}, ${mobile ? "mobile" : "desktop"})`, async () => {
+      const products = zefirSizeVariantsFixture();
+      if (kind !== "zefir") products.forEach(p => {
+        p.name = kind === "same-size" ? products[0].name : "Одинаковая модель без размера";
+        p.properties = p.properties.map(v => v.name === "Размер, мм" ? { ...v, value: kind === "same-size" ? "2000х600" : "" } : v);
+        if (kind === "no-size") p.properties = p.properties.filter(v => v.name !== "Артикул");
+      });
+      const { page, context, errors } = await open({ products, workspace: true, variants: true, images: true, mobile });
+      try {
+        assert.equal(await page.locator(".cat-card").count(), 1);
+        for (const view of ["show", "site", "table"]) {
+          await page.locator(`[data-view="${view}"]`).click();
+          const buttons = page.locator('#ic-results [data-action="size"]');
+          assert.equal(await buttons.count(), 4);
+          assert.equal(new Set(await buttons.allTextContents()).size, 4);
+          for (const [index, product] of products.entries()) {
+            await page.locator(`#ic-results [data-action="size"][data-guid="${product.guid}"]`).click();
+            assert.equal(await page.locator('#ic-results [data-action="size"][aria-pressed="true"]').getAttribute("data-guid"), product.guid);
+            assert.match(await page.locator("#ic-results .cat-stock").textContent() ?? "", new RegExp(String(12 + index)));
+            assert.match(await page.locator("#ic-results img").first().getAttribute("src") ?? "", new RegExp(product.guid));
+          }
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        }
+        await page.locator('[data-view="show"]').click();
+        await page.locator(".cat-name").first().click();
+        await page.locator('#ic-detail [data-action="detail-size"]').last().waitFor();
+        for (const [index, product] of products.entries()) {
+          await page.locator(`#ic-detail [data-action="detail-size"][data-guid="${product.guid}"]`).click();
+          await page.waitForURL(url => url.searchParams.get("product") === product.guid);
+          const accessories = page.locator(".cat-specs .field").filter({ hasText: "Комплектующие" });
+          assert.match(await accessories.textContent() ?? "", new RegExp("#plinth!" + (index === 3 ? 0 : 1)));
+        }
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await page.locator("#ic-close").click();
+        await page.waitForURL(url => !url.searchParams.has("product"));
+        if (kind === "zefir") {
+          await page.locator("#ic-query").fill("2000*900");
+          await page.waitForFunction(() => document.querySelector("#ic-results")?.getAttribute("aria-busy") === "false" &&
+            document.querySelector('#ic-results [data-action="size"][aria-pressed="true"]')?.textContent === "2000×900" &&
+            document.querySelectorAll('#ic-results [data-action="size"][title]').length === 3);
+          assert.equal(await page.locator('#ic-results [data-action="size"][title]').count(), 3);
+          await page.locator('[data-view="table"]').click();
+          await page.locator("#ic-results").scrollIntoViewIfNeeded();
+          await page.screenshot({ path: `/home/user/workspace/catalog-name-price-${mobile ? "mobile" : "desktop"}.png`, fullPage: false });
+        }
+        assert.deepEqual(errors, []);
+      } finally { await context.close(); }
+    });
+  }
   it("uploads only after explicit confirmation and removes the form after success", async () => {
     const { page, context, errors, control } = await open({ empty: true, mobile: true });
     try {

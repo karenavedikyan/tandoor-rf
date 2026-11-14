@@ -15,7 +15,7 @@ import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { parseProductsJson } from "../../src/internal-catalog/model";
 import { importSnapshot, loadSnapshot, searchProducts } from "../../src/internal-catalog/repository";
 import { loadCatalogContext } from "../../src/internal-catalog/context";
-import { avallonSizeVariantsFixture, catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
+import { avallonSizeVariantsFixture, zefirSizeVariantsFixture, catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 const ORIGIN = "http://127.0.0.1:3000";
@@ -449,5 +449,50 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     assert.equal(audit.body.cards, 1);
     assert.deepEqual(audit.body.coverage, { assigned: 2, unique: 2, ok: true });
     assert.deepEqual(await fingerprint(), before);
+  });
+  it("groups all equal-name/price records, including same-size and size-less variants across groups, without writes", async () => {
+    const type = fixtureGuid(800), batch = fixtureGuid(887);
+    await pool.query("INSERT INTO onec_manual_batches(id,fingerprint) VALUES($1,$2)", [batch, "e".repeat(64)]);
+    for (let n = 1; n <= 4; n++) {
+      await pool.query(`INSERT INTO onec_manual_records(batch_id,file_key,row_index,entity_kind,entity_guid,record)
+        VALUES($1,'prices',$2,'product',$3,$4)`, [batch, n, fixtureGuid(n), {
+        guid: fixtureGuid(n), type_price: [{ guid: type, name: "РРЦ Тандор", price: 10630 }],
+      }]);
+      await pool.query(`UPDATE onec_manual_object_versions SET batch_id=$2 WHERE entity_kind='product'
+        AND entity_guid=$1 AND file_key='prices'`, [fixtureGuid(n), batch]);
+    }
+    for (const kind of ["zefir", "same-size", "no-size"]) {
+      const products = zefirSizeVariantsFixture();
+      products.forEach((p, i) => {
+        p.guid_group = fixtureGuid(700 + i);
+        p.chapter = [{ guid: fixtureGuid(710 + i), name: "Раздел " + i }];
+        p.properties = p.properties.filter(v => v.name !== "СсылкаНаГлавную");
+        if (kind === "same-size") {
+          p.name = products[0].name;
+          p.properties.find(v => v.name === "Размер, мм")!.value = "2000х600";
+        }
+        if (kind === "no-size") { p.name = "Одинаковая модель"; p.properties = p.properties.filter(v => v.name !== "Размер, мм"); }
+      });
+      const parsed = parseProductsJson(Buffer.from(JSON.stringify(products)));
+      const version = (await importSnapshot(pool, parsed, kind + ".json", parsed.sha256)).snapshotId;
+      const fingerprint = async () => (await pool.query(`SELECT md5(string_agg(record::text,'' ORDER BY guid)) AS hash,
+        count(*)::int AS count FROM internal_catalog_products WHERE snapshot_id=$1`, [version])).rows;
+      const before = await fingerprint();
+      const list = await get("/products").query({ version, priceType: type });
+      assert.equal(list.status, 200); assert.equal(list.body.total, 1); assert.equal(list.body.matchedProducts, 4);
+      assert.equal(list.body.items[0].variants.length, 4);
+      const filtered = await get("/products").query({ version, priceType: type, section: products[3].chapter[0].guid });
+      assert.equal(filtered.body.total, 1); assert.equal(filtered.body.items[0].guid, products[3].guid);
+      assert.equal(filtered.body.items[0].variants.filter(v => v.matchesFilters).length, 1);
+      for (const product of products) {
+        const detail = await get("/products/" + product.guid).query({ version, priceType: type });
+        assert.equal(detail.status, 200);
+        assert.deepEqual(detail.body.product, product); assert.equal(detail.body.variants.length, 4);
+      }
+      const audit = await get("/audit").query({ version, priceType: type });
+      assert.equal(audit.body.cards, 1); assert.equal(audit.body.ruleViolations, 0);
+      assert.deepEqual(audit.body.coverage, { assigned: 4, unique: 4, ok: true });
+      assert.deepEqual(await fingerprint(), before);
+    }
   });
 });
