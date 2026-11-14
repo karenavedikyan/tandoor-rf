@@ -15,9 +15,10 @@ async function finishOperatorJob(db: PoolClient, jobId: string | undefined, outc
   if (!jobId) return;
   // Commit the result with its projection, including NO_CHANGES and A→B→A.
   // A crash after COMMIT must not depend on the first owner of a reused batch.
-  await db.query(`UPDATE onec_import_jobs SET status='success',finished_at=NOW(),
+  const updated = await db.query(`UPDATE onec_import_jobs SET status='success',finished_at=NOW(),
     result=$2::jsonb,error_code=NULL WHERE id=$1::uuid AND status='running'`,
   [jobId, JSON.stringify(outcome)]);
+  if (updated.rowCount !== 1) throw new Error("JOB_NOT_RUNNABLE");
 }
 
 export type ManualUpdateOptions = {
@@ -25,13 +26,15 @@ export type ManualUpdateOptions = {
   manualFiles?: ManualFiles; manualReader?: ManualReader; operatorImportJobId?: string;
   /** Fault injection only on isolated test DB. Never exposed by HTTP. */
   beforeManualCommit?: () => Promise<void>;
+  /** Fault injection on isolated test DB only; never populated from HTTP. */
+  commitTestFault?: "before" | "after";
 };
 export async function runManualUpdate(options: ManualUpdateOptions): Promise<RegularUpdateResult> {
   const env = options.env ?? process.env, started = Date.now(), startedAt = new Date(started).toISOString();
   const cli = parseRegularUpdateCliArgs(options.argv ?? []);
   const mode = cli.ok ? cli.options.mode : "dry_run";
   const result = (value: Partial<RegularUpdateResult> & { status: RegularUpdateResult["status"]; message: string }): RegularUpdateResult => ({
-    mode, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - started, ...value,
+    mode, manualRecoveryVersion: 1, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - started, ...value,
   });
   if (!cli.ok) return result({ status: "REJECTED_BY_CHECKS", errorCode: cli.code, message: "Проверьте параметры запуска." });
   let p: ReturnType<typeof prepareManualBundle>, sales: ReturnType<typeof prepareSales>;
@@ -65,6 +68,13 @@ export async function runManualUpdate(options: ManualUpdateOptions): Promise<Reg
     return result({ status: "ERROR", errorCode: "DATABASE_ERROR", message: "База недоступна. Обновление не началось." });
   }
   let locked = false, committing = false;
+  const commit = async () => {
+    if (options.commitTestFault &&
+      (env.NODE_ENV !== "test" || env.TEST_DATABASE_URL !== url)) throw new Error("TEST_HOOK_FORBIDDEN");
+    if (options.commitTestFault === "before") throw new Error("TEST_COMMIT_REPLY_LOST");
+    await db!.query("COMMIT");
+    if (options.commitTestFault === "after") throw new Error("TEST_COMMIT_REPLY_LOST");
+  };
   try {
     locked = await tryAcquireImportLock(db);
     if (!locked) return result({ ...common, status: "REJECTED_BY_CHECKS", errorCode: "IMPORT_LOCKED",
@@ -86,7 +96,7 @@ export async function runManualUpdate(options: ManualUpdateOptions): Promise<Reg
         manualSummary: { ...common.manualSummary, batchId: active.rows[0].id, issueCount: active.rows[0].issue_count },
         message: `Нет изменений. Замечаний: ${active.rows[0].issue_count}.` });
       await finishOperatorJob(db, options.operatorImportJobId, outcome);
-      committing = true; await db.query("COMMIT"); committing = false;
+      committing = true; await commit(); committing = false;
       return outcome;
     }
     // A previously seen bundle can become active again. Projection + diagnostics are recomputed.
@@ -111,8 +121,10 @@ export async function runManualUpdate(options: ManualUpdateOptions): Promise<Reg
     const outcome = result({ ...common, status: "SUCCESS", exportBatchId: batch,
       manualSummary: { ...common.manualSummary, batchId: batch, issueCount: p.issues.length },
       message: p.issues.length ? `Обновлено с замечаниями. Требуют проверки: ${p.issues.length}.` : "Обновлено. Замечаний не обнаружено." });
+    if (options.operatorImportJobId &&
+      !(await checkOperatorImportJobRunnable(db, options.operatorImportJobId)).runnable) throw new Error("JOB_NOT_RUNNABLE");
     await finishOperatorJob(db, options.operatorImportJobId, outcome);
-    committing = true; await db.query("COMMIT"); committing = false;
+    committing = true; await commit(); committing = false;
     return outcome;
   } catch (error) {
     await db.query("ROLLBACK").catch(() => {});
@@ -122,7 +134,9 @@ export async function runManualUpdate(options: ManualUpdateOptions): Promise<Reg
     if (committing) {
       const recovery = createImportPool(url);
       try { await recovery.query(`UPDATE onec_v3_exchange_state SET apply_blocked=TRUE,
-        apply_blocked_reason='COMMIT_UNCERTAIN',updated_at=NOW() WHERE id=1`); } catch { /* operator must inspect DB availability */ }
+        apply_blocked_reason=$1,updated_at=NOW() WHERE id=1 AND
+        (NOT apply_blocked OR apply_blocked_reason=$1)`,
+      [options.operatorImportJobId ? `MANUAL_COMMIT_UNCERTAIN:${options.operatorImportJobId}` : "COMMIT_UNCERTAIN"]); } catch { /* status also blocks on the uncertain job */ }
       finally { await recovery.end(); }
     }
     return result({ ...common, status: "ERROR", applyPermitted: false,

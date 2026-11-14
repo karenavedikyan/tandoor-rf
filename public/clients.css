@@ -314,6 +314,35 @@
   font-weight: 600;
 }
 
+#onec-update-history {
+  min-width: 0;
+  width: 100%;
+}
+
+.clients-design-page #onec-update-panel .clients-onec-update__meta {
+  font-size: 12px;
+}
+
+#onec-update-history summary {
+  cursor: pointer;
+}
+
+#onec-history-content {
+  max-height: 24rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+#onec-history-content article {
+  padding-block: 0.65rem;
+  border-bottom: 1px solid var(--rf-border);
+}
+
+.clients-onec-update__meta dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 640px) {
   .clients-sync-block,
   .clients-onec-update {

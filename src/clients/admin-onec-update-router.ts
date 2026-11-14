@@ -9,6 +9,7 @@ import {
   adminOnecUpdateProbeHandler,
   adminOnecUpdateStartHandler,
   adminOnecUpdateStatusHandler,
+  adminOnecUpdateHistoryHandler,
 } from "./admin-onec-update/handlers";
 
 export function createAdminClientsRouter(): express.Router {
@@ -18,6 +19,9 @@ export function createAdminClientsRouter(): express.Router {
 
   router.get("/onec-update/status", ...adminChain, (req, res, next) => {
     void adminOnecUpdateStatusHandler(req, res).catch(next);
+  });
+  router.get("/onec-update/history", ...adminChain, (req, res, next) => {
+    void adminOnecUpdateHistoryHandler(req, res).catch(next);
   });
 
   router.get("/onec-update/config-check", ...adminChain, (req, res, next) => {

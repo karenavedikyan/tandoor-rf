@@ -22,19 +22,21 @@ type JobRow = {
   error_code: string | null;
   requested_by_user_id: string | null;
   job_source: RegularUpdateJobSource;
+  retry_of_job_id?: string | null;
 };
 
 export type StartRegularUpdateJobResult =
   | { ok: true; jobId: string }
   | {
       ok: false;
-      code: "UPDATE_ALREADY_RUNNING" | "APPLY_BLOCKED" | "IMPORT_RUNNING";
+      code: "UPDATE_ALREADY_RUNNING" | "APPLY_BLOCKED" | "IMPORT_RUNNING" | "JOB_CHANGED";
       message: string;
       existingJobId?: string;
     };
 
 export type EnqueueRegularUpdateJobInput =
-  | { jobSource: typeof REGULAR_UPDATE_JOB_SOURCE_ADMIN; requestedByUserId: string }
+  | { jobSource: typeof REGULAR_UPDATE_JOB_SOURCE_ADMIN; requestedByUserId: string;
+      requestKey?: string; retryOfJobId?: string }
   | {
       jobSource: "nightly";
       windowKey: string;
@@ -129,6 +131,10 @@ const DATA_PRESERVED_REJECTION_CODES = new Set([
   "APPLY_BLOCKED",
   "STALE_RUNNING_IMPORT",
   "IMPORT_LOCKED",
+  "SOURCE_UNREADABLE",
+  "BUNDLE_UNSTABLE",
+  "FILE_TOO_LARGE",
+  "JOB_EXPIRED",
 ]);
 
 function dataPreserved(phase: OnecUpdateUiPhase, errorCode: string | null): boolean {
@@ -175,6 +181,7 @@ export function mapJobRowToDto(
     exportBatchId: row.result?.exportBatchId ?? null,
     failureStage: row.result?.stage ?? null,
     diagnosticId: row.result?.diagnosticId ?? null,
+    retryOfJobId: row.retry_of_job_id ?? null,
     ...(row.result?.manualSummary ? { manualSummary: row.result.manualSummary } : {}),
   };
 }
@@ -188,6 +195,7 @@ const JOB_ROW_SELECT = `
   result,
   error_code,
   requested_by_user_id::text,
+  retry_of_job_id::text,
   job_source
 `;
 
@@ -316,7 +324,9 @@ export async function countRunningImportRuns(client?: PoolClient): Promise<numbe
 
 export async function isExchangeApplyBlocked(client?: PoolClient): Promise<boolean> {
   const query = `SELECT (apply_blocked OR COALESCE(
-    (SELECT apply_blocked FROM onec_v3_exchange_state WHERE id=1),FALSE)) AS apply_blocked
+    (SELECT apply_blocked FROM onec_v3_exchange_state WHERE id=1),FALSE)
+    OR EXISTS(SELECT 1 FROM onec_import_jobs WHERE kind='regular_update_bundle'
+      AND error_code='COMMIT_UNCERTAIN')) AS apply_blocked
     FROM onec_exchange_state WHERE id = 1`;
   if (client) {
     const result = await client.query<{ apply_blocked: boolean }>(query);
@@ -362,6 +372,18 @@ async function enqueueRegularUpdateJobOnClient(
   await client.query("SELECT pg_advisory_xact_lock($1)", [REGULAR_UPDATE_ADMIN_LOCK]);
   await finalizeStaleRegularUpdateJobs(client);
 
+  if (input.jobSource === REGULAR_UPDATE_JOB_SOURCE_ADMIN && input.requestKey) {
+    const replay = (await client.query<{ id: string; requested_by_user_id: string; retry_of_job_id: string | null }>(
+      "SELECT id::text,requested_by_user_id::text,retry_of_job_id::text FROM onec_import_jobs WHERE request_key=$1::uuid",
+      [input.requestKey])).rows[0];
+    if (replay) {
+      if (replay.requested_by_user_id !== input.requestedByUserId ||
+        (replay.retry_of_job_id ?? null) !== (input.retryOfJobId ?? null))
+        return { ok: false, code: "JOB_CHANGED", message: "Параметры запроса изменились. Проверьте состояние обновления." };
+      return { ok: true, jobId: replay.id };
+    }
+  }
+
   const active = await queryActiveRegularUpdateJob(client);
   if (active) {
     return {
@@ -391,6 +413,15 @@ async function enqueueRegularUpdateJobOnClient(
   const requestedByUserId =
     input.jobSource === REGULAR_UPDATE_JOB_SOURCE_ADMIN ? input.requestedByUserId : null;
 
+  if (input.jobSource === REGULAR_UPDATE_JOB_SOURCE_ADMIN && input.retryOfJobId) {
+    const previous = (await client.query<{ id: string; status: string; error_code: string | null }>(
+      `SELECT id::text,status,error_code FROM onec_import_jobs WHERE kind=$1
+       ORDER BY requested_at DESC,id DESC LIMIT 1`, [REGULAR_UPDATE_JOB_KIND])).rows[0];
+    if (!previous || previous.id !== input.retryOfJobId || previous.status !== "failed" ||
+      previous.error_code === "COMMIT_UNCERTAIN")
+      return { ok: false, code: "JOB_CHANGED", message: "Состояние предыдущей попытки изменилось. Проверьте состояние перед повтором." };
+  }
+
   const requestedAt =
     input.jobSource === "nightly" ? input.requestedAt : new Date();
   const nightlyWindow =
@@ -416,9 +447,11 @@ async function enqueueRegularUpdateJobOnClient(
         requested_by_user_id,
         job_source,
         nightly_window_key,
-        nightly_window_deadline_at
+        nightly_window_deadline_at,
+        request_key,
+        retry_of_job_id
       )
-      VALUES ($1, 'apply', 'pending', $4, $5, $2::uuid, $3, $6, $7)
+      VALUES ($1, 'apply', 'pending', $4, $5, $2::uuid, $3, $6, $7, $8::uuid, $9::uuid)
       RETURNING id::text
     `,
     [
@@ -429,6 +462,8 @@ async function enqueueRegularUpdateJobOnClient(
       expiresAt,
       nightlyWindow?.key ?? null,
       nightlyWindow?.deadlineAt ?? null,
+      input.jobSource === REGULAR_UPDATE_JOB_SOURCE_ADMIN ? input.requestKey ?? null : null,
+      input.jobSource === REGULAR_UPDATE_JOB_SOURCE_ADMIN ? input.retryOfJobId ?? null : null,
     ],
   );
   const jobId = inserted.rows[0]?.id;
@@ -468,9 +503,20 @@ export async function tryEnqueueRegularUpdateJob(
 
 export async function tryStartRegularUpdateJob(
   requestedByUserId: string,
+  options: { requestKey?: string; retryOfJobId?: string } = {},
 ): Promise<StartRegularUpdateJobResult> {
   return tryEnqueueRegularUpdateJob({
     jobSource: REGULAR_UPDATE_JOB_SOURCE_ADMIN,
     requestedByUserId,
+    ...options,
   });
+}
+
+/** Bounded operator audit; no raw source values or secrets. */
+export async function loadRegularUpdateHistory(): Promise<AdminOnecUpdateJobDto[]> {
+  const pool = getPool();
+  if (!pool) throw new Error("DATABASE_UNAVAILABLE");
+  const rows = await pool.query<JobRow>(`SELECT ${JOB_ROW_SELECT} FROM onec_import_jobs
+    WHERE kind=$1 ORDER BY requested_at DESC,id DESC LIMIT 20`, [REGULAR_UPDATE_JOB_KIND]);
+  return rows.rows.map(row => mapJobRowToDto(row, null));
 }

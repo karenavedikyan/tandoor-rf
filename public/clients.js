@@ -34,6 +34,13 @@
   var onecUpdateStatusEl = document.getElementById("onec-update-status");
   var onecUpdateMetaEl = document.getElementById("onec-update-meta");
   var onecUpdatePollTimer = null;
+  var onecUpdateState = null;
+  var onecStartBusy = false;
+  var onecStatusSequence = 0;
+  var onecStartRequest = null;
+  var onecCheckButton = document.getElementById("onec-check-status");
+  var onecHistory = document.getElementById("onec-update-history");
+  var onecHistoryContent = document.getElementById("onec-history-content");
   var resultsStateEl = document.getElementById("results-state");
   var resultsContentEl = document.getElementById("results-content");
   var tableBody = document.getElementById("clients-table-body");
@@ -4723,10 +4730,19 @@
     if (!onecUpdateStatusEl || !onecUpdateButtonEl) {
       return;
     }
+    onecUpdateState = data;
     var formatted = logic.formatOnecUpdateStatusText(data);
     onecUpdateStatusEl.textContent = formatted.text;
     onecUpdateStatusEl.className = "clients-onec-update__status" + (formatted.statusClass ? " " + formatted.statusClass : "");
-    onecUpdateButtonEl.disabled = !!formatted.disableButton;
+    onecUpdateButtonEl.disabled = onecStartBusy || !!formatted.disableButton;
+    var retry = data && data.job && (data.job.phase === "error" || data.job.phase === "rejected");
+    onecUpdateButtonEl.textContent = retry ? "Повторить обновление" : "Обновить из 1С";
+    var guidance = document.getElementById("onec-update-guidance");
+    if (guidance) guidance.textContent = !data ? "Проверка состояния не запускает новую загрузку." :
+      data.job && data.job.phase === "uncertain" ? "Проверяем результат сохранения. Повтор недоступен до подтверждения результата. Небезопасный сброс не выполняется." :
+      retry && data.canStart ? "Можно повторить: полный актуальный комплект будет прочитан заново. Автоматического повтора нет." :
+      data.job && (data.job.phase === "running" || data.job.phase === "pending") ?
+        "Обработка продолжается на сервере. Закрытие вкладки её не отменяет; второй импорт не запускайте." : "";
 
     if (onecUpdateMetaEl) {
       var lines = logic.formatOnecUpdateMetaLines(data);
@@ -4761,7 +4777,7 @@
     }
     onecUpdatePollTimer = setTimeout(function () {
       loadOnecUpdateStatus(false);
-    }, 2000);
+    }, 5000);
   }
 
   function retryOnecUpdateStatus() {
@@ -4786,9 +4802,11 @@
     if (!shouldShowOnecUpdatePanel()) {
       return Promise.resolve({ ok: true, skipped: true });
     }
+    var sequence = ++onecStatusSequence;
     return api
       .apiRequest("/api/admin/clients/onec-update/status")
       .then(function (result) {
+        if (sequence !== onecStatusSequence) return { ok: false, stale: true };
         if (result.response.status !== 200 || !result.data) {
           if (result.response.status >= 500 || result.response.status === 408 || result.response.status === 429) {
             retryOnecUpdateStatus();
@@ -4807,45 +4825,83 @@
         return { ok: true };
       })
       .catch(function () {
+        if (sequence !== onecStatusSequence) return { ok: false, stale: true };
         retryOnecUpdateStatus();
         return { ok: false };
       });
   }
 
   function startOnecUpdate() {
-    if (!onecUpdateButtonEl || onecUpdateButtonEl.disabled) {
+    if (!onecUpdateButtonEl || onecUpdateButtonEl.disabled || onecStartBusy ||
+      !onecUpdateState || !onecUpdateState.canStart) {
       return;
     }
+    var retryOf = onecUpdateState && onecUpdateState.job &&
+      /^(error|rejected)$/.test(onecUpdateState.job.phase) ? onecUpdateState.job.id : null;
     var confirmed = window.confirm(
-      "Запустить ручное обновление из 12 файлов 1С?\n\n" +
+      (retryOf ? "Повторно загрузить данные из 1С? Система заново прочитает полный актуальный комплект из 12 файлов.\n\n" :
+        "Запустить ручное обновление из 12 файлов 1С?\n\n") +
         "Исходные строки и дубли будут сохранены, замечания выделены красным. При технической ошибке прежние данные сохранятся. Формирование новой выгрузки в 1С и автообновление не запускаются.",
     );
     if (!confirmed) {
       return;
     }
-    onecUpdateButtonEl.disabled = true;
+    onecStartBusy = true;
+    ++onecStatusSequence; // Ignore status reads started before this action.
+    if (onecUpdatePollTimer) clearTimeout(onecUpdatePollTimer);
+    if (!onecStartRequest) {
+      onecStartRequest = { requestKey: window.crypto.randomUUID() };
+      if (retryOf) onecStartRequest.retryOfJobId = retryOf;
+    }
+    renderOnecUpdateStatus({ canStart: false, job: { phase: "pending", message: "Запрос на обновление отправляется." } });
     api
-      .apiRequest("/api/admin/clients/onec-update", { method: "POST", body: {} })
+      .apiRequest("/api/admin/clients/onec-update", { method: "POST", body: onecStartRequest })
       .then(function (result) {
+        onecStartBusy = false;
         if (result.response.status === 202 && result.data) {
+          onecStartRequest = null;
           return loadOnecUpdateStatus(false);
         }
-        var message = api.extractErrorMessage(result.data, "Не удалось запустить обновление из 1С.");
-        renderOnecUpdateStatus({
-          canStart: false,
-          blockedReason: message,
-          job: null,
-        });
+        if (result.response.status === 409) {
+          onecStartRequest = null;
+          return loadOnecUpdateStatus(false);
+        }
+        retryOnecUpdateStatus();
         return { ok: false };
       })
-      .catch(function (err) {
-        renderOnecUpdateStatus({
-          canStart: false,
-          blockedReason: api.mapRequestError(err, api.REQUEST_TIMEOUT_MS / 1000),
-          job: null,
-        });
+      .catch(function () {
+        onecStartBusy = false;
+        // Retain the request key: a lost POST reply is not evidence of rejection.
+        retryOnecUpdateStatus();
       });
   }
+
+  function loadOnecHistory() {
+    if (!shouldShowOnecUpdatePanel() || !onecHistoryContent) return;
+    onecHistoryContent.textContent = "Загружаем историю…";
+    api.apiRequest("/api/admin/clients/onec-update/history").then(function (result) {
+      if (result.response.status !== 200 || !result.data || !Array.isArray(result.data.jobs)) throw new Error("HISTORY_UNAVAILABLE");
+      onecHistoryContent.innerHTML = result.data.jobs.length ? result.data.jobs.map(function (job) {
+        var text = logic.formatOnecUpdatePhaseLabel(job.phase) + ". " + (job.message || "");
+        var lines = logic.formatOnecUpdateMetaLines({ job: job }).filter(function (line) {
+          return ["Попытка", "Повтор попытки", "Инициатор", "Начало (МСК)", "Завершение (МСК)", "Код", "Пакет 1С", "Диагностика"].includes(line.label);
+        });
+        return '<article><p>' + shell.escapeHtml(text) + '</p><dl class="clients-onec-update__meta">' +
+          lines.map(function (line) { return "<dt>" + shell.escapeHtml(line.label) + "</dt><dd>" + shell.escapeHtml(line.value) + "</dd>"; }).join("") + "</dl></article>";
+      }).join("") : "Попыток обновления пока нет.";
+    }).catch(function () {
+      onecHistoryContent.textContent = "Не удалось получить историю. Закройте и откройте её повторно.";
+    });
+  }
+  onecCheckButton?.addEventListener("click", function () {
+    if (onecCheckButton.disabled) return;
+    onecCheckButton.disabled = true;
+    loadOnecUpdateStatus(false).finally(function () {
+      onecCheckButton.disabled = false;
+      if (onecHistory && onecHistory.open) loadOnecHistory();
+    });
+  });
+  onecHistory?.addEventListener("toggle", function () { if (onecHistory.open) loadOnecHistory(); });
 
   function loadOptions() {
     return api.apiRequest("/api/clients/options").then(function (result) {

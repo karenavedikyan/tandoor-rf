@@ -322,7 +322,7 @@ export async function runOneImportJob(
       return "failed";
     }
 
-    await db.query(
+    const failedUpdate = await db.query(
       `
         UPDATE onec_import_jobs
         SET
@@ -335,6 +335,14 @@ export async function runOneImportJob(
       `,
       [job.id, redacted, outcome.errorCode, outcome.importRunId],
     );
+    if (failedUpdate.rowCount === 0) {
+      const committed = await db.query<{ status: string }>("SELECT status FROM onec_import_jobs WHERE id=$1::uuid", [job.id]);
+      if (committed.rows[0]?.status === "success") {
+        console.info(JSON.stringify({ event: "onec_import_job_finished", jobId: job.id,
+          kind: job.kind, status: "success", resultRecovered: true }));
+        return "success";
+      }
+    }
     console.info(
       JSON.stringify({
         event: "onec_import_job_finished",

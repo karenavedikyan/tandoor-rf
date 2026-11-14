@@ -7,7 +7,13 @@ import {
   getAdminOnecUpdateStatus,
   runAdminOnecUpdateProbe,
   startAdminOnecUpdate,
+  getAdminOnecUpdateHistory,
 } from "./service";
+
+export async function adminOnecUpdateHistoryHandler(_req: AuthenticatedRequest, res: Response): Promise<void> {
+  setNoStore(res);
+  res.status(200).json(await getAdminOnecUpdateHistory());
+}
 
 export async function adminOnecUpdateStatusHandler(
   _req: AuthenticatedRequest,
@@ -47,7 +53,15 @@ export async function adminOnecUpdateStartHandler(
   }
 
   try {
-    const started = await startAdminOnecUpdate({ requestedByUserId: req.authUser.id });
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const { requestKey, retryOfJobId } = req.body ?? {};
+    if ((requestKey !== undefined && (typeof requestKey !== "string" || !uuid.test(requestKey))) ||
+      (retryOfJobId !== undefined && (typeof retryOfJobId !== "string" || !uuid.test(retryOfJobId)))) {
+      setNoStore(res);
+      res.status(400).json(apiError("INVALID_REQUEST", "Некорректный идентификатор попытки."));
+      return;
+    }
+    const started = await startAdminOnecUpdate({ requestedByUserId: req.authUser.id, requestKey, retryOfJobId });
     setNoStore(res);
     res.status(202).json(started);
   } catch (error) {
@@ -59,7 +73,7 @@ export async function adminOnecUpdateStartHandler(
       error !== null && typeof error === "object" && "existingJobId" in error
         ? (error as { existingJobId?: string }).existingJobId
         : undefined;
-    const conflictCodes = new Set(["UPDATE_ALREADY_RUNNING", "APPLY_BLOCKED", "IMPORT_RUNNING"]);
+    const conflictCodes = new Set(["UPDATE_ALREADY_RUNNING", "APPLY_BLOCKED", "IMPORT_RUNNING", "JOB_CHANGED"]);
     const isConflict = code != null && conflictCodes.has(code);
     const message =
       error instanceof Error ? error.message : "Не удалось запустить обновление из 1С.";

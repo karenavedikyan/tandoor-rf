@@ -12,6 +12,7 @@ import { prepareManualBundle, type ManualFiles } from "../../src/onec-manual/mod
 import { runManualUpdate } from "../../src/onec-manual/run-update";
 import request from "supertest";
 import { closePool } from "../../src/db/pool";
+import { tryStartRegularUpdateJob, isExchangeApplyBlocked, loadRegularUpdateHistory } from "../../src/clients/admin-onec-update/repository";
 
 describe("manual import worker ownership and recovery", { concurrency: false }, () => {
   let pool: Pool;
@@ -28,7 +29,10 @@ describe("manual import worker ownership and recovery", { concurrency: false }, 
       ONEC_FTP_PORT: "21", ONEC_FTP_USER: "test", ONEC_FTP_PASSWORD: "test-not-a-password",
       ONEC_FTP_BASE_PATH: "/LC", ONEC_FTP_SECURITY: "plain", ONEC_NIGHTLY_EXCHANGE_ENABLED: "false" };
   });
-  beforeEach(async () => { await pool.query("TRUNCATE onec_import_jobs"); });
+  beforeEach(async () => {
+    await pool.query("TRUNCATE onec_import_jobs");
+    await pool.query("UPDATE onec_v3_exchange_state SET apply_blocked=FALSE,apply_blocked_reason=NULL WHERE id=1");
+  });
   after(async () => { await pool?.end(); await closePool(); });
   async function job(marker = true, pending = false) {
     const id = randomUUID();
@@ -198,5 +202,142 @@ describe("manual import worker ownership and recovery", { concurrency: false }, 
     const reactivated = await apply(a);
     assert.equal(reactivated.status, "SUCCESS");
     assert.equal(reactivated.exportBatchId, first.exportBatchId);
+  });
+  it("serializes concurrent administrators and replays the same request after completion", async () => {
+    const requestKey = randomUUID();
+    const results = await Promise.all([
+      tryStartRegularUpdateJob(adminId, { requestKey }),
+      tryStartRegularUpdateJob(adminId, { requestKey }),
+    ]);
+    assert.ok(results[0].ok && results[1].ok);
+    if (!results[0].ok || !results[1].ok) return;
+    assert.equal(results[0].jobId, results[1].jobId);
+    const id = results[0].jobId;
+    await pool.query("UPDATE onec_import_jobs SET status='success',finished_at=NOW() WHERE id=$1", [id]);
+    assert.deepEqual(await tryStartRegularUpdateJob(adminId, { requestKey }), { ok: true, jobId: id });
+    assert.equal((await pool.query("SELECT count(*) FROM onec_import_jobs")).rows[0].count, "1");
+    const conflict = await tryStartRegularUpdateJob(randomUUID(), { requestKey });
+    assert.equal(conflict.ok, false);
+  });
+  it("recovers a dead attempt and links one retry; stale retries are refused", async () => {
+    const previous = await job();
+    const started = await tryStartRegularUpdateJob(adminId, { requestKey: randomUUID(), retryOfJobId: previous });
+    assert.ok(started.ok);
+    if (!started.ok) return;
+    assert.equal((await row(previous)).error_code, "WORKER_INTERRUPTED");
+    const history = await loadRegularUpdateHistory();
+    assert.equal(history[0].id, started.jobId);
+    assert.equal(history[0].retryOfJobId, previous);
+    const second = await tryStartRegularUpdateJob(adminId, { requestKey: randomUUID(), retryOfJobId: previous });
+    assert.equal(second.ok, false);
+    await pool.query("UPDATE onec_import_jobs SET status='success' WHERE id=$1", [started.jobId]);
+    const stale = await tryStartRegularUpdateJob(adminId, { requestKey: randomUUID(), retryOfJobId: previous });
+    assert.equal(stale.ok, false);
+  });
+  for (const fault of ["before", "after"] as const) {
+    it(`reconciles a lost COMMIT reply ${fault} commit only after the worker lease ends`, async () => {
+      const id = await job(), worker = await pool.connect(), files = manualFixture({
+        groups: [{ guid_group: randomUUID(), name_group: "Commit test" }],
+      });
+      const oldActive = (await pool.query("SELECT batch_id FROM onec_manual_state WHERE id=1")).rows[0].batch_id;
+      try {
+        await acquireWorkerLease(worker, id);
+        const result = await runManualUpdate({ env: { ...env, TEST_DATABASE_URL: env.DATABASE_URL },
+          manualFiles: files, operatorImportJobId: id, commitTestFault: fault,
+          argv: ["--apply", "--expected-fingerprint", prepareManualBundle(files).fingerprint] });
+        assert.equal(result.errorCode, "COMMIT_UNCERTAIN", JSON.stringify(result));
+        await recover();
+        assert.equal(await isExchangeApplyBlocked(), true);
+        assert.equal((await row(id)).status, fault === "after" ? "success" : "running");
+      } finally { await releaseWorkerLease(worker, id); worker.release(); }
+      await recover();
+      const final = await row(id);
+      assert.equal(final.status, fault === "after" ? "success" : "failed");
+      assert.equal(await isExchangeApplyBlocked(), false);
+      const active = (await pool.query("SELECT batch_id FROM onec_manual_state WHERE id=1")).rows[0].batch_id;
+      if (fault === "before") {
+        assert.equal(final.error_code, "WORKER_INTERRUPTED");
+        assert.equal(active, oldActive);
+      } else assert.equal(active, final.result.exportBatchId);
+      assert.equal((await pool.query("SELECT count(*) FROM onec_import_jobs")).rows[0].count, "1");
+    });
+  }
+  it("does not clear an unrelated or unversioned uncertain operation", async () => {
+    const id = await job(false);
+    await pool.query(`UPDATE onec_import_jobs SET status='failed',error_code='COMMIT_UNCERTAIN' WHERE id=$1`, [id]);
+    await pool.query("UPDATE onec_v3_exchange_state SET apply_blocked=TRUE,apply_blocked_reason='COMMIT_UNCERTAIN' WHERE id=1");
+    await recover();
+    assert.equal(await isExchangeApplyBlocked(), true);
+    assert.equal((await row(id)).error_code, "COMMIT_UNCERTAIN");
+  });
+  for (const scenario of ["NO_CHANGES", "reused"] as const) {
+    for (const fault of ["before", "after"] as const) {
+      it(`resolves ${scenario} ${fault} lost COMMIT using this attempt, not the batch's first owner`, async () => {
+        const a = manualFixture({ groups: [{ guid_group: randomUUID(), name_group: "A" }] });
+        const b = manualFixture({ groups: [{ guid_group: randomUUID(), name_group: "B" }] });
+        const apply = async (files: ManualFiles, commitTestFault?: "before" | "after") => {
+          const id = await job();
+          const result = await runManualUpdate({ env: { ...env, TEST_DATABASE_URL: env.DATABASE_URL },
+            manualFiles: files, operatorImportJobId: id, commitTestFault,
+            argv: ["--apply", "--expected-fingerprint", prepareManualBundle(files).fingerprint] });
+          return { id, result };
+        };
+        const original = await apply(a);
+        assert.equal(original.result.status, "SUCCESS");
+        if (scenario === "reused") assert.equal((await apply(b)).result.status, "SUCCESS");
+        const oldActive = (await pool.query("SELECT batch_id FROM onec_manual_state WHERE id=1")).rows[0].batch_id;
+        const uncertain = await apply(a, fault);
+        assert.equal(uncertain.result.errorCode, "COMMIT_UNCERTAIN");
+        await recover();
+        const resolved = await row(uncertain.id);
+        assert.equal(resolved.status, fault === "after" ? "success" : "failed");
+        if (fault === "after") assert.equal(resolved.result.status, scenario === "NO_CHANGES" ? "NO_CHANGES" : "SUCCESS");
+        assert.equal((await pool.query("SELECT batch_id FROM onec_manual_state WHERE id=1")).rows[0].batch_id,
+          fault === "after" ? original.result.exportBatchId : oldActive);
+        assert.equal(await isExchangeApplyBlocked(), false);
+        const newer = await apply(b);
+        assert.ok(["SUCCESS", "NO_CHANGES"].includes(newer.result.status));
+        if (fault === "after") {
+          await pool.query(`UPDATE onec_v3_exchange_state SET apply_blocked=TRUE,apply_blocked_reason=$1 WHERE id=1`,
+            [`MANUAL_COMMIT_UNCERTAIN:${uncertain.id}`]);
+          await recover();
+          assert.equal((await pool.query("SELECT batch_id FROM onec_manual_state WHERE id=1")).rows[0].batch_id,
+            newer.result.exportBatchId);
+        }
+      });
+    }
+  }
+  it("fences a resumed old worker before it can apply any business changes", async () => {
+    const id = await job(), files = manualFixture({ groups: [{ guid_group: randomUUID() }] });
+    await recover();
+    const before = (await pool.query("SELECT batch_id FROM onec_manual_state WHERE id=1")).rows[0].batch_id;
+    const result = await runManualUpdate({ env, manualFiles: files, operatorImportJobId: id,
+      argv: ["--apply", "--expected-fingerprint", prepareManualBundle(files).fingerprint] });
+    assert.equal(result.status, "ERROR");
+    assert.equal((await row(id)).error_code, "WORKER_INTERRUPTED");
+    assert.equal((await pool.query("SELECT batch_id FROM onec_manual_state WHERE id=1")).rows[0].batch_id, before);
+  });
+  it("requires admin rights for history and validates retry requests without starting FTP", async () => {
+    const app = (await import("../../src/server")).createApp();
+    const login = await request(app).post("/api/auth/login").set("Origin", "http://127.0.0.1:3000")
+      .send({ email: "recovery-admin@test.local", password: "StrongPass123!" });
+    const cookie = login.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+    assert.equal((await request(app).get("/api/admin/clients/onec-update/history")).status, 401);
+    assert.equal((await request(app).get("/api/admin/clients/onec-update/history").set("Cookie", cookie)).status, 200);
+    await createTestUser({ databaseUrl: getIntegrationDatabaseUrl(), email: "recovery-manager@test.local",
+      password: "StrongPass123!", fullName: "Recovery manager", role: "manager" });
+    const managerLogin = await request(app).post("/api/auth/login").set("Origin", "http://127.0.0.1:3000")
+      .send({ email: "recovery-manager@test.local", password: "StrongPass123!" });
+    const managerCookie = managerLogin.headers["set-cookie"]?.[0]?.split(";")[0] ?? "";
+    assert.equal(managerLogin.status, 200);
+    for (const path of ["history", "status"]) assert.equal((await request(app)
+      .get(`/api/admin/clients/onec-update/${path}`).set("Cookie", managerCookie)).status, 403);
+    assert.equal((await request(app).post("/api/admin/clients/onec-update").set("Cookie", managerCookie)
+      .set("Origin", "http://127.0.0.1:3000").send({ requestKey: randomUUID() })).status, 403);
+    assert.equal((await request(app).post("/api/admin/clients/onec-update").set("Cookie", cookie)
+      .set("Origin", "https://foreign.test").send({ requestKey: randomUUID() })).status, 403);
+    assert.equal((await request(app).post("/api/admin/clients/onec-update").set("Cookie", cookie)
+      .set("Origin", "http://127.0.0.1:3000").send({ requestKey: "invalid" })).status, 400);
+    assert.equal((await pool.query("SELECT count(*) FROM onec_import_jobs")).rows[0].count, "0");
   });
 });

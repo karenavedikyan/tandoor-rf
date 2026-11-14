@@ -39,11 +39,19 @@
                     id="onec-update-button"
                     class="workspace-button workspace-button--secondary clients-onec-update__button"
                     data-testid="onec-update-button"
+                    disabled
                   >
                     Обновить из 1С
                   </button>
-                  <p id="onec-update-status" class="clients-onec-update__status" data-testid="onec-update-status"></p>
+                  <button type="button" id="onec-check-status" class="workspace-button workspace-button--secondary"
+                    data-testid="onec-check-status">Проверить состояние</button>
+                  <p id="onec-update-status" class="clients-onec-update__status" data-testid="onec-update-status" role="status"></p>
+                  <p id="onec-update-guidance" class="clients-onec-update__status" data-testid="onec-update-guidance"></p>
                   <dl id="onec-update-meta" class="clients-onec-update__meta clients-hidden"></dl>
+                  <details id="onec-update-history" data-testid="onec-update-history">
+                    <summary>История обновлений</summary>
+                    <div id="onec-history-content" data-testid="onec-history-content"></div>
+                  </details>
                   <a
                     href="/clients/field-map"
                     id="clients-field-map-link"
