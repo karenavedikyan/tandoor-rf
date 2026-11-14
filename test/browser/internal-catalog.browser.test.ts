@@ -26,7 +26,7 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
     photoBytes = await sharp({ create: { width: 20, height: 10, channels: 3, background: "#426428" } }).webp().toBuffer();
   });
   after(async () => { await browser?.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  async function open(options: { products?: Product[]; variants?: boolean; unknownStock?: boolean; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string; images?: boolean; brokenImages?: boolean; role?: "admin" | "manager"; forbidden?: boolean; workspace?: boolean } = {}) {
+  async function open(options: { products?: Product[]; variants?: boolean; unknownStock?: boolean; mobile?: boolean; metaStatus?: number; empty?: boolean; product?: string; images?: boolean; thumbnails?: boolean; brokenImages?: boolean; role?: "admin" | "manager"; forbidden?: boolean; workspace?: boolean } = {}) {
     const context = await browser.newContext({ viewport: options.mobile ? { width: 375, height: 812 } : { width: 1440, height: 1000 } });
     const page = await context.newPage();
     const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
@@ -57,7 +57,7 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
         if (!control.failUpload) control.imported = true;
       } else if (pathname === "/api/internal-catalog/meta") {
         status = options.metaStatus ?? 200;
-        data = status !== 200 ? { error: { message: "Нет доступа" } } : { imagesConfigured: options.images === true, snapshot: options.empty && !control.imported ? null : {
+        data = status !== 200 ? { error: { message: "Нет доступа" } } : { imagesConfigured: options.images === true, thumbnailsReady: options.thumbnails === true, snapshot: options.empty && !control.imported ? null : {
           id: fixtureGuid(900), sha256: parsed.sha256, sourceName: "synthetic.json",
           importedAt: "2026-10-31T08:00:00Z", summary: parsed.summary,
         }, ...(options.workspace ? { groups: [{ guid: fixtureGuid(810), name: "Группа 1С", parent: null }],
@@ -219,6 +219,28 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
       await page.locator(".cat-card").first().click();
       await page.locator(".cat-gallery .cat-img-missing").waitFor({ state: "visible" });
       assert.equal(await page.locator(".cat-specs").first().isVisible(), true);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+  for (const mobile of [false, true]) it(`ready thumbnails use size-specific URLs; detail/zoom keep full photos (${mobile ? "mobile" : "desktop"})`, async () => {
+    const { page, context, errors } = await open({ images: true, thumbnails: true, mobile });
+    try {
+      const gridImage = page.locator("#ic-results .cat-img img").first();
+      await gridImage.waitFor(); assert.match(await gridImage.getAttribute("src") ?? "", /preview=list$/);
+      await page.locator("#ic-results .cat-name").first().click();
+      await page.locator("#ic-detail[open]").waitFor();
+      const hero = page.locator("#ic-detail .cat-img img");
+      assert.doesNotMatch(await hero.getAttribute("src") ?? "", /preview=/);
+      await hero.click(); await page.locator("#ic-light[open]").waitFor();
+      assert.doesNotMatch(await page.locator("#ic-light img").getAttribute("src") ?? "", /preview=/);
+      await page.keyboard.press("Escape"); await page.keyboard.press("Escape");
+      await page.locator('[data-view="table"]').click();
+      assert.match(await page.locator(".cat-thumb img").first().getAttribute("src") ?? "", /preview=small$/);
+      await page.locator(".cat-thumb img").first().evaluate((img: HTMLImageElement) => img.decode());
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      if (process.env.CATALOG_THUMBNAIL_SCREENSHOTS) await page.screenshot({
+        path: path.join(process.env.CATALOG_THUMBNAIL_SCREENSHOTS, `catalog-thumbnails-${mobile ? "375" : "1440"}.png`),
+      });
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   });
