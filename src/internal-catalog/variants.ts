@@ -25,19 +25,44 @@ function identity(product: Product, context: CatalogContext, priceType: string) 
 // Never copy them between sizes: detail/reply still use the selected original SKU.
 const presentationFields = new Set(["Размер, мм", "Артикул", "Главная", "главная (бот)", "Название для сайта",
   "Актуальный остаток", "Дата ожидаемого поступления", "Количество ожидаемого поступления",
-  "Гарантийный срок", "Условия эксплуатации", "Новинка", "Хит продаж", "Акция"]);
-function configuration(product: Product): Map<string, string> {
+  "Гарантийный срок", "Условия эксплуатации", "Новинка", "Хит продаж", "Акция",
+  "Тип товара", "сайт Тандор", "СсылкаНаГлавнуюNEW"]);
+// The legacy checkbox varies between sizes of the same source-linked model
+// (e.g. Avallon melange left). Keep it on the selected SKU, not in family identity.
+// Exact glass specifications ("Стекло", "Стеклопакет") still distinguish finishes.
+const sizeVariantFields = new Set(["ВХ. Стеклопакет"]);
+const derivedClassifications = new Map([
+  ["Цветовая гамма", "Цвет"],
+  ["МТ. Толщина полотна (сайт)", "Толщина полотна, мм"],
+  ["МТ. Толщина стали (сайт)", "Толщина стали, мм"],
+]);
+// Comparison only: do not rewrite the original properties or infer synonyms.
+const configurationValue = (value: string) => value.normalize("NFC").toLocaleLowerCase("ru").replace(/\s+/g, " ").trim();
+function nonBlockingClassifications(products: Product[]): Set<string> {
+  const fields = new Set<string>();
+  for (const [classification, exactField] of derivedClassifications) {
+    const exactValues = products.map(product => new Set(product.properties
+      .filter(p => p.name.trim() === exactField).map(p => configurationValue(p.value)).filter(Boolean)));
+    // An absent or ambiguous exact value must not hide a classification conflict.
+    if (exactValues.every(values => values.size === 1) &&
+        new Set(exactValues.map(values => [...values][0])).size === 1) fields.add(classification);
+  }
+  return fields;
+}
+function configuration(product: Product, nonBlocking: Set<string>): Map<string, string> {
   const values = new Map<string, Set<string>>();
   for (const property of product.properties) {
-    const name = property.name.trim(), value = property.value.trim();
-    if (!value || presentationFields.has(name) || /^АкцияДействует(?:С|До)_/.test(name)) continue;
+    const name = property.name.trim(), value = configurationValue(property.value);
+    if (!value || presentationFields.has(name) || sizeVariantFields.has(name) || nonBlocking.has(name) ||
+        /^АкцияДействует(?:С|До)_/.test(name)) continue;
     const entries = values.get(name) ?? new Set<string>();
     entries.add(JSON.stringify([property.guid, value])); values.set(name, entries);
   }
   return new Map([...values].map(([name, entries]) => [name, JSON.stringify([...entries].sort())]));
 }
 function configurationAnalysis(products: Product[]) {
-  const configurations = products.map(configuration), observed = new Map<string, Set<string>>();
+  const nonBlocking = nonBlockingClassifications(products);
+  const configurations = products.map(product => configuration(product, nonBlocking)), observed = new Map<string, Set<string>>();
   for (const fields of configurations) for (const [name, value] of fields) {
     const values = observed.get(name) ?? new Set<string>();
     values.add(value); observed.set(name, values);

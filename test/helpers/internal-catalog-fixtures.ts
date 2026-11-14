@@ -27,3 +27,18 @@ export function sizeVariantsFixture(): Product[] {
     files: [{ guid: fixtureGuid(300 + index), name: "Фото " + width, path: width + ".jpg" }],
   }));
 }
+export function avallonSizeVariantsFixture(): Product[] {
+  return sizeVariantsFixture().slice(0, 2).map((product, index) => ({
+    ...product,
+    name: `Аваллон мет/мет меланж ${index === 0 ? 850 : 950}х2030 левая`,
+    properties: product.properties.map(p => ({
+      ...p, value: p.name === "Размер, мм" ? `${index === 0 ? 850 : 950}x2030` :
+        p.name === "СсылкаНаГлавную" ? "3e28a681-44d9-11e6-80c0-avallonbezstekla" :
+        p.name === "Цвет" ? "Муар черный_Муар меланж" :
+        p.name === "Покрытие двери" ? "Муар меланж / Муар черный" : p.value,
+    })).concat([
+      { guid: fixtureGuid(980), name: "Сторона открывания", value: "Левое" },
+      { guid: fixtureGuid(981), name: "ВХ. Стеклопакет", value: index === 0 ? "да" : "нет" },
+    ]),
+  }));
+}
