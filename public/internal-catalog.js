@@ -132,7 +132,9 @@
       var data = await request("/products?" + p.toString());
       if (sequence !== listSequence || key !== filterKey()) return;
       currentPage = data.page; updateUrl();
-      el.count.textContent = "Найдено: " + number(data.total) + " из " + number(snapshot.summary.products);
+      el.count.textContent = data.matchedProducts !== undefined && data.matchedProducts !== data.total ?
+        "Найдено карточек: " + number(data.total) + " · товаров: " + number(data.matchedProducts) + " из " + number(snapshot.summary.products) :
+        "Найдено: " + number(data.total) + " из " + number(snapshot.summary.products);
       el.results.innerHTML = workspace ? workspace.results(data) : data.items.length ? data.items.map(renderCard).join("") :
         '<div class="ic-empty"><h2>Ничего не найдено</h2><p>Попробуйте другое название, артикул или сбросьте фильтры.</p>' +
         actionButton("ic-empty-reset", "Показать все товары") + "</div>";
@@ -195,18 +197,27 @@
   }
   async function openProduct(guid, push) {
     clearTimeout(timer);
-    if (push) { var p = paramsWithFilters(); p.set("product", guid); history.pushState({ icModal: true }, "", url(p)); }
+    if (push) {
+      var p = paramsWithFilters(); p.set("product", guid);
+      if (push === "replace") history.replaceState(history.state, "", url(p));
+      else history.pushState({ icModal: true }, "", url(p));
+    }
     var sequence = ++detailSequence;
     el["detail-body"].innerHTML = '<h2 id="ic-detail-title">Загружаем карточку…</h2>';
     if (!el.detail.open) el.detail.showModal();
     el.detail.scrollTop = 0;
     try {
       if (!guidPattern.test(guid)) throw new Error("Некорректная ссылка на товар.");
-      var data = await request("/products/" + encodeURIComponent(guid) + "?version=" + encodeURIComponent(snapshot.id));
+      var data = await request("/products/" + encodeURIComponent(guid) + "?version=" + encodeURIComponent(snapshot.id) +
+        "&priceType=" + encodeURIComponent(paramsWithFilters().get("priceType") || ""));
       if (sequence !== detailSequence || !el.detail.open) return;
       el["detail-body"].innerHTML = workspace ? workspace.detail(data) : renderDetail(data);
       bindImageErrors(el["detail-body"]);
       if (workspace) workspace.afterRender();
+      if (push === "replace") {
+        var selected = el["detail-body"].querySelector('[data-action="detail-size"][aria-pressed="true"]');
+        if (selected) selected.focus();
+      }
     } catch (error) {
       if (sequence !== detailSequence || !el.detail.open) return;
       el["detail-body"].innerHTML = '<h2 id="ic-detail-title">Карточка недоступна</h2><p>' + esc(error.message) + "</p>" +
