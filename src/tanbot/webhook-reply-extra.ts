@@ -31,6 +31,7 @@ export type TelegramReplyExtra = {
 };
 
 export type MaxReplyExtra = {
+  catalogImageToken?: string;
   forwardInvitationText?: string;
   inlineButtons?: MaxInlineButton[][];
   copyOnlyCode?: string;

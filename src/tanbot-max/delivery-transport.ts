@@ -3,13 +3,14 @@ import { MAX_API_ORIGIN } from "./config";
 import { safeTransportFailure } from "./safe-errors";
 import { redactMaxSecrets } from "./sanitize";
 import { createMaxDispatcher, isLikelyTlsError, readMaxTlsCaBundle, wrapFetchWithMaxTls } from "./tls-fetch";
+import { uploadMaxCatalogPhoto } from "../tanbot/catalog-media";
 
 export type MaxCallbackButton = { type: "callback"; text: string; payload: string };
 export type MaxRequestContactButton = { type: "request_contact"; text: string };
 export type MaxLinkButton = { type: "link"; text: string; url: string };
 export type MaxInlineButton = MaxCallbackButton | MaxRequestContactButton | MaxLinkButton;
 
-export type MaxDeliveryResult =
+export type MaxDeliveryResult = (
   | { ok: true; result: unknown }
   | {
       ok: false;
@@ -18,7 +19,7 @@ export type MaxDeliveryResult =
       httpStatus?: number;
       retryable?: boolean;
       retryAfterSeconds?: number;
-    };
+    }) & { uploadedImageToken?: string };
 
 export type MaxDeliveryTransport = (input: {
   token: string;
@@ -31,6 +32,7 @@ export type MaxDeliveryTransport = (input: {
   maxImageToken?: string;
   maxFileToken?: string;
   maxVideoToken?: string;
+  photoBytes?: Buffer;
 }) => Promise<MaxDeliveryResult>;
 
 /** Documented success: HTTP 200 with message object (not necessarily success:true). */
@@ -45,6 +47,9 @@ export function parseMaxSendResult(bodyText: string, httpStatus: number): MaxDel
     return safeTransportFailure("INVALID_JSON");
   }
   const row = parsed as { success?: unknown; message?: unknown; code?: unknown };
+  if (row.code === "attachment.not.ready") {
+    return { ok: false, code: "ATTACHMENT_NOT_READY", message: "MAX image is processing.", retryable: true };
+  }
   if (row.success === false) {
     return { ok: false, code: "API_ERROR", message: "MAX API error.", httpStatus: httpStatus || 400 };
   }
@@ -142,12 +147,22 @@ export function createDefaultMaxDeliveryTransport(
     maxImageToken,
     maxFileToken,
     maxVideoToken,
+    photoBytes,
   }) => {
     const url = `${MAX_API_ORIGIN}/messages?user_id=${encodeURIComponent(userId.toString())}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const body = buildMaxSendMessagePayload({ text, inlineButtons, shareUrl, maxImageToken, maxFileToken, maxVideoToken });
+    let uploadedImageToken = maxImageToken;
     try {
+      if (photoBytes && !uploadedImageToken) {
+        if (photoBytes.length > 1024 * 1024) return { ok: false, code: "IMAGE_TOO_LARGE", message: "Image exceeds limit." };
+        uploadedImageToken = await uploadMaxCatalogPhoto(fetchWithTls, {
+          token, bytes: photoBytes, signal: controller.signal, maxResponseBytes,
+        }) ?? undefined;
+        if (!uploadedImageToken) return { ok: false, code: "IMAGE_UPLOAD", message: "Image upload failed.", retryable: true };
+      }
+      const body = buildMaxSendMessagePayload({ text, inlineButtons, shareUrl,
+        maxImageToken: uploadedImageToken, maxFileToken, maxVideoToken });
       const response = await fetchWithTls(url, {
         method: "POST",
         headers: {
@@ -178,6 +193,7 @@ export function createDefaultMaxDeliveryTransport(
           message: "MAX rate limit.",
           httpStatus: 429,
           retryable: true,
+          uploadedImageToken,
         };
       }
       if (response.status >= 500) {
@@ -187,19 +203,20 @@ export function createDefaultMaxDeliveryTransport(
           message: "MAX HTTP error.",
           httpStatus: response.status,
           retryable: true,
+          uploadedImageToken,
         };
       }
-      const parsed = parseMaxSendResult(bodyResult.text, response.status);
+      const parsed = { ...parseMaxSendResult(bodyResult.text, response.status), uploadedImageToken };
       if (!parsed.ok && response.ok) {
         return parsed;
       }
       if (!response.ok) {
-        return parsed.ok ? parsed : parseMaxSendResult(bodyResult.text, response.status);
+        return parsed;
       }
       return parsed;
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") {
-        return { ok: false, code: "TIMEOUT", message: "MAX request timed out.", retryable: true };
+        return { ok: false, code: "TIMEOUT", message: "MAX request timed out.", retryable: true, uploadedImageToken };
       }
       if (isLikelyTlsError(err)) {
         return { ...safeTransportFailure("TLS_ERROR"), code: "TLS_ERROR" };
@@ -210,6 +227,7 @@ export function createDefaultMaxDeliveryTransport(
         code: "NETWORK_ERROR",
         message: redactMaxSecrets(message, [token]),
         retryable: true,
+        uploadedImageToken,
       };
     } finally {
       clearTimeout(timer);

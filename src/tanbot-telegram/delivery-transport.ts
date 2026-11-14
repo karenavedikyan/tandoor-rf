@@ -2,6 +2,7 @@ import { readBoundedResponseBody } from "./bounded-body";
 import { TELEGRAM_API_ORIGIN } from "./config";
 import { safeTransportFailure } from "./safe-errors";
 import { redactTelegramSecrets } from "./sanitize";
+import { photoForm } from "../tanbot/catalog-media";
 
 export const TELEGRAM_DELIVERY_METHODS = [
   "sendMessage",
@@ -29,6 +30,7 @@ export type TelegramDeliveryTransport = (input: {
   body: Record<string, unknown>;
   timeoutMs: number;
   maxResponseBytes: number;
+  photoBytes?: Buffer;
 }) => Promise<TelegramDeliveryResult>;
 
 function buildUrl(token: string, method: TelegramDeliveryMethod): string {
@@ -86,7 +88,7 @@ function parseEnvelope(bodyText: string, token: string): TelegramDeliveryResult 
 }
 
 export function createDefaultTelegramDeliveryTransport(fetchImpl: typeof fetch = fetch): TelegramDeliveryTransport {
-  return async ({ method, token, body, timeoutMs, maxResponseBytes }) => {
+  return async ({ method, token, body, timeoutMs, maxResponseBytes, photoBytes }) => {
     if (!TELEGRAM_DELIVERY_METHODS.includes(method)) {
       return { ok: false, code: "METHOD_NOT_ALLOWED", message: "Method not allowed." };
     }
@@ -94,10 +96,19 @@ export function createDefaultTelegramDeliveryTransport(fetchImpl: typeof fetch =
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      let payload: string | FormData = JSON.stringify(body);
+      if (photoBytes) {
+        if (method !== "sendPhoto" || photoBytes.length > 1024 * 1024) return safeTransportFailure("INVALID_JSON");
+        const form = photoForm(photoBytes, "photo");
+        for (const [key, value] of Object.entries(body)) {
+          if (key !== "photo" && value !== undefined) form.append(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+        }
+        payload = form;
+      }
       const response = await fetchImpl(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        headers: photoBytes ? {} : { "Content-Type": "application/json" },
+        body: payload,
         signal: controller.signal,
         redirect: "error",
       });
