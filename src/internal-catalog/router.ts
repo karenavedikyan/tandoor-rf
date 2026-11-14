@@ -7,6 +7,8 @@ import { internalCatalogAccess } from "./access";
 import { GUID, normalizeSearch, MAX_JSON_BYTES, parseProductsJson } from "./model";
 import { importSnapshot, loadProduct, loadSnapshot, searchProducts } from "./repository";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "./images";
+import { loadCatalogContext, loadCatalogFacets } from "./context";
+import { CATALOG_FACETS, commerceFor } from "./presentation";
 
 export function createInternalCatalogRouter(): express.Router {
   const router = express.Router();
@@ -58,7 +60,13 @@ export function createInternalCatalogRouter(): express.Router {
     return result;
   }
   router.get("/meta", wrap(async (_req, res) => {
-    res.json({ snapshot: await loadSnapshot(requirePool()), imagesConfigured: internalCatalogImagesConfigured() });
+    const db = requirePool(), current = await loadSnapshot(db);
+    if (!current) { res.json({ snapshot: null, imagesConfigured: internalCatalogImagesConfigured() }); return; }
+    const [context, facets, counts] = await Promise.all([loadCatalogContext(db), loadCatalogFacets(db, current.id),
+      db.query<{ guid: string; count: string }>(`SELECT record->>'guid_group' AS guid,count(*) AS count
+        FROM internal_catalog_products WHERE snapshot_id=$1 GROUP BY record->>'guid_group'`, [current.id])]);
+    res.json({ snapshot: current, imagesConfigured: internalCatalogImagesConfigured(),
+      groups: context.groups, groupCounts: counts.rows, facets, priceTypes: context.priceTypes });
   }));
   router.get("/products", wrap(async (req, res) => {
     const q = field(req, "q", 160), section = field(req, "section", 36),
@@ -66,10 +74,32 @@ export function createInternalCatalogRouter(): express.Router {
     if (q === null || section === null || brand === null || page === null ||
         (section && !GUID.test(section)) || (page && !/^[1-9]\d{0,6}$/.test(page)) ||
         normalizeSearch(q).split(" ").filter(Boolean).length > 8) { invalid(res); return; }
+    const group = field(req, "group", 36), priceType = field(req, "priceType", 36),
+      min = field(req, "min", 18), max = field(req, "max", 18), availability = field(req, "availability", 10),
+      flag = field(req, "flag", 10), sort = field(req, "sort", 10), rawFilters = field(req, "filters", 12000);
+    let properties: Record<string, string[]> = {};
+    try {
+      properties = JSON.parse(rawFilters || "{}");
+      if (!properties || Array.isArray(properties) || typeof properties !== "object" || Object.keys(properties).length > 12 ||
+          Object.entries(properties).some(([name, selected]) => !CATALOG_FACETS.includes(name as typeof CATALOG_FACETS[number]) ||
+            !Array.isArray(selected) || !selected.length || selected.length > 20 ||
+            selected.some(v => typeof v !== "string" || !v.trim() || v.length > 200))) throw new Error("filters");
+    } catch { invalid(res); return; }
+    const numeric = (x: string | null) => x === "" || (x !== null && /^\d{1,12}(?:\.\d{1,4})?$/.test(x));
+    if (group === null || (group && !GUID.test(group)) || priceType === null || (priceType && !GUID.test(priceType)) ||
+      !numeric(min) || !numeric(max) || (min && max && Number(min) > Number(max)) ||
+      ((min || max || sort === "asc" || sort === "desc") && !priceType) ||
+      availability === null || !["", "in", "zero", "unknown"].includes(availability) ||
+      flag === null || !["", "new", "hit", "sale"].includes(flag) ||
+      sort === null || !["", "name", "asc", "desc", "stock"].includes(sort) || rawFilters === null) { invalid(res); return; }
     const current = await snapshot(req, res);
     if (current === undefined) return;
     if (!current) { res.json({ snapshotId: null, total: 0, page: 1, pageSize: 24, items: [] }); return; }
-    const result = await searchProducts(requirePool(), current.id, { q, section, brand, page: Number(page || 1), pageSize: 24 });
+    const context = await loadCatalogContext(requirePool());
+    if (priceType && !context.priceTypes.some(x => x.guid === priceType.toLowerCase())) { invalid(res, "Тип цены не найден в выгрузке."); return; }
+    const result = await searchProducts(requirePool(), current.id, { q, section, brand, page: Number(page || 1), pageSize: 24,
+      group: group?.toLowerCase(), priceType: priceType?.toLowerCase(), properties, min: min ? Number(min) : undefined,
+      max: max ? Number(max) : undefined, availability, flag, sort }, context);
     const quality = await qualityForVisibleTargets(result.items.map(item => ({ kind: "product", guid: item.guid })));
     res.json({ ...result, items: result.items.map(item => ({ ...item, _onecQuality: quality.get("product:" + item.guid) ?? null })) });
   }));
@@ -93,8 +123,9 @@ export function createInternalCatalogRouter(): express.Router {
         WHERE v.entity_kind='product' AND v.entity_guid=$1::uuid AND v.file_key IN ('prices','stocks')
         ORDER BY r.file_key,r.row_index`, [guid])).rows;
     } catch (error) { if ((error as { code?: string }).code !== "42P01") throw error; }
+    const context = await loadCatalogContext(requirePool());
     res.json({ snapshotId: current!.id, importedAt: current!.importedAt, product,
-      _onecQuality: quality.get("product:" + guid) ?? null, sourceValues });
+      commerce: commerceFor(context, guid.toLowerCase()), _onecQuality: quality.get("product:" + guid) ?? null, sourceValues });
   }));
   router.get("/products/:guid/images/:fileGuid", wrap(async (req, res) => {
     const { guid, fileGuid } = req.params;

@@ -12,6 +12,8 @@
   <link rel="stylesheet" href="/clients.css">
   <link rel="stylesheet" href="/brand/cabinet.css">
   <link rel="stylesheet" href="/internal-catalog.css">
+  <link rel="stylesheet" href="/catalog-prototype.css">
+  <link rel="stylesheet" href="/catalog-workspace.css">
 </head>
 <body class="legacy-body internal-catalog-page">
   <div class="legacy-app">
@@ -21,62 +23,80 @@
       <div id="workspace-topbar"></div>
       <main class="legacy-content ic-main">
         <header class="ic-heading">
-          <p class="ic-eyebrow">Внутренний справочник · 1С</p>
+          <p class="ic-eyebrow">Tandoor RF / Рабочее пространство</p>
           <h1>Каталог продукции</h1>
-          <p class="ic-description">Найдите товар и откройте его характеристики из выгрузки.</p>
+          <p class="ic-description">Цены, остатки и фото моделей — чтобы ответить клиенту за один экран</p>
         </header>
         <div id="ic-state" class="ic-state" role="status" aria-live="polite">Загружаем каталог…</div>
         <section id="ic-app" hidden aria-label="Поиск по каталогу">
-          <div class="ic-source">
-            <span class="ic-source-dot" aria-hidden="true"></span>
-            <span id="ic-source-label"></span>
-        <span class="ic-source-note">Только для администратора</span>
-          </div>
-          <form id="ic-search-form" class="ic-filters" role="search">
-            <div class="ic-query">
-              <label for="ic-query">Найти товар</label>
-              <div class="ic-query-row">
-                <input id="ic-query" type="search" maxlength="160" placeholder="Название, артикул или характеристика" autocomplete="off" aria-describedby="ic-search-hint">
-                <button type="submit" class="ic-button ic-button-primary">Найти</button>
-              </div>
-              <p id="ic-search-hint" class="ic-hint">Можно искать по нескольким словам или GUID товара.</p>
-            </div>
-            <div class="ic-select-field">
-              <label for="ic-section">Раздел</label>
-              <select id="ic-section"><option value="">Все разделы</option></select>
-            </div>
-            <div class="ic-select-field">
-              <label for="ic-brand">Бренд</label>
-              <select id="ic-brand"><option value="">Все бренды</option></select>
-            </div>
-          </form>
-          <div class="ic-results-heading">
-            <p id="ic-count" role="status" aria-live="polite"></p>
-            <button type="button" id="ic-reset" class="ic-text-button" hidden>Сбросить фильтры</button>
-          </div>
-          <div id="ic-results" class="ic-grid" aria-label="Товары"></div>
+          <div id="catalog-root">
+          <div class="cat">
+            <aside class="cat-side"><div id="ic-tree" class="cat-nav cat-nav-side"></div></aside>
+            <div class="cat-main">
+              <form id="ic-search-form" class="card cat-toolbar" role="search">
+                <button type="button" class="cat-navbtn" id="ic-nav-open" aria-expanded="false"><i data-lucide="menu"></i><span>Все разделы</span><i data-lucide="chevron-down"></i></button>
+                <div class="cat-search"><i data-lucide="search"></i><input id="ic-query" type="search" maxlength="160" placeholder="Модель, цвет или артикул" autocomplete="off" aria-label="Найти товар"></div>
+                <button type="button" class="primary cat-filterbtn" id="ic-filter-open" aria-expanded="false"><i data-lucide="sliders-horizontal"></i><span>Подобрать по фильтрам</span></button>
+                <div class="cat-seg" role="group" aria-label="Вид карточек">
+                  <button type="button" data-view="site" aria-pressed="false"><i data-lucide="layout-grid"></i><span>Как на сайте</span></button>
+                  <button type="button" data-view="show" class="active" aria-pressed="true"><i data-lucide="rows-3"></i><span>Витрина</span></button>
+                  <button type="button" data-view="table" aria-pressed="false"><i data-lucide="table-2"></i><span>Таблица</span></button>
+                </div>
+                <label class="cat-mode" title="Режим показа: без цен и точных остатков. Доступ не меняется."><input type="checkbox" id="ic-client-view"><i data-lucide="eye-off"></i><span>Как видит клиент</span></label>
+                <button type="button" class="cat-fullbtn" id="ic-full"><i data-lucide="maximize-2"></i><span>На весь экран</span></button>
+              </form>
+              <div class="cat-marks" id="ic-marks" aria-label="Быстрые отметки"></div>
+              <div class="cat-summary"><div class="cat-summary-l"><span id="ic-count" role="status" aria-live="polite"></span><nav id="ic-path" class="cat-path" aria-label="Путь по каталогу"></nav></div><button type="button" id="ic-reset" class="ic-text-button" hidden>Сбросить фильтры</button></div>
+              <div id="ic-results" aria-label="Товары"></div>
           <nav id="ic-pagination" class="ic-pagination" aria-label="Страницы каталога" hidden>
             <button type="button" id="ic-prev" class="ic-button">Назад</button>
             <span id="ic-page-label"></span>
             <button type="button" id="ic-next" class="ic-button">Далее</button>
           </nav>
-          <p class="ic-footnote">Справочник из JSON, отдельно от каталога образцов. Цены и остатки в карточках не заменяют актуальные данные 1С. <span id="ic-photo-status">Изображения ещё не подключены.</span></p>
+              <p class="cat-foot-note"><b>Источник данных.</b> <span id="ic-source-label"></span>. Цены и остатки на момент загрузки, не персональный расчёт и не гарантия отгрузки. <span id="ic-photo-status"></span> Только для администратора.</p>
+            </div>
+          </div>
+          </div>
         </section>
       </main>
     </div>
   </div>
-  <dialog id="ic-detail" class="ic-detail" aria-labelledby="ic-detail-title">
-    <div class="ic-detail-bar">
-      <span class="ic-eyebrow">Карточка продукции</span>
-      <button type="button" id="ic-close" class="ic-button" autofocus>Закрыть</button>
+  <dialog id="ic-filters" class="cat-filters" aria-labelledby="ic-filters-title">
+    <div class="cat-fhead"><div><b id="ic-filters-title">Фильтр</b><span>Данные из 1С</span></div><button type="button" class="cat-fclose" data-close="filters" aria-label="Закрыть фильтр"><i data-lucide="x"></i></button></div>
+    <div class="cat-fbody">
+      <details class="cat-fg" open><summary>Раздел и бренд</summary><div class="cat-fg-body">
+        <label for="ic-section">Раздел</label><select id="ic-section"><option value="">Все разделы</option></select>
+        <label for="ic-brand">Бренд</label><select id="ic-brand"><option value="">Все бренды</option></select>
+      </div></details>
+      <details class="cat-fg" open><summary>Цена</summary><div class="cat-fg-body">
+        <label for="ic-price-type">Тип цены из 1С</label><select id="ic-price-type"><option value="">Выберите тип цены</option></select>
+        <div class="cat-price-range"><input id="ic-min" type="number" min="0" step="0.01" placeholder="Цена от" aria-label="Цена от"><i></i><input id="ic-max" type="number" min="0" step="0.01" placeholder="Цена до" aria-label="Цена до"></div>
+        <p class="cat-fnote">Типы цен показаны как в 1С, без расчёта скидки конкретного клиента.</p>
+      </div></details>
+      <details class="cat-fg" open><summary>Сортировка</summary><div class="cat-fg-body"><select id="ic-sort" aria-label="Сортировка"><option value="name">По названию</option><option value="asc">По возрастанию цены</option><option value="desc">По убыванию цены</option><option value="stock">Сначала в наличии</option></select></div></details>
+      <details class="cat-fg" open><summary>Наличие на складах</summary><div class="cat-fg-body"><select id="ic-availability" aria-label="Наличие"><option value="">Любое</option><option value="in">Есть остаток в 1С</option><option value="zero">Нулевой остаток в 1С</option><option value="unknown">Остаток не определён</option></select><p class="cat-fnote">Не подтверждает свободный остаток: резервы не переданы.</p></div></details>
+      <div id="ic-facets"></div>
     </div>
-    <div id="ic-detail-body"></div>
+    <div class="cat-ffoot"><button type="button" id="ic-filter-reset" class="cat-freset" aria-label="Сбросить фильтры"><i data-lucide="rotate-ccw"></i></button><button type="button" class="primary cat-fapply" data-close="filters">Применить</button></div>
+  </dialog>
+  <dialog id="ic-nav" class="ic-nav-dialog" aria-label="Разделы каталога"><div id="ic-mobile-tree"></div></dialog>
+  <dialog id="ic-detail" class="cat-panel ic-product-dialog" aria-labelledby="ic-detail-title">
+    <div class="cat-panel-box"><button type="button" id="ic-close" class="ic-detail-close" aria-label="Закрыть"><i data-lucide="x"></i></button><div id="ic-detail-body"></div></div>
+  </dialog>
+  <dialog id="ic-light" class="cat-light ic-light-dialog" aria-label="Фото товара"></dialog>
+  <dialog id="ic-copy" class="ic-copy-dialog" aria-labelledby="ic-copy-title">
+    <header><h2 id="ic-copy-title">Ответ клиенту</h2><button type="button" data-close="copy" aria-label="Закрыть"><i data-lucide="x"></i></button></header>
+    <textarea id="ic-copy-text" aria-label="Текст для копирования" readonly rows="12"></textarea>
+    <p id="ic-copy-status" role="status">Выделите текст и скопируйте. Ничего не отправляется автоматически.</p>
+    <button type="button" id="ic-copy-button" class="primary">Скопировать</button>
   </dialog>
   <script src="/common.js" defer></script>
   <script src="/brand/shell-icons.js" defer></script>
   <script src="/clients-shell.js" defer></script>
   <link rel="stylesheet" href="/onec-quality.css" />
   <script src="/onec-quality.js" defer></script>
+  <script src="/brand/lucide.js" defer></script>
+  <script src="/catalog-workspace.js" defer></script>
   <script src="/internal-catalog.js" defer></script>
 </body>
 </html>
