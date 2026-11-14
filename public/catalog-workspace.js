@@ -97,17 +97,17 @@
         (!s.client ? '<div class="cat-quick"><button type="button" data-action="reply" data-guid="' + esc(p.guid) + '">' + icon("copy") + "Ответ клиенту</button></div>" : "")) + "</article>";
   }
   function table(items) {
-    return '<div class="card tablewrap"><table class="cat-table"><thead><tr><th></th><th>Модель</th><th class="cat-hide-m">Раздел</th><th class="cat-hide-m cat-hide-l">Размеры</th>' +
-      (!s.client ? '<th class="num">Цена из 1С</th>' : "") + "<th>Наличие</th></tr></thead><tbody>" +
+    return '<div class="card tablewrap"><table class="cat-table" role="table" aria-label="Товары каталога"><thead><tr><th></th><th>Модель</th><th class="cat-hide-m">Раздел</th><th class="cat-hide-m cat-hide-l">Размеры</th>' +
+      (!s.client ? '<th class="num">Цена из 1С</th>' : "") + '<th>Наличие</th></tr></thead><tbody role="rowgroup">' +
       items.map(function (p) {
         cache(p); var list = files(p), v = price(p);
-        return '<tr data-product="' + esc(p.guid) + '" tabindex="0"><td><div class="cat-thumb">' +
+        return '<tr role="row" data-product="' + esc(p.guid) + '" tabindex="0"><td role="cell"><div class="cat-thumb">' +
           (list.length ? '<img src="' + esc(imageUrl(p, list[0])) + '" alt="" loading="lazy">' : "") +
-          '</div></td><td><div class="cat-name">' + esc(p.modelName || p.name) + '</div><span class="small">' + esc(p.article || p.guid) + "</span>" + sizes(p, false) + quality(p) +
-          '</td><td class="cat-hide-m"><span class="small">' + esc((p.sections || []).map(function (x) { return x.name; }).join(", ")) +
-          '</span></td><td class="cat-hide-m cat-hide-l"><span class="small">' + esc(prop(p, "Размер, мм")) + "</span></td>" +
-          (!s.client ? '<td class="num"><strong>' + money(v ? v.value : null) + '</strong><span class="small">' + esc(v ? v.name : "") + "</span></td>" : "") +
-          "<td>" + stockHtml(p, true) + "</td></tr>";
+          '</div></td><td role="cell"><div class="cat-name">' + esc(p.modelName || p.name) + '</div><span class="small ic-product-code' + (p.article ? "" : " ic-source-guid") + '">' + esc(p.article || p.guid) + "</span>" + sizes(p, false) + quality(p) +
+          '</td><td role="cell" class="cat-hide-m"><span class="small">' + esc((p.sections || []).map(function (x) { return x.name; }).join(", ")) +
+          '</span></td><td role="cell" class="cat-hide-m cat-hide-l"><span class="small">' + esc(prop(p, "Размер, мм")) + "</span></td>" +
+          (!s.client ? '<td role="cell" class="num ic-table-price"><strong>' + money(v ? v.value : null) + '</strong><span class="small">' + esc(v ? v.name : "") + "</span></td>" : "") +
+          '<td role="cell" class="ic-table-stock">' + stockHtml(p, true) + "</td></tr>";
       }).join("") + "</tbody></table></div>";
   }
   function renderResults(data) {

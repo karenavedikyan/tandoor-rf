@@ -44,3 +44,26 @@ it("does not confuse a technical main-product marker with a different physical c
     { guid: g(991), name: "главная (бот)", value: "Да" });
   assert.equal(productFamilies(products, context(), g(800)).length, 1);
 });
+it("groups missing non-conflicting attributes and technical site aliases without filling source gaps", () => {
+  const products = sizeVariantsFixture();
+  products.forEach((p, i) => {
+    if (i !== 1) p.properties.push({ guid: g(992), name: "Стекло", value: "Зеркало бронза фацет" });
+    p.properties.push({ guid: g(993), name: "Название для сайта", value: i === 2 ? "400/6" : "400" });
+  });
+  const before = JSON.stringify(products);
+  assert.equal(productFamilies(products, context(), g(800)).length, 1);
+  assert.equal(products[1].properties.some(p => p.name === "Стекло"), false);
+  assert.equal(JSON.stringify(products), before);
+});
+it("never uses an unknown attribute to bridge conflicting known configurations, regardless of order", () => {
+  const products = sizeVariantsFixture();
+  for (const i of [0, 2, 3]) products[i].properties.push({
+    guid: g(992), name: "Стекло", value: i === 3 ? "Прозрачное" : "Бронза",
+  });
+  for (const input of [products, [...products].reverse()]) {
+    const families = productFamilies(input, context(), g(800));
+    assert.equal(families.length, 3);
+    assert.deepEqual(families.find(f => f.products.length === 2)!.products.map(p => p.guid), [g(1), g(3)]);
+    assert.equal(families.find(f => f.products.some(p => p.guid === g(2)))!.products.length, 1);
+  }
+});
