@@ -173,6 +173,62 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     assert.equal(new Set([...one.body.items, ...two.body.items].map(x => x.guid)).size, 30);
     assert.equal((await get("/products?page=999")).body.page, 2);
   });
+  it("projects imported commerce and group descendants, combines facets and validates every new filter", async () => {
+    const batch = fixtureGuid(850), type = fixtureGuid(851), warehouse = fixtureGuid(852), root = fixtureGuid(853), leaf = fixtureGuid(854);
+    await pool.query("INSERT INTO onec_manual_batches(id,fingerprint) VALUES($1,$2)", [batch, "c".repeat(64)]);
+    const rows = [
+      { file: "groups", kind: "group", guid: root, record: { guid_group: root, name_group: "Корень", owner_group: null } },
+      { file: "groups", kind: "group", guid: leaf, record: { guid_group: leaf, name_group: "Лист", owner_group: root } },
+      { file: "prices", kind: "product", guid: fixtureGuid(1), record: { guid: fixtureGuid(1), type_price: [{ guid: type, name: "РРЦ Тандор", price: 1200 }] } },
+      { file: "prices", kind: "product", guid: fixtureGuid(2), record: { guid: fixtureGuid(2), type_price: [{ guid: type, name: "РРЦ Тандор", price: 800 }] } },
+      { file: "stocks", kind: "product", guid: fixtureGuid(1), record: { guid: fixtureGuid(1), warehouse: [{ guid: warehouse, name: "Склад", quantity: 3 }] } },
+      { file: "stocks", kind: "product", guid: fixtureGuid(2), record: { guid: fixtureGuid(2), warehouse: [{ guid: warehouse, name: "Склад", quantity: 0 }] } },
+    ];
+    for (const [index, row] of rows.entries()) {
+      await pool.query(`INSERT INTO onec_manual_records(batch_id,file_key,row_index,entity_kind,entity_guid,record)
+        VALUES($1,$2,$3,$4,$5,$6)`, [batch, row.file, index, row.kind, row.guid, row.record]);
+      await pool.query(`INSERT INTO onec_manual_object_versions(entity_kind,entity_guid,file_key,batch_id)
+        VALUES($1,$2,$3,$4)`, [row.kind, row.guid, row.file, batch]);
+    }
+    for (const n of [1, 2]) await pool.query(`UPDATE internal_catalog_products SET record=record ||
+      jsonb_build_object('guid_group',$3::text,'properties',(record->'properties') || $4::jsonb)
+      WHERE snapshot_id=$1 AND guid=$2`, [snapshotId, fixtureGuid(n), leaf, JSON.stringify([
+      { guid: fixtureGuid(860), name: "Цвет", value: n === 1 ? "Белый" : "Серый" },
+      { guid: fixtureGuid(861), name: "Новинка", value: n === 1 ? "Да" : "Нет" },
+    ])]);
+    const meta = await get("/meta");
+    assert.equal(meta.status, 200);
+    assert.equal(meta.body.groups.length, 2);
+    assert.equal(meta.body.priceTypes[0].guid, type);
+    assert.deepEqual(meta.body.facets.find((x: { name: string }) => x.name === "Цвет").values, ["Белый", "Серый"]);
+    const filtered = await get("/products").query({ group: root, priceType: type, min: "1000", max: "1500", availability: "in",
+      flag: "new", filters: JSON.stringify({ Цвет: ["Белый"] }), sort: "asc", version: snapshotId });
+    assert.equal(filtered.status, 200);
+    assert.equal(filtered.body.total, 1);
+    assert.equal(filtered.body.items[0].commerce.quantity, 3);
+    assert.equal(filtered.body.items[0].commerce.prices[0].value, 1200);
+    assert.equal(filtered.body.items[0].files[0].path, undefined);
+    const ascending = await get("/products").query({ group: root, priceType: type, sort: "asc", version: snapshotId });
+    assert.deepEqual(ascending.body.items.map((x: { guid: string }) => x.guid), [fixtureGuid(2), fixtureGuid(1)]);
+    assert.equal((await get("/products").query({ group: root, availability: "zero" })).body.total, 1);
+    assert.equal((await get("/products").query({ availability: "unknown" })).body.total, 28);
+    for (const bad of [
+      { priceType: "invalid" }, { priceType: fixtureGuid(9999) }, { min: "1" }, { priceType: type, min: "-1" },
+      { priceType: type, min: "10", max: "1" }, { availability: "yes" }, { sort: "asc" }, { sort: "injected" },
+      { flag: "injected" }, { group: "invalid" }, { filters: JSON.stringify({ private: ["x"] }) }, { filters: "[]" },
+      { filters: JSON.stringify({ Цвет: [] }) }, { filters: JSON.stringify({ Цвет: [1] }) },
+    ]) assert.equal((await get("/products").query(bad)).status, 400, JSON.stringify(bad));
+    const detail = await get("/products/" + fixtureGuid(1)).query({ version: snapshotId });
+    assert.equal(detail.body.commerce.warehouses[0].name, "Склад");
+    assert.equal(detail.body.sourceValues.length, 2);
+    // Conflicting evidence is not summed and remains visible as a review requirement.
+    await pool.query(`INSERT INTO onec_manual_records(batch_id,file_key,row_index,entity_kind,entity_guid,record)
+      VALUES($1,'stocks',99,'product',$2,$3)`, [batch, fixtureGuid(1), { guid: fixtureGuid(1),
+      warehouse: [{ guid: warehouse, name: "Склад", quantity: 4 }] }]);
+    const conflict = await get("/products/" + fixtureGuid(1));
+    assert.equal(conflict.body.commerce.quantity, null);
+    assert.equal(conflict.body.commerce.warehouses[0].conflict, true);
+  });
   it("returns intact detail, rejects malformed queries and does not expose public import/file endpoints", async () => {
     const detail = await get("/products/" + fixtureGuid(1));
     assert.equal(detail.status, 200); assert.equal(detail.body.product.properties[2].value.length, 1024);

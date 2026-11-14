@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  var api = window.TandoorRf, shell = window.ClientsShell;
+  var api = window.TandoorRf, shell = window.ClientsShell, workspace = window.CatalogWorkspace;
   var byId = function (id) { return document.getElementById("ic-" + id); };
   var el = {}, snapshot = null, currentPage = 1, listSequence = 0, detailSequence = 0, timer;
   var guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -11,13 +11,14 @@
   function filters() {
     return { q: el.query.value.trim(), section: el.section.value, brand: el.brand.value, page: currentPage };
   }
-  function filterKey() { return JSON.stringify(filters()); }
+  function filterKey() { return JSON.stringify([filters(), workspace && workspace.extra()]); }
   function paramsWithFilters() {
     var p = new URLSearchParams(), f = filters();
     if (f.q) p.set("q", f.q);
     if (f.section) p.set("section", f.section);
     if (f.brand) p.set("brand", f.brand);
     if (f.page > 1) p.set("page", String(f.page));
+    if (workspace) workspace.appendParams(p);
     return p;
   }
   function url(p) { return "/internal-catalog" + (p.toString() ? "?" + p.toString() : ""); }
@@ -125,17 +126,18 @@
     var sequence = ++listSequence, key = filterKey(), f = filters();
     el.results.setAttribute("aria-busy", "true"); el.results.inert = true;
     el.count.textContent = "Ищем товары…";
-    el.reset.hidden = !f.q && !f.section && !f.brand;
+    el.reset.hidden = !f.q && !f.section && !f.brand && !(workspace && workspace.active());
     try {
       var p = paramsWithFilters(); p.set("version", snapshot.id);
       var data = await request("/products?" + p.toString());
       if (sequence !== listSequence || key !== filterKey()) return;
       currentPage = data.page; updateUrl();
       el.count.textContent = "Найдено: " + number(data.total) + " из " + number(snapshot.summary.products);
-      el.results.innerHTML = data.items.length ? data.items.map(renderCard).join("") :
+      el.results.innerHTML = workspace ? workspace.results(data) : data.items.length ? data.items.map(renderCard).join("") :
         '<div class="ic-empty"><h2>Ничего не найдено</h2><p>Попробуйте другое название, артикул или сбросьте фильтры.</p>' +
         actionButton("ic-empty-reset", "Показать все товары") + "</div>";
       bindImageErrors(el.results);
+      if (workspace) workspace.afterRender();
       if (byId("empty-reset")) byId("empty-reset").onclick = reset;
       el.pagination.hidden = data.total <= data.pageSize;
       el.prev.disabled = data.page <= 1; el.next.disabled = data.page * data.pageSize >= data.total;
@@ -152,9 +154,10 @@
     el.query.value = (p.get("q") || "").slice(0, 160);
     el.section.value = p.get("section") || ""; el.brand.value = p.get("brand") || "";
     currentPage = /^[1-9]\d{0,6}$/.test(p.get("page") || "") ? Number(p.get("page")) : 1;
+    if (workspace) workspace.readUrl(p);
   }
   function changed() { clearTimeout(timer); currentPage = 1; updateUrl(); loadList(false); }
-  function reset() { el.query.value = ""; el.section.value = ""; el.brand.value = ""; changed(); el.query.focus(); }
+  function reset() { el.query.value = ""; el.section.value = ""; el.brand.value = ""; if (workspace) workspace.reset(); changed(); el.query.focus(); }
   function property(product, name) {
     var found = product.properties.find(function (x) { return x.name.trim() === name; });
     return found && found.value.trim() ? found.value.trim() : "";
@@ -201,8 +204,9 @@
       if (!guidPattern.test(guid)) throw new Error("Некорректная ссылка на товар.");
       var data = await request("/products/" + encodeURIComponent(guid) + "?version=" + encodeURIComponent(snapshot.id));
       if (sequence !== detailSequence || !el.detail.open) return;
-      el["detail-body"].innerHTML = renderDetail(data);
+      el["detail-body"].innerHTML = workspace ? workspace.detail(data) : renderDetail(data);
       bindImageErrors(el["detail-body"]);
+      if (workspace) workspace.afterRender();
     } catch (error) {
       if (sequence !== detailSequence || !el.detail.open) return;
       el["detail-body"].innerHTML = '<h2 id="ic-detail-title">Карточка недоступна</h2><p>' + esc(error.message) + "</p>" +
@@ -230,6 +234,7 @@
       el.brand.innerHTML = '<option value="">Все бренды</option>' + snapshot.summary.brands.map(function (b) {
         return '<option value="' + esc(b) + '">' + esc(b) + "</option>";
       }).join("");
+      if (workspace) workspace.setup(data);
       el["source-label"].textContent = number(snapshot.summary.products) + " товаров · " + number(snapshot.summary.sections.length) +
         " разделов · загрузка " + new Date(snapshot.importedAt).toLocaleDateString("ru-RU");
       readUrl(); el.state.hidden = true; el.app.hidden = false;
@@ -246,11 +251,14 @@
   el.prev.onclick = function () { currentPage--; updateUrl(); loadList(true); };
   el.next.onclick = function () { currentPage++; updateUrl(); loadList(true); };
   el.results.addEventListener("click", function (event) {
-    var link = event.target.closest("a[data-product]");
+    var link = event.target.closest("[data-product]");
     if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0) return;
     event.preventDefault(); openProduct(link.dataset.product, true);
   });
+  if (workspace) workspace.bind({ changed: changed, reset: reset, updateUrl: updateUrl,
+    openProduct: openProduct, request: request, snapshot: function () { return snapshot; } });
   el.close.onclick = closeDetail;
+  el.detail.addEventListener("click", function (event) { if (event.target === el.detail) closeDetail(); });
   el.detail.addEventListener("cancel", function (event) { event.preventDefault(); closeDetail(); });
   window.addEventListener("popstate", function () {
     if (!snapshot) return;
