@@ -202,6 +202,32 @@ describe("catalogue photo transports (mock HTTP only)", () => {
     if (!sent.ok) assert.equal(sent.retryable, true);
     assert.equal(calls, 3);
   });
+  it("MAX scopes its custom CA dispatcher to the API, not the globally trusted upload host", async () => {
+    const calls: string[] = [];
+    const transport = createDefaultMaxDeliveryTransport(async (url, init) => {
+      const target = new URL(String(url));
+      calls.push(target.hostname);
+      const dispatcher = (init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher;
+      if (target.hostname === "iu.oneme.ru") {
+        assert.ok(dispatcher === undefined, "upload must retain the normal TLS trust store");
+        assert.equal(new Headers(init?.headers).get("Authorization"), null);
+        assert.equal(init?.redirect, "error");
+        assert.ok((init?.body as FormData).get("data") instanceof Blob);
+        return Response.json({ photos: { "123": { token: "uploaded-token" } } });
+      }
+      assert.equal(target.origin, "https://platform-api2.max.ru");
+      assert.ok(dispatcher, "API still requires its configured CA");
+      assert.equal(new Headers(init?.headers).get("Authorization"), "synthetic");
+      if (target.pathname === "/uploads") return Response.json({ url: "https://iu.oneme.ru/uploadImage?signed=1" });
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.attachments[0].payload.token, "uploaded-token");
+      return Response.json({ message: { body: { mid: "sent" } } });
+    }, { TANBOT_MAX_TLS_CA_BUNDLE: "certs/max/Russian_Trusted_CA.pem" });
+    const result = await transport({ token: "synthetic", userId: 42n, text: "Модель",
+      photoBytes: Buffer.from("mock-jpeg"), timeoutMs: 1000, maxResponseBytes: 4096 });
+    assert.equal(result.ok, true, !result.ok ? result.message : undefined);
+    assert.deepEqual(calls, ["platform-api2.max.ru", "iu.oneme.ru", "platform-api2.max.ru"]);
+  });
   it("MAX reuses a persisted upload token on retry, without a second upload", async () => {
     let calls = 0;
     const transport = createDefaultMaxDeliveryTransport(async (url) => {
@@ -215,15 +241,18 @@ describe("catalogue photo transports (mock HTTP only)", () => {
   it("MAX rejects a forged upload host and ambiguous uploaded photo set", async () => {
     for (const url of ["http://iu.oneme.ru/x", "https://127.0.0.1/x", "https://evil.example/x", "https://iu.oneme.ru.evil.example/x"]) {
       let calls = 0;
-      const token = await uploadMaxCatalogPhoto(async () => { calls++; return Response.json({ url }); },
+      const fetchImpl: typeof fetch = async () => { calls++; return Response.json({ url }); };
+      const token = await uploadMaxCatalogPhoto({ api: fetchImpl, upload: fetchImpl },
         { token: "synthetic", bytes: Buffer.from("mock"), signal: AbortSignal.timeout(1000), maxResponseBytes: 4096 });
       assert.equal(token, null); assert.equal(calls, 1);
     }
     let calls = 0;
-    const token = await uploadMaxCatalogPhoto(async () => {
+    const fetchImpl: typeof fetch = async () => {
       return ++calls === 1 ? Response.json({ url: "https://iu.oneme.ru/x" }) :
         Response.json({ photos: { a: { token: "one" }, b: { token: "two" } } });
-    }, { token: "synthetic", bytes: Buffer.from("mock"), signal: AbortSignal.timeout(1000), maxResponseBytes: 4096 });
+    };
+    const token = await uploadMaxCatalogPhoto({ api: fetchImpl, upload: fetchImpl },
+      { token: "synthetic", bytes: Buffer.from("mock"), signal: AbortSignal.timeout(1000), maxResponseBytes: 4096 });
     assert.equal(token, null);
     assert.equal(parseMaxSendResult('{"code":"attachment.not.ready"}', 400).ok, false);
   });

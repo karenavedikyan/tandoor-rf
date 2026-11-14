@@ -156,7 +156,7 @@ export function createDefaultMaxDeliveryTransport(
     try {
       if (photoBytes && !uploadedImageToken) {
         if (photoBytes.length > 1024 * 1024) return { ok: false, code: "IMAGE_TOO_LARGE", message: "Image exceeds limit." };
-        uploadedImageToken = await uploadMaxCatalogPhoto(fetchWithTls, {
+        uploadedImageToken = await uploadMaxCatalogPhoto({ api: fetchWithTls, upload: fetchImpl }, {
           token, bytes: photoBytes, signal: controller.signal, maxResponseBytes,
         }) ?? undefined;
         if (!uploadedImageToken) return { ok: false, code: "IMAGE_UPLOAD", message: "Image upload failed.", retryable: true };
