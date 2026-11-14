@@ -59,7 +59,7 @@ async function openClientsPage(
   await page.waitForSelector("#clients-app:not(.clients-hidden)", { timeout: 60_000 });
   await page.waitForSelector("#onec-update-panel:not(.clients-hidden)", { timeout: 60_000 });
   if (!(await page.locator("#onec-update-panel").evaluate(el => (el as HTMLDetailsElement).open)))
-    await page.locator("#onec-update-panel summary").click();
+    await page.locator("#onec-update-panel > summary").click();
   await page.waitForSelector("[data-testid='onec-update-button']", { timeout: 60_000 });
 }
 
@@ -140,7 +140,7 @@ describe("admin clients onec update button browser", () => {
     });
     try {
       await openClientsPage(page, baseUrl, { width: 375, height: 844 });
-      await page.waitForFunction(() => document.getElementById("onec-update-status")?.textContent?.includes("Повторная проверка"), undefined, { timeout: 10000 });
+      await page.waitForFunction(() => document.getElementById("onec-update-status")?.textContent?.includes("Повторная проверка"), undefined, { timeout: 15000 });
       assert.equal(await page.locator("#onec-update-button").isDisabled(), true);
       await page.waitForFunction(() => document.getElementById("onec-update-status")?.textContent?.includes("Завершено"), undefined, { timeout: 12000 });
       assert.ok(reads >= 3);
@@ -188,5 +188,89 @@ describe("admin clients onec update button browser", () => {
     assert.match(await page.locator("#onec-update-meta").textContent(), /Прежние данные сохранены/);
     await page.close();
     await context.close();
+  });
+
+  it("checks state without POST, retries with a key and previous attempt, and shows safe history at 375px", async () => {
+    const { page, context } = await openPage({ onecUpdatePhase: "error" });
+    const errors: string[] = [];
+    page.on("pageerror", e => errors.push(e.message));
+    const bodies: Array<{ requestKey: string; retryOfJobId: string }> = [];
+    let completed = false;
+    await page.route("**/api/admin/clients/onec-update", async route => {
+      bodies.push(route.request().postDataJSON());
+      completed = true;
+      await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ jobId: "retry" }) });
+    });
+    await page.route("**/api/admin/clients/onec-update/status", async route => {
+      if (!completed) { await route.fallback(); return; }
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ canStart: true,
+        job: { id: "retry", phase: "completed", message: "Данные обновлены" } }) });
+    });
+    await page.route("**/api/admin/clients/onec-update/history", route => route.fulfill({
+      contentType: "application/json", body: JSON.stringify({ jobs: [{ id: "retry", phase: "completed",
+        retryOfJobId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", message: "<img src=x onerror=alert(1)>",
+        startedAt: "2026-11-14T08:18:00Z", finishedAt: "2026-11-14T08:20:00Z" }] }),
+    }));
+    try {
+      await openClientsPage(page, baseUrl, DESKTOP);
+      await page.locator("#onec-check-status").click();
+      await page.waitForFunction(() => !(document.getElementById("onec-check-status") as HTMLButtonElement).disabled);
+      assert.equal(bodies.length, 0);
+      assert.match(await page.locator("#onec-update-button").innerText(), /Повторить/);
+      page.once("dialog", async d => { assert.match(d.message(), /актуальный комплект/); await d.accept(); });
+      await page.locator("#onec-update-button").click();
+      await page.waitForFunction(() => document.getElementById("onec-update-status")?.textContent?.includes("Данные обновлены"));
+      assert.equal(bodies.length, 1);
+      assert.match(bodies[0].requestKey, /^[0-9a-f-]{36}$/);
+      assert.equal(bodies[0].retryOfJobId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+      await page.locator("#onec-update-history summary").click();
+      await page.locator("#onec-history-content article").waitFor();
+      assert.match(await page.locator("#onec-history-content").innerText(), /<img src=x/);
+      assert.equal(await page.locator("#onec-history-content img").count(), 0);
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, "onec-retry-desktop.png"), fullPage: true });
+      await page.setViewportSize({ width: 375, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, "onec-retry-mobile.png"), fullPage: true });
+      await page.setViewportSize(DESKTOP);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+
+  it("keeps start disabled after a lost POST reply and only checks status", async () => {
+    const { page, context } = await openPage({ onecUpdatePhase: "idle" });
+    let posts = 0, failStatus = false;
+    await page.route("**/api/admin/clients/onec-update", async route => {
+      posts++; failStatus = true; await route.abort("failed");
+    });
+    await page.route("**/api/admin/clients/onec-update/status", async route => {
+      if (failStatus) await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      else await route.fallback();
+    });
+    try {
+      await openClientsPage(page, baseUrl, DESKTOP);
+      page.once("dialog", d => d.accept());
+      await page.locator("#onec-update-button").click();
+      await page.waitForFunction(() => document.getElementById("onec-update-status")?.textContent?.includes("могло продолжить"));
+      assert.equal(await page.locator("#onec-update-button").isDisabled(), true);
+      await page.locator("#onec-check-status").click();
+      await page.waitForFunction(() => !(document.getElementById("onec-check-status") as HTMLButtonElement).disabled);
+      assert.equal(posts, 1);
+      assert.equal(await page.locator("#onec-update-button").isDisabled(), true);
+    } finally { await context.close(); }
+  });
+
+  it("keeps uncertain results blocked while state checking remains available", async () => {
+    const { page, context } = await openPage();
+    await page.route("**/api/admin/clients/onec-update/status", route => route.fulfill({
+      contentType: "application/json", body: JSON.stringify({ canStart: false,
+        job: { id: "uncertain", phase: "uncertain", message: "Проверяем результат сохранения" } }),
+    }));
+    try {
+      await openClientsPage(page, baseUrl, DESKTOP);
+      assert.equal(await page.locator("#onec-update-button").isDisabled(), true);
+      assert.equal(await page.locator("#onec-check-status").isEnabled(), true);
+      await page.locator("#onec-check-status").click();
+      assert.match(await page.locator("#onec-update-guidance").innerText(), /Небезопасный сброс/);
+    } finally { await context.close(); }
   });
 });

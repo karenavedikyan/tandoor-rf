@@ -1995,13 +1995,16 @@
     if (!data || !data.job) {
       return false;
     }
-    return data.job.phase === "pending" || data.job.phase === "running";
+    // A committed success can be visible before its worker releases the lease.
+    // Keep checking until the remaining safety block has been reconciled.
+    return data.job.phase === "pending" || data.job.phase === "running" || data.job.phase === "uncertain" ||
+      (data.canStart === false && !!data.blockedReason);
   }
 
   function formatOnecUpdateStatusText(data) {
     if (!data) {
       return {
-        text: "Не удалось получить статус обновления из 1С.",
+        text: "Не удалось получить статус обновления из 1С. Обновление могло продолжить работу. Проверьте состояние перед повтором.",
         statusClass: "clients-onec-update__status--error",
         disableButton: true,
       };
@@ -2046,6 +2049,11 @@
     }
     var lines = [];
     var job = data.job;
+    if (job.id) lines.push({ label: "Попытка", value: job.id });
+    if (job.retryOfJobId) lines.push({ label: "Повтор попытки", value: job.retryOfJobId });
+    if (job.startedAt) lines.push({ label: "Начало (МСК)", value: new Date(job.startedAt).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }) });
+    if (job.finishedAt) lines.push({ label: "Завершение (МСК)", value: new Date(job.finishedAt).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }) });
+    if (job.errorCode) lines.push({ label: "Код", value: job.errorCode });
     if (job.requestedByUserId) lines.push({ label: "Инициатор", value: job.requestedByUserId });
     if (job.manualSummary) {
       var labels = { holdings: "Холдинги", clients: "Юрлица", retail: "Торговые точки", employees: "Сотрудники",

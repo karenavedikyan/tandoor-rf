@@ -7,6 +7,7 @@ import {
   loadLatestRegularUpdateJob,
   mapJobRowToDto,
   tryStartRegularUpdateJob,
+  loadRegularUpdateHistory,
 } from "./repository";
 import {
   runOnecIntegrationConfigCheck,
@@ -34,16 +35,20 @@ async function buildBlockedReason(): Promise<string | null> {
 }
 
 export async function getAdminOnecUpdateStatus(): Promise<AdminOnecUpdateStatusResponse> {
-  const lastSuccessfulUpdateAt = await loadLastSuccessfulUpdateAt();
   const active = await loadActiveRegularUpdateJob();
   const latest = active ?? (await loadLatestRegularUpdateJob());
   const blockedReason = await buildBlockedReason();
+  const lastSuccessfulUpdateAt = await loadLastSuccessfulUpdateAt();
 
   return {
     job: latest ? mapJobRowToDto(latest, lastSuccessfulUpdateAt) : null,
     canStart: blockedReason === null,
     blockedReason,
   };
+}
+
+export async function getAdminOnecUpdateHistory() {
+  return { jobs: await loadRegularUpdateHistory() };
 }
 
 export async function getAdminOnecConfigCheck(): Promise<AdminOnecConfigCheckResponse> {
@@ -77,8 +82,10 @@ export async function runAdminOnecUpdateProbe(): Promise<AdminOnecUpdateProbeRes
 
 export async function startAdminOnecUpdate(input: {
   requestedByUserId: string;
+  requestKey?: string;
+  retryOfJobId?: string;
 }): Promise<AdminOnecUpdateStartResponse> {
-  const started = await tryStartRegularUpdateJob(input.requestedByUserId);
+  const started = await tryStartRegularUpdateJob(input.requestedByUserId, input);
   if (!started.ok) {
     throw Object.assign(new Error(started.message), {
       code: started.code,

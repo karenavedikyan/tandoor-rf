@@ -46,6 +46,8 @@ export type RegularUpdateResult = {
   stage?: import("../onec-import/job-failure").ImportJobFailureStage;
   /** Opaque id for unknown internal failures; safe to show admins. */
   diagnosticId?: string;
+  /** This executor atomically stores the attempt result with its business projection. */
+  manualRecoveryVersion?: 1;
   message: string;
   cleanupWarning?: string;
 };

@@ -7,8 +7,41 @@ import { IMPORT_ADVISORY_LOCK_KEY } from "../../onec-clients/constants";
 export const JOB_EXPIRED_CODE = "JOB_EXPIRED";
 export const WORKER_INTERRUPTED_CODE = "WORKER_INTERRUPTED";
 
+/** Only versioned atomic manual attempts are eligible. Never clear an unrelated block. */
+async function reconcileUncertainManualCommits(client: PoolClient): Promise<void> {
+  const candidates = await client.query<{ id: string; status: string }>(`
+    SELECT id::text,status FROM onec_import_jobs
+    WHERE kind='regular_update_bundle' AND job_source='admin_manual' AND (
+      (error_code='COMMIT_UNCERTAIN' AND result->>'manualRecoveryVersion'='1')
+      OR id::text=(SELECT substring(apply_blocked_reason FROM 25)
+        FROM onec_v3_exchange_state WHERE id=1 AND apply_blocked_reason LIKE 'MANUAL_COMMIT_UNCERTAIN:%')
+    ) FOR UPDATE SKIP LOCKED`);
+  for (const row of candidates.rows) {
+    if (!(await acquireRecoveryLease(client, row.id))) continue;
+    const lock = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_xact_lock($1) AS locked", [IMPORT_ADVISORY_LOCK_KEY]);
+    if (!lock.rows[0]?.locked) continue;
+    // Both the worker lease and apply transaction have ended. A committed attempt
+    // is already success because finishOperatorJob is in the same transaction.
+    if (row.status === "pending") continue;
+    if (row.status !== "success") await recoverInterruptedManualJob(client, row.id, true);
+    await client.query(`UPDATE onec_v3_exchange_state SET apply_blocked=FALSE,
+      apply_blocked_reason=NULL,updated_at=NOW() WHERE id=1
+      AND apply_blocked_reason=$1`, [`MANUAL_COMMIT_UNCERTAIN:${row.id}`]);
+  }
+}
+
 /** Caller holds the job row lock. Only versioned leases may be recovered automatically. */
-async function recoverInterruptedManualJob(client: PoolClient, jobId: string): Promise<void> {
+async function recoverInterruptedManualJob(client: PoolClient, jobId: string, uncertain = false): Promise<void> {
+  // Versioned uncertain attempts have an atomic per-attempt result in the job
+  // itself. A batch's original operator_job_id is NOT a receipt for A→B→A.
+  if (uncertain) {
+    await client.query(`UPDATE onec_import_jobs SET status='failed',finished_at=NOW(),error_code=$2,
+      result=jsonb_build_object('status','ERROR','mode','apply','manualRecoveryVersion',1,
+        'errorCode',$2::text,'message','Обновление прервано. Сохранение не выполнено. Прежние данные сохранены. Можно повторить обновление.')
+      WHERE id=$1::uuid AND status IN ('running','failed')`, [jobId, WORKER_INTERRUPTED_CODE]);
+    return;
+  }
   const batch = (await client.query<{
     id: string; fingerprint: string; counts: Record<string, number>; issue_count: number; imported_at: Date;
   }>(`SELECT id::text,fingerprint,counts,issue_count,imported_at FROM onec_manual_batches
@@ -115,6 +148,7 @@ async function reconcileRunningRegularUpdateJob(
 
 /** Finalize expired pending jobs and reconcile running jobs from linked import runs. */
 export async function finalizeStaleRegularUpdateJobs(client: PoolClient): Promise<void> {
+  await reconcileUncertainManualCommits(client);
   await finalizeExpiredNightlyWindowJobs(client);
   await client.query(
     `
