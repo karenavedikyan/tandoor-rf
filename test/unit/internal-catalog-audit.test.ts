@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import { auditCatalog } from "../../src/internal-catalog/audit";
 import { buildCatalogContext } from "../../src/internal-catalog/presentation";
-import { sizeVariantsFixture, fixtureGuid as g } from "../helpers/internal-catalog-fixtures";
+import { avallonSizeVariantsFixture, sizeVariantsFixture, fixtureGuid as g } from "../helpers/internal-catalog-fixtures";
 
 it("audits every GUID, explains splits and never uses commerce/service differences as configuration", () => {
   const products = sizeVariantsFixture();
@@ -36,6 +36,21 @@ it("covers empty snapshots and ineligible products without dropping GUIDs", () =
   assert.equal(report.ineligible.missingLink, 1);
   assert.equal(report.ineligible.dimensionMismatch, 1);
   assert.equal(report.ineligible.unknownPrice, 4);
+});
+it("audits minor-difference families as one card without concealing important physical conflicts", () => {
+  const products = avallonSizeVariantsFixture();
+  const context = buildCatalogContext(products.map(p => ({
+    file_key: "prices", imported_at: "2026-11-14T08:00:00Z",
+    record: { guid: p.guid, type_price: [{ guid: g(800), name: "РРЦ Тандор", price: 57900 }] },
+  })));
+  const grouped = auditCatalog(products, context, g(800));
+  assert.equal(grouped.cards, 1);
+  assert.equal(grouped.unresolvedModels, 0);
+  assert.deepEqual(grouped.coverage, { assigned: 2, unique: 2, ok: true });
+  products.forEach((p, i) => p.properties.push({ guid: g(982), name: "Вид утеплителя", value: i ? "Вата" : "Плита" }));
+  const separated = auditCatalog(products, context, g(800));
+  assert.equal(separated.cards, 2);
+  assert.deepEqual(separated.unresolved[0].fields, ["Вид утеплителя"]);
 });
 it("audits each price type independently, explaining duplicate sizes and unknown/conflicting prices", () => {
   const products = sizeVariantsFixture();

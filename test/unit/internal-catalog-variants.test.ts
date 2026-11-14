@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import { productFamilies, productSize } from "../../src/internal-catalog/variants";
 import { buildCatalogContext } from "../../src/internal-catalog/presentation";
-import { sizeVariantsFixture, fixtureGuid as g } from "../helpers/internal-catalog-fixtures";
+import { avallonSizeVariantsFixture, sizeVariantsFixture, fixtureGuid as g } from "../helpers/internal-catalog-fixtures";
 const context = (prices = [100, 100, 100, 100]) => buildCatalogContext(prices.map((price, i) => ({
   file_key: "prices", imported_at: "2026-11-14T08:00:00Z",
   record: { guid: g(i + 1), type_price: [{ guid: g(800), name: "РРЦ Тандор", price }] },
@@ -78,9 +78,58 @@ it("keeps per-SKU stock, arrivals, promotions, warranty and operating text out o
   const before = JSON.stringify(products);
   assert.equal(productFamilies(products, context(), g(800)).length, 1);
   assert.equal(JSON.stringify(products), before);
-  for (const name of ["Сторона открывания", "Вид утеплителя", "Комплектующие", "Глазок", "ВХ. Стеклопакет"]) {
+  for (const name of ["Сторона открывания", "Вид утеплителя", "Комплектующие", "Глазок", "Стекло", "Стеклопакет"]) {
     const copy = structuredClone(products);
     copy.forEach((p, i) => p.properties.push({ guid: g(980), name, value: i < 2 ? "Исполнение А" : "Исполнение Б" }));
     assert.equal(productFamilies(copy, context(), g(800)).length, 2, name);
+  }
+});
+it("groups Avallon melange left sizes despite the legacy glass checkbox, without altering either SKU", () => {
+  const products = avallonSizeVariantsFixture(), before = JSON.stringify(products);
+  const families = productFamilies(products, context([57900, 57900]), g(800));
+  assert.equal(families.length, 1);
+  assert.equal(families[0].modelName, "Аваллон мет/мет меланж левая");
+  assert.deepEqual(families[0].products.map(productSize), ["850×2030", "950×2030"]);
+  assert.deepEqual(families[0].products.map(p => p.properties.find(x => x.name === "ВХ. Стеклопакет")!.value), ["да", "нет"]);
+  assert.equal(JSON.stringify(products), before);
+  const right = structuredClone(products);
+  right[1].properties.find(p => p.name === "Сторона открывания")!.value = "Правое";
+  assert.equal(productFamilies(right, context([57900, 57900]), g(800)).length, 2);
+  assert.equal(productFamilies(products, context([57900, 58000]), g(800)).length, 2);
+});
+it("ignores service classifications and formatting but preserves the original selected-size data", () => {
+  const products = sizeVariantsFixture();
+  products.forEach((product, i) => {
+    product.properties.find(p => p.name === "Цвет")!.value = i % 2 ? "  БЕЛЫЙ  " : "белый";
+    ["Тип товара", "сайт Тандор", "СсылкаНаГлавнуюNEW", "Цветовая гамма"].forEach((name, n) =>
+      product.properties.push({ guid: g(960 + n), name, value: i % 2 ? "Светлая" : "Белая" }));
+  });
+  const before = JSON.stringify(products);
+  assert.equal(productFamilies(products, context(), g(800)).length, 1);
+  assert.equal(JSON.stringify(products), before);
+});
+it("does not hide gamut conflicts if exact color is missing, ambiguous or genuinely different", () => {
+  for (const kind of ["missing", "ambiguous", "different"]) {
+    const products = sizeVariantsFixture();
+    products.forEach((product, i) =>
+      product.properties.push({ guid: g(990), name: "Цветовая гамма", value: i < 2 ? "Белая" : "Светлая" }));
+    if (kind === "missing") products[1].properties = products[1].properties.filter(p => p.name !== "Цвет");
+    if (kind === "ambiguous") products[1].properties.push({ guid: g(204), name: "Цвет", value: "Серый" });
+    if (kind === "different") products[1].properties.find(p => p.name === "Цвет")!.value = "Серый";
+    assert.ok(productFamilies(products, context(), g(800)).length > 1, kind);
+  }
+});
+it("prefers identical exact thickness over inconsistent site ranges, retaining real physical differences", () => {
+  for (const [range, exact] of [
+    ["МТ. Толщина полотна (сайт)", "Толщина полотна, мм"],
+    ["МТ. Толщина стали (сайт)", "Толщина стали, мм"],
+  ]) {
+    const products = sizeVariantsFixture();
+    products.forEach((product, i) => product.properties.push(
+      { guid: g(990), name: range, value: i % 2 ? "Диапазон А" : "Диапазон Б" },
+      { guid: g(991), name: exact, value: "92" }));
+    assert.equal(productFamilies(products, context(), g(800)).length, 1, range);
+    products[1].properties.find(p => p.name === exact)!.value = "100";
+    assert.ok(productFamilies(products, context(), g(800)).length > 1, exact);
   }
 });

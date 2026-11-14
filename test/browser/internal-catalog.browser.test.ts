@@ -7,7 +7,7 @@ import { chromium, webkit, type Browser, type Page } from "playwright";
 import { createApp } from "../../src/server";
 import { normalizeSearch, parseProductsJson, type Product } from "../../src/internal-catalog/model";
 import { listItem } from "../../src/internal-catalog/repository";
-import { catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
+import { avallonSizeVariantsFixture, catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
 import { productFamilies, productSize } from "../../src/internal-catalog/variants";
 import type { CatalogContext } from "../../src/internal-catalog/presentation";
 import { resolveMockResponse } from "./helpers/clients-api-mocks";
@@ -157,6 +157,34 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
       await page.locator("#ic-close").click();
       await page.waitForURL(url => !url.searchParams.has("product"));
       assert.equal(await page.locator("#ic-detail").evaluate((d: HTMLDialogElement) => d.open), false);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+  for (const mobile of [false, true]) it(`keeps minor-difference Avallon sizes in one card and shows original SKU properties (${mobile ? "mobile" : "desktop"})`, async () => {
+    const { page, context, errors } = await open({ products: avallonSizeVariantsFixture(), variants: true, workspace: true, mobile, images: true });
+    try {
+      assert.equal(await page.locator(".cat-card").count(), 1);
+      assert.match(await page.locator("#ic-count").textContent() ?? "", /карточек: 1.*товаров: 2/);
+      for (const view of ["show", "site", "table"]) {
+        await page.locator(`[data-view="${view}"]`).click();
+        await page.locator('#ic-results [data-action="size"]').filter({ hasText: "950×2030" }).click();
+        assert.equal(await page.locator('#ic-results [data-action="size"][aria-pressed="true"]').textContent(), "950×2030");
+        assert.match(await page.locator("#ic-results .cat-stock").textContent() ?? "", /13/);
+        assert.match(await page.locator("#ic-results img").first().getAttribute("src") ?? "", new RegExp(fixtureGuid(2)));
+      }
+      await page.locator('[data-view="show"]').click();
+      await page.locator(".cat-name").first().click();
+      await page.locator('#ic-detail [data-action="detail-size"]').last().waitFor();
+      assert.match(await page.locator("#ic-detail-title").textContent() ?? "", /950х2030/);
+      const glass = page.locator(".cat-specs .field").filter({ hasText: "ВХ. Стеклопакет" });
+      assert.match(await glass.textContent() ?? "", /нет/);
+      await page.locator('#ic-detail [data-action="detail-size"]').filter({ hasText: "850×2030" }).click();
+      await page.waitForFunction(() => document.querySelector("#ic-detail-title")?.textContent?.includes("850х2030"));
+      assert.match(await glass.textContent() ?? "", /да/);
+      assert.match(page.url(), new RegExp("product=" + fixtureGuid(1)));
+      await page.locator("#ic-close").click();
+      await page.waitForURL(url => !url.searchParams.has("product"));
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   });
@@ -462,7 +490,8 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
             ".cat", ".cat-search input", ".cat-toolbar", ".cat-grid", ".cat-body", ".cat-name", ".cat-price", ".cat-color", ".cat-filterbtn", ".view-show .cat-img",
           ].map(selector => getComputedStyle(document.querySelector(selector)!));
           return {
-            font: cat.fontFamily, base: cat.fontSize, line: cat.lineHeight,
+            // WebKit serializes the same 20.3px line height as 20.300001px.
+            font: cat.fontFamily, base: cat.fontSize, line: Math.round(parseFloat(cat.lineHeight) * 10000) / 10000,
             input: input.fontSize, inputHeight: input.minHeight,
             toolbarPadding: toolbar.padding, toolbarBg: toolbar.backgroundColor,
             gap: grid.gap, columns: grid.gridTemplateColumns.split(" ").length,
@@ -475,7 +504,7 @@ describe("internal catalogue UI (synthetic API; real import/access covered in in
           };
         });
         assert.deepEqual(actual, {
-          font: "Golos, sans-serif", base: "14px", line: "20.3px", input: "16px", inputHeight: "44px",
+          font: "Golos, sans-serif", base: "14px", line: 20.3, input: "16px", inputHeight: "44px",
           toolbarPadding: mobile ? "10px 12px" : "14px 16px", toolbarBg: dark ? "rgb(34, 44, 37)" : "rgb(255, 255, 255)",
           gap: mobile ? "10px" : "14px", columns: mobile ? 2 : 3, cardPadding: mobile ? "10px 12px 12px" : "12px 14px 14px",
           name: mobile ? "14px" : "16px", nameWeight: "650", price: mobile ? "16px" : "18px", priceWeight: "700",

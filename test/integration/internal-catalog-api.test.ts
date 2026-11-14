@@ -15,7 +15,7 @@ import { closePool, resetPoolForTests } from "../../src/db/pool";
 import { parseProductsJson } from "../../src/internal-catalog/model";
 import { importSnapshot, loadSnapshot, searchProducts } from "../../src/internal-catalog/repository";
 import { loadCatalogContext } from "../../src/internal-catalog/context";
-import { catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
+import { avallonSizeVariantsFixture, catalogueFixture, sizeVariantsFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
 import { linkUserToEmployee } from "../helpers/access-db-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 const ORIGIN = "http://127.0.0.1:3000";
@@ -372,6 +372,8 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     products.forEach((p, i) => {
       if (i !== 1) p.properties.push({ guid: fixtureGuid(992), name: "Стекло", value: "Зеркало бронза фацет" });
       p.properties.push({ guid: fixtureGuid(993), name: "Название для сайта", value: i === 2 ? "400/6" : "400" });
+      p.properties.push({ guid: fixtureGuid(994), name: "Цветовая гамма", value: i === 2 ? "Светлая" : "Белая" });
+      p.properties.push({ guid: fixtureGuid(995), name: "Тип товара", value: i === 1 ? "Заказная" : "Складская" });
     });
     const parsed = parseProductsJson(Buffer.from(JSON.stringify(products)));
     const version = (await importSnapshot(pool, parsed, "sizes.json", parsed.sha256)).snapshotId;
@@ -418,6 +420,34 @@ describe("internal catalogue API and import isolation", { concurrency: false }, 
     assert.equal(second.items[0].guid, fixtureGuid(4)); assert.equal(second.items[0].variants.length, 0);
     const bySize = await get("/products").query({ version, priceType: type, filters: JSON.stringify({ "Размер, мм": ["2000х700"] }) });
     assert.equal(bySize.body.items[0].guid, fixtureGuid(2)); assert.equal(bySize.body.items[0].variants.length, 3);
+    assert.deepEqual(await fingerprint(), before);
+  });
+  it("returns one Avallon family, size-matched search and original per-SKU legacy flags without writes", async () => {
+    const products = avallonSizeVariantsFixture(), parsed = parseProductsJson(Buffer.from(JSON.stringify(products)));
+    const version = (await importSnapshot(pool, parsed, "avallon-sizes.json", parsed.sha256)).snapshotId;
+    const type = fixtureGuid(800);
+    const fingerprint = async () => (await pool.query(`SELECT md5(string_agg(record::text,'' ORDER BY guid)) AS hash,
+      count(*)::int AS count FROM internal_catalog_products WHERE snapshot_id=$1`, [version])).rows;
+    const before = await fingerprint();
+    const response = await get("/products").query({ version, priceType: type });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.total, 1);
+    assert.equal(response.body.matchedProducts, 2);
+    assert.equal(response.body.items[0].modelName, "Аваллон мет/мет меланж левая");
+    assert.deepEqual(response.body.items[0].variants.map(v => v.size), ["850×2030", "950×2030"]);
+    const filtered = await get("/products").query({ version, priceType: type, q: "950х2030" });
+    assert.equal(filtered.body.total, 1);
+    assert.equal(filtered.body.items[0].guid, fixtureGuid(2));
+    assert.equal(filtered.body.items[0].variants.length, 2);
+    for (const product of products) {
+      const detail = await get("/products/" + product.guid).query({ version, priceType: type });
+      assert.equal(detail.status, 200);
+      assert.deepEqual(detail.body.product, product);
+      assert.equal(detail.body.variants.length, 2);
+    }
+    const audit = await get("/audit").query({ version, priceType: type });
+    assert.equal(audit.body.cards, 1);
+    assert.deepEqual(audit.body.coverage, { assigned: 2, unique: 2, ok: true });
     assert.deepEqual(await fingerprint(), before);
   });
 });
