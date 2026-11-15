@@ -598,6 +598,27 @@ export async function handleTanbotMaxUpdate(
   return { reply, dedupKey: update.dedupKey };
 }
 
+/** Best-effort UI acknowledgement, not a business reply. Start after webhook
+ * authentication, await in the router's finally, never hold a DB lock for it.
+ * https://dev.max.ru/docs-api/methods/POST/answers/ */
+export async function acknowledgeMaxCatalogCallback(
+  config: TanbotMaxStage2Config, transport: MaxDeliveryTransport | null, raw: unknown,
+): Promise<void> {
+  if (!config.deliveryEnabled || !transport) return;
+  const parsed = parseMaxWebhookUpdate(raw);
+  if (!parsed.ok || !("callbackId" in parsed.update) || !parsed.update.callbackId ||
+      parsed.update.recipientChatType !== "dialog" ||
+      !isCatalogRequest(null, parsed.update.callbackPayload)) return;
+  try {
+    await transport({ token: config.botToken, userId: parsed.update.maxUserId,
+      text: "", callbackId: parsed.update.callbackId,
+      timeoutMs: Math.min(config.requestTimeoutMs, 1200), maxResponseBytes: config.maxResponseBytes });
+  } catch {
+    // A failed acknowledgement must not discard a committed reply or trigger
+    // message delivery twice. Normal persisted reply/retry remains authoritative.
+  }
+}
+
 export async function maybeSendMaxWebhookReply(
   pool: Pool,
   config: TanbotMaxStage2Config,

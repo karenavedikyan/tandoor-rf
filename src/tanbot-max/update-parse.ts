@@ -23,6 +23,7 @@ export type ParsedMaxWebhookUpdate = {
   startPayload: string | null;
   commandText: string | null;
   callbackPayload: string | null;
+  callbackId?: string;
   imageDownloadUrl?: string | null;
   imageFileName?: string | null;
   imageMediaToken?: string | null;
@@ -164,6 +165,8 @@ export function parseMaxWebhookUpdate(raw: unknown):
         startPayload: null,
         commandText: null,
         callbackPayload: payload,
+        ...(typeof cb.callback_id === "string" && cb.callback_id.trim() && cb.callback_id.length <= 512
+          ? { callbackId: cb.callback_id } : {}),
         recipientChatType: chatType,
       },
     };

@@ -101,7 +101,7 @@ describe("bot catalogue: public photo-only projection", () => {
         quantity: 987654, pricesImportedAt: "PRIVATE_DATE", stocksImportedAt: null, warehouses: [] });
       const r = buildCatalogBotReply(channel, v, catalogCallback("p", snapshot, id(1)));
       assert.deepEqual(readCatalogPhoto(r.replyExtra), { snapshotId: snapshot, productGuid: id(1), fileGuid: id(2001) });
-      assert.match(r.text, /Фото 1 из 2/);
+      assert.equal(r.text, "Модель 01");
       const next = choices(r).find(b => b.text === "Следующее фото")!;
       const second = buildCatalogBotReply(channel, v, next.data);
       assert.equal(readCatalogPhoto(second.replyExtra)?.fileGuid, id(999));
@@ -116,22 +116,28 @@ describe("bot catalogue: public photo-only projection", () => {
       assert.equal(readCatalogPhoto(stale.replyExtra), null);
       assert.match(buildCatalogBotReply(channel, null).text, /пока недоступны/);
     });
-    it(`${channel}: reuses name+RRP grouping; different prices stay separate, each photo SKU stays selectable`, () => {
+    it(`${channel}: visual model ignores prices, sizes and handing; gallery retains exact photo ownership`, () => {
       const v = view(3), priceId = id(800);
       v.context.priceTypes = [{ guid: priceId, name: "РРЦ Тандор" }];
       for (let i = 0; i < 3; i++) {
-        v.products[i].name = `Зефир 2000х${600 + i * 100}`;
+        v.products[i].name = `Зефир 2000х${600 + i * 100} ${i === 1 ? "правая" : "левая"}`;
         v.products[i].properties = [{ guid: id(900), name: "Размер, мм", value: `2000х${600 + i * 100}` }];
         v.context.commerce.set(id(i + 1), { prices: [{ guid: priceId, name: "РРЦ Тандор", value: i === 2 ? 200 : 100, conflict: false }],
           quantity: null, pricesImportedAt: null, stocksImportedAt: null, warehouses: [] });
       }
       const listing = buildCatalogBotReply(channel, v, catalogCallback("l", snapshot, CATALOG_BOT_SECTIONS[0].guid));
-      assert.equal(choices(listing).filter(b => b.text.startsWith("Зефир")).length, 2);
+      assert.equal(choices(listing).filter(b => b.text === "Зефир").length, 1);
       const model = buildCatalogBotReply(channel, v, catalogCallback("p", snapshot, id(1)));
       assert.ok(!choices(model).some(b => b.text.includes(id(2).slice(0, 8))), "human labels never expose technical GUIDs");
-      const variant = choices(model).find(b => b.text.startsWith("2000×700"))!;
-      assert.ok(variant);
-      assert.equal(readCatalogPhoto(buildCatalogBotReply(channel, v, variant.data).replyExtra)?.productGuid, id(2));
+      assert.equal(model.text, "Зефир");
+      assert.ok(!choices(model).some(b => /вариант|2000|прав|лев/i.test(b.text)));
+      const next = choices(model).find(b => b.text === "Следующее фото")!;
+      assert.ok(next);
+      const second = buildCatalogBotReply(channel, v, next.data);
+      assert.equal(readCatalogPhoto(second.replyExtra)?.productGuid, id(2));
+      assert.equal(readCatalogPhoto(second.replyExtra)?.fileGuid, id(2002));
+      const third = buildCatalogBotReply(channel, v, choices(second).find(b => b.text === "Следующее фото")!.data);
+      assert.equal(readCatalogPhoto(third.replyExtra)?.productGuid, id(3));
     });
   }
   it("only the first-level section chooser exposes catalogue, not tracker menus", () => {

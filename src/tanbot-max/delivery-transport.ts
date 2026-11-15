@@ -33,6 +33,8 @@ export type MaxDeliveryTransport = (input: {
   maxFileToken?: string;
   maxVideoToken?: string;
   photoBytes?: Buffer;
+  /** Empty POST /answers acknowledgement; never edits or creates a message. */
+  callbackId?: string;
 }) => Promise<MaxDeliveryResult>;
 
 /** Documented success: HTTP 200 with message object (not necessarily success:true). */
@@ -148,20 +150,26 @@ export function createDefaultMaxDeliveryTransport(
     maxFileToken,
     maxVideoToken,
     photoBytes,
+    callbackId,
   }) => {
-    const url = `${MAX_API_ORIGIN}/messages?user_id=${encodeURIComponent(userId.toString())}`;
+    if (callbackId !== undefined && (!callbackId.trim() || callbackId.length > 512)) {
+      return { ok: false, code: "INVALID_CALLBACK", message: "Invalid callback identifier." };
+    }
+    const url = callbackId !== undefined
+      ? `${MAX_API_ORIGIN}/answers?callback_id=${encodeURIComponent(callbackId)}`
+      : `${MAX_API_ORIGIN}/messages?user_id=${encodeURIComponent(userId.toString())}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let uploadedImageToken = maxImageToken;
     try {
-      if (photoBytes && !uploadedImageToken) {
+      if (callbackId === undefined && photoBytes && !uploadedImageToken) {
         if (photoBytes.length > 1024 * 1024) return { ok: false, code: "IMAGE_TOO_LARGE", message: "Image exceeds limit." };
         uploadedImageToken = await uploadMaxCatalogPhoto({ api: fetchWithTls, upload: fetchImpl }, {
           token, bytes: photoBytes, signal: controller.signal, maxResponseBytes,
         }) ?? undefined;
         if (!uploadedImageToken) return { ok: false, code: "IMAGE_UPLOAD", message: "Image upload failed.", retryable: true };
       }
-      const body = buildMaxSendMessagePayload({ text, inlineButtons, shareUrl,
+      const body = callbackId !== undefined ? {} : buildMaxSendMessagePayload({ text, inlineButtons, shareUrl,
         maxImageToken: uploadedImageToken, maxFileToken, maxVideoToken });
       const response = await fetchWithTls(url, {
         method: "POST",
@@ -245,11 +253,13 @@ export function createRecordingMaxDeliveryTransport(
       maxImageToken?: string;
       maxFileToken?: string;
       maxVideoToken?: string;
+      callbackId?: string;
     }>;
   },
 ): MaxDeliveryTransport {
-  return async ({ userId, text, inlineButtons, shareUrl, maxImageToken, maxFileToken, maxVideoToken }) => {
-    sink.calls.push({ userId: userId.toString(), text, inlineButtons, shareUrl, maxImageToken, maxFileToken, maxVideoToken });
+  return async ({ userId, text, inlineButtons, shareUrl, maxImageToken, maxFileToken, maxVideoToken, callbackId }) => {
+    sink.calls.push({ userId: userId.toString(), text, inlineButtons, shareUrl, maxImageToken, maxFileToken, maxVideoToken,
+      ...(callbackId !== undefined ? { callbackId } : {}) });
     return { ok: true, result: { message: { mid: "test-mid" } } };
   };
 }
