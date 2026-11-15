@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp, { type Sharp, type Metadata } from "sharp";
-import { withNormalizedJpeg } from "./jpeg-normalize";
+import { catalogFileMemoryAvailable, withNormalizedJpeg, withNormalizedJpegFile } from "./jpeg-normalize";
+import { CATALOG_REFERENCE_MAX_PIXELS, CATALOG_REFERENCE_MAX_SOURCE_BYTES } from "./temporary-source";
 import { CatalogImageDeferred, isImageResourceError } from "./image-deferred";
 import { s3Enabled, s3Config, checkS3Storage, readS3Preview, writeS3Preview } from "./image-s3";
 
@@ -216,13 +217,24 @@ async function withSharpTimeout<T>(
   createPipeline: () => Sharp,
   operation: (pipeline: Sharp) => Promise<T>,
   timeoutMs: number,
+  catalogueFile = false,
 ): Promise<T> {
+  if (catalogueFile && !catalogFileMemoryAvailable()) throw new CatalogImageDeferred();
   const pipeline = createPipeline();
+  if (catalogueFile) pipeline.timeout({ seconds: Math.max(1, Math.ceil(timeoutMs / 1000)) });
   let timer: NodeJS.Timeout | undefined;
+  let monitor: NodeJS.Timeout | undefined;
+  const processing = operation(pipeline);
   try {
     return await Promise.race([
-      operation(pipeline),
+      processing,
       new Promise<T>((_resolve, reject) => {
+        if (catalogueFile) monitor = setInterval(() => {
+          if (!catalogFileMemoryAvailable()) {
+            pipeline.destroy();
+            reject(new CatalogImageDeferred());
+          }
+        }, 20);
         timer = setTimeout(() => {
           pipeline.destroy();
           reject(new Error("Image processing timeout."));
@@ -231,6 +243,9 @@ async function withSharpTimeout<T>(
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (monitor) clearInterval(monitor);
+    // Do not unlink a source or release the media lease while libvips still owns it.
+    if (catalogueFile) await processing.catch(() => {});
   }
 }
 
@@ -257,12 +272,28 @@ export async function processCatalogReferenceToPreview(sourceBuffer: Buffer): Pr
   return processPreviewWithDimension(sourceBuffer, 8192, true);
 }
 
-async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: number, catalogue = false): Promise<ImageValidationResult> {
-  if (sourceBuffer.length === 0) return { ok: false, message: "Empty file." };
-  const maxBytes = getMaxImageBytes();
-  if (sourceBuffer.length > maxBytes) return { ok: false, message: "Image exceeds size limit." };
+/** Only accepts a caller-owned private temporary file, never an HTTP path.
+ * Byte/pixel limits here are catalogue-original policy, not upload policy.
+ */
+export async function processCatalogReferenceFileToPreview(sourcePath: string): Promise<ImageValidationResult> {
+  return processPreviewWithDimension(sourcePath, 8192, true);
+}
 
-  const maxPixels = getMaxImagePixels();
+async function processPreviewWithDimension(sourceBuffer: Buffer | string, maxDimension: number, catalogue = false): Promise<ImageValidationResult> {
+  const fileBacked = typeof sourceBuffer === "string";
+  let sourceSize: number;
+  if (fileBacked) {
+    try {
+      const stat = await fs.lstat(sourceBuffer);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new CatalogImageDeferred();
+      sourceSize = stat.size;
+    } catch { throw new CatalogImageDeferred(); }
+  } else sourceSize = sourceBuffer.length;
+  if (sourceSize === 0) return { ok: false, message: "Empty file." };
+  const maxBytes = fileBacked ? CATALOG_REFERENCE_MAX_SOURCE_BYTES : getMaxImageBytes();
+  if (sourceSize > maxBytes) return { ok: false, message: "Image exceeds size limit." };
+
+  const maxPixels = fileBacked ? CATALOG_REFERENCE_MAX_PIXELS : getMaxImagePixels();
   const previewMax = getPreviewMaxDimension();
   const timeoutMs = getImageProcessTimeoutMs();
 
@@ -271,6 +302,7 @@ async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: n
       () => sharp(sourceBuffer, { failOn: "error", limitInputPixels: maxPixels }),
       (pipeline) => pipeline.metadata(),
       timeoutMs,
+      fileBacked,
     );
     if (!isAllowedImageMetadata(metadata)) {
       return { ok: false, message: "Unsupported or animated image." };
@@ -287,7 +319,7 @@ async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: n
       return { ok: false, message: "Image pixel count exceeds limit." };
     }
 
-    const render = (input: Buffer) => withSharpTimeout(
+    const render = (input: Buffer | string) => withSharpTimeout(
       () => sharp(input, { failOn: "error", limitInputPixels: maxPixels }),
       (pipeline) =>
         pipeline
@@ -301,8 +333,11 @@ async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: n
           .webp({ quality: 85 })
           .toBuffer(),
       timeoutMs,
+      fileBacked,
     );
-    const previewBuffer = catalogue ? await withNormalizedJpeg(sourceBuffer, metadata, render) : await render(sourceBuffer);
+    const previewBuffer = typeof sourceBuffer === "string"
+      ? await withNormalizedJpegFile(sourceBuffer, metadata, render)
+      : catalogue ? await withNormalizedJpeg(sourceBuffer, metadata, render) : await render(sourceBuffer);
     if (!previewBuffer) return { ok: false, message: "Invalid JPEG image." };
 
     if (!previewBuffer.length) {

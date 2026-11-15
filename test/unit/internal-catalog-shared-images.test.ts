@@ -14,6 +14,7 @@ import { createFtpPhotoSession, readFtpPhoto } from "../../src/internal-catalog/
 import { createPhotoCache, readExistingCatalogPhoto } from "../../src/internal-catalog/shared-images";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "../../src/internal-catalog/images";
 import { CatalogImageDeferred } from "../../src/catalog/image-deferred";
+import { CATALOG_REFERENCE_MAX_SOURCE_BYTES } from "../../src/catalog/temporary-source";
 
 describe("internal catalogue shared photo source", { concurrency: false }, () => {
   let saved: NodeJS.ProcessEnv, jpeg: Buffer, webp: Buffer, root: string;
@@ -114,7 +115,7 @@ describe("internal catalogue shared photo source", { concurrency: false }, () =>
     assert.equal((await processCatalogReferenceToPreview(jpeg)).ok, false);
   });
   it("rejects invalid announced sizes without downloading", async () => {
-    for (const size of [0, -1, NaN, Infinity, 1.5, 8 * 1024 * 1024 + 1]) {
+    for (const size of [0, -1, NaN, Infinity, 1.5, CATALOG_REFERENCE_MAX_SOURCE_BYTES + 1]) {
       const ftp = fake(jpeg, size);
       assert.equal(await readFtpPhoto("photo.jpg", () => ftp.client), null);
       assert.equal(ftp.downloaded(), false); assert.equal(ftp.closed(), true);
