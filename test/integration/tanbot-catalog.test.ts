@@ -11,6 +11,8 @@ import { parseProductsJson } from "../../src/internal-catalog/model";
 import { importSnapshot } from "../../src/internal-catalog/repository";
 import { makeThumbnails, THUMBNAIL_RECIPE } from "../../src/internal-catalog/thumbnails";
 import { loadCatalogBotView, catalogPhotoBytes, catalogCallback, CATALOG_BOT_SECTIONS } from "../../src/tanbot/catalog";
+import type { CatalogBotReply } from "../../src/tanbot/catalog";
+import { readCatalogBrowseInput } from "../../src/tanbot/catalog-browse";
 import { handleTanbotTelegramUpdate } from "../../src/tanbot-telegram/webhook-handler";
 import { handleTanbotMaxUpdate } from "../../src/tanbot-max/webhook-handler";
 import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2-config";
@@ -29,6 +31,8 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
   const hash = (b: Buffer) => createHash("sha256").update(b).digest("hex");
   const products = catalogueFixture(15).map((p, i) => ({
     ...p, chapter: [], name: `Модель ${String(i + 1).padStart(2, "0")}`, guid_group: id(500), name_group: "Входные двери",
+    properties: [...p.properties.filter(v => v.name !== "Цвет"),
+      { guid: id(888), name: "Цвет", value: i % 2 ? "Чёрный" : "Белый" }],
     files: [{ guid: id(1000 + i), name: "private-source-name", path: `${i + 1}.jpg` }],
   }));
   products[0].files.push({ guid: id(2000), name: "private-second", path: "second.jpg" });
@@ -82,18 +86,99 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     globalThis.fetch = originalFetch;
     await closePool();
   });
-  function telegramRaw(input: { text?: string; callback?: string; group?: boolean }, updateId = ++seq) {
-    const message = { message_id: updateId, from: { id: 710001, is_bot: false },
-      chat: { id: 710001, type: input.group ? "group" : "private" }, text: input.text ?? "" };
+  function telegramRaw(input: { text?: string; callback?: string; group?: boolean; userId?: number }, updateId = ++seq) {
+    const userId = input.userId ?? 710001;
+    const message = { message_id: updateId, from: { id: userId, is_bot: false },
+      chat: { id: userId, type: input.group ? "group" : "private" }, text: input.text ?? "" };
     return input.callback ? { update_id: updateId, callback_query: { id: `cat-${updateId}`, from: message.from,
       data: input.callback, message } } : { update_id: updateId, message };
   }
-  function maxRaw(input: { text?: string; callback?: string; group?: boolean }, timestamp = ++seq) {
-    const message = { sender: { user_id: 710002, is_bot: false },
-      recipient: { chat_id: 910002, chat_type: input.group ? "chat" : "dialog" },
+  function maxRaw(input: { text?: string; callback?: string; group?: boolean; userId?: number; chatId?: number }, timestamp = ++seq) {
+    const message = { sender: { user_id: input.userId ?? 710002, is_bot: false },
+      recipient: { chat_id: input.chatId ?? 910002, chat_type: input.group ? "chat" : "dialog" },
       body: { mid: `cat-${timestamp}`, text: input.text ?? "" } };
     return { update_type: input.callback ? "message_callback" : "message_created", timestamp, message,
       ...(input.callback ? { callback: { callback_id: `cat-cb-${timestamp}`, user: message.sender, payload: input.callback } } : {}) };
+  }
+  const buttons = (r: Partial<CatalogBotReply>) => r.inlineButtons
+    ? r.inlineButtons.flat().map(b => ({ text: b.text, data: "payload" in b ? b.payload : "" }))
+    : (r.replyMarkup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard
+      .flat().map(b => ({ text: b.text, data: b.callback_data }));
+  for (const channel of ["telegram", "max"] as const) {
+    it(`${channel}: filters + search + photo through webhooks, retry and foreign/stale button isolation`, async () => {
+      const send = async (input: { text?: string; callback?: string; userId?: number; chatId?: number }) => {
+        const result = channel === "telegram"
+          ? await handleTanbotTelegramUpdate(pool(), tg.config, telegramRaw(input))
+          : await handleTanbotMaxUpdate(pool(), max.config, maxRaw(input));
+        assert.ok(result.reply);
+        return result.reply as Partial<CatalogBotReply> & { text: string };
+      };
+      const click = async (r: Partial<CatalogBotReply>, label: string) => {
+        const button = buttons(r).find(b => b.text === label); assert.ok(button, label);
+        return send({ callback: button.data });
+      };
+      let r = await send({ callback: catalogCallback("g", snapshot, CATALOG_BOT_SECTIONS[0].guid) });
+      const initial = r;
+      const foreign = await send({ callback: buttons(r).find(b => b.text === "Фильтры")!.data, userId: 710003 });
+      assert.match(foreign.text, /устарела/); assert.equal(foreign.replyExtra?.catalogBrowse, undefined);
+      if (channel === "max") {
+        const otherChat = await send({ callback: buttons(r)[0].data, chatId: 910003 });
+        assert.equal(otherChat.replyExtra?.catalogBrowse, undefined);
+      }
+      r = await click(r, "Фильтры"); r = await click(r, "Цвет"); r = await click(r, "Белый");
+      const labels = buttons(r).map(b => b.text).join("\n");
+      assert.match(labels, /Модель 01/); assert.ok(!labels.includes("Модель 02"));
+      r = await click(r, "Найти по названию");
+      assert.equal((r.replyExtra?.catalogBrowse as { awaitingSearch: boolean }).awaitingSearch, true);
+      // Same webhook retry must replay exactly the committed reply, not search twice.
+      const raw = channel === "telegram" ? telegramRaw({ text: "модель 01" }) : maxRaw({ text: "модель 01" });
+      const first = channel === "telegram"
+        ? await handleTanbotTelegramUpdate(pool(), tg.config, raw) : await handleTanbotMaxUpdate(pool(), max.config, raw);
+      const duplicate = channel === "telegram"
+        ? await handleTanbotTelegramUpdate(pool(), tg.config, raw) : await handleTanbotMaxUpdate(pool(), max.config, raw);
+      assert.equal(duplicate.reply?.text, first.reply?.text);
+      assert.deepEqual(duplicate.reply?.replyExtra?.catalogBrowse, first.reply?.replyExtra?.catalogBrowse);
+      assert.deepEqual(buttons(duplicate.reply!), buttons(first.reply!));
+      assert.ok(first.reply); r = first.reply as typeof r;
+      assert.match(r.text, /Моделей с фото: 1\./);
+      r = await click(r, buttons(r).find(b => b.text.includes("Модель 01"))!.text);
+      assert.equal((r.replyExtra?.catalogPhoto as { productGuid: string }).productGuid, id(1));
+      assert.equal((r.replyExtra?.catalogBrowse as { filters: Record<string, string> }).filters["Цвет"], "белый");
+      const stale = await send({ callback: buttons(initial)[0].data });
+      assert.match(stale.text, /Кнопка устарела/);
+      assert.equal((stale.replyExtra?.catalogBrowse as { query: string }).query, "модель 01");
+      r = await click(stale, "Сбросить отбор");
+      assert.match(r.text, /Моделей с фото: 11\./);
+      // Leaving the catalogue must cancel plain-text capture, without clearing tracker drafts.
+      r = await click(r, "Найти по названию");
+      await send({ text: "/start" });
+      const client = await pool().connect();
+      try {
+        assert.equal(await readCatalogBrowseInput(client, channel, channel === "telegram" ? 710001n : 910002n,
+          channel === "telegram" ? 710001n : 710002n, "Модель"), null);
+      } finally { client.release(); }
+    });
+    it(`${channel}: search session expires after 30 minutes and never resumes from an older prompt`, async () => {
+      const raw = channel === "telegram"
+        ? telegramRaw({ callback: catalogCallback("g", snapshot, CATALOG_BOT_SECTIONS[0].guid) })
+        : maxRaw({ callback: catalogCallback("g", snapshot, CATALOG_BOT_SECTIONS[0].guid) });
+      const first = channel === "telegram"
+        ? await handleTanbotTelegramUpdate(pool(), tg.config, raw) : await handleTanbotMaxUpdate(pool(), max.config, raw);
+      assert.ok(first.reply);
+      const search = buttons(first.reply).find(b => b.text === "Найти по названию")!.data;
+      if (channel === "telegram") await handleTanbotTelegramUpdate(pool(), tg.config, telegramRaw({ callback: search }));
+      else await handleTanbotMaxUpdate(pool(), max.config, maxRaw({ callback: search }));
+      const table = channel === "telegram" ? "tanbot_telegram_update_dedup" : "tanbot_max_update_dedup";
+      await pool().query(`UPDATE ${table} SET received_at=NOW()-INTERVAL '31 minutes'`);
+      const client = await pool().connect();
+      try {
+        assert.equal(await readCatalogBrowseInput(client, channel, channel === "telegram" ? 710001n : 910002n,
+          channel === "telegram" ? 710001n : 710002n, "Модель"), null);
+      } finally { client.release(); }
+      // These synthetic conversation steps have no delivery transport. Keep
+      // them out of the separate retry-worker transport test later in this suite.
+      await pool().query(`UPDATE ${table} SET reply_delivered_at=NOW() WHERE reply_delivered_at IS NULL`);
+    });
   }
   it("eligibility excludes no-reference, unavailable, corrupt and unprepared images before pagination", async () => {
     const view = await loadCatalogBotView(pool()); assert.ok(view);
@@ -208,6 +293,25 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     const before = await state();
     await handleTanbotTelegramUpdate(pool(), tg.config, telegramRaw({ text: "Каталог" }));
     await handleTanbotMaxUpdate(pool(), max.config, maxRaw({ callback: "cat:root" }));
+    for (const channel of ["telegram", "max"] as const) {
+      const send = async (input: { text?: string; callback?: string }) => {
+        const result = channel === "telegram"
+          ? await handleTanbotTelegramUpdate(pool(), tg.config, telegramRaw(input))
+          : await handleTanbotMaxUpdate(pool(), max.config, maxRaw(input));
+        assert.ok(result.reply); return result.reply;
+      };
+      const click = async (r: Partial<CatalogBotReply>, label: string) => {
+        const button = buttons(r).find(b => b.text === label); assert.ok(button, label);
+        return send({ callback: button.data });
+      };
+      let r = await send({ callback: catalogCallback("g", snapshot, CATALOG_BOT_SECTIONS[0].guid) });
+      r = await click(r, "Фильтры"); r = await click(r, "Цвет"); r = await click(r, "Белый");
+      r = await click(r, "Найти по названию"); r = await send({ text: "Модель 01" });
+      r = await click(r, buttons(r).find(b => b.text.includes("Модель 01"))!.text);
+      assert.ok(r.replyExtra?.catalogPhoto);
+      r = await click(r, "Найти по названию"); r = await send({ text: "Отмена" });
+      assert.equal((r.replyExtra?.catalogBrowse as { awaitingSearch: boolean }).awaitingSearch, false);
+    }
     assert.deepEqual(await state(), before);
   });
   it("excluded product categories disappear from DB views and queued photos in both channels", async () => {

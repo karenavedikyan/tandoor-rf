@@ -75,7 +75,8 @@ const label = (text: string, max = 90) => text.replace(/[\u0000-\u001f\u007f]/g,
 
 /** A narrow opt-in public projection, NOT access to internal-catalog HTTP routes. */
 export function isCatalogRequest(text: string | null | undefined, callback?: string | null): boolean {
-  return !!callback?.startsWith("cat:") || /^(?:каталог|\/catalog(?:@[a-z0-9_]+)?)$/i.test(text?.trim() ?? "");
+  return !!callback?.startsWith("cat:") || !!callback?.startsWith("cat2:") ||
+    /^(?:каталог|\/catalog(?:@[a-z0-9_]+)?)$/i.test(text?.trim() ?? "");
 }
 
 /** Snapshot tag prevents an old button from selecting a new snapshot's model.
@@ -132,6 +133,7 @@ function reply(channel: Channel, text: string, choices: Choice[], photo?: Catalo
   const inlineButtons = buttons.map(b => [{ type: "callback" as const, text: b.text, payload: b.data }]);
   return { text, inlineButtons, replyExtra: { ...extra, inlineButtons } };
 }
+export { reply as catalogBotReply };
 
 function categories(view: CatalogView): Group[] {
   const groups = new Map(view.context.groups.map(g => [g.guid, { ...g }]));

@@ -102,14 +102,14 @@ describe("native bot main menu (MAX + Telegram)", { concurrency: false }, () => 
           890010010,
         ])
       ).rows[0]!.reply_text,
-      new RegExp(NATIVE_MAIN_MENU_ACTION_PROMPT),
+      /Выберите раздел\./u,
     );
     const drafts = await getPool()!.query(`SELECT id FROM tt_external_request_drafts`);
     assert.equal(drafts.rowCount, 0);
     assert.deepEqual(await globalCounts(), before);
   });
 
-  it("Telegram /start home uses persistent reply keyboard without inline_keyboard", async () => {
+  it("Telegram /start offers two sections; tracker keyboard appears only after choosing ТанТрекер", async () => {
     const tgUserId = 89001002;
     await seedStaffTelegram(tgUserId);
     await resetPoolForTests();
@@ -129,16 +129,36 @@ describe("native bot main menu (MAX + Telegram)", { concurrency: false }, () => 
         },
       });
     const row = (
-      await getPool()!.query<{ reply_extra: { replyMarkup?: Record<string, unknown> } }>(
+      await getPool()!.query<{ reply_extra: { replyMarkup?: Record<string, unknown>; replyKeyboardClear?: boolean } }>(
         `SELECT reply_extra FROM tanbot_telegram_update_dedup WHERE update_id=$1`,
         [890010020],
       )
     ).rows[0]!;
     const markup = row.reply_extra?.replyMarkup;
-    assert.ok(markup && Array.isArray(markup.keyboard), "home screen must use reply keyboard");
-    assert.equal(markup.is_persistent, true);
-    assert.equal((markup as { inline_keyboard?: unknown }).inline_keyboard, undefined);
-    assert.notEqual(row.reply_extra?.replyKeyboardClear, true);
+    assert.ok(markup && Array.isArray(markup.inline_keyboard), "root must offer section buttons");
+    const rootButtons = (markup.inline_keyboard as { text: string; callback_data: string }[][]).flat();
+    assert.deepEqual(rootButtons.map(b => b.text), ["ТанТрекер", "Каталог"]);
+    assert.equal(markup.keyboard, undefined);
+    assert.equal(row.reply_extra?.replyKeyboardClear, true);
+    const before = await globalCounts();
+    const selected = await request(app)
+      .post("/api/tanbot-telegram/webhook")
+      .set("X-Telegram-Bot-Api-Secret-Token", process.env.TANBOT_TELEGRAM_WEBHOOK_SECRET!)
+      .send({
+        update_id: 890010022,
+        callback_query: { id: "select-tracker", data: rootButtons[0].callback_data,
+          from: { id: tgUserId, is_bot: false },
+          message: { message_id: 1, chat: { id: tgUserId, type: "private" } } },
+      });
+    assert.equal(selected.status, 200);
+    const tracker = (await getPool()!.query(
+      "SELECT reply_text,reply_extra FROM tanbot_telegram_update_dedup WHERE update_id=$1", [890010022])).rows[0];
+    assert.match(tracker.reply_text, /^ТанТрекер\n/u);
+    assert.match(tracker.reply_text, new RegExp(NATIVE_MAIN_MENU_ACTION_PROMPT));
+    assert.ok(Array.isArray(tracker.reply_extra.replyMarkup.keyboard));
+    assert.equal(tracker.reply_extra.replyMarkup.is_persistent, true);
+    assert.equal(tracker.reply_extra.replyMarkup.inline_keyboard, undefined);
+    assert.deepEqual(await globalCounts(), before);
   });
 
   it("Telegram compact Menu text stores inline actions and keyboard delivery hints", async () => {
