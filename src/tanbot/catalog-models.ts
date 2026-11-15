@@ -1,8 +1,16 @@
 import { normalizeSearch, type Product } from "../internal-catalog/model";
 import { productModelName } from "../internal-catalog/variants";
 
-/** Bot-only visual identity. Originals, LK families, prices and GUIDs stay intact. */
+/** Bot-only visual identity. Prefer the explicit website model, not SKU finishes.
+ * Never infer a base model from its first word, colour dictionaries or source links.
+ * Originals, LK families, prices and GUIDs stay intact. */
 export function catalogModelName(product: Product): string {
+  const websiteNames = new Map(product.properties
+    .filter(p => p.name.trim() === "Название для сайта" && p.value.trim())
+    .map(p => [normalizeSearch(p.value), p.value.normalize("NFKC").replace(/\s+/g, " ").trim()]));
+  if (websiteNames.size === 1) {
+    return productModelName({ ...product, name: [...websiteNames.values()][0] });
+  }
   let name = productModelName(product);
   const door = /^(?:Входные|Межкомнатные) двери$/.test(product.name_group ?? "");
   if (door) name = name.replace(/(^|[\s,(])(?:левая|правая|левое|правое|левый|правый|лев|прав|L|R)(?=$|[\s,).])/gi, "$1");
