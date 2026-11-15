@@ -1,6 +1,6 @@
-import { Writable } from "node:stream";
 import { Client } from "basic-ftp";
-import { getMaxImageBytes, processCatalogReferenceToPreview } from "../catalog/image-storage";
+import { processCatalogReferenceFileToPreview } from "../catalog/image-storage";
+import { CATALOG_REFERENCE_MAX_SOURCE_BYTES, withTemporaryCatalogSource } from "../catalog/temporary-source";
 import { loadOnecFtpConfig } from "../onec-ftp/config";
 import { safeImagePath } from "./model";
 import { CatalogImageDeferred } from "../catalog/image-deferred";
@@ -33,7 +33,7 @@ export function createFtpPhotoSession(
     const config = loaded.config;
     client ??= makeClient(Math.min(config.timeoutMs, deadlineMs));
     const current = client;
-    const limit = Math.min(getMaxImageBytes(), 8 * 1024 * 1024);
+    const limit = CATALOG_REFERENCE_MAX_SOURCE_BYTES;
     let timer: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
@@ -46,16 +46,9 @@ export function createFtpPhotoSession(
           const remote = `/s3/IMG/${relative}`;
           const expected = await current.size(remote);
           if (!Number.isSafeInteger(expected) || expected <= 0 || expected > limit) return null;
-          const chunks: Buffer[] = [];
-          let seen = 0;
-          await current.downloadTo(new Writable({ write(chunk: Buffer, _encoding, done) {
-            seen += chunk.length;
-            sourceBytes += chunk.length;
-            if (seen > expected || seen > limit) { done(new Error("IMAGE_SIZE_LIMIT")); return; }
-            chunks.push(Buffer.from(chunk)); done();
-          } }), remote);
-          if (seen !== expected) throw new CatalogImageDeferred();
-          const result = await processCatalogReferenceToPreview(Buffer.concat(chunks));
+          const result = await withTemporaryCatalogSource(expected, async destination => {
+            await current.downloadTo(destination, remote);
+          }, processCatalogReferenceFileToPreview, bytes => { sourceBytes += bytes; });
           return result.ok ? result.previewBuffer : null;
         })(),
         new Promise<null>((_resolve, reject) => {
