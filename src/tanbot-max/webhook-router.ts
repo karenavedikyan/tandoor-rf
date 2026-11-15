@@ -6,7 +6,7 @@ import {
   loadTanbotMaxStage2Config,
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
 } from "./stage2-config";
-import { handleTanbotMaxUpdate, maybeSendMaxWebhookReply } from "./webhook-handler";
+import { acknowledgeMaxCatalogCallback, handleTanbotMaxUpdate, maybeSendMaxWebhookReply } from "./webhook-handler";
 import { createDefaultMaxDeliveryTransport } from "./delivery-transport";
 
 function constantTimeEqual(a: string, b: string): boolean {
@@ -63,9 +63,14 @@ export function createTanbotMaxWebhookRouter(): express.Router {
       }
 
       const transport = loaded.config.deliveryEnabled ? createDefaultMaxDeliveryTransport() : null;
-      const { reply, dedupKey } = await handleTanbotMaxUpdate(pool, loaded.config, raw);
-      await maybeSendMaxWebhookReply(pool, loaded.config, transport, dedupKey, reply);
-      res.status(200).json({ ok: true });
+      const acknowledgement = acknowledgeMaxCatalogCallback(loaded.config, transport, raw);
+      try {
+        const { reply, dedupKey } = await handleTanbotMaxUpdate(pool, loaded.config, raw);
+        await maybeSendMaxWebhookReply(pool, loaded.config, transport, dedupKey, reply);
+        res.status(200).json({ ok: true });
+      } finally {
+        await acknowledgement;
+      }
     })().catch(next);
   });
 

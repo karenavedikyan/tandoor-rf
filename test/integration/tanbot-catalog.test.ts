@@ -32,7 +32,9 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
   const products = catalogueFixture(15).map((p, i) => ({
     ...p, chapter: [], name: `Модель ${String(i + 1).padStart(2, "0")}`, guid_group: id(500), name_group: "Входные двери",
     properties: [...p.properties.filter(v => v.name !== "Цвет"),
-      { guid: id(888), name: "Цвет", value: i % 2 ? "Чёрный" : "Белый" }],
+      { guid: id(888), name: "Цвет", value: i % 2 ? "Чёрный" : "Белый" },
+      { guid: id(889), name: "ВХ. По назначению", value: i % 3 ? "для квартиры" : "для дома/для квартиры" },
+      { guid: id(890), name: "ВХ. Стеклопакет", value: i % 4 ? "нет" : "да" }],
     files: [{ guid: id(1000 + i), name: "private-source-name", path: `${i + 1}.jpg` }],
   }));
   products[0].files.push({ guid: id(2000), name: "private-second", path: "second.jpg" });
@@ -128,6 +130,12 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
       r = await click(r, "Фильтры"); r = await click(r, "Цвет"); r = await click(r, "Белый");
       const labels = buttons(r).map(b => b.text).join("\n");
       assert.match(labels, /Модель 01/); assert.ok(!labels.includes("Модель 02"));
+      r = await click(r, "Фильтры");
+      assert.ok(!buttons(r).some(b => /Размер|Сторона|Толщина/.test(b.text)));
+      r = await click(r, "Назначение"); r = await click(r, "Для дома");
+      assert.match(r.text, /Моделей с фото: 2\./);
+      r = await click(r, "Фильтры"); r = await click(r, "Остекление"); r = await click(r, "Со стеклом");
+      assert.match(r.text, /Моделей с фото: 1\./);
       r = await click(r, "Найти по названию");
       assert.equal((r.replyExtra?.catalogBrowse as { awaitingSearch: boolean }).awaitingSearch, true);
       // Same webhook retry must replay exactly the committed reply, not search twice.
@@ -143,6 +151,8 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
       assert.match(r.text, /Моделей с фото: 1\./);
       r = await click(r, buttons(r).find(b => b.text.includes("Модель 01"))!.text);
       assert.equal((r.replyExtra?.catalogPhoto as { productGuid: string }).productGuid, id(1));
+      assert.equal(r.text, "Модель 01");
+      assert.ok(!buttons(r).some(b => /Фильтры|вариант|Размер|открыван/.test(b.text)));
       assert.equal((r.replyExtra?.catalogBrowse as { filters: Record<string, string> }).filters["Цвет"], "белый");
       const stale = await send({ callback: buttons(initial)[0].data });
       assert.match(stale.text, /Кнопка устарела/);
@@ -186,6 +196,64 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     assert.equal(view.products[0].files.length, 2);
     for (const n of [12, 13, 14, 15]) assert.ok(!view.products.some(p => p.guid === id(n)));
     assert.equal(await beforeRecords(), initialRecords);
+  });
+  it("catalogue and exact-photo reads do not load any commercial rows", async () => {
+    const sql: string[] = [];
+    const db = { query: async (text: string, params?: unknown[]) => {
+      sql.push(text); return pool().query(text, params);
+    } } as unknown as import("pg").PoolClient;
+    const view = await loadCatalogBotView(db); assert.ok(view);
+    assert.equal(view.context.commerce.size, 0); assert.deepEqual(view.context.priceTypes, []);
+    assert.ok(await catalogPhotoBytes(db, { snapshotId: snapshot, productGuid: id(1), fileGuid: id(1000) }));
+    const groupReads = sql.filter(s => s.includes("onec_manual_object_versions"));
+    assert.equal(groupReads.length, 2);
+    for (const s of groupReads) {
+      assert.match(s, /WHERE v.entity_kind='group' AND v.file_key='groups'/);
+      assert.doesNotMatch(s, /prices|stocks/);
+    }
+  });
+  it("authenticated MAX route acknowledges in parallel; an acknowledgement failure never blocks the persisted reply", async () => {
+    const savedFetch = globalThis.fetch;
+    const savedEnabled = process.env.TANBOT_MAX_DELIVERY_ENABLED;
+    process.env.TANBOT_MAX_DELIVERY_ENABLED = "true";
+    try {
+      for (const failure of [false, true]) {
+        const events: string[] = [];
+        let finishAck: (() => void) | undefined, ackFinished = false, replyBeforeAck = false;
+        globalThis.fetch = async (url, init) => {
+          const endpoint = new URL(String(url));
+          assert.equal(endpoint.origin, "https://platform-api2.max.ru");
+          if (endpoint.pathname === "/answers") {
+            events.push("ack-start");
+            assert.deepEqual(JSON.parse(String(init?.body)), {});
+            if (failure) return Response.json({}, { status: 503 });
+            return new Promise<Response>((resolve, reject) => {
+              finishAck = () => { ackFinished = true; resolve(Response.json({ success: true })); };
+              init?.signal?.addEventListener("abort", () => {
+                ackFinished = true; reject(new DOMException("Aborted", "AbortError"));
+              }, { once: true });
+            });
+          }
+          assert.equal(endpoint.pathname, "/messages");
+          events.push("reply-send"); replyBeforeAck = !ackFinished; finishAck?.();
+          return Response.json({ message: { mid: "synthetic-ack-reply" } });
+        };
+        // Authentication gate must prevent even an acknowledgement side effect.
+        assert.equal((await request(app).post("/api/tanbot-max/webhook")
+          .send(maxRaw({ callback: "cat:root" }))).status, 403);
+        assert.equal(events.length, 0);
+        const response = await request(app).post("/api/tanbot-max/webhook")
+          .set("X-Max-Bot-Api-Secret", max.config.webhookSecret!)
+          .send(maxRaw({ callback: "cat:root" }));
+        assert.equal(response.status, 200);
+        assert.deepEqual(events, ["ack-start", "reply-send"]);
+        if (!failure) assert.ok(replyBeforeAck, "reply generation/delivery must not wait for the acknowledgement");
+      }
+    } finally {
+      globalThis.fetch = savedFetch;
+      if (savedEnabled === undefined) delete process.env.TANBOT_MAX_DELIVERY_ENABLED;
+      else process.env.TANBOT_MAX_DELIVERY_ENABLED = savedEnabled;
+    }
   });
   it("photo read rechecks file/SKU/snapshot ownership, not only a caller-supplied path", async () => {
     const input = { snapshotId: snapshot, productGuid: id(1), fileGuid: id(1000) };
@@ -309,6 +377,8 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
       r = await click(r, "Найти по названию"); r = await send({ text: "Модель 01" });
       r = await click(r, buttons(r).find(b => b.text.includes("Модель 01"))!.text);
       assert.ok(r.replyExtra?.catalogPhoto);
+      assert.equal(r.text, "Модель 01");
+      r = await click(r, "К моделям");
       r = await click(r, "Найти по названию"); r = await send({ text: "Отмена" });
       assert.equal((r.replyExtra?.catalogBrowse as { awaitingSearch: boolean }).awaitingSearch, false);
     }

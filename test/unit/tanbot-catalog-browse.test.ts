@@ -19,6 +19,10 @@ function fixture(count = 20): CatalogView {
         { guid: id(102), name: "Размер, мм", value: i % 3 ? "800х2000" : "900х2000" },
         { guid: id(103), name: "Сторона открывания", value: i % 4 ? "Правая" : "Левая" },
         { guid: id(104), name: "Закрытая маржа", value: "СЕКРЕТ ПОСТАВЩИКА" },
+        { guid: id(105), name: "ВХ. По назначению", value: i % 3 ? "для квартиры" : "для дома" },
+        { guid: id(106), name: "ВХ. Терморазрыв", value: i % 4 ? "нет" : "да" },
+        { guid: id(107), name: "ВХ. Стеклопакет", value: i % 2 ? "нет" : "да" },
+        { guid: id(108), name: "Вид двери", value: i % 2 ? "Глухая (ДГ)" : "Стеклянная (ДО)" },
       ],
       files: [1, 2].map(n => ({ guid: id(2000 + i * 2 + n), name: "private-file", path: `private/${i}-${n}.jpg` })),
     })) };
@@ -62,9 +66,9 @@ describe("catalogue category filters and name search", () => {
       const v = fixture(), original = JSON.stringify(v);
       let r = apply(open(), "Цвет", "Белый");
       assert.equal(filteredCatalogView(restrictCatalogBotView(v), state(r)).products.length, 10);
-      r = apply(r, "Размер, мм", "900х2000");
+      r = apply(r, "Назначение", "Для дома");
       assert.equal(filteredCatalogView(restrictCatalogBotView(v), state(r)).products.length, 4);
-      r = apply(r, "Сторона открывания", "Левая");
+      r = apply(r, "Терморазрыв", "С терморазрывом");
       assert.equal(filteredCatalogView(restrictCatalogBotView(v), state(r)).products.length, 2);
       r = click(r, "Найти по названию");
       assert.ok(state(r).awaitingSearch);
@@ -77,6 +81,9 @@ describe("catalogue category filters and name search", () => {
       assert.equal((r.replyExtra.catalogPhoto as { productGuid: string }).productGuid, id(1));
       assert.equal(Object.keys(state(r).filters).length, 3);
       assert.equal(state(r).query, "ЕЛКА");
+      assert.equal(r.text, "Ёлка 01", "photo caption contains only model name");
+      assert.ok(!choices(r).some(c => c.text === "Фильтры"));
+      r = click(r, "К моделям");
       r = click(r, "Фильтры"); r = click(r, "Выбрано: Цвет"); r = click(r, "Любое значение");
       assert.equal(state(r).filters["Цвет"], undefined);
       assert.equal(Object.keys(state(r).filters).length, 2);
@@ -181,5 +188,15 @@ describe("catalogue category filters and name search", () => {
     assert.equal(await readCatalogBrowseInput(db, "telegram", 100n, 200n, null, "cat2:0000000000000000:0"), null);
     assert.equal(await readCatalogBrowseInput(db, "max", 1n, 2n, "обычный текст"), null);
     assert.ok(await readCatalogBrowseInput(db, "max", 1n, 2n, null, "cat2:0000000000000000:0"));
+  });
+  it("old technical-filter state cannot reinterpret buttons after the buyer-gallery upgrade", async () => {
+    const r = buildCatalogBrowseReply("max", fixture(), { text: null,
+      callback: catalogCallback("g", id(1000), category), state: null });
+    const previous = { ...state(r), version: 1, awaitingSearch: true };
+    const db = { query: async () => ({ rows: [{ state: previous }] }) } as unknown as PoolClient;
+    const input = await readCatalogBrowseInput(db, "max", 1n, 2n, null, choices(r)[0].data);
+    assert.ok(input); assert.equal(input.state, null);
+    assert.match(buildCatalogBrowseReply("max", fixture(), input).text, /Выберите категорию заново/);
+    assert.equal(await readCatalogBrowseInput(db, "max", 1n, 2n, "обычный текст"), null);
   });
 });

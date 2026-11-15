@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import type { PoolClient } from "pg";
 import { GUID, normalizeSearch, type Product } from "../internal-catalog/model";
-import { CATALOG_FACETS } from "../internal-catalog/presentation";
+import { BUYER_FIELDS, buyerFields, buyerValues } from "./catalog-buyer-facets";
+import { catalogModelName } from "./catalog-models";
 import {
   isNativeMainMenuText, isNativeTrackerMenuText, isNativeContinueDraftText, isNativeCreateMenuText,
 } from "./native-create/main-menu";
@@ -20,7 +21,7 @@ type Action =
   | { kind: "pick"; field: string; value: string }
   | { kind: "search" | "clear" | "list" };
 export type CatalogBrowseState = {
-  version: 1; revision: string; snapshotId: string; category: string;
+  version: 2; revision: string; snapshotId: string; category: string;
   query: string; filters: Record<string, string>; awaitingSearch: boolean;
   listPage: number;
   actions: Action[];
@@ -28,7 +29,7 @@ export type CatalogBrowseState = {
 export type CatalogBrowseInput = {
   text: string | null; callback: string | null; state: CatalogBrowseState | null;
 };
-const FIELDS = CATALOG_FACETS.filter(f => f !== "Тип погонажа");
+const FIELDS: readonly string[] = BUYER_FIELDS;
 const PAGE = 8;
 const clean = (s: string, max = 100) => s.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 const allowedField = (s: string) => FIELDS.some(f => f === s);
@@ -54,7 +55,7 @@ export function isCatalogSearchText(text: string | null | undefined): boolean {
 function validState(value: unknown): value is CatalogBrowseState {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const s = value as CatalogBrowseState;
-  return s.version === 1 && /^[a-f0-9]{16}$/.test(s.revision) &&
+  return s.version === 2 && /^[a-f0-9]{16}$/.test(s.revision) &&
     GUID.test(s.snapshotId) && !!section(s.category) &&
     typeof s.query === "string" && s.query.length <= 80 &&
     Number.isInteger(s.listPage) && s.listPage >= 0 && s.listPage <= 9999 &&
@@ -108,13 +109,12 @@ export async function readCatalogBrowseInput(
 }
 
 function propertyValues(p: Product, field: string): string[] {
-  return p.properties.filter(v => v.name.trim() === field)
-    .map(v => clean(v.value, 101)).filter(v => !!v && v !== "-" && v.length <= 100 && normalizeSearch(v).length <= 100);
+  return buyerValues(p, field);
 }
 export function filteredCatalogView(view: CatalogView, state: Pick<CatalogBrowseState, "category" | "filters" | "query">): CatalogView {
   const words = normalizeSearch(state.query).split(" ").filter(Boolean);
   return { ...view, products: view.products.filter(p =>
-    p.guid_group === state.category && words.every(w => normalizeSearch(p.name).includes(w)) &&
+    p.guid_group === state.category && words.every(w => normalizeSearch(catalogModelName(p)).includes(w)) &&
     Object.entries(state.filters).every(([field, value]) =>
       propertyValues(p, field).some(v => normalizeSearch(v) === value))) };
 }
@@ -180,7 +180,7 @@ export function buildCatalogBrowseReply(
     const category = parsed.action === "p"
       ? view.products.find(p => p.guid === parsed.id)?.guid_group : parsed.id;
     if (!category || !section(category)) return buildCatalogBotReply(channel, view, input.callback);
-    state = { version: 1, revision: "", snapshotId: view.snapshotId, category,
+    state = { version: 2, revision: "", snapshotId: view.snapshotId, category,
       filters: {}, query: "", awaitingSearch: false, listPage: 0, actions: [] };
     action = { kind: "legacy", callback: parsed.action === "g"
       ? catalogCallback("l", view.snapshotId, category, parsed.page) : input.callback! };
@@ -215,8 +215,9 @@ export function buildCatalogBrowseReply(
     [listButton(), choose("Сбросить отбор", { kind: "clear" })]);
   }
   if (action.kind === "fields" || action.kind === "values") {
-    const fields = FIELDS.filter(f => !!state.filters[f] || valuesFor(view, state, f).length > 1);
-    const field = action.kind === "values" && allowedField(action.field) ? action.field : null;
+    const available = buyerFields(state.category);
+    const field = action.kind === "values" && available.includes(action.field) ? action.field : null;
+    const fields = field ? [] : available.filter(f => !!state.filters[f] || valuesFor(view, state, f).length > 0);
     const items = field ? valuesFor(view, state, field) : fields;
     const current = Math.max(0, Math.min(action.page, Math.ceil(items.length / PAGE) - 1));
     const buttons = items.slice(current * PAGE, (current + 1) * PAGE).map(value => field
@@ -231,7 +232,7 @@ export function buildCatalogBrowseReply(
     if (field) buttons.push(choose("Все фильтры", { kind: "fields", page: 0 }));
     buttons.push(listButton(), choose("Сбросить отбор", { kind: "clear" }));
     return finish(`${heading}\n\n${field ? `Выберите: ${field}.` :
-      fields.length ? "Выберите характеристику. Можно сочетать несколько фильтров." :
+      fields.length ? "Основные фильтры. Можно сочетать несколько условий." :
         "Для текущего отбора нет различающихся характеристик. Измените название или сбросьте отбор."}${summary(state)}`, buttons);
   }
   const filtered = filteredCatalogView(view, state);
@@ -241,10 +242,13 @@ export function buildCatalogBrowseReply(
   if (parsed?.action === "g") return buildCatalogBotReply(channel, view, callback);
   if (parsed?.action === "l") state.listPage = parsed.page;
   const legacy = buildCatalogBotReply(channel, filtered, callback);
+  const photo = readCatalogPhoto(legacy.replyExtra);
   const buttons = [
-    choose("Фильтры", { kind: "fields", page: 0 }),
-    choose("Найти по названию", { kind: "search" }),
-    ...(state.query || Object.keys(state.filters).length ? [choose("Сбросить отбор", { kind: "clear" })] : []),
+    ...(!photo ? [
+      choose("Фильтры", { kind: "fields", page: 0 }),
+      choose("Найти по названию", { kind: "search" }),
+      ...(state.query || Object.keys(state.filters).length ? [choose("Сбросить отбор", { kind: "clear" })] : []),
+    ] : []),
     ...legacyChoices(legacy).filter(b => b.data.startsWith("cat:"))
       .map(b => choose(b.text, { kind: "legacy", callback:
         legacy.replyExtra.catalogPhoto && parseCatalogCallback(b.data)?.action === "l"
@@ -256,6 +260,6 @@ export function buildCatalogBrowseReply(
   const text = filtered.products.length ? legacy.text.replace("Выберите модель.",
     "Выберите модель или сузьте список фильтрами и поиском по названию.") :
     `${heading}\n\nПо этому отбору моделей с фото не найдено. Измените название или сбросьте отбор.`;
-  return finish((text + summary(state)).slice(0, legacy.replyExtra.catalogPhoto ? 950 : 3500),
-    buttons, readCatalogPhoto(legacy.replyExtra) ?? undefined);
+  return finish((text + (photo ? "" : summary(state))).slice(0, photo ? 950 : 3500),
+    buttons, photo ?? undefined);
 }
