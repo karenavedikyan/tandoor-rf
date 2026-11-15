@@ -44,8 +44,11 @@ function catalogSection(product: Product, groups: ReadonlyMap<string, Group>) {
     if (group.conflict) return null;
     evidence.push(group.name); cursor = group.parent ?? undefined;
   }
-  const meaningful = (value: string) => !["", "-", "нет", "не указан", "не указано", "не задан", "не задано"].includes(normalizeSearch(value));
-  if (product.properties.some(p => p.name.trim() === "Тип погонажа" && meaningful(p.value))) return null;
+  // Door leaves also carry the compatible trim system ("Телескопический
+  // погонаж"). Its presence alone does not make the leaf a trim product.
+  // Actual component types and denied catalogue branches still stay excluded.
+  if (product.properties.some(p => p.name.trim() === "Тип погонажа" &&
+      /наличник|добор|короб|плинтус/.test(normalizeSearch(p.value)))) return null;
   const sections = new Set<number>();
   for (const raw of evidence) {
     const value = normalizeSearch(raw);
@@ -53,7 +56,7 @@ function catalogSection(product: Product, groups: ReadonlyMap<string, Group>) {
     if (/погонаж|напольн|ламинат|линолеум|паркет|кварц.?винил|плитк|керамогранит|ковролин|плинтус|наличник|добор|коробочн|коробк/.test(value)) return null;
     if (/фурнитур/.test(value)) sections.add(2);
     else if (/межкомнатн/.test(value)) sections.add(1);
-    else if (/входн/.test(value)) sections.add(0);
+    else if (/входн|металлическ[а-я]*\s+двер/.test(value)) sections.add(0);
   }
   return sections.size === 1 ? CATALOG_BOT_SECTIONS[[...sections][0]] : null;
 }
