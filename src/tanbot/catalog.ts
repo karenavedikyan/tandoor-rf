@@ -22,6 +22,9 @@ export type CatalogView = {
   snapshotId: string;
   products: Product[];
   context: CatalogContext;
+  /** Verified hashes of the actual bot preview, keyed by normalized source path.
+   * Snapshot-local, never included in messenger replies or source records. */
+  photoHashes?: ReadonlyMap<string, string>;
 };
 const PAGE_SIZE = 8;
 const ROOT = "-";
@@ -128,8 +131,9 @@ export async function loadCatalogBotView(db: Db): Promise<CatalogView | null> {
   if (!schema.rows[0]?.media_table) {
     return { snapshotId: snapshot.id, products: [], context: { groups: [], commerce: new Map(), priceTypes: [] } };
   }
-  const products = await db.query<{ record: Product }>(`
-      SELECT jsonb_set(p.record,'{files}',jsonb_agg(f ORDER BY ord)) AS record
+  const products = await db.query<{ record: Product; photo_hashes: Record<string, string> }>(`
+      SELECT jsonb_set(p.record,'{files}',jsonb_agg(f ORDER BY ord)) AS record,
+        jsonb_object_agg(replace(f->>'path',chr(92),'/'),t.list_sha256) AS photo_hashes
       FROM internal_catalog_products p
       CROSS JOIN LATERAL jsonb_array_elements(p.record->'files') WITH ORDINALITY AS files(f,ord)
       JOIN internal_catalog_thumbnails t ON t.snapshot_id=p.snapshot_id
@@ -139,7 +143,8 @@ export async function loadCatalogBotView(db: Db): Promise<CatalogView | null> {
       WHERE p.snapshot_id=$1::uuid GROUP BY p.snapshot_id,p.guid ORDER BY p.guid`,
     [snapshot.id, THUMBNAIL_RECIPE]);
   const context = await loadBotCatalogGroups(db);
-  return restrictCatalogBotView({ snapshotId: snapshot.id, products: products.rows.map(r => r.record), context });
+  return restrictCatalogBotView({ snapshotId: snapshot.id, products: products.rows.map(r => r.record), context,
+    photoHashes: new Map(products.rows.flatMap(r => Object.entries(r.photo_hashes))) });
 }
 
 /** No prices/stocks/commerce needed for a public name-and-photo catalogue.
@@ -255,17 +260,28 @@ function buildCatalogBotContent(channel: Channel, view: CatalogView | null, call
   // Only entrance doors need exterior + interior-panel galleries.
   // Other categories send one photo; old photo-page callbacks stay readable.
   const autoGallery = page === 0 && product.guid_group === CATALOG_BOT_SECTIONS[0].guid;
+  // The same exterior/interior is often copied into distinct size/handing paths.
+  // Compare verified preview content, not file names, dimensions or colours.
+  // Keep every distinct panel; absent hashes conservatively retain source paths.
+  const seenPhotos = new Set<string>();
+  const galleryPhotos = autoGallery ? family.photos.filter(({ file }) => {
+    const path = file.path.replace(/\\/g, "/");
+    const hash = view.photoHashes?.get(path);
+    const key = hash ? `sha256:${hash}` : `path:${path}`;
+    if (seenPhotos.has(key)) return false;
+    seenPhotos.add(key); return true;
+  }) : [];
   if (page > 0) {
     if (index > 0) choices.push({ text: "Предыдущее фото", data: catalogCallback("p", view.snapshotId, id, index - 1) });
     if (index + 1 < family.photos.length) choices.push({ text: "Следующее фото", data: catalogCallback("p", view.snapshotId, id, index + 1) });
   }
   choices.push({ text: "К моделям", data: catalogCallback("l", view.snapshotId, product.guid_group ?? ROOT) }, rootChoice);
-  if (autoGallery && family.photos.length > 4096) {
+  if (autoGallery && galleryPhotos.length > 4096) {
     return reply(channel, "У модели слишком много фото для одной отправки. Обратитесь к менеджеру.", choices);
   }
   const result = reply(channel, label(family.name, 200), choices,
     { snapshotId: view.snapshotId, productGuid: selected.product.guid, fileGuid: selected.file.guid });
-  if (autoGallery) result.replyExtra.catalogGallery = family.photos.map(({ product: p, file }) =>
+  if (autoGallery) result.replyExtra.catalogGallery = galleryPhotos.map(({ product: p, file }) =>
     ({ snapshotId: view.snapshotId, productGuid: p.guid, fileGuid: file.guid }));
   return result;
 }

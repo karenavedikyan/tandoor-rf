@@ -63,11 +63,17 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     snapshot = (await importSnapshot(pool(), parsed, "synthetic-catalog.json", parsed.sha256)).snapshotId;
     const source = await sharp({ create: { width: 200, height: 800, channels: 3, background: "#426428" } }).jpeg().toBuffer();
     const thumbnails = await makeThumbnails(source); assert.ok(thumbnails); bytes = thumbnails.list;
+    // Distinct fixture sides must have distinct image content. Repeated content
+    // under different SKU paths is covered explicitly by the deduplication test.
+    const panel = await makeThumbnails(await sharp({ create: {
+      width: 200, height: 800, channels: 3, background: "#ffffff",
+    } }).jpeg().toBuffer()); assert.ok(panel);
     for (const path of [...Array.from({ length: 11 }, (_, i) => `${i + 1}.jpg`), "second.jpg"]) {
+      const image = path === "second.jpg" ? panel : thumbnails;
       await pool().query(`INSERT INTO internal_catalog_thumbnails
         (snapshot_id,source_path,recipe,status,small_bytes,small_sha256,list_bytes,list_sha256)
         VALUES($1,$2,$3,'ready',$4,$5,$6,$7)`,
-      [snapshot, path, THUMBNAIL_RECIPE, thumbnails.small, thumbnails.smallHash, bytes, hash(bytes)]);
+      [snapshot, path, THUMBNAIL_RECIPE, image.small, image.smallHash, image.list, image.listHash]);
     }
     // A file reference is not evidence of a usable image.
     await pool().query(`INSERT INTO internal_catalog_thumbnails(snapshot_id,source_path,recipe,status)
@@ -197,6 +203,45 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     assert.equal(view.products[0].files.length, 2);
     for (const n of [12, 13, 14, 15]) assert.ok(!view.products.some(p => p.guid === id(n)));
     assert.equal(await beforeRecords(), initialRecords);
+  });
+  it("DB-backed Amulet gallery removes size/handing copies by verified image content in both channels", async () => {
+    const db = await pool().connect();
+    try {
+      await db.query("BEGIN");
+      for (let i = 0; i < 4; i++) {
+        const p = { ...products[i],
+          name: `Амулет ${i < 2 ? 860 : 960}х2050 ${i % 2 ? "правая" : "левая"}`,
+          properties: [{ guid: id(99010), name: "Название для сайта", value: "Амулет" }],
+          files: [0, 1].map(side => ({ guid: id(99100 + i * 2 + side), name: `${side}_амулет`,
+            path: `synthetic/amulet/${i}/${side}.jpg` })),
+        };
+        await db.query("UPDATE internal_catalog_products SET record=$3::jsonb WHERE snapshot_id=$1 AND guid=$2",
+          [snapshot, p.guid, JSON.stringify(p)]);
+        for (const [side, file] of p.files.entries()) {
+          await db.query(`INSERT INTO internal_catalog_thumbnails
+            (snapshot_id,source_path,recipe,status,small_bytes,small_sha256,list_bytes,list_sha256)
+            SELECT snapshot_id,$2,recipe,status,small_bytes,small_sha256,list_bytes,list_sha256
+            FROM internal_catalog_thumbnails WHERE snapshot_id=$1 AND source_path=$3 AND recipe=$4`,
+          [snapshot, file.path, side ? "second.jpg" : "1.jpg", THUMBNAIL_RECIPE]);
+        }
+      }
+      const before = await db.query("SELECT guid,record FROM internal_catalog_products ORDER BY guid");
+      const view = await loadCatalogBotView(db); assert.ok(view);
+      const family = view.products.filter(p => p.properties.some(x => x.value === "Амулет"));
+      assert.equal(family.length, 4);
+      assert.equal(family.flatMap(p => p.files).length, 8, "all source references are preserved");
+      assert.equal(new Set(family.flatMap(p => p.files.map(f => view.photoHashes?.get(f.path)))).size, 2);
+      const { buildCatalogBotReply, readCatalogGallery, readCatalogPhoto } = await import("../../src/tanbot/catalog");
+      for (const channel of ["max", "telegram"] as const) {
+        const r = buildCatalogBotReply(channel, view, catalogCallback("p", snapshot, products[3].guid));
+        const photos = readCatalogGallery(r.replyExtra)!;
+        assert.equal(photos.length, 2);
+        assert.deepEqual(readCatalogPhoto(r.replyExtra), photos[0]);
+        assert.notDeepEqual(await catalogPhotoBytes(db, photos[0]), await catalogPhotoBytes(db, photos[1]));
+        assert.doesNotMatch(JSON.stringify(r), /photoHashes|sha256|synthetic\/amulet/);
+      }
+      assert.deepEqual((await db.query("SELECT guid,record FROM internal_catalog_products ORDER BY guid")).rows, before.rows);
+    } finally { await db.query("ROLLBACK"); db.release(); }
   });
   it("DB-backed catalogue keeps door leaves with compatible trim and uses the specific coating in both channels", async () => {
     const db = await pool().connect();

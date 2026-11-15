@@ -22,6 +22,62 @@ function choices(r: CatalogBotReply) {
 }
 describe("automatic complete model galleries", () => {
   for (const channel of ["max", "telegram"] as const) {
+    it(`${channel}: Amulet size/handing copies send one exterior and one interior, not eight photos`, () => {
+      const v = fixture();
+      v.products = [0, 1, 2, 3].map(i => ({
+        ...v.products[0], guid: id(i + 1),
+        name: `Амулет ${i < 2 ? 860 : 960}х2050 ${i % 2 ? "правая" : "левая"}`,
+        properties: [{ guid: id(600), name: "Название для сайта", value: "Амулет" }],
+        files: [0, 1].map(side => ({ guid: id(700 + i * 2 + side),
+          name: side ? "2_амулет" : "1_амулет", path: `private\\copy-${i}\\${side}.jpg` })),
+      }));
+      v.photoHashes = new Map(v.products.flatMap(p => p.files.map((f, side) =>
+        [f.path.replace(/\\/g, "/"), (side ? "b" : "a").repeat(64)])));
+      const before = JSON.stringify(v.products);
+      const hashes = [...v.photoHashes];
+      for (const products of [v.products, [...v.products].reverse()]) {
+        const r = buildCatalogBotReply(channel, { ...v, products }, catalogCallback("p", v.snapshotId, id(4)));
+        assert.equal(r.text, "Амулет");
+        assert.deepEqual(readCatalogGallery(r.replyExtra)?.map(p => [p.productGuid, p.fileGuid]),
+          [[id(1), id(700)], [id(1), id(701)]]);
+        assert.deepEqual(readCatalogPhoto(r.replyExtra), readCatalogGallery(r.replyExtra)?.[0]);
+        assert.doesNotMatch(JSON.stringify(r), /private|photoHashes|sha256|a{64}|b{64}/);
+      }
+      assert.equal(JSON.stringify(v.products), before);
+      assert.deepEqual([...v.photoHashes], hashes);
+    });
+    it(`${channel}: deduplicates common exterior without losing differently coloured panels with identical names`, () => {
+      const v = fixture();
+      v.products[1].files[0].path = "private/another-exterior.jpg";
+      v.products[0].files[1].name = v.products[1].files[1].name = "interior";
+      v.photoHashes = new Map([
+        ["private/external.jpg", "a".repeat(64)], ["private/another-exterior.jpg", "a".repeat(64)],
+        ["private/panel-0.jpg", "b".repeat(64)], ["private/panel-1.jpg", "c".repeat(64)],
+      ]);
+      let r = buildCatalogBrowseReply(channel, v, { state: null, text: null,
+        callback: catalogCallback("g", v.snapshotId, CATALOG_BOT_SECTIONS[0].guid) });
+      for (const text of ["Фильтры", "Цвет", "Белый", "Дипломат"]) {
+        const b = choices(r).find(x => x.text === text); assert.ok(b, text);
+        r = buildCatalogBrowseReply(channel, v, { state: r.replyExtra.catalogBrowse as CatalogBrowseState,
+          text: null, callback: b.data });
+      }
+      assert.deepEqual(readCatalogGallery(r.replyExtra)?.map(p => p.fileGuid), [id(700), id(701), id(703)]);
+      assert.equal(v.products[1].files.length, 2);
+    });
+    it(`${channel}: missing hashes retain distinct paths, even when filenames match`, () => {
+      const v = fixture();
+      v.products[1].files[0].path = "private/another-exterior.jpg";
+      v.photoHashes = new Map([["private/external.jpg", "a".repeat(64)]]);
+      const r = buildCatalogBotReply(channel, v, catalogCallback("p", v.snapshotId, id(1)));
+      assert.equal(readCatalogGallery(r.replyExtra)?.length, 4);
+    });
+    it(`${channel}: legacy photo page still addresses the original source image`, () => {
+      const v = fixture();
+      v.photoHashes = new Map(v.products.flatMap(p => p.files.map(f => [f.path, "a".repeat(64)])));
+      const r = buildCatalogBotReply(channel, v, catalogCallback("p", v.snapshotId, id(1), 2));
+      assert.equal(readCatalogGallery(r.replyExtra), null);
+      assert.equal(readCatalogPhoto(r.replyExtra)?.fileGuid, id(703));
+    });
     for (const category of [1, 2]) {
       it(`${channel}: ${CATALOG_BOT_SECTIONS[category].name} sends one photo, preserving source galleries`, () => {
         const v = fixture();
