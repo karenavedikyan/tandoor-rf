@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp, { type Sharp, type Metadata } from "sharp";
+import { withNormalizedJpeg } from "./jpeg-normalize";
+import { CatalogImageDeferred, isImageResourceError } from "./image-deferred";
 import { s3Enabled, s3Config, checkS3Storage, readS3Preview, writeS3Preview } from "./image-s3";
 
 export type ImageValidationResult =
@@ -252,10 +254,10 @@ export async function processImageToPreview(sourceBuffer: Buffer): Promise<Image
  * General uploads and existing import jobs retain processImageToPreview limits.
  */
 export async function processCatalogReferenceToPreview(sourceBuffer: Buffer): Promise<ImageValidationResult> {
-  return processPreviewWithDimension(sourceBuffer, 8192);
+  return processPreviewWithDimension(sourceBuffer, 8192, true);
 }
 
-async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: number): Promise<ImageValidationResult> {
+async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: number, catalogue = false): Promise<ImageValidationResult> {
   if (sourceBuffer.length === 0) return { ok: false, message: "Empty file." };
   const maxBytes = getMaxImageBytes();
   if (sourceBuffer.length > maxBytes) return { ok: false, message: "Image exceeds size limit." };
@@ -285,8 +287,8 @@ async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: n
       return { ok: false, message: "Image pixel count exceeds limit." };
     }
 
-    const previewBuffer = await withSharpTimeout(
-      () => sharp(sourceBuffer, { failOn: "error", limitInputPixels: maxPixels }),
+    const render = (input: Buffer) => withSharpTimeout(
+      () => sharp(input, { failOn: "error", limitInputPixels: maxPixels }),
       (pipeline) =>
         pipeline
           .rotate()
@@ -300,6 +302,8 @@ async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: n
           .toBuffer(),
       timeoutMs,
     );
+    const previewBuffer = catalogue ? await withNormalizedJpeg(sourceBuffer, metadata, render) : await render(sourceBuffer);
+    if (!previewBuffer) return { ok: false, message: "Invalid JPEG image." };
 
     if (!previewBuffer.length) {
       return { ok: false, message: "Preview generation failed." };
@@ -315,7 +319,9 @@ async function processPreviewWithDimension(sourceBuffer: Buffer, maxDimension: n
       contentSha256,
       previewBuffer,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof CatalogImageDeferred) throw error;
+    if (catalogue && isImageResourceError(error)) throw new CatalogImageDeferred();
     return { ok: false, message: "Unsupported or corrupted image." };
   }
 }
