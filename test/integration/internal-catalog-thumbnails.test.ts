@@ -162,7 +162,7 @@ describe("durable catalogue thumbnails (isolated synthetic PostgreSQL)", { concu
       await check.query("SELECT pg_advisory_unlock(718332021)");
     } finally { check.release(); }
   });
-  it("returns retryable 503 rather than missing-photo 404 for a temporary source failure", async () => {
+  it("uses the verified list image for the full gallery when source decoding is deferred", async () => {
     const env = { ...process.env };
     Object.assign(process.env, { INTERNAL_CATALOG_IMAGE_BACKEND: "shared",
       ONEC_FTP_ENABLED: "true", ONEC_FTP_HOST: "synthetic.invalid", ONEC_FTP_USER: "synthetic",
@@ -174,10 +174,63 @@ describe("durable catalogue thumbnails (isolated synthetic PostgreSQL)", { concu
       assert.equal((await request(app).get(url)).status, 401);
       assert.equal(access.mock.callCount(), 0);
       const result = await request(app).get(url).set("Cookie", cookie);
+      assert.equal(result.status, 200);
+      assert.equal(result.headers["x-catalog-image-preview"], "list");
+      assert.match(result.headers["content-type"], /image\/webp/);
+      assert.equal((await sharp(result.body).metadata()).height, 640);
+      assert.equal(result.headers["retry-after"], undefined);
+      assert.equal((await request(app).get(path(1, 301).split("&preview=")[0]).set("Cookie", cookie)).status, 404);
+      assert.equal((await request(app).get(url.replace(snapshot, fixtureGuid(999))).set("Cookie", cookie)).status, 404);
+      assert.equal(JSON.stringify((await pool.query("SELECT guid,record FROM internal_catalog_products ORDER BY guid")).rows), recordsBefore);
+    } finally {
+      access.mock.restore();
+      for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
+      Object.assign(process.env, env);
+    }
+  });
+  it("uses a verified list image when the original is absent without attempting an import", async () => {
+    const env = { ...process.env };
+    delete process.env.INTERNAL_CATALOG_IMAGE_BACKEND;
+    delete process.env.INTERNAL_CATALOG_IMAGE_SOURCE_DIR;
+    const access = mock.method(Client.prototype, "access", async () => { throw new Error("NO_FTP"); });
+    try {
+      const result = await request(app).get(path().split("&preview=")[0]).set("Cookie", cookie);
+      assert.equal(result.status, 200);
+      assert.equal(result.headers["x-catalog-image-preview"], "list");
+      assert.equal((await sharp(result.body).metadata()).height, 640);
+      assert.equal(access.mock.callCount(), 0);
+      await pool.query("ALTER TABLE internal_catalog_thumbnails RENAME TO thumbnail_schema_not_applied");
+      try {
+        assert.equal((await request(app).get(path().split("&preview=")[0]).set("Cookie", cookie)).status, 404);
+      } finally {
+        await pool.query("ALTER TABLE thumbnail_schema_not_applied RENAME TO internal_catalog_thumbnails");
+      }
+    } finally {
+      access.mock.restore();
+      for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
+      Object.assign(process.env, env);
+    }
+  });
+  it("keeps retryable 503 when neither the original nor a valid prepared list is available", async () => {
+    const env = { ...process.env };
+    Object.assign(process.env, { INTERNAL_CATALOG_IMAGE_BACKEND: "shared",
+      ONEC_FTP_ENABLED: "true", ONEC_FTP_HOST: "synthetic.invalid", ONEC_FTP_USER: "synthetic",
+      ONEC_FTP_PASSWORD: "synthetic-not-a-credential", ONEC_FTP_BASE_PATH: "/LC", ONEC_FTP_SECURITY: "plain" });
+    delete process.env.CATALOG_IMAGE_STORAGE_DIR;
+    const access = mock.method(Client.prototype, "access", async () => { throw new CatalogImageDeferred(); });
+    const saved = (await pool.query("SELECT list_bytes FROM internal_catalog_thumbnails WHERE source_path=$1",
+      ["20240626/photo.jpg"])).rows[0].list_bytes;
+    await pool.query("UPDATE internal_catalog_thumbnails SET list_bytes=$1 WHERE source_path=$2",
+      [Buffer.from("corrupt"), "20240626/photo.jpg"]);
+    try {
+      const result = await request(app).get(path().split("&preview=")[0]).set("Cookie", cookie);
       assert.equal(result.status, 503); assert.equal(result.headers["retry-after"], "3");
       assert.equal(result.body.error.code, "IMAGE_RETRY_LATER");
       assert.doesNotMatch(JSON.stringify(result.body), /synthetic|password|ftp|private/i);
+      assert.equal(result.headers["x-catalog-image-preview"], undefined);
     } finally {
+      await pool.query("UPDATE internal_catalog_thumbnails SET list_bytes=$1 WHERE source_path=$2",
+        [saved, "20240626/photo.jpg"]);
       access.mock.restore();
       for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
       Object.assign(process.env, env);

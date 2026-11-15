@@ -157,12 +157,27 @@ export function createInternalCatalogRouter(): express.Router {
     if (current === undefined) return;
     const product = current ? await loadProduct(requirePool(), current.id, guid) : null;
     const file = product?.files.find(item => item.guid === fileGuid.toLowerCase());
-    let bytes: Buffer | null;
+    let bytes: Buffer | null = null;
+    let deferred = false;
     try {
       bytes = file ? preview ? await readThumbnail(requirePool(), current!.id, file.path, preview) :
         await readInternalCatalogImage(file, requirePool(), current!.id) : null;
     } catch (error) {
       if (!(error instanceof CatalogImageDeferred)) throw error;
+      deferred = true;
+    }
+    // A prepared, checksum-verified 640px image is preferable to a broken
+    // gallery when the full source is unavailable or its decoder is deferred.
+    // Authorization and snapshot/product/file binding above still apply.
+    if (!bytes && !preview && file && current) {
+      try { bytes = await readThumbnail(requirePool(), current.id, file.path, "list"); }
+      catch (error) {
+        // Preserve the old route while the additive thumbnail schema is absent.
+        if ((error as { code?: string }).code !== "42P01") throw error;
+      }
+      if (bytes) res.set("X-Catalog-Image-Preview", "list");
+    }
+    if (!bytes && deferred) {
       res.set("Retry-After", "3").status(503).json({
         error: { code: "IMAGE_RETRY_LATER", message: "Фотография временно недоступна. Повторите запрос позже." },
       });

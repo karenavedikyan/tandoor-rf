@@ -76,6 +76,12 @@ Upstream license notices are included alongside this file.
   users, roles, assignments, bot links and history are not rewritten.
 - SHA-256, full WebP decoding, bounds, EXIF removal, snapshot/product
   fingerprints, database storage cap, readiness and final counts are checked.
+- This is a one-shot maintenance tool, not a scheduled service. A container
+  whose PID 1 does not reap adopted children can retain exited native-shell
+  zombie entries after the pass. They do not retain image RAM or sockets, but
+  consume PID slots. Check PID headroom before another maintenance pass; use
+  an init/subreaper before adapting this design to recurring execution. Do not
+  restart the application merely for cleanup without separate authorization.
 
 Sandbox checks:
 
