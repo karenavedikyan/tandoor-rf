@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildCatalogBotReply, catalogCallback, CATALOG_BOT_SECTIONS, readCatalogGallery,
-  type CatalogBotReply, type CatalogView } from "../../src/tanbot/catalog";
+  readCatalogPhoto, type CatalogBotReply, type CatalogView } from "../../src/tanbot/catalog";
 import { buildCatalogBrowseReply, type CatalogBrowseState } from "../../src/tanbot/catalog-browse";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 function fixture(): CatalogView {
@@ -22,6 +22,34 @@ function choices(r: CatalogBotReply) {
 }
 describe("automatic complete model galleries", () => {
   for (const channel of ["max", "telegram"] as const) {
+    for (const category of [1, 2]) {
+      it(`${channel}: ${CATALOG_BOT_SECTIONS[category].name} sends one photo, preserving source galleries`, () => {
+        const v = fixture();
+        v.products = v.products.map(p => ({ ...p, name_group: CATALOG_BOT_SECTIONS[category].name }));
+        const before = JSON.stringify(v);
+        const r = buildCatalogBotReply(channel, v, catalogCallback("p", v.snapshotId, id(1)));
+        assert.equal(readCatalogGallery(r.replyExtra), null);
+        assert.equal(readCatalogPhoto(r.replyExtra)?.fileGuid, id(700));
+        assert.ok(!choices(r).some(b => /Следующее фото|Предыдущее фото/.test(b.text)));
+        assert.equal(JSON.stringify(v), before);
+      });
+      it(`${channel}: ${CATALOG_BOT_SECTIONS[category].name} single photo respects the chosen colour`, () => {
+        const v = fixture();
+        v.products = v.products.map(p => ({ ...p, name_group: CATALOG_BOT_SECTIONS[category].name }));
+        let r = buildCatalogBrowseReply(channel, v, { state: null, text: null,
+          callback: catalogCallback("g", v.snapshotId, CATALOG_BOT_SECTIONS[category].guid) });
+        const click = (label: string) => {
+          const b = choices(r).find(x => x.text === label); assert.ok(b, label);
+          r = buildCatalogBrowseReply(channel, v, { state: r.replyExtra.catalogBrowse as CatalogBrowseState,
+            text: null, callback: b.data });
+        };
+        click("Фильтры"); click("Цвет"); click("Чёрный"); click("Дипломат");
+        assert.equal(readCatalogGallery(r.replyExtra), null);
+        assert.equal(readCatalogPhoto(r.replyExtra)?.productGuid, id(2));
+        click("К моделям");
+        assert.match(r.text, /Цвет: ч[её]рный/);
+      });
+    }
     it(`${channel}: one model click contains exterior + all panels, without repeated source paths`, () => {
       const v = fixture(), before = JSON.stringify(v);
       const r = buildCatalogBotReply(channel, v, catalogCallback("p", v.snapshotId, id(1)));

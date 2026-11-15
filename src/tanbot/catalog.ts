@@ -252,19 +252,20 @@ function buildCatalogBotContent(channel: Channel, view: CatalogView | null, call
   const index = Math.min(page, family.photos.length - 1);
   const selected = family.photos[index];
   const choices: Choice[] = [];
-  // Old photo-page callbacks remain readable; every new model selection sends
-  // its complete, path-deduplicated gallery without asking for another click.
+  // Only entrance doors need exterior + interior-panel galleries.
+  // Other categories send one photo; old photo-page callbacks stay readable.
+  const autoGallery = page === 0 && product.guid_group === CATALOG_BOT_SECTIONS[0].guid;
   if (page > 0) {
     if (index > 0) choices.push({ text: "Предыдущее фото", data: catalogCallback("p", view.snapshotId, id, index - 1) });
     if (index + 1 < family.photos.length) choices.push({ text: "Следующее фото", data: catalogCallback("p", view.snapshotId, id, index + 1) });
   }
   choices.push({ text: "К моделям", data: catalogCallback("l", view.snapshotId, product.guid_group ?? ROOT) }, rootChoice);
-  if (page === 0 && family.photos.length > 4096) {
+  if (autoGallery && family.photos.length > 4096) {
     return reply(channel, "У модели слишком много фото для одной отправки. Обратитесь к менеджеру.", choices);
   }
   const result = reply(channel, label(family.name, 200), choices,
     { snapshotId: view.snapshotId, productGuid: selected.product.guid, fileGuid: selected.file.guid });
-  if (page === 0) result.replyExtra.catalogGallery = family.photos.map(({ product: p, file }) =>
+  if (autoGallery) result.replyExtra.catalogGallery = family.photos.map(({ product: p, file }) =>
     ({ snapshotId: view.snapshotId, productGuid: p.guid, fileGuid: file.guid }));
   return result;
 }

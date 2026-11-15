@@ -112,7 +112,7 @@ describe("catalogue parity across all buyer filters and categories", () => {
     });
   }
   for (const channel of ["max", "telegram"] as const) {
-    it(`${channel}: all coating values are reachable, PET models have a filtered gallery and keep the selection on return`, () => {
+    it(`${channel}: all coating values are reachable, PET models have one filtered photo and keep the selection on return`, () => {
       const { view } = fixture(), section = CATALOG_BOT_SECTIONS[1].guid;
       let r = buildCatalogBrowseReply(channel, view, { text: null, state: null,
         callback: catalogCallback("g", view.snapshotId, section) });
@@ -139,11 +139,10 @@ describe("catalogue parity across all buyer filters and categories", () => {
       click("Деканто");
       const first = readCatalogPhoto(r.replyExtra); assert.ok(first);
       assert.equal(r.text, "Деканто");
-      const gallery = readCatalogGallery(r.replyExtra); assert.ok(gallery);
-      assert.equal(gallery.length, 2);
-      const next = gallery[1];
-      assert.notEqual(first.productGuid, next.productGuid);
-      assert.notEqual(first.fileGuid, next.fileGuid);
+      assert.equal(readCatalogGallery(r.replyExtra), null);
+      assert.ok(filteredCatalogView(restrictCatalogBotView(view), {
+        category: section, query: "", filters: { Покрытие: "пэт" },
+      }).products.some(p => p.guid === first.productGuid));
       assert.ok(!choices(r).some(x => x.text === "Следующее фото"));
       click("К моделям");
       assert.match(r.text, /Покрытие: пэт/);

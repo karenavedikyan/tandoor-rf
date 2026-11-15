@@ -241,9 +241,10 @@ export function buildCatalogBrowseReply(
   const parsed = parseCatalogCallback(callback);
   if (parsed?.action === "g") return buildCatalogBotReply(channel, view, callback);
   if (parsed?.action === "l") state.listPage = parsed.page;
-  // Filters select models, not the colour variants shown after selecting one.
-  // Gate the callback with the filtered SKU list before expanding its gallery.
+  // Expand all panel colours only for entrance-door galleries.
+  // Other categories keep the single photo within the selected filters.
   const galleryView = parsed?.action === "p" && parsed.page === 0 &&
+    state.category === CATALOG_BOT_SECTIONS[0].guid &&
     filtered.products.some(p => p.guid === parsed.id)
     ? { ...view, products: view.products.filter(p => p.guid_group === state.category) } : filtered;
   const legacy = buildCatalogBotReply(channel, galleryView, callback);
