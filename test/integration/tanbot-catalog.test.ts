@@ -20,6 +20,7 @@ import { loadTanbotMaxStage2Config } from "../../src/tanbot-max/stage2-config";
 import { deliverTelegramWebhookReply } from "../../src/tanbot-telegram/webhook-reply-delivery";
 import { deliverMaxWebhookReply } from "../../src/tanbot-max/webhook-reply-delivery";
 import { processUndeliveredMaxWebhookReplies } from "../../src/tanbot-max/reply-retry";
+import { deliverCatalogGallery } from "../../src/tanbot/catalog-gallery-delivery";
 
 describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency: false }, () => {
   let snapshot: string, bytes: Buffer;
@@ -224,6 +225,54 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
       }
     } finally { await db.query("ROLLBACK"); db.release(); }
   });
+  it("DB-backed ungrouped models and typed floor stops retain filters and exact photos in both channels", async () => {
+    const db = await pool().connect();
+    try {
+      await db.query("BEGIN");
+      const sources: [string, string][][] = [
+        [["ВХ. Терморазрыв", "нет"]],
+        [["Название для сайта", "Simple 8"], ["Вид двери", "Глухая (ДГ)"], ["Покрытие двери", "ПЭТ"]],
+        [["Тип фурнитуры", "Ручка"]],
+        [["Тип фурнитуры", "Ограничитель"]],
+        [["Тип фурнитуры", "Ограничитель"]],
+        [["Тип фурнитуры", "Ручка"], ["Вид двери", "Глухая"]],
+      ];
+      for (let i = 0; i < sources.length; i++) {
+        const p = { ...products[i], guid_group: undefined, name_group: undefined,
+          chapter: i === 3 ? [{ guid: id(98000), name: "Ограничители напольные" }] :
+            i === 4 ? [{ guid: id(98001), name: "Напольные покрытия" }] : [],
+          properties: sources[i].map(([name, value], j) => ({ guid: id(98100 + j), name, value })),
+        };
+        if (i === 3) Object.assign(p, { guid_group: id(98002), name_group: "МЕЖКОМНАТКА фурнитура" });
+        await db.query("UPDATE internal_catalog_products SET record=$3::jsonb WHERE snapshot_id=$1 AND guid=$2",
+          [snapshot, p.guid, JSON.stringify(p)]);
+      }
+      const before = (await db.query("SELECT guid,record FROM internal_catalog_products ORDER BY guid")).rows;
+      const v = await loadCatalogBotView(db); assert.ok(v);
+      const expectedCategories = [0, 1, 2, 2];
+      for (let i = 0; i < 4; i++) {
+        assert.equal(v.products.find(p => p.guid === products[i].guid)?.guid_group,
+          CATALOG_BOT_SECTIONS[expectedCategories[i]].guid);
+        assert.ok(await catalogPhotoBytes(db, { snapshotId: snapshot, productGuid: products[i].guid,
+          fileGuid: products[i].files[0].guid }));
+      }
+      for (const i of [4, 5]) {
+        assert.ok(!v.products.some(p => p.guid === products[i].guid));
+        assert.equal(await catalogPhotoBytes(db, { snapshotId: snapshot, productGuid: products[i].guid,
+          fileGuid: products[i].files[0].guid }), null);
+      }
+      const selected = filteredCatalogView(v, { category: CATALOG_BOT_SECTIONS[1].guid,
+        query: "simple", filters: { Покрытие: "пэт", Остекление: "без стекла" } });
+      assert.deepEqual(selected.products.map(p => p.guid), [products[1].guid]);
+      for (const channel of ["max", "telegram"] as const) {
+        const { buildCatalogBotReply, readCatalogPhoto } = await import("../../src/tanbot/catalog");
+        const r = buildCatalogBotReply(channel, selected, catalogCallback("p", snapshot, products[1].guid));
+        assert.equal(r.text, "Simple 8");
+        assert.equal(readCatalogPhoto(r.replyExtra)?.fileGuid, products[1].files[0].guid);
+      }
+      assert.deepEqual((await db.query("SELECT guid,record FROM internal_catalog_products ORDER BY guid")).rows, before);
+    } finally { await db.query("ROLLBACK"); db.release(); }
+  });
   it("catalogue and exact-photo reads do not load any commercial rows", async () => {
     const sql: string[] = [];
     const db = { query: async (text: string, params?: unknown[]) => {
@@ -307,7 +356,7 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     assert.equal((await request(app).post("/api/tanbot-telegram/webhook")
       .set("X-Telegram-Bot-Api-Secret-Token", tg.config.webhookSecret!).send(telegramRaw({ text: "Каталог" }))).status, 200);
   });
-  it("Telegram category -> models -> actual photo uses one deduplicated primary sendPhoto with keyboard", async () => {
+  it("Telegram model selection sends its whole gallery once, with buttons on the final photo", async () => {
     const entry = await handleTanbotTelegramUpdate(pool(), tg.config, telegramRaw({ text: "Каталог" })); assert.ok(entry.reply);
     assert.match(entry.reply.text, /Категории/);
     const listing = await handleTanbotTelegramUpdate(pool(), tg.config,
@@ -321,13 +370,14 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
       if (p.method === "sendPhoto") {
         assert.ok(p.photoBytes); assert.equal((await sharp(p.photoBytes).metadata()).format, "jpeg");
         assert.match(String(p.body.caption), /Модель 01/);
-        assert.ok(p.body.reply_markup); assert.equal(p.body.text, undefined); assert.equal(p.body.photo, undefined);
+        assert.equal(Boolean(p.body.reply_markup), calls.filter(m => m === "sendPhoto").length === 2);
+        assert.equal(p.body.text, undefined); assert.equal(p.body.photo, undefined);
       }
       return { ok: true as const, result: { message_id: 1 } };
     };
     await deliverTelegramWebhookReply(pool(), tg.config, transport, selected.updateId, selected.reply);
     await deliverTelegramWebhookReply(pool(), tg.config, transport, selected.updateId, selected.reply);
-    assert.equal(calls.filter(m => m === "sendPhoto").length, 1);
+    assert.equal(calls.filter(m => m === "sendPhoto").length, 2);
     assert.equal(calls.filter(m => m === "sendMessage").length, 0);
     assert.equal((await handleTanbotTelegramUpdate(pool(), tg.config, raw)).reply, null);
   });
@@ -338,7 +388,7 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     let attempts = 0;
     const transport = async (p: Parameters<Parameters<typeof deliverMaxWebhookReply>[2]>[0]) => {
       attempts++; assert.equal(p.userId, 710002n); assert.ok(p.photoBytes);
-      assert.equal(p.maxImageToken, attempts === 1 ? undefined : "persisted-synthetic-token");
+      assert.equal(p.maxImageToken, attempts === 2 ? "persisted-synthetic-token" : undefined);
       return attempts === 1 ? { ok: false as const, code: "ATTACHMENT_NOT_READY", message: "not ready",
         retryable: true, uploadedImageToken: "persisted-synthetic-token" } :
         { ok: true as const, result: { message: { body: { mid: "sent" } } } };
@@ -347,12 +397,68 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     const pending = (await pool().query("SELECT reply_extra,reply_delivered_at FROM tanbot_max_update_dedup WHERE dedup_key=$1",
       [selected.dedupKey])).rows[0];
     assert.equal(pending.reply_delivered_at, null);
-    assert.equal(pending.reply_extra.catalogImageToken, "persisted-synthetic-token");
+    assert.equal(pending.reply_extra.catalogGalleryProgress.imageToken, "persisted-synthetic-token");
     // Drain only this row (others are Telegram), through the existing retry worker.
     await processUndeliveredMaxWebhookReplies(pool(), max.config, transport, { deliveryEnabled: true });
-    assert.equal(attempts, 2);
+    assert.equal(attempts, 3);
     await deliverMaxWebhookReply(pool(), max.config, transport, selected.dedupKey, selected.reply);
-    assert.equal(attempts, 2);
+    assert.equal(attempts, 3);
+  });
+  for (const channel of ["max", "telegram"] as const) {
+    it(`${channel}: a mid-gallery failure resumes at the unsent photo under concurrent retries`, async () => {
+      const selected = channel === "max"
+        ? await handleTanbotMaxUpdate(pool(), max.config, maxRaw({ callback: catalogCallback("p", snapshot, id(1)) }))
+        : await handleTanbotTelegramUpdate(pool(), tg.config, telegramRaw({ callback: catalogCallback("p", snapshot, id(1)) }));
+      assert.ok(selected.reply);
+      let calls = 0;
+      const deliver = () => channel === "max"
+        ? deliverMaxWebhookReply(pool(), max.config, async p => {
+          calls++; assert.ok(p.photoBytes);
+          assert.equal(Boolean(p.inlineButtons), calls !== 1);
+          assert.equal(p.maxImageToken, calls === 3 ? "gallery-second-token" : undefined);
+          return calls === 2 ? { ok: false, code: "ATTACHMENT_NOT_READY", message: "synthetic",
+            retryable: true, uploadedImageToken: "gallery-second-token" } : { ok: true, result: {} };
+        }, (selected as { dedupKey: string }).dedupKey, selected.reply as never)
+        : deliverTelegramWebhookReply(pool(), tg.config, async p => {
+          if (p.method === "answerCallbackQuery") return { ok: true, result: {} };
+          calls++; assert.equal(p.method, "sendPhoto"); assert.ok(p.photoBytes);
+          assert.equal(Boolean(p.body.reply_markup), calls !== 1);
+          return calls === 2 ? { ok: false, code: "NETWORK_ERROR", message: "synthetic", retryable: true } :
+            { ok: true, result: {} };
+        }, (selected as { updateId: number }).updateId, selected.reply as never);
+      assert.equal((await deliver())?.ok, false);
+      const pending = channel === "max"
+        ? (await pool().query("SELECT reply_extra,reply_delivered_at FROM tanbot_max_update_dedup WHERE dedup_key=$1",
+          [(selected as { dedupKey: string }).dedupKey])).rows[0]
+        : (await pool().query("SELECT reply_extra,reply_delivered_at FROM tanbot_telegram_update_dedup WHERE update_id=$1",
+          [(selected as { updateId: number }).updateId])).rows[0];
+      assert.equal(pending.reply_extra.catalogGalleryProgress.sent, 1);
+      assert.equal(pending.reply_delivered_at, null);
+      await Promise.all([deliver(), deliver()]);
+      assert.equal(calls, 3, "the acknowledged first photo is not sent again");
+      await deliver(); assert.equal(calls, 3);
+    });
+  }
+  it("a long gallery yields with persisted progress and continues instead of silently truncating", async () => {
+    const { buildCatalogBotReply, readCatalogGallery } = await import("../../src/tanbot/catalog");
+    const v = await loadCatalogBotView(pool()); assert.ok(v);
+    const r = buildCatalogBotReply("max", v, catalogCallback("p", snapshot, id(1)));
+    const photos = readCatalogGallery(r.replyExtra)!;
+    assert.equal(photos.length, 2);
+    const client = await pool().connect();
+    let extra = r.replyExtra, calls = 0, clock = 0;
+    const send = async (bytes: Buffer | null) => { assert.ok(bytes); calls++; return { ok: true as const, result: {} }; };
+    try {
+      const first = await deliverCatalogGallery({ client, photos, extra,
+        persist: async next => { extra = next; }, send, now: () => (clock++ ? 20001 : 0) });
+      assert.equal(first.ok, false);
+      assert.equal(!first.ok && first.code, "CATALOG_GALLERY_PENDING");
+      assert.equal((extra.catalogGalleryProgress as { sent: number }).sent, 1);
+      assert.equal((await deliverCatalogGallery({ client, photos, extra,
+        persist: async next => { extra = next; }, send, now: () => 0 })).ok, true);
+      assert.equal(calls, 2);
+      assert.equal((extra.catalogGalleryProgress as { sent: number }).sent, 2);
+    } finally { client.release(); }
   });
   it("Telegram failed send remains retryable and concurrent delivery workers serialize the photo", async () => {
     const selected = await handleTanbotTelegramUpdate(pool(), tg.config,

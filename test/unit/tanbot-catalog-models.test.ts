@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import type { Product } from "../../src/internal-catalog/model";
 import { catalogModelName, catalogModels } from "../../src/tanbot/catalog-models";
 import { buildCatalogBrowseReply, type CatalogBrowseState } from "../../src/tanbot/catalog-browse";
-import { catalogCallback, CATALOG_BOT_SECTIONS, readCatalogPhoto, type CatalogBotReply, type CatalogView } from "../../src/tanbot/catalog";
+import { catalogCallback, CATALOG_BOT_SECTIONS, readCatalogPhoto, readCatalogGallery, type CatalogBotReply, type CatalogView } from "../../src/tanbot/catalog";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 function product(n: number, model: string | null, name: string, colour = "Белый"): Product {
@@ -83,19 +83,16 @@ describe("explicit base model identity, bot projection only", () => {
         state: r.replyExtra.catalogBrowse as CatalogBrowseState });
       assert.match(r.text, /Моделей с фото: 1\./);
       r = click(r, "Астра");
-      for (const n of [1, 2, 3]) {
-        assert.equal(r.text, "Астра");
-        assert.equal(readCatalogPhoto(r.replyExtra)?.productGuid, id(n));
-        assert.equal(readCatalogPhoto(r.replyExtra)?.fileGuid, id(200 + n));
-        if (n < 3) r = click(r, "Следующее фото");
-      }
+      assert.equal(r.text, "Астра");
+      assert.deepEqual(readCatalogGallery(r.replyExtra)?.map(p => [p.productGuid, p.fileGuid]),
+        [1, 2, 3].map(n => [id(n), id(200 + n)]));
       r = click(r, "К моделям");
       r = click(r, "Фильтры"); r = click(r, "Цвет"); r = click(r, "Белый");
       assert.equal(choices(r).filter(c => c.text === "Астра").length, 1);
       r = click(r, "Астра");
       assert.equal(readCatalogPhoto(r.replyExtra)?.productGuid, id(1));
-      r = click(r, "Следующее фото");
-      assert.equal(readCatalogPhoto(r.replyExtra)?.productGuid, id(3), "black variant excluded before grouping/gallery");
+      assert.deepEqual(readCatalogGallery(r.replyExtra)?.map(p => p.productGuid), [id(1), id(2), id(3)],
+        "the colour filter selects the model, while its gallery includes all panel colours");
       assert.ok(!choices(r).some(c => c.text === "Следующее фото"));
       assert.equal(JSON.stringify(v), original);
       assert.doesNotMatch(JSON.stringify(r), /private\/|Белая шагрень|2050|правая|Закупка/);

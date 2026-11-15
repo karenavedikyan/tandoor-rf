@@ -14,8 +14,9 @@ import {
 import { isHandoffReplyFullyDelivered } from "../tanbot/webhook-reply-extra";
 import { deliverTelegramNativeMediaFromExtra } from "../tanbot/native-create/media-delivery";
 import { TELEGRAM_KEYBOARD_AUX_TEXT } from "../tanbot/native-create/telegram-reply-markup";
-import { readCatalogPhoto, catalogPhotoBytes } from "../tanbot/catalog";
+import { readCatalogPhoto, readCatalogGallery, catalogPhotoBytes } from "../tanbot/catalog";
 import { catalogJpeg } from "../tanbot/catalog-media";
+import { deliverCatalogGallery } from "../tanbot/catalog-gallery-delivery";
 
 export function buildTelegramSendMessagePayload(input: {
   chatId: bigint;
@@ -112,6 +113,25 @@ async function deliverTelegramWebhookReplyUnderLock(
           maxResponseBytes: config.maxResponseBytes,
         });
         answeredCallback = true;
+      }
+      const gallery = readCatalogGallery(extra);
+      if (gallery) {
+        lastResult = await deliverCatalogGallery({
+          client, photos: gallery, extra,
+          persist: next => updateTelegramReplyExtra(client, updateId, next),
+          send: async (bytes, last) => transport({
+            method: bytes ? "sendPhoto" : "sendMessage", token: config.botToken,
+            body: { chat_id: reply.chatId.toString(),
+              ...(bytes ? { caption: primaryText } : {
+                text: "Фотография сейчас недоступна. Откройте каталог заново или выберите другую модель." }),
+              ...(last ? { reply_markup: extra.replyMarkup ?? reply.replyMarkup } : {}) },
+            photoBytes: bytes ?? undefined,
+            timeoutMs: config.requestTimeoutMs, maxResponseBytes: config.maxResponseBytes,
+          }),
+        });
+        if (!lastResult.ok) return lastResult;
+        await mergeTelegramReplyDeliveryProgress(client, updateId, "primary");
+        continue;
       }
       const body = buildTelegramSendMessagePayload({
         chatId: reply.chatId,

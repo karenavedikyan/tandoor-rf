@@ -50,14 +50,32 @@ function catalogSection(product: Product, groups: ReadonlyMap<string, Group>) {
   if (product.properties.some(p => p.name.trim() === "Тип погонажа" &&
       /наличник|добор|короб|плинтус/.test(normalizeSearch(p.value)))) return null;
   const sections = new Set<number>();
+  let hasFloorWording = false;
   for (const raw of evidence) {
     const value = normalizeSearch(raw);
     // Deny rules take precedence even inside an otherwise allowed door branch.
-    if (/погонаж|напольн|ламинат|линолеум|паркет|кварц.?винил|плитк|керамогранит|ковролин|плинтус|наличник|добор|коробочн|коробк/.test(value)) return null;
+    if (/погонаж|напольн[а-я]*\s+покрыт|ламинат|линолеум|паркет|кварц.?винил|плитк|керамогранит|ковролин|плинтус|наличник|добор|коробочн|коробк/.test(value)) return null;
+    if (/напольн/.test(value)) hasFloorWording = true;
     if (/фурнитур/.test(value)) sections.add(2);
     else if (/межкомнатн/.test(value)) sections.add(1);
     else if (/входн|металлическ[а-я]*\s+двер/.test(value)) sections.add(0);
   }
+  const values = (field: string) => product.properties.filter(p => p.name.trim() === field)
+    .map(p => normalizeSearch(p.value))
+    .filter(v => !["", "-", "не указан", "не указано", "не задан", "не задано"].includes(v));
+  // Only genuinely ungrouped records get this fallback. Never repair a broken
+  // hierarchy, override a denied branch, or guess the category from SKU text.
+  if (!product.guid_group) {
+    if (values("Тип фурнитуры").some(v => v !== "нет")) sections.add(2);
+    if (values("Вид двери").some(v =>
+      /^(?:глухая(?:\s*\(дг\))?|стеклянная(?:\s*\(до\))?|частично остекленная(?:\s*\(дч\))?)$/.test(v))) sections.add(1);
+    if (["ВХ. По назначению", "ВХ. Терморазрыв", "ВХ. Стеклопакет"]
+      .some(field => values(field).length)) sections.add(0);
+  }
+  // "Напольный" alone remains denied, except for explicitly typed door stops
+  // in the hardware category. Real flooring branches were rejected above.
+  if (hasFloorWording && !(sections.size === 1 && sections.has(2) &&
+      values("Тип фурнитуры").includes("ограничитель"))) return null;
   return sections.size === 1 ? CATALOG_BOT_SECTIONS[[...sections][0]] : null;
 }
 /** Fixed three-section bot projection, not a change to the internal catalogue. */
@@ -234,11 +252,21 @@ function buildCatalogBotContent(channel: Channel, view: CatalogView | null, call
   const index = Math.min(page, family.photos.length - 1);
   const selected = family.photos[index];
   const choices: Choice[] = [];
-  if (index > 0) choices.push({ text: "Предыдущее фото", data: catalogCallback("p", view.snapshotId, id, index - 1) });
-  if (index + 1 < family.photos.length) choices.push({ text: "Следующее фото", data: catalogCallback("p", view.snapshotId, id, index + 1) });
+  // Old photo-page callbacks remain readable; every new model selection sends
+  // its complete, path-deduplicated gallery without asking for another click.
+  if (page > 0) {
+    if (index > 0) choices.push({ text: "Предыдущее фото", data: catalogCallback("p", view.snapshotId, id, index - 1) });
+    if (index + 1 < family.photos.length) choices.push({ text: "Следующее фото", data: catalogCallback("p", view.snapshotId, id, index + 1) });
+  }
   choices.push({ text: "К моделям", data: catalogCallback("l", view.snapshotId, product.guid_group ?? ROOT) }, rootChoice);
-  return reply(channel, label(family.name, 200), choices,
+  if (page === 0 && family.photos.length > 4096) {
+    return reply(channel, "У модели слишком много фото для одной отправки. Обратитесь к менеджеру.", choices);
+  }
+  const result = reply(channel, label(family.name, 200), choices,
     { snapshotId: view.snapshotId, productGuid: selected.product.guid, fileGuid: selected.file.guid });
+  if (page === 0) result.replyExtra.catalogGallery = family.photos.map(({ product: p, file }) =>
+    ({ snapshotId: view.snapshotId, productGuid: p.guid, fileGuid: file.guid }));
+  return result;
 }
 
 export function readCatalogPhoto(extra: unknown): CatalogPhoto | null {
@@ -247,6 +275,19 @@ export function readCatalogPhoto(extra: unknown): CatalogPhoto | null {
   const row = value as Record<string, unknown>;
   return ["snapshotId", "productGuid", "fileGuid"].every(k => typeof row[k] === "string" && GUID.test(row[k] as string))
     ? { snapshotId: row.snapshotId as string, productGuid: row.productGuid as string, fileGuid: row.fileGuid as string } : null;
+}
+
+/** A frozen, bounded queue of public identifiers only. Never persist source
+ * URLs, bytes, commerce or characteristics in a messenger reply envelope. */
+export function readCatalogGallery(extra: unknown): CatalogPhoto[] | null {
+  if (!extra || typeof extra !== "object") return null;
+  const raw = (extra as Record<string, unknown>).catalogGallery;
+  if (!Array.isArray(raw) || !raw.length || raw.length > 4096) return null;
+  const photos = raw.map(item => readCatalogPhoto({ catalogPhoto: item }));
+  const first = readCatalogPhoto(extra);
+  if (!first || photos.some(p => !p || p.snapshotId !== first.snapshotId) ||
+      JSON.stringify(photos[0]) !== JSON.stringify(first)) return null;
+  return photos as CatalogPhoto[];
 }
 
 /** Revalidate current snapshot + SKU/file membership at send/retry time.

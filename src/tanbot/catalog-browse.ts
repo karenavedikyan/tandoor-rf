@@ -241,7 +241,12 @@ export function buildCatalogBrowseReply(
   const parsed = parseCatalogCallback(callback);
   if (parsed?.action === "g") return buildCatalogBotReply(channel, view, callback);
   if (parsed?.action === "l") state.listPage = parsed.page;
-  const legacy = buildCatalogBotReply(channel, filtered, callback);
+  // Filters select models, not the colour variants shown after selecting one.
+  // Gate the callback with the filtered SKU list before expanding its gallery.
+  const galleryView = parsed?.action === "p" && parsed.page === 0 &&
+    filtered.products.some(p => p.guid === parsed.id)
+    ? { ...view, products: view.products.filter(p => p.guid_group === state.category) } : filtered;
+  const legacy = buildCatalogBotReply(channel, galleryView, callback);
   const photo = readCatalogPhoto(legacy.replyExtra);
   const buttons = [
     ...(!photo ? [
@@ -260,6 +265,8 @@ export function buildCatalogBrowseReply(
   const text = filtered.products.length ? legacy.text.replace("Выберите модель.",
     "Выберите модель или сузьте список фильтрами и поиском по названию.") :
     `${heading}\n\nПо этому отбору моделей с фото не найдено. Измените название или сбросьте отбор.`;
-  return finish((text + (photo ? "" : summary(state))).slice(0, photo ? 950 : 3500),
+  const result = finish((text + (photo ? "" : summary(state))).slice(0, photo ? 950 : 3500),
     buttons, photo ?? undefined);
+  if (legacy.replyExtra.catalogGallery) result.replyExtra.catalogGallery = legacy.replyExtra.catalogGallery;
+  return result;
 }

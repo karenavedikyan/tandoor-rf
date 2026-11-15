@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import sharp from "sharp";
-import { buildCatalogBotReply, catalogCallback, isCatalogRequest, parseCatalogCallback, readCatalogPhoto, CATALOG_BOT_SECTIONS, restrictCatalogBotView,
+import { buildCatalogBotReply, catalogCallback, isCatalogRequest, parseCatalogCallback, readCatalogPhoto, readCatalogGallery, CATALOG_BOT_SECTIONS, restrictCatalogBotView,
   type CatalogView } from "../../src/tanbot/catalog";
 import { catalogJpeg, uploadMaxCatalogPhoto } from "../../src/tanbot/catalog-media";
 import { createDefaultTelegramDeliveryTransport } from "../../src/tanbot-telegram/delivery-transport";
@@ -102,8 +102,9 @@ describe("bot catalogue: public photo-only projection", () => {
       const r = buildCatalogBotReply(channel, v, catalogCallback("p", snapshot, id(1)));
       assert.deepEqual(readCatalogPhoto(r.replyExtra), { snapshotId: snapshot, productGuid: id(1), fileGuid: id(2001) });
       assert.equal(r.text, "Модель 01");
-      const next = choices(r).find(b => b.text === "Следующее фото")!;
-      const second = buildCatalogBotReply(channel, v, next.data);
+      assert.deepEqual(readCatalogGallery(r.replyExtra)?.map(p => p.fileGuid), [id(2001), id(999)]);
+      assert.ok(!choices(r).some(b => /Следующее фото|Предыдущее фото/.test(b.text)));
+      const second = buildCatalogBotReply(channel, v, catalogCallback("p", snapshot, id(1), 1));
       assert.equal(readCatalogPhoto(second.replyExtra)?.fileGuid, id(999));
       assert.doesNotMatch(JSON.stringify(r), /private\/|PRIVATE_|1234567|987654|Закупка|Не публиковать/);
     });
@@ -131,13 +132,8 @@ describe("bot catalogue: public photo-only projection", () => {
       assert.ok(!choices(model).some(b => b.text.includes(id(2).slice(0, 8))), "human labels never expose technical GUIDs");
       assert.equal(model.text, "Зефир");
       assert.ok(!choices(model).some(b => /вариант|2000|прав|лев/i.test(b.text)));
-      const next = choices(model).find(b => b.text === "Следующее фото")!;
-      assert.ok(next);
-      const second = buildCatalogBotReply(channel, v, next.data);
-      assert.equal(readCatalogPhoto(second.replyExtra)?.productGuid, id(2));
-      assert.equal(readCatalogPhoto(second.replyExtra)?.fileGuid, id(2002));
-      const third = buildCatalogBotReply(channel, v, choices(second).find(b => b.text === "Следующее фото")!.data);
-      assert.equal(readCatalogPhoto(third.replyExtra)?.productGuid, id(3));
+      assert.deepEqual(readCatalogGallery(model.replyExtra)?.map(p => [p.productGuid, p.fileGuid]),
+        [[id(1), id(2001)], [id(2), id(2002)], [id(3), id(2003)]]);
     });
   }
   it("only the first-level section chooser exposes catalogue, not tracker menus", () => {
