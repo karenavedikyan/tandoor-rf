@@ -42,6 +42,13 @@ export function buyerValues(product: Product, field: string): string[] {
     return (broad.length ? broad : values(product, "Цвет").filter(meaningful))
       .map(v => palette[normalizeSearch(v)] ?? v);
   }
+  if (field === "Покрытие") {
+    // The catalogue's door-coating facet is specific (ПЭТ, Эмалит, ...).
+    // "Покрытие" can instead contain the broad "Современные покрытия".
+    // Use the same specific field for every coating, not a ПЭТ exception.
+    const door = values(product, "Покрытие двери").filter(meaningful);
+    return door.length ? door : values(product, "Покрытие").filter(meaningful);
+  }
   if (field === "Терморазрыв") {
     return binary(product, "ВХ. Терморазрыв", "С терморазрывом", "Без терморазрыва");
   }

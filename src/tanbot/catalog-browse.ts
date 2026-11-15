@@ -21,7 +21,7 @@ type Action =
   | { kind: "pick"; field: string; value: string }
   | { kind: "search" | "clear" | "list" };
 export type CatalogBrowseState = {
-  version: 3; revision: string; snapshotId: string; category: string;
+  version: 4; revision: string; snapshotId: string; category: string;
   query: string; filters: Record<string, string>; awaitingSearch: boolean;
   listPage: number;
   actions: Action[];
@@ -55,7 +55,7 @@ export function isCatalogSearchText(text: string | null | undefined): boolean {
 function validState(value: unknown): value is CatalogBrowseState {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const s = value as CatalogBrowseState;
-  return s.version === 3 && /^[a-f0-9]{16}$/.test(s.revision) &&
+  return s.version === 4 && /^[a-f0-9]{16}$/.test(s.revision) &&
     GUID.test(s.snapshotId) && !!section(s.category) &&
     typeof s.query === "string" && s.query.length <= 80 &&
     Number.isInteger(s.listPage) && s.listPage >= 0 && s.listPage <= 9999 &&
@@ -180,7 +180,7 @@ export function buildCatalogBrowseReply(
     const category = parsed.action === "p"
       ? view.products.find(p => p.guid === parsed.id)?.guid_group : parsed.id;
     if (!category || !section(category)) return buildCatalogBotReply(channel, view, input.callback);
-    state = { version: 3, revision: "", snapshotId: view.snapshotId, category,
+    state = { version: 4, revision: "", snapshotId: view.snapshotId, category,
       filters: {}, query: "", awaitingSearch: false, listPage: 0, actions: [] };
     action = { kind: "legacy", callback: parsed.action === "g"
       ? catalogCallback("l", view.snapshotId, category, parsed.page) : input.callback! };

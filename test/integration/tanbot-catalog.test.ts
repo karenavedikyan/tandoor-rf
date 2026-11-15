@@ -12,7 +12,7 @@ import { importSnapshot } from "../../src/internal-catalog/repository";
 import { makeThumbnails, THUMBNAIL_RECIPE } from "../../src/internal-catalog/thumbnails";
 import { loadCatalogBotView, catalogPhotoBytes, catalogCallback, CATALOG_BOT_SECTIONS } from "../../src/tanbot/catalog";
 import type { CatalogBotReply } from "../../src/tanbot/catalog";
-import { readCatalogBrowseInput } from "../../src/tanbot/catalog-browse";
+import { readCatalogBrowseInput, filteredCatalogView } from "../../src/tanbot/catalog-browse";
 import { handleTanbotTelegramUpdate } from "../../src/tanbot-telegram/webhook-handler";
 import { handleTanbotMaxUpdate } from "../../src/tanbot-max/webhook-handler";
 import { loadTanbotTelegramStage2Config } from "../../src/tanbot-telegram/stage2-config";
@@ -196,6 +196,33 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     assert.equal(view.products[0].files.length, 2);
     for (const n of [12, 13, 14, 15]) assert.ok(!view.products.some(p => p.guid === id(n)));
     assert.equal(await beforeRecords(), initialRecords);
+  });
+  it("DB-backed catalogue keeps door leaves with compatible trim and uses the specific coating in both channels", async () => {
+    const db = await pool().connect();
+    try {
+      await db.query("BEGIN");
+      for (let i = 0; i < 2; i++) {
+        const p = { ...products[i], guid_group: id(99000), name_group: "Межкомнатные двери",
+          properties: [...products[i].properties,
+            { guid: id(99001), name: "Тип погонажа", value: "Телескопический погонаж" },
+            { guid: id(99002), name: "Покрытие", value: "Современные покрытия" },
+            { guid: id(99003), name: "Покрытие двери", value: i ? "ПВХ" : "ПЭТ" }],
+        };
+        await db.query("UPDATE internal_catalog_products SET record=$3::jsonb WHERE snapshot_id=$1 AND guid=$2",
+          [snapshot, p.guid, JSON.stringify(p)]);
+      }
+      const v = await loadCatalogBotView(db); assert.ok(v);
+      const selected = filteredCatalogView(v, { category: CATALOG_BOT_SECTIONS[1].guid,
+        query: "", filters: { Покрытие: "пэт" } });
+      assert.deepEqual(selected.products.map(p => p.guid), [products[0].guid]);
+      for (const channel of ["max", "telegram"] as const) {
+        const reply = (await import("../../src/tanbot/catalog")).buildCatalogBotReply(channel, selected,
+          catalogCallback("l", snapshot, CATALOG_BOT_SECTIONS[1].guid));
+        assert.match(reply.text, /Моделей с фото: 1\./);
+        assert.ok(await catalogPhotoBytes(db, { snapshotId: snapshot, productGuid: products[0].guid,
+          fileGuid: products[0].files[0].guid }));
+      }
+    } finally { await db.query("ROLLBACK"); db.release(); }
   });
   it("catalogue and exact-photo reads do not load any commercial rows", async () => {
     const sql: string[] = [];

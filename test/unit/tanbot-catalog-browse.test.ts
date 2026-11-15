@@ -189,10 +189,10 @@ describe("catalogue category filters and name search", () => {
     assert.equal(await readCatalogBrowseInput(db, "max", 1n, 2n, "обычный текст"), null);
     assert.ok(await readCatalogBrowseInput(db, "max", 1n, 2n, null, "cat2:0000000000000000:0"));
   });
-  it("old finish-based gallery state cannot reinterpret buttons after the base-model upgrade", async () => {
+  it("old gallery state cannot reinterpret buttons after the catalogue-facet upgrade", async () => {
     const r = buildCatalogBrowseReply("max", fixture(), { text: null,
       callback: catalogCallback("g", id(1000), category), state: null });
-    const previous = { ...state(r), version: 2, awaitingSearch: true };
+    const previous = { ...state(r), version: 3, awaitingSearch: true };
     const db = { query: async () => ({ rows: [{ state: previous }] }) } as unknown as PoolClient;
     const input = await readCatalogBrowseInput(db, "max", 1n, 2n, null, choices(r)[0].data);
     assert.ok(input); assert.equal(input.state, null);

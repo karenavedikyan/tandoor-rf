@@ -33,6 +33,20 @@ describe("bot buyer facets and visual model identity", () => {
     assert.deepEqual(buyerValues(product(2, [["Цвет", "Хром/Никель"]]), "Цвет"), ["Хром/Никель"]);
     assert.deepEqual(buyerValues(product(0), "Цвет"), []);
   });
+  it("uses the catalogue's specific door coating for every value, with a legacy fallback only when absent", () => {
+    for (const coating of ["ПЭТ", "ПВХ", "Эмалит", "Эмалекс", "Soft touch", "Массив Ольхи", "Шпон Дуба"]) {
+      assert.deepEqual(buyerValues(product(1, [
+        ["Покрытие", "Современные покрытия"], ["Покрытие двери", coating],
+      ]), "Покрытие"), [coating]);
+    }
+    for (const missing of ["", "-", "не указано"]) {
+      assert.deepEqual(buyerValues(product(1, [
+        ["Покрытие", "Шпон"], ["Покрытие двери", missing],
+      ]), "Покрытие"), ["Шпон"]);
+    }
+    assert.deepEqual(buyerValues(product(1, [["Покрытие двери", "ПЭТ"]]), "Покрытие"), ["ПЭТ"]);
+    assert.deepEqual(buyerValues(product(1), "Покрытие"), []);
+  });
   it("glass is based on explicit entry glazing or interior classification, never product words", () => {
     for (const [source, label] of [["да", "Со стеклом"], ["нет", "Без стекла"]]) {
       assert.deepEqual(buyerValues(product(0, [["ВХ. Стеклопакет", source]]), "Остекление"), [label]);
