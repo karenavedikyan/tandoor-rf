@@ -4,7 +4,7 @@ import { normalizeSearch, type Product } from "../../src/internal-catalog/model"
 import { buyerFields } from "../../src/tanbot/catalog-buyer-facets";
 import { catalogModels } from "../../src/tanbot/catalog-models";
 import { buildCatalogBrowseReply, filteredCatalogView, type CatalogBrowseState } from "../../src/tanbot/catalog-browse";
-import { CATALOG_BOT_SECTIONS, catalogCallback, restrictCatalogBotView, readCatalogPhoto,
+import { CATALOG_BOT_SECTIONS, catalogCallback, restrictCatalogBotView, readCatalogPhoto, readCatalogGallery,
   type CatalogBotReply, type CatalogView } from "../../src/tanbot/catalog";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -59,6 +59,21 @@ function fixture() {
         ["Материал", material]], { "Тип фурнитуры": [type], Цвет: [colour], Материал: [material] });
     }
   }
+  // Independent expected selections include ungrouped variants and a real
+  // hardware floor stop, not only records reachable through source groups.
+  for (const category of [0, 1, 2]) {
+    const source = rows.find(r => r.category === category)!;
+    const copy = structuredClone(source);
+    copy.product.guid = id(40000 + category);
+    delete copy.product.guid_group; delete copy.product.name_group;
+    copy.product.files = [{ guid: id(41000 + category), name: "private-source",
+      path: `private/ungrouped-${category}.jpg` }];
+    rows.push(copy);
+  }
+  add(2, "Ограничитель DS-0020", [["Тип фурнитуры", "Ограничитель"],
+    ["Цвет", "Графит"], ["Материал", "Сталь"]],
+  { "Тип фурнитуры": ["Ограничитель"], Цвет: ["Графит"], Материал: ["Сталь"] });
+  rows.at(-1)!.product.chapter.push({ guid: id(42000), name: "Ограничители напольные" });
   const view: CatalogView = { snapshotId: id(9000), products: rows.map(x => x.product),
     context: { groups, commerce: new Map(), priceTypes: [] } };
   return { rows, view };
@@ -124,10 +139,12 @@ describe("catalogue parity across all buyer filters and categories", () => {
       click("Деканто");
       const first = readCatalogPhoto(r.replyExtra); assert.ok(first);
       assert.equal(r.text, "Деканто");
-      click("Следующее фото");
-      const next = readCatalogPhoto(r.replyExtra); assert.ok(next);
+      const gallery = readCatalogGallery(r.replyExtra); assert.ok(gallery);
+      assert.equal(gallery.length, 2);
+      const next = gallery[1];
       assert.notEqual(first.productGuid, next.productGuid);
       assert.notEqual(first.fileGuid, next.fileGuid);
+      assert.ok(!choices(r).some(x => x.text === "Следующее фото"));
       click("К моделям");
       assert.match(r.text, /Покрытие: пэт/);
       assert.equal(choices(r).filter(x => x.text === "Деканто").length, 1);
@@ -151,5 +168,36 @@ describe("catalogue parity across all buyer filters and categories", () => {
     assert.ok(projected.products.some(p => p.guid === original.guid));
     assert.ok(!projected.products.some(p => extras.some(x => x.guid === p.guid)));
     assert.equal(JSON.stringify(view), before);
+  });
+  it("ungrouped fallback fails closed on unknown or contradictory properties and never overrides a source group", () => {
+    const { view } = fixture();
+    const make = (n: number, props: [string, string][]): Product => ({
+      guid: id(50000 + n), name: "Входная межкомнатная дверь фурнитура",
+      chapter: [], properties: props.map(([name, value], i) => ({ guid: id(51000 + i), name, value })),
+      files: [{ guid: id(52000 + n), name: "private", path: `private/guard-${n}.jpg` }],
+    });
+    const rejected = [
+      make(1, []),
+      make(2, [["Тип фурнитуры", "не указано"], ["Вид двери", "-"]]),
+      make(3, [["Тип фурнитуры", "Ручка"], ["Вид двери", "Глухая (ДГ)"]]),
+      make(4, [["Вид двери", "Глухая"], ["ВХ. Терморазрыв", "нет"]]),
+      { ...make(5, [["Тип фурнитуры", "Ручка"]]), guid_group: id(59999) },
+      { ...make(6, [["Тип фурнитуры", "Ограничитель"]]), name_group: "Напольные покрытия" },
+      { ...make(7, [["Тип фурнитуры", "Ограничитель"]]), name_group: "Ламинат" },
+      { ...make(8, [["Тип фурнитуры", "Ручка"]]), name_group: "Напольные" },
+      make(9, [["Вид двери", "Глухая"], ["Тип погонажа", "Наличник"]]),
+    ];
+    const accepted = [
+      make(10, [["ВХ. Терморазрыв", "нет"]]),
+      make(11, [["Вид двери", "Частично остекленная (ДЧ)"]]),
+      { ...make(12, [["Тип фурнитуры", "Ограничитель"]]), name_group: "Напольные" },
+    ];
+    view.products = [...rejected, ...accepted];
+    const before = JSON.stringify(view);
+    const projected = restrictCatalogBotView(view);
+    assert.deepEqual(projected.products.map(p => p.guid), accepted.map(p => p.guid));
+    assert.deepEqual(projected.products.map(p => p.guid_group), CATALOG_BOT_SECTIONS.map(s => s.guid));
+    assert.deepEqual(restrictCatalogBotView(projected), projected, "projection must be idempotent");
+    assert.equal(JSON.stringify(view), before, "source records stay unchanged");
   });
 });
