@@ -121,6 +121,9 @@ describe("phone and messenger profile UI, synthetic API only", { concurrency: fa
       assert.ok(popup.url().startsWith("https://max.ru/synthetic_bot?start="));
       await popup.close();
       assert.match(await dialog.getByLabel("Ссылка подключения").inputValue(), /SYNTHETIC_ONLY/);
+      assert.equal(await dialog.getByLabel("Команда подключения").inputValue(), "/start SYNTHETIC_ONLY");
+      assert.equal(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
+      await page.screenshot({ path: `${evidence}/link-fallback-${width}-${theme}.png` });
       await page.screenshot({ path: `${evidence}/connect-${width}-${theme}.png` });
       state.max.push({ ...account("91002", p2, false), notificationsEnabled: false });
       await dialog.getByRole("button", { name: "Проверить подключение" }).click();

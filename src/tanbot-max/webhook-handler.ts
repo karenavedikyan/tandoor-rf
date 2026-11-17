@@ -66,8 +66,11 @@ async function processUpdateInTransaction(
     chatId: bigint;
   },
 ): Promise<WebhookReply> {
-  const startPayload = (update.startPayload as string | null) ?? null;
   const commandText = (update.commandText as string | null) ?? null;
+  // Same expiring bearer token as the deep link; only accept the fallback in a dialog.
+  const manualStart = update.updateType === "message_created" && update.recipientChatType === "dialog"
+    ? commandText?.match(/^\/start\s+([A-Za-z0-9_-]{1,128})$/i)?.[1] ?? null : null;
+  const startPayload = (update.startPayload as string | null) ?? manualStart;
   const invitation = invitationTokenFromText(commandText ?? "");
   const recipientToken = startPayload && isExternalMessengerStartToken(startPayload)
     ? startPayload : invitation.kind === "token" ? invitation.token : null;
@@ -227,6 +230,11 @@ async function processUpdateInTransaction(
         channel: "max",
         messengerUserId: update.maxUserId,
       });
+      // Do not queue an undeliverable system-stop reply for the next bot start.
+      if (update.updateType === "bot_stopped") {
+        await commitMaxUpdateReply(client, update.dedupKey, null);
+        return null;
+      }
       reply = {
         userId: update.maxUserId,
         chatId: update.chatId,
@@ -274,7 +282,7 @@ async function processUpdateInTransaction(
             chatId: update.chatId,
             text: "Приглашение недоступно.",
           };
-    } else if (update.updateType === "bot_started") {
+    } else if (update.updateType === "bot_started" || manualStart) {
       if (!startPayload) {
         const { isExternalMessengerFeatureEnabled } = await import("../tan-tracker/external-messenger/config");
         if (isExternalMessengerFeatureEnabled()) {
@@ -337,12 +345,14 @@ async function processUpdateInTransaction(
           };
         } else {
           const account = await findAccountByMaxUserId(client, update.maxUserId);
+          if (!account) throw new Error("LINKED_MAX_ACCOUNT_NOT_FOUND");
           reply = {
             userId: update.maxUserId,
             chatId: update.chatId,
             text: buildMessengerLinkSuccessReply({
               channelLabel: "MAX",
-              notificationsEnabled: account?.notifications_enabled ?? true,
+              notificationsEnabled: account.notifications_enabled,
+              phoneE164: account.phone_e164,
             }),
           };
         }

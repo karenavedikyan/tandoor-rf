@@ -10,6 +10,7 @@ import { buildMainMenuInline, menuReplyKeyboard } from "../native-create/keyboar
 import { tryNativeCreateMaxMessage, tryNativeCreateMaxPhoto } from "../native-create/adapters";
 import { registerVerifiedBotContact } from "./verified-contact-registration";
 import { linkStaffByVerifiedContact } from "../verified-contact-staff-link";
+import { buildMessengerLinkSuccessReply } from "../link-bot-replies";
 
 export type ExternalPersonBotReply = {
   text: string;
@@ -42,10 +43,15 @@ export async function handleExternalPersonMaxContact(
     channel: "max", messengerUserId: input.maxUserId, messengerChatId: input.chatId, phoneRaw: input.phoneRaw,
   });
   if (identity.kind === "rejected") return { text: identity.text };
-  if (identity.kind === "staff") return {
-    text: "Номер подтверждён. Откройте «Мои передачи» или «Создать передачу»:",
-    inlineButtons: buildMainMenuInline("max").maxInlineButtons,
-  };
+  if (identity.kind === "staff") {
+    const account = await findAccountByMaxUserId(client, input.maxUserId);
+    if (!account) throw new Error("LINKED_MAX_ACCOUNT_NOT_FOUND");
+    return {
+      text: buildMessengerLinkSuccessReply({ channelLabel: "MAX",
+        notificationsEnabled: account.notifications_enabled, phoneE164: account.phone_e164 }),
+      inlineButtons: buildMainMenuInline("max").maxInlineButtons,
+    };
+  }
   const registration = await registerVerifiedBotContact(client, {
     channel: "max",
     messengerUserId: input.maxUserId,

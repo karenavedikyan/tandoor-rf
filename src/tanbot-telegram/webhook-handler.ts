@@ -449,11 +449,13 @@ async function processParsedUpdate(
           };
         } else {
           const account = await findAccountByTelegramUserId(client, update.telegramUserId);
+          if (!account) throw new Error("LINKED_TELEGRAM_ACCOUNT_NOT_FOUND");
           reply = {
             chatId: update.chatId,
             text: buildMessengerLinkSuccessReply({
               channelLabel: "Telegram",
-              notificationsEnabled: account?.notifications_enabled ?? true,
+              notificationsEnabled: account.notifications_enabled,
+              phoneE164: account.phone_e164,
             }),
           };
         }

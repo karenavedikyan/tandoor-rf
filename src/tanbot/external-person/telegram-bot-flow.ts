@@ -10,6 +10,7 @@ import { menuReplyKeyboard } from "../native-create/keyboards";
 import { tryNativeCreateTelegramMessage, tryNativeCreateTelegramPhoto } from "../native-create/adapters";
 import { registerVerifiedBotContact } from "./verified-contact-registration";
 import { linkStaffByVerifiedContact } from "../verified-contact-staff-link";
+import { buildMessengerLinkSuccessReply } from "../link-bot-replies";
 
 export type ExternalPersonBotReply = {
   text: string;
@@ -40,10 +41,15 @@ export async function handleExternalPersonTelegramContact(
     channel: "telegram", messengerUserId: input.telegramUserId, messengerChatId: input.chatId, phoneRaw: input.phoneRaw,
   });
   if (identity.kind === "rejected") return { text: identity.text, replyMarkup: { remove_keyboard: true } };
-  if (identity.kind === "staff") return {
-    text: "Номер подтверждён. Откройте «Мои передачи» или «Создать передачу»:",
-    replyMarkup: menuReplyKeyboard(),
-  };
+  if (identity.kind === "staff") {
+    const account = await findAccountByTelegramUserId(client, input.telegramUserId);
+    if (!account) throw new Error("LINKED_TELEGRAM_ACCOUNT_NOT_FOUND");
+    return {
+      text: buildMessengerLinkSuccessReply({ channelLabel: "Telegram",
+        notificationsEnabled: account.notifications_enabled, phoneE164: account.phone_e164 }),
+      replyMarkup: menuReplyKeyboard(),
+    };
+  }
   const registration = await registerVerifiedBotContact(client, {
     channel: "telegram",
     messengerUserId: input.telegramUserId,
