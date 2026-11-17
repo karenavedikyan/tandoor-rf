@@ -34,6 +34,13 @@
           : '<p class="mn-hint">Подключение включает коды и уведомления Тан-трекера. Уведомления о новых передачах можно выключить отдельно.</p>' +
             channels.map(function (channel) {
               var s = states[channel], d = s.data, name = names[channel], id = scope + "-" + channel;
+              if (!s.error && d && Array.isArray(d.accounts) && (d.accounts.length > 1 || (d.accounts.length && !d.linked))) {
+                var active = d.accounts.filter(function (a) { return a.notificationsEnabled; }).length;
+                return '<div class="mn-channel"><div class="mn-line"><strong>' + name +
+                  '</strong><span class="mn-status">Подключено: ' + d.accounts.length + ' · с уведомлениями: ' + active +
+                  '</span></div><p class="mn-hint">Отправляем во все включённые аккаунты. Настройки каждого аккаунта доступны в профиле.</p>' +
+                  '<a data-mn="profile" href="/profile#messenger-accounts">Настроить номера и ботов</a></div>';
+              }
               var status = !d ? "Проверяем подключение…" : !d.integrationEnabled ? "Канал временно недоступен" :
                 d.linked ? "Подключён · уведомления " + (d.notificationsEnabled ? "включены" : "выключены") : s.link ? "Ожидает подтверждения в боте" : "Не подключён";
               return '<div class="mn-channel"><div class="mn-line"><strong>' + name + '</strong>' +
@@ -82,6 +89,12 @@
       channels.forEach(function (channel) { void load(channel); });
     };
     root.addEventListener("click", async function (event) {
+      var profileLink = event.target.closest('a[data-mn="profile"]');
+      if (profileLink && root.contains(profileLink)) {
+        var panel = root.closest("dialog");
+        if (panel && panel.open) panel.close();
+        return;
+      }
       var button = event.target.closest("button[data-mn]");
       if (!button || !root.contains(button) || isPreview()) return;
       var channel = button.dataset.channel, s = states[channel];

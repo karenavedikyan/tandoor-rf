@@ -40,7 +40,7 @@ function contextText(row: ReceiptTransfer): string {
 export async function currentParty(client: PoolClient, ctx: NativeCreateContext): Promise<string | null> {
   try { await assertNativeCreateContext(client, ctx); } catch { return null; }
   if (ctx.isLinkedStaff && ctx.staffUserId) {
-    const table = ctx.channel === "telegram" ? "tanbot_telegram_accounts" : "tanbot_max_accounts";
+    const table = ctx.channel === "telegram" ? "tanbot_telegram_all_accounts" : "tanbot_max_all_accounts";
     const prefix = ctx.channel === "telegram" ? "telegram" : "max";
     const binding = await client.query(
       `SELECT 1 FROM ${table} WHERE user_id=$1::uuid AND ${prefix}_user_id=$2

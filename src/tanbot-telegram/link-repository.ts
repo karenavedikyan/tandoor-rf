@@ -1,6 +1,8 @@
 import type { PoolClient } from "pg";
 
 export type LinkAttemptRow = {
+  phone_e164: string | null;
+  enable_notifications: boolean;
   id: string;
   user_id: string;
   token_hash: string;
@@ -26,13 +28,13 @@ export async function cancelActiveLinkAttempts(client: PoolClient, userId: strin
 
 export async function insertLinkAttempt(
   client: PoolClient,
-  input: { userId: string; tokenHash: string; expiresAt: Date },
+  input: { userId: string; tokenHash: string; expiresAt: Date; phone?: string | null; enableNotifications?: boolean },
 ): Promise<{ id: string }> {
   const row = await client.query<{ id: string }>(
-    `INSERT INTO tanbot_telegram_link_attempts (user_id, token_hash, expires_at)
-     VALUES ($1::uuid, $2, $3)
+    `INSERT INTO tanbot_telegram_link_attempts (user_id, token_hash, expires_at, phone_e164, enable_notifications)
+     VALUES ($1::uuid, $2, $3, $4, $5)
      RETURNING id::text`,
-    [input.userId, input.tokenHash, input.expiresAt],
+    [input.userId, input.tokenHash, input.expiresAt, input.phone ?? null, input.enableNotifications !== false],
   );
   return { id: row.rows[0]!.id };
 }
@@ -42,7 +44,7 @@ export async function findLinkAttemptByTokenHash(
   tokenHash: string,
 ): Promise<LinkAttemptRow | null> {
   const row = await client.query<LinkAttemptRow>(
-    `SELECT id::text, user_id::text, token_hash, expires_at, consumed_at, cancelled_at,
+    `SELECT phone_e164,enable_notifications,id::text, user_id::text, token_hash, expires_at, consumed_at, cancelled_at,
             telegram_user_id::text, telegram_chat_id::text, telegram_username, telegram_first_name,
             telegram_started_at, confirmed_at
      FROM tanbot_telegram_link_attempts
@@ -58,7 +60,7 @@ export async function lockLinkAttemptByTokenHash(
   tokenHash: string,
 ): Promise<LinkAttemptRow | null> {
   const row = await client.query<LinkAttemptRow>(
-    `SELECT id::text, user_id::text, token_hash, expires_at, consumed_at, cancelled_at,
+    `SELECT phone_e164,enable_notifications,id::text, user_id::text, token_hash, expires_at, consumed_at, cancelled_at,
             telegram_user_id::text, telegram_chat_id::text, telegram_username, telegram_first_name,
             telegram_started_at, confirmed_at
      FROM tanbot_telegram_link_attempts
@@ -74,7 +76,7 @@ export async function findPendingLinkAttemptForUser(
   userId: string,
 ): Promise<LinkAttemptRow | null> {
   const row = await client.query<LinkAttemptRow>(
-    `SELECT id::text, user_id::text, token_hash, expires_at, consumed_at, cancelled_at,
+    `SELECT phone_e164,enable_notifications,id::text, user_id::text, token_hash, expires_at, consumed_at, cancelled_at,
             telegram_user_id::text, telegram_chat_id::text, telegram_username, telegram_first_name,
             telegram_started_at, confirmed_at
      FROM tanbot_telegram_link_attempts
@@ -127,7 +129,7 @@ export async function findAccountByTelegramUserId(
   telegramUserId: bigint,
 ): Promise<{ user_id: string; notifications_enabled: boolean } | null> {
   const row = await client.query<{ user_id: string; notifications_enabled: boolean }>(
-    `SELECT user_id::text, notifications_enabled FROM tanbot_telegram_accounts
+    `SELECT user_id::text, notifications_enabled FROM tanbot_telegram_all_accounts
      WHERE telegram_user_id = $1 AND stopped_at IS NULL`,
     [telegramUserId.toString()],
   );
@@ -145,7 +147,7 @@ export async function findTelegramAccountByMessengerIdIncludingStopped(
 } | null> {
   const row = await client.query(
     `SELECT user_id::text, telegram_user_id::text, notifications_enabled, stopped_at
-     FROM tanbot_telegram_accounts WHERE telegram_user_id = $1 LIMIT 1`,
+     FROM tanbot_telegram_all_accounts WHERE telegram_user_id = $1 LIMIT 1`,
     [telegramUserId.toString()],
   );
   return row.rows[0] ?? null;
@@ -154,6 +156,7 @@ export async function findTelegramAccountByMessengerIdIncludingStopped(
 export async function findAccountByUserId(
   client: PoolClient,
   userId: string,
+  messengerUserId?: string | null,
 ): Promise<{
   user_id: string;
   telegram_user_id: string;
@@ -163,8 +166,9 @@ export async function findAccountByUserId(
 } | null> {
   const row = await client.query(
     `SELECT user_id::text, telegram_user_id::text, telegram_username, notifications_enabled, stopped_at
-     FROM tanbot_telegram_accounts WHERE user_id = $1::uuid`,
-    [userId],
+     FROM tanbot_telegram_all_accounts WHERE user_id = $1::uuid
+       AND (($2::bigint IS NULL AND is_primary) OR telegram_user_id=$2::bigint) LIMIT 1`,
+    [userId, messengerUserId ?? null],
   );
   return row.rows[0] ?? null;
 }

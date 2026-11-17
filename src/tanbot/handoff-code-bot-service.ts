@@ -83,6 +83,7 @@ export async function assertHandoffCodeBotAccess(
   client: PoolClient,
   channel: BotChannel,
   userId: string,
+  messengerUserId?: bigint,
 ): Promise<{ ok: true; partyId: string } | { ok: false; message: string }> {
   if (!isTanbotHandoffCodePilotEnabled()) {
     return { ok: false, message: "Пилот кодов приёма отключён." };
@@ -102,12 +103,16 @@ export async function assertHandoffCodeBotAccess(
   const account =
     channel === "telegram"
       ? await client.query<{ notifications_enabled: boolean; stopped_at: Date | null }>(
-          `SELECT notifications_enabled, stopped_at FROM tanbot_telegram_accounts WHERE user_id = $1::uuid`,
-          [userId],
+          `SELECT notifications_enabled, stopped_at FROM tanbot_telegram_all_accounts
+           WHERE user_id = $1::uuid AND
+             (($2::bigint IS NULL AND is_primary) OR telegram_user_id=$2) LIMIT 1`,
+          [userId, messengerUserId?.toString() ?? null],
         )
       : await client.query<{ notifications_enabled: boolean; stopped_at: Date | null }>(
-          `SELECT notifications_enabled, stopped_at FROM tanbot_max_accounts WHERE user_id = $1::uuid`,
-          [userId],
+          `SELECT notifications_enabled, stopped_at FROM tanbot_max_all_accounts
+           WHERE user_id = $1::uuid AND
+             (($2::bigint IS NULL AND is_primary) OR max_user_id=$2) LIMIT 1`,
+          [userId, messengerUserId?.toString() ?? null],
         );
   const acc = account.rows[0];
   if (!acc || acc.stopped_at) {
@@ -190,7 +195,7 @@ export async function issueHandoffCodeViaBot(
     expectedHandoffVersion?: number | null;
   },
 ): Promise<
-  | { ok: true; message: string; code: string }
+  | { ok: true; message: string; code: string; deliveryQueued?: boolean }
   | { ok: false; message: string }
 > {
   const transferRow = await client.query<{
@@ -249,6 +254,7 @@ export async function issueHandoffCodeViaBot(
   return {
     ok: true,
     code: gen.code,
+    deliveryQueued: gen.botDeliveryQueued === true,
     message: formatIssuedCodeMessage({
       publicCode: gen.publicCode,
       itemTitle: gen.itemTitle,

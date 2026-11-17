@@ -15,6 +15,7 @@ export type HandoffCodeGenerateResult =
       publicCode: string;
       itemTitle: string;
       handoffVersion: number;
+      botDeliveryQueued?: boolean;
     }
   | { ok: false; http: number; message: string };
 
@@ -90,6 +91,12 @@ export async function generateHandoffCodeForPendingParty(
     [row.id, input.auditUserId, input.auditPartyId, input.auditAction ?? "code_generate"],
   );
 
+  let botDeliveryQueued = false;
+  if (input.notifyHolder !== false) {
+    const { enqueueIssuedStaffReceiptCode } = await import("./automatic-receipt-codes");
+    botDeliveryQueued = await enqueueIssuedStaffReceiptCode(client, { transferId: row.id, code, expiresAt });
+  }
+
   const holderParty = (
     await client.query<{ holder_party_id: string }>(`SELECT holder_party_id::text FROM tt_transfers WHERE id = $1`, [
       row.id,
@@ -118,5 +125,6 @@ export async function generateHandoffCodeForPendingParty(
     publicCode: row.public_code,
     itemTitle: row.item_title,
     handoffVersion: row.handoff_version,
+    botDeliveryQueued,
   };
 }

@@ -34,12 +34,12 @@ export async function automaticReceiptTargets(
      UNION ALL
      SELECT 'telegram',a.telegram_user_id::text,a.telegram_chat_id::text,p.phone_e164
      FROM tt_parties p JOIN users u ON u.id=p.user_id AND u.status='active'
-     JOIN tanbot_telegram_accounts a ON a.user_id=u.id
+     JOIN tanbot_telegram_all_accounts a ON a.user_id=u.id
      WHERE p.id=$1::uuid AND p.kind='user' AND a.notifications_enabled=TRUE AND a.stopped_at IS NULL
      UNION ALL
      SELECT 'max',a.max_user_id::text,a.max_chat_id::text,p.phone_e164
      FROM tt_parties p JOIN users u ON u.id=p.user_id AND u.status='active'
-     JOIN tanbot_max_accounts a ON a.user_id=u.id
+     JOIN tanbot_max_all_accounts a ON a.user_id=u.id
      WHERE p.id=$1::uuid AND p.kind='user' AND a.notifications_enabled=TRUE AND a.stopped_at IS NULL`,
     [partyId],
   );

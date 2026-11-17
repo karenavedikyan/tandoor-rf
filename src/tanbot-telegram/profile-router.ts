@@ -34,7 +34,11 @@ export function createTanbotTelegramProfileRouter(): Router {
       setNoStore(res);
       const flags = describeTanbotStage2FeatureFlags();
       if (!flags.integrationEnabled) {
+        const pool = getPool()!;
         res.status(200).json({
+          ...await getTanbotLinkStatus(pool, req.authUser!.id, flags.expectedBotUsername, {
+            integrationEnabled: false,
+          }),
           integrationEnabled: false,
           linked: false,
           notificationsEnabled: false,
@@ -83,7 +87,15 @@ export function createTanbotTelegramProfileRouter(): Router {
         return;
       }
       try {
-        const result = await startTanbotLink(pool, loaded.config, req.authUser!.id);
+        const body = req.body as { phone?: unknown; enableNotifications?: unknown };
+        if ((body.phone != null && typeof body.phone !== "string") ||
+          (body.enableNotifications != null && typeof body.enableNotifications !== "boolean")) {
+          res.status(400).json(apiError(ERROR_CODES.VALIDATION_ERROR, "Некорректные настройки привязки."));
+          return;
+        }
+        const result = await startTanbotLink(pool, loaded.config, req.authUser!.id, {
+          phone: body.phone as string | undefined, enableNotifications: body.enableNotifications as boolean | undefined,
+        });
         res.status(200).json(result);
       } catch (err: unknown) {
         const http = (err as { http?: number }).http ?? 503;
@@ -160,7 +172,14 @@ export function createTanbotTelegramProfileRouter(): Router {
         res.status(503).json(apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "База данных недоступна."));
         return;
       }
-      await disconnectTanbotLink(pool, req.authUser!.id);
+      try {
+        const accountId = (req.body as { accountId?: unknown })?.accountId;
+        await disconnectTanbotLink(pool, req.authUser!.id, accountId === undefined ? undefined : String(accountId));
+      } catch (err) {
+        if ((err as { http?: number }).http !== 409) throw err;
+        res.status(409).json(apiError(ERROR_CODES.VALIDATION_ERROR, (err as Error).message));
+        return;
+      }
       res.status(200).json({ ok: true });
     }),
   );
@@ -181,7 +200,9 @@ export function createTanbotTelegramProfileRouter(): Router {
         return;
       }
       try {
-        await setTanbotNotificationsEnabled(pool, req.authUser!.id, enabled);
+        const accountId = (req.body as { accountId?: unknown })?.accountId;
+        await setTanbotNotificationsEnabled(pool, req.authUser!.id, enabled,
+          accountId === undefined ? undefined : String(accountId));
         res.status(200).json({ ok: true, enabled });
       } catch (err: unknown) {
         const http = (err as { http?: number }).http ?? 503;

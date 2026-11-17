@@ -25,8 +25,9 @@ async function loadPendingMax(client: PoolClient, limit: number) {
     event_type: string;
     payload: Record<string, unknown>;
     attempt_count: number;
+    target_messenger_user_id: string | null;
   }>(
-    `SELECT id::text, user_id::text, event_type, payload, attempt_count
+    `SELECT target_messenger_user_id::text,id::text, user_id::text, event_type, payload, attempt_count
      FROM tanbot_notification_outbox
      WHERE channel = 'max' AND status = 'pending' AND next_attempt_at <= NOW()
      ORDER BY created_at
@@ -63,7 +64,7 @@ export async function processTanbotMaxNotificationOutbox(
         continue;
       }
 
-      const account = await findAccountByUserId(client, row.user_id);
+      const account = await findAccountByUserId(client, row.user_id, row.target_messenger_user_id);
       if (!account || account.stopped_at || !account.notifications_enabled) {
         await client.query(
           `UPDATE tanbot_notification_outbox SET status = 'cancelled', last_error_code = 'NO_SUBSCRIPTION' WHERE id = $1::uuid`,
@@ -140,7 +141,8 @@ export async function processTanbotMaxNotificationOutbox(
         shareUrl: delivery.shareUrl,
         timeoutMs: config.requestTimeoutMs,
         maxResponseBytes: config.maxResponseBytes,
-      });
+      }).catch(() => ({ ok: false as const, code: "NETWORK_ERROR", message: "Transport unavailable",
+        retryable: true, retryAfterSeconds: 30 }));
 
       if (send.ok) {
         await client.query(

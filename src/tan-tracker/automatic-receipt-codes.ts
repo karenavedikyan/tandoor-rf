@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  createReceiptAccountDeliveries, renewReceiptAccountDeliveries, finishReceiptAccountBatch,
+  type ReceiptAccountDelivery,
+} from "./automatic-receipt-account-deliveries";
 import type { Pool, PoolClient } from "pg";
 import {
   automaticReceiptTargets,
@@ -35,6 +39,7 @@ type Job = {
   phone_snapshot: string | null;
   status: string;
   generation: number;
+  delivery_epoch: string | null;
   encrypted_code: string | null;
   code_hash: string | null;
   code_expires_at: Date | null;
@@ -69,6 +74,8 @@ export const isAutomaticReceiptCallback = (s: string) =>
   /^ac:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 export const automaticReceiptSenderGuidance = (code: string, existingTrack = false) =>
   `${existingTrack ? `Для трека ${code} назначен следующий получатель.` : `Передача создана: ${code}.`}\n\nКод будет отправлен получателю в подключённый бот. Пересылать приглашение не нужно.\nПопросите получателя назвать код при получении предмета, затем нажмите «Ввести код».\nОтветственность перейдёт только после проверки кода.\nЕсли сообщение не пришло, нажмите «Запросить код повторно».`;
+export const STAFF_RECEIPT_DELIVERY_QUEUED =
+  "Код поставлен в очередь. Один и тот же код придёт во все подключённые аккаунты MAX и Telegram с включёнными уведомлениями.";
 
 async function queueAutomaticReceiptRenewal(client: PoolClient, id: string): Promise<void> {
   await client.query(
@@ -76,6 +83,7 @@ async function queueAutomaticReceiptRenewal(client: PoolClient, id: string): Pro
     encrypted_code=NULL,code_hash=NULL,code_expires_at=NULL,header_sent_at=NULL,sent_at=NULL,
     attempt_count=0,next_attempt_at=NOW(),last_error_code=NULL WHERE id=$1::uuid`, [id],
   );
+  await renewReceiptAccountDeliveries(client, id);
 }
 
 /** A holder requests delivery, never acts as the recipient and never receives the code. */
@@ -95,7 +103,9 @@ export async function requestAutomaticReceiptCodeByHolder(
     [t.id, t.handoff_version],
   )).rows[0];
   // Never silently retarget an existing job after a messenger rebind.
-  if (!j || !open(t, j) || !await targetStillMatches(client, j)) return "manual";
+  if (!j || !open(t, j) || !await anyTargetStillMatches(client, j)) return "manual";
+  if (j.status === "pending" && !j.code_hash) return "queued";
+  if (j.generation >= 3) return "unavailable";
   if (j.code_expires_at && Date.now() - (j.code_expires_at.getTime() - HANDOFF_CODE_TTL_MS) < 60_000) {
     return "cooldown";
   }
@@ -126,10 +136,11 @@ export async function enqueueAutomaticReceiptCode(
     targets.find((r) => r.channel === "max") ??
     targets[0];
   if (!target) return false;
-  await client.query(
+  const inserted = await client.query<{ id: string }>(
     `INSERT INTO tt_automatic_receipt_codes
     (id,transfer_id,handoff_version,pending_party_id,channel,messenger_user_id,messenger_chat_id,phone_snapshot)
-    VALUES($1::uuid,$2,$3,$4::uuid,$5,$6,$7,$8) ON CONFLICT(transfer_id,handoff_version) DO NOTHING`,
+    VALUES($1::uuid,$2,$3,$4::uuid,$5,$6,$7,$8) ON CONFLICT(transfer_id,handoff_version) DO NOTHING
+    RETURNING id`,
     [
       randomUUID(),
       t.id,
@@ -141,6 +152,10 @@ export async function enqueueAutomaticReceiptCode(
       target.phone,
     ],
   );
+  if (inserted.rowCount && targets.length > 1) {
+    const staff = await client.query("SELECT 1 FROM tt_parties WHERE id=$1 AND kind='user'", [t.pending_party_id]);
+    if (staff.rowCount) await createReceiptAccountDeliveries(client, inserted.rows[0]!.id, targets);
+  }
   return true;
 }
 
@@ -155,6 +170,7 @@ function context(j: Job): string {
     j.messenger_chat_id,
     j.phone_snapshot,
     j.generation,
+    ...(j.delivery_epoch ? [j.delivery_epoch] : []),
   ]);
 }
 function open(t: Transfer | undefined, j: Job): t is Transfer {
@@ -180,6 +196,17 @@ async function targetStillMatches(
       t.phone === j.phone_snapshot,
   );
 }
+async function anyTargetStillMatches(client: PoolClient, j: Job): Promise<boolean> {
+  const deliveries = (await client.query<ReceiptAccountDelivery>(
+    "SELECT * FROM tt_automatic_receipt_account_deliveries WHERE job_id=$1 AND generation=$2 AND delivery_epoch=$3",
+    [j.id,j.generation,j.delivery_epoch],
+  )).rows;
+  if (!deliveries.length) return targetStillMatches(client, j);
+  for (const delivery of deliveries) {
+    if (await targetStillMatches(client, { ...j, ...delivery, id: j.id })) return true;
+  }
+  return false;
+}
 async function codeStillValid(client: PoolClient, j: Job): Promise<boolean> {
   return (
     !!j.code_hash &&
@@ -204,6 +231,10 @@ async function cancel(client: PoolClient, id: string, reason: string) {
     "UPDATE tt_automatic_receipt_codes SET status='cancelled',encrypted_code=NULL,last_error_code=$2 WHERE id=$1::uuid",
     [id, reason],
   );
+  await client.query(`UPDATE tt_automatic_receipt_account_deliveries d
+    SET status='cancelled',last_error_code=$2
+    FROM tt_automatic_receipt_codes j WHERE j.id=$1 AND d.job_id=j.id
+    AND d.delivery_epoch=j.delivery_epoch AND d.generation=j.generation AND d.status='pending'`, [id,reason]);
 }
 
 /** Transfer -> job lock order also matches transfer deletion/cascade and explicit renew. */
@@ -212,6 +243,7 @@ async function deliverStep(
   id: string,
   channel: ReceiptChannel,
   transport: AutomaticReceiptTransport,
+  deliveryId: string | null,
 ) {
   const c = await pool.connect();
   try {
@@ -238,17 +270,34 @@ async function deliverStep(
     }
     const j = (
       await c.query<Job>(
-        `SELECT * FROM tt_automatic_receipt_codes WHERE id=$1::uuid AND channel=$2
-      AND status='pending' AND next_attempt_at<=NOW() FOR UPDATE SKIP LOCKED`,
-        [id, channel],
+        `SELECT * FROM tt_automatic_receipt_codes WHERE id=$1::uuid
+      AND status='pending' AND (($3::uuid IS NULL AND channel=$2 AND next_attempt_at<=NOW())
+        OR $3::uuid IS NOT NULL) FOR UPDATE SKIP LOCKED`,
+        [id, channel, deliveryId],
       )
     ).rows[0];
     if (!j) {
       await c.query("COMMIT");
       return "skip";
     }
-    if (!open(t, j) || !(await targetStillMatches(c, j))) {
+    const delivery = deliveryId ? (await c.query<ReceiptAccountDelivery>(
+      `SELECT * FROM tt_automatic_receipt_account_deliveries WHERE id=$1 AND job_id=$2
+       AND generation=$3 AND channel=$4 AND delivery_epoch=$5 AND status='pending' AND next_attempt_at<=NOW() FOR UPDATE`,
+      [deliveryId,id,j.generation,channel,j.delivery_epoch],
+    )).rows[0] : undefined;
+    if (deliveryId && !delivery) { await c.query("COMMIT"); return "skip"; }
+    const recipient = delivery ? { ...j, ...delivery, id: j.id } : j;
+    if (!open(t, j)) {
       await cancel(c, id, "STALE_RECIPIENT");
+      await c.query("COMMIT");
+      return "cancelled";
+    }
+    if (!(await targetStillMatches(c, recipient))) {
+      if (delivery) {
+        await c.query(`UPDATE tt_automatic_receipt_account_deliveries
+          SET status='cancelled',last_error_code='STALE_RECIPIENT' WHERE id=$1`, [delivery.id]);
+        await finishReceiptAccountBatch(c,id,j.generation);
+      } else await cancel(c, id, "STALE_RECIPIENT");
       await c.query("COMMIT");
       return "cancelled";
     }
@@ -300,7 +349,7 @@ async function deliverStep(
         ],
       );
     }
-    const header = !j.header_sent_at;
+    const header = !recipient.header_sent_at;
     const route = header
       ? await buildNotificationRouteSnapshot(
           c,
@@ -315,8 +364,8 @@ async function deliverStep(
     try {
       result = await transport({
         channel,
-        userId: j.messenger_user_id,
-        chatId: j.messenger_chat_id,
+        userId: recipient.messenger_user_id,
+        chatId: recipient.messenger_chat_id,
         text,
         ...(header ? { callback: automaticReceiptCallback(id) } : {}),
       });
@@ -324,7 +373,13 @@ async function deliverStep(
       result = { ok: false, code: "TRANSPORT_FAILED", retryable: true };
     }
     if (result.ok) {
-      await c.query(
+      if (delivery) {
+        await c.query(header
+          ? `UPDATE tt_automatic_receipt_account_deliveries SET header_sent_at=NOW(),attempt_count=0 WHERE id=$1`
+          : `UPDATE tt_automatic_receipt_account_deliveries SET status='sent',sent_at=NOW(),attempt_count=0,last_error_code=NULL WHERE id=$1`,
+        [delivery.id]);
+        if (!header) await finishReceiptAccountBatch(c,id,j.generation);
+      } else await c.query(
         header
           ? "UPDATE tt_automatic_receipt_codes SET header_sent_at=NOW(),attempt_count=0 WHERE id=$1::uuid"
           : "UPDATE tt_automatic_receipt_codes SET status='sent',sent_at=NOW(),encrypted_code=NULL,attempt_count=0 WHERE id=$1::uuid",
@@ -333,13 +388,18 @@ async function deliverStep(
       await c.query("COMMIT");
       return header ? "header" : "sent";
     }
-    const attempts = j.attempt_count + 1,
+    const attempts = recipient.attempt_count + 1,
       retry = result.retryable === true && attempts < 8;
     const reason = /^[A-Z0-9_]{1,64}$/.test(result.code)
       ? result.code
       : "DELIVERY_FAILED";
     const delay = Math.min(300, Math.max(1, result.retryAfterSeconds ?? 30));
-    await c.query(
+    if (delivery) {
+      await c.query(`UPDATE tt_automatic_receipt_account_deliveries SET status=$2,
+        attempt_count=$3,last_error_code=$4,next_attempt_at=NOW()+($5::int*interval '1 second') WHERE id=$1`,
+      [delivery.id,retry ? "pending" : "failed",attempts,reason,delay]);
+      await finishReceiptAccountBatch(c,id,j.generation);
+    } else await c.query(
       `UPDATE tt_automatic_receipt_codes SET status=$2,attempt_count=$3,last_error_code=$4,
       next_attempt_at=NOW()+($5::int*interval '1 second'),encrypted_code=CASE WHEN $2='failed' THEN NULL ELSE encrypted_code END
       WHERE id=$1::uuid`,
@@ -366,15 +426,23 @@ export async function processAutomaticReceiptCodes(
 ) {
   const result = { sent: 0, failed: 0, cancelled: 0 };
   if (!input.deliveryEnabled) return result;
-  const jobs = await pool.query<{ id: string }>(
-    `SELECT id::text FROM tt_automatic_receipt_codes
-    WHERE channel=$1 AND status='pending' AND next_attempt_at<=NOW() ORDER BY created_at LIMIT $2`,
+  const jobs = await pool.query<{ id: string; delivery_id: string | null }>(
+    `SELECT * FROM (
+      SELECT j.id::text,NULL::text AS delivery_id,j.created_at FROM tt_automatic_receipt_codes j
+      WHERE j.channel=$1 AND j.status='pending' AND j.next_attempt_at<=NOW()
+      AND NOT EXISTS (SELECT 1 FROM tt_automatic_receipt_account_deliveries d WHERE d.job_id=j.id)
+      UNION ALL
+      SELECT j.id::text,d.id::text AS delivery_id,d.created_at FROM tt_automatic_receipt_codes j
+      JOIN tt_automatic_receipt_account_deliveries d ON d.job_id=j.id
+      AND d.delivery_epoch=j.delivery_epoch AND d.generation=j.generation
+      WHERE j.status='pending' AND d.channel=$1 AND d.status='pending' AND d.next_attempt_at<=NOW()
+    ) deliveries ORDER BY created_at,delivery_id LIMIT $2`,
     [input.channel, input.limit ?? 20],
   );
   for (const job of jobs.rows) {
-    let step = await deliverStep(pool, job.id, input.channel, input.transport);
+    let step = await deliverStep(pool, job.id, input.channel, input.transport, job.delivery_id);
     if (step === "header")
-      step = await deliverStep(pool, job.id, input.channel, input.transport);
+      step = await deliverStep(pool, job.id, input.channel, input.transport, job.delivery_id);
     if (step === "sent" || step === "failed" || step === "cancelled")
       result[step]++;
   }
@@ -417,13 +485,22 @@ export async function handleAutomaticReceiptCallback(
       [id],
     )
   ).rows[0];
+  const deliveries = j ? (await client.query<ReceiptAccountDelivery>(
+    "SELECT * FROM tt_automatic_receipt_account_deliveries WHERE job_id=$1 AND generation=$2 AND delivery_epoch=$3",
+    [j.id,j.generation,j.delivery_epoch],
+  )).rows : [];
+  const delivery = deliveries.find(d => d.channel === input.channel &&
+    d.messenger_user_id === input.userId.toString() && d.messenger_chat_id === input.chatId.toString());
+  const recipient = j && delivery ? { ...j, ...delivery, id: j.id } : j;
   if (
     !j ||
+    !recipient ||
     !open(t, j) ||
-    input.channel !== j.channel ||
-    input.userId.toString() !== j.messenger_user_id ||
-    input.chatId.toString() !== j.messenger_chat_id ||
-    !(await targetStillMatches(client, j))
+    (deliveries.length > 0 && !delivery) ||
+    input.channel !== recipient.channel ||
+    input.userId.toString() !== recipient.messenger_user_id ||
+    input.chatId.toString() !== recipient.messenger_chat_id ||
+    !(await targetStillMatches(client, recipient))
   ) {
     return {
       text: "Эта кнопка устарела или недоступна. Новый код может запросить только текущий получатель в своём подключённом боте.",
@@ -436,14 +513,20 @@ export async function handleAutomaticReceiptCallback(
   if (j.status === "pending" && !j.code_hash)
     return { text: "Новый код уже поставлен в очередь и придёт в этот чат." };
   if (await codeStillValid(client, j)) {
-    if (j.status === "sent")
+    if (recipient.status === "sent")
       return {
         text: "Код в предыдущем сообщении ещё действует. Назовите его отправителю при получении предмета.",
       };
-    if (j.status === "pending")
+    if (recipient.status === "pending")
       return {
         text: "Код уже доставляется в этот чат. Пожалуйста, подождите.",
       };
+    if (delivery && j.encrypted_code && delivery.status === "failed") {
+      await client.query(`UPDATE tt_automatic_receipt_account_deliveries SET status='pending',
+        attempt_count=0,next_attempt_at=NOW(),last_error_code=NULL WHERE id=$1`, [delivery.id]);
+      await client.query("UPDATE tt_automatic_receipt_codes SET status='pending' WHERE id=$1", [j.id]);
+      return { text: "Повторная доставка кода запрошена только для этого чата." };
+    }
   }
   if (j.generation >= 3)
     return {
@@ -458,6 +541,39 @@ export async function handleAutomaticReceiptCallback(
     };
   await queueAutomaticReceiptRenewal(client, id);
   return {
-    text: "Запрошен новый код. Он придёт отдельным сообщением в этот чат.",
+    text: deliveries.length
+      ? "Запрошен новый код. Один и тот же код придёт во все подключённые аккаунты с включёнными уведомлениями."
+      : "Запрошен новый код. Он придёт отдельным сообщением в этот чат.",
   };
+}
+
+/** Explicit LK/bot issuance supersedes every older delivery, but never issues another code. */
+export async function enqueueIssuedStaffReceiptCode(
+  client: PoolClient, input: { transferId: string; code: string; expiresAt: Date },
+): Promise<boolean> {
+  const t = (await client.query<Transfer>("SELECT * FROM tt_transfers WHERE id=$1 FOR UPDATE", [input.transferId])).rows[0];
+  if (!t?.pending_party_id) return false;
+  const staff = await client.query("SELECT 1 FROM tt_parties WHERE id=$1 AND kind='user'", [t.pending_party_id]);
+  if (!staff.rowCount) return false;
+  const targets = await automaticReceiptTargets(client,t.pending_party_id);
+  if (targets.length < 2) {
+    const previous = await client.query(`SELECT 1 FROM tt_automatic_receipt_codes
+      WHERE transfer_id=$1 AND handoff_version=$2 AND delivery_epoch IS NOT NULL`, [t.id,t.handoff_version]);
+    if (!targets.length || !previous.rowCount) return false;
+  }
+  if (!await enqueueAutomaticReceiptCode(client,t.id)) return false;
+  const j = (await client.query<Job>(`SELECT * FROM tt_automatic_receipt_codes
+    WHERE transfer_id=$1 AND handoff_version=$2 FOR UPDATE`, [t.id,t.handoff_version])).rows[0]!;
+  if (!open(t,j)) return false;
+  await client.query(`UPDATE tt_automatic_receipt_account_deliveries SET status='cancelled',
+    last_error_code='CODE_REPLACED' WHERE job_id=$1 AND status='pending'`, [j.id]);
+  // A fresh explicit issuance starts a new delivery batch; old snapshots remain auditable.
+  j.delivery_epoch = randomUUID(); j.generation = 1;
+  await client.query(`UPDATE tt_automatic_receipt_codes SET delivery_epoch=$2,generation=1,
+    status='pending',encrypted_code=$3,code_hash=$4,code_expires_at=$5,header_sent_at=NULL,
+    sent_at=NULL,attempt_count=0,next_attempt_at=NOW(),last_error_code=NULL WHERE id=$1`,
+  [j.id,j.delivery_epoch,encryptAutomaticReceiptCode(input.code,context(j)),
+    hashOtp(input.code,requireHandoffOtpPepper()),input.expiresAt]);
+  await createReceiptAccountDeliveries(client,j.id,targets);
+  return true;
 }

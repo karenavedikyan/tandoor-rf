@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { saveMessengerAccount } from "./messenger-accounts";
 import { normalizeRuPhoneE164 } from "../tan-tracker/phone-normalize";
 import { lockPhonePartyResolution } from "../tan-tracker/phone-party-resolver";
 import { findProfilesByPhone, profilePhoneNumbers } from "../tan-tracker/profile-phone";
@@ -45,7 +46,7 @@ export async function linkStaffByVerifiedContact(
   const phone = normalizeRuPhoneE164(input.phoneRaw);
   if (!phone) return rejected("Не удалось подтвердить номер: некорректный номер телефона.");
   const prefix = input.channel === "max" ? "max" : "telegram";
-  const table = `tanbot_${prefix}_accounts`; // closed, server-owned identifiers only
+  const table = `tanbot_${prefix}_all_accounts`; // closed, server-owned identifiers only
   const lockUser = input.channel === "max" ? lockTanbotMaxLkUser : lockTanbotTelegramLkUser;
   const lockMessenger = input.channel === "max" ? lockTanbotMaxMessenger : lockTanbotTelegramMessenger;
   const initial = await candidates(client, phone);
@@ -70,10 +71,9 @@ export async function linkStaffByVerifiedContact(
     `SELECT user_id::text, ${prefix}_user_id::text AS messenger_user_id,
             ${prefix}_chat_id::text AS messenger_chat_id, notifications_enabled, stopped_at
      FROM ${table}
-     WHERE ${prefix}_user_id = $1 OR user_id = $2::uuid
-     ORDER BY user_id
-     FOR UPDATE`,
-    [messengerId, user?.id ?? null],
+     WHERE ${prefix}_user_id = $1
+     ORDER BY user_id`,
+    [messengerId],
   )).rows;
   if (!user) {
     // A stopped staff binding remains reserved too: never turn it into an external identity.
@@ -96,21 +96,15 @@ export async function linkStaffByVerifiedContact(
   if ((external.rowCount ?? 0) > 0) return conflict();
 
   const existing = accounts[0];
+  try {
+    await saveMessengerAccount(client, { channel: input.channel, userId: user.id,
+      messengerUserId: messengerId, messengerChatId: chatId, phone, phoneConfirmed: true,
+      enabled: existing && !existing.stopped_at ? existing.notifications_enabled : true });
+  } catch (err) {
+    if ((err as { http?: number }).http === 409) return conflict();
+    throw err;
+  }
   if (!existing || existing.stopped_at) {
-    if (existing) {
-      // Reconfirming one's own contact explicitly resumes ONLY this same binding.
-      await client.query(
-        `UPDATE ${table} SET stopped_at = NULL, notifications_enabled = TRUE, linked_at = NOW()
-         WHERE user_id = $1::uuid`,
-        [user.id],
-      );
-    } else {
-      await client.query(
-        `INSERT INTO ${table} (user_id, ${prefix}_user_id, ${prefix}_chat_id, notifications_enabled)
-         VALUES ($1::uuid, $2, $3, TRUE)`,
-        [user.id, messengerId, chatId],
-      );
-    }
     await (input.channel === "max" ? cancelMaxAttempts : cancelTelegramAttempts)(client, user.id);
     await (input.channel === "max" ? auditMax : auditTelegram)(client, {
       userId: user.id, actorUserId: user.id, action: "own_contact_link",

@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { listMessengerAccounts } from "../tanbot/messenger-accounts";
 
 export type OutboxChannel = "telegram" | "max";
 
@@ -19,12 +20,22 @@ export async function enqueueNotificationOutbox(
     payload: Record<string, unknown>;
   },
 ): Promise<void> {
-  await client.query(
-    `INSERT INTO tanbot_notification_outbox (idempotency_key, user_id, channel, event_type, payload)
-     VALUES ($1, $2::uuid, $3, $4, $5::jsonb)
-     ON CONFLICT (idempotency_key) DO NOTHING`,
-    [input.idempotencyKey, input.userId, input.channel, input.eventType, JSON.stringify(input.payload)],
-  );
+  const accounts = await listMessengerAccounts(client, input.channel, input.userId);
+  // Preserve the old key and primary-only meaning, including pending pre-upgrade jobs.
+  // Additional recipients have immutable individual targets and retry state.
+  const targets = [
+    { key: input.idempotencyKey, id: accounts.find(a => a.is_primary)?.messenger_user_id ?? null },
+    ...accounts.filter(a => !a.is_primary && !a.stopped_at && a.notifications_enabled)
+      .map(a => ({ key: `${input.idempotencyKey}:account:${a.messenger_user_id}`, id: a.messenger_user_id })),
+  ];
+  for (const target of targets) {
+    await client.query(
+      `INSERT INTO tanbot_notification_outbox
+        (idempotency_key, user_id, channel, event_type, payload,target_messenger_user_id)
+       VALUES ($1, $2::uuid, $3, $4, $5::jsonb,$6)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [target.key,input.userId,input.channel,input.eventType,JSON.stringify(input.payload),target.id]);
+  }
 }
 
 export async function enqueueTanTrackerAssignmentTelegram(

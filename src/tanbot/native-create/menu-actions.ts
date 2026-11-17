@@ -1,4 +1,6 @@
 import type { PoolClient } from "pg";
+import { STAFF_RECEIPT_DELIVERY_QUEUED } from "../../tan-tracker/automatic-receipt-codes";
+import { changeMessengerAccount } from "../messenger-accounts";
 import type { NativeCreateContext, NativeCreateReply } from "./engine";
 import { assertNativeCreateContext } from "./access-guard";
 import { buildNativeCreateCallback, type NativeCreateCallbackAction } from "./callback-codec";
@@ -31,13 +33,13 @@ function withButtons(ctx: NativeCreateContext, text: string, buttons: Choice[], 
 async function binding(client: PoolClient, ctx: NativeCreateContext): Promise<Binding | null> {
   try { await assertNativeCreateContext(client, ctx); } catch { return null; }
   if (ctx.isLinkedStaff) {
-    const table = ctx.channel === "telegram" ? "tanbot_telegram_accounts" : "tanbot_max_accounts";
+    const table = ctx.channel === "telegram" ? "tanbot_telegram_all_accounts" : "tanbot_max_all_accounts";
     const prefix = ctx.channel === "telegram" ? "telegram" : "max";
     return (await client.query<Binding>(
       `SELECT a.notifications_enabled,p.id AS party_id FROM ${table} a
        LEFT JOIN tt_parties p ON p.user_id=a.user_id AND p.kind='user'
        WHERE a.user_id=$1::uuid AND a.${prefix}_user_id=$2 AND a.${prefix}_chat_id=$3
-         AND a.stopped_at IS NULL FOR UPDATE OF a`,
+         AND a.stopped_at IS NULL`,
       [ctx.staffUserId, ctx.messengerUserId.toString(), ctx.messengerChatId])).rows[0] ?? null;
   }
   return (await client.query<Binding>(
@@ -91,12 +93,8 @@ export async function settingsReply(
   if (action === "notify_off" || action === "notify_on") {
     const enabled = action === "notify_on";
     if (ctx.isLinkedStaff) {
-      const table = ctx.channel === "telegram" ? "tanbot_telegram_accounts" : "tanbot_max_accounts";
-      const column = ctx.channel === "telegram" ? "telegram" : "max";
-      await client.query(
-        `UPDATE ${table} SET notifications_enabled=$4 WHERE user_id=$1::uuid
-         AND ${column}_user_id=$2 AND ${column}_chat_id=$3 AND stopped_at IS NULL`,
-        [ctx.staffUserId, ctx.messengerUserId.toString(), ctx.messengerChatId, enabled]);
+      await changeMessengerAccount(client, { channel: ctx.channel, userId: ctx.staffUserId!,
+        accountId: ctx.messengerUserId.toString(), enabled });
     } else {
       await client.query(
         `UPDATE tt_external_person_verifications SET notifications_enabled=$5,
@@ -141,6 +139,7 @@ export async function receiveCodeReply(
       channel: ctx.channel, userId: ctx.isLinkedStaff ? ctx.staffUserId : null,
       partyId: current.party_id, transferPublicCode: transfer.public_code, expectedHandoffVersion: selection.version,
     });
+    if (issued.ok && issued.deliveryQueued) return withButtons(ctx, STAFF_RECEIPT_DELIVERY_QUEUED, []);
     return withButtons(ctx, issued.message, [], issued.ok ? issued.code : undefined);
   }
   const rows = (await client.query<{ id: string; public_code: string; item_title: string; handoff_version: number }>(
