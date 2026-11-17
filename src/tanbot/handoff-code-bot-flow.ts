@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { STAFF_RECEIPT_DELIVERY_QUEUED } from "../tan-tracker/automatic-receipt-codes";
 import type { MaxInlineButton } from "../tanbot-max/delivery-transport";
 import { lockTanbotMaxMessenger, lockTanbotTelegramMessenger } from "./link-advisory-locks";
 import {
@@ -80,7 +81,7 @@ export async function buildHandoffCodeBotReply(
     return { text: "Канал не подключён к личному кабинету." };
   }
 
-  const access = await assertHandoffCodeBotAccess(client, channel, staffUserId);
+  const access = await assertHandoffCodeBotAccess(client, channel, staffUserId, input.externalUserId);
   if (!access.ok) {
     return { text: access.message };
   }
@@ -95,6 +96,7 @@ export async function buildHandoffCodeBotReply(
       expectedHandoffVersion: genCode.handoffVersion,
     });
     if (!issued.ok) return { text: issued.message };
+    if (issued.deliveryQueued) return { text: STAFF_RECEIPT_DELIVERY_QUEUED };
     return { text: issued.message, copyOnlyCode: issued.code };
   }
 

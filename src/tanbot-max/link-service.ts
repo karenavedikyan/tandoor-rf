@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { withTransaction } from "../access/db";
 import type { TanbotMaxStage2Config } from "./stage2-config";
+import { changeMessengerAccount, messengerProfileStatus, saveMessengerAccount, validateAccountPhone } from "../tanbot/messenger-accounts";
 import {
   assertLkUserActiveForTanbotLink,
   lockTanbotMaxLkUser,
@@ -21,6 +22,8 @@ import {
 import { buildMaxDeepLink, generateLinkStartToken, hashLinkStartToken } from "./link-tokens";
 
 export type LinkStatusDto = {
+  accounts: Awaited<ReturnType<typeof messengerProfileStatus>>["accounts"];
+  profilePhones: string[];
   linked: boolean;
   notificationsEnabled: boolean;
   maxUsername: string | null;
@@ -46,6 +49,7 @@ export async function getTanbotMaxLinkStatus(
     const pending = await findPendingLinkAttemptForUser(client, userId);
     const linked = !!account && !account.stopped_at;
     return {
+      ...await messengerProfileStatus(client, "max", userId),
       linked,
       notificationsEnabled: linked ? account!.notifications_enabled : false,
       maxUsername: linked ? account!.max_username : null,
@@ -69,6 +73,7 @@ export async function startTanbotMaxLink(
   pool: Pool,
   config: TanbotMaxStage2Config,
   userId: string,
+  options: { phone?: string | null; enableNotifications?: boolean } = {},
 ): Promise<{ deepLink: string; expiresAt: string; attemptId: string }> {
   const token = generateLinkStartToken();
   const tokenHash = hashLinkStartToken(token, config.linkTokenPepper);
@@ -77,12 +82,10 @@ export async function startTanbotMaxLink(
   const attemptId = await withTransaction(async (client) => {
     await lockTanbotMaxLkUser(client, userId);
     await assertLkUserActiveForTanbotLink(client, userId);
-    const existing = await findAccountByUserId(client, userId);
-    if (existing && !existing.stopped_at) {
-      throw Object.assign(new Error("MAX уже подключён."), { http: 409 });
-    }
+    const phone = await validateAccountPhone(client, userId, options.phone);
     await cancelActiveLinkAttempts(client, userId);
-    const inserted = await insertLinkAttempt(client, { userId, tokenHash, expiresAt });
+    const inserted = await insertLinkAttempt(client, { userId, tokenHash, expiresAt, phone,
+      enableNotifications: options.enableNotifications });
     await insertLinkAudit(client, {
       userId,
       actorUserId: userId,
@@ -109,7 +112,7 @@ async function finalizeMaxLinkAttemptOnClient(
   await assertLkUserActiveForTanbotLink(client, userId);
 
   const attemptRow = await client.query(
-    `SELECT id::text, user_id::text, expires_at, consumed_at, cancelled_at,
+    `SELECT phone_e164,id::text, user_id::text, expires_at, consumed_at, cancelled_at,
             max_user_id::text, max_chat_id::text, max_username
      FROM tanbot_max_link_attempts
      WHERE id = $1::uuid
@@ -119,6 +122,7 @@ async function finalizeMaxLinkAttemptOnClient(
   const attempt = attemptRow.rows[0] as
     | {
         id: string;
+        phone_e164: string | null;
         user_id: string;
         expires_at: Date;
         consumed_at: Date | null;
@@ -144,11 +148,6 @@ async function finalizeMaxLinkAttemptOnClient(
   const maxUserId = BigInt(attempt.max_user_id);
   await lockTanbotMaxMessenger(client, maxUserId);
 
-  const ownRow = await findAccountByUserId(client, userId);
-  if (ownRow && !ownRow.stopped_at && ownRow.max_user_id !== attempt.max_user_id) {
-    throw Object.assign(new Error("Сначала отключите текущий MAX в профиле."), { http: 409 });
-  }
-
   const messengerRow = await findMaxAccountByMessengerIdIncludingStopped(client, maxUserId);
   if (messengerRow && messengerRow.user_id !== userId) {
     throw Object.assign(new Error("Этот MAX уже привязан к другому сотруднику."), { http: 409 });
@@ -160,29 +159,9 @@ async function finalizeMaxLinkAttemptOnClient(
       ? messengerRow.notifications_enabled
       : options.enableNotifications;
 
-  if (ownRow || messengerRow) {
-    const updated = await client.query<{ notifications_enabled: boolean }>(
-      `UPDATE tanbot_max_accounts
-       SET max_user_id = $2,
-           max_chat_id = $3,
-           max_username = $4,
-           notifications_enabled = $5,
-           stopped_at = NULL,
-           linked_at = NOW()
-       WHERE user_id = $1::uuid
-       RETURNING notifications_enabled`,
-      [userId, attempt.max_user_id, attempt.max_chat_id, attempt.max_username, nextNotifications],
-    );
-    if (!updated.rowCount) {
-      throw Object.assign(new Error("Не удалось обновить привязку MAX."), { http: 409 });
-    }
-  } else {
-    await client.query(
-      `INSERT INTO tanbot_max_accounts (user_id, max_user_id, max_chat_id, max_username, notifications_enabled, stopped_at)
-       VALUES ($1::uuid, $2, $3, $4, $5, NULL)`,
-      [userId, attempt.max_user_id, attempt.max_chat_id, attempt.max_username, nextNotifications],
-    );
-  }
+  const phone = await validateAccountPhone(client, userId, attempt.phone_e164);
+  await saveMessengerAccount(client, { channel: "max", userId, messengerUserId: attempt.max_user_id,
+    messengerChatId: attempt.max_chat_id, username: attempt.max_username, phone, enabled: nextNotifications });
 
   await client.query(
     `UPDATE tanbot_max_link_attempts SET consumed_at = NOW(), confirmed_at = NOW() WHERE id = $1::uuid`,
@@ -205,28 +184,19 @@ export async function confirmTanbotMaxLink(
   return { linked: true };
 }
 
-export async function disconnectTanbotMaxLink(pool: Pool, userId: string): Promise<void> {
+export async function disconnectTanbotMaxLink(pool: Pool, userId: string, accountId?: string): Promise<void> {
   await withTransaction(async (client) => {
     await lockTanbotMaxLkUser(client, userId);
-    await client.query(
-      `UPDATE tanbot_max_accounts SET stopped_at = NOW(), notifications_enabled = FALSE WHERE user_id = $1::uuid`,
-      [userId],
-    );
+    await changeMessengerAccount(client, { channel: "max", userId, accountId, disconnect: true });
     await cancelActiveLinkAttempts(client, userId);
     await insertLinkAudit(client, { userId, actorUserId: userId, action: "link_disconnect" });
   });
 }
 
-export async function setTanbotMaxNotificationsEnabled(pool: Pool, userId: string, enabled: boolean): Promise<void> {
+export async function setTanbotMaxNotificationsEnabled(pool: Pool, userId: string, enabled: boolean, accountId?: string): Promise<void> {
   await withTransaction(async (client) => {
-    const account = await findAccountByUserId(client, userId);
-    if (!account || account.stopped_at) {
-      throw Object.assign(new Error("MAX не подключён."), { http: 409 });
-    }
-    await client.query(
-      `UPDATE tanbot_max_accounts SET notifications_enabled = $2 WHERE user_id = $1::uuid AND stopped_at IS NULL`,
-      [userId, enabled],
-    );
+    await lockTanbotMaxLkUser(client, userId);
+    await changeMessengerAccount(client, { channel: "max", userId, accountId, enabled });
     await insertLinkAudit(client, {
       userId,
       actorUserId: userId,
@@ -320,7 +290,7 @@ export async function consumeStartTokenForMaxUser(
         existingAccount.user_id === attempt.user_id &&
         attempt.max_user_id === input.maxUserId.toString();
       await finalizeMaxLinkAttemptOnClient(client, attempt.id, attempt.user_id, {
-        enableNotifications: true,
+        enableNotifications: attempt.enable_notifications,
         preserveNotificationPreference: !!alreadyActive,
       });
     } catch (err: unknown) {

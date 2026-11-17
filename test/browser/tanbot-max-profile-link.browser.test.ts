@@ -25,16 +25,9 @@ const SYNTH_TOKEN = "SYNTH_MAX_TEST_TOKEN_0123456789abcdef";
 async function assertMaxNotificationControls(page: Page, linked: boolean): Promise<void> {
   assert.equal(await page.locator("#tanbot-max-confirm-notifications").count(), 0);
   assert.equal(await page.locator("#tanbot-max-confirm-notifications-wrap").count(), 0);
-  const checkboxes = page.locator("#tanbot-max-section input[type='checkbox']");
-  assert.equal(await checkboxes.count(), 1, "exactly one preference checkbox in MAX section");
-  const wrap = page.locator("#tanbot-max-notifications-toggle-wrap");
-  if (linked) {
-    assert.equal(await wrap.isVisible(), true);
-    assert.equal(await page.locator("#tanbot-max-notifications-toggle").isVisible(), true);
-  } else {
-    assert.equal(await wrap.isHidden(), true);
-    assert.equal(await page.locator("#tanbot-max-notifications-toggle").isHidden(), true);
-  }
+  const row = page.locator('#messenger-accounts [data-testid^="ma-max-"]');
+  assert.equal(await row.getByRole("checkbox").count(), linked ? 1 : 0);
+  assert.equal(await row.getByRole("button", { name: linked ? "Отключить" : "Подключить MAX", exact: true }).isVisible(), true);
 }
 
 describe("tanbot max profile link browser smoke", { concurrency: false, skip: !RUN }, () => {
@@ -61,9 +54,10 @@ describe("tanbot max profile link browser smoke", { concurrency: false, skip: !R
       password: PASSWORD,
       fullName: "Browser Max",
       role: "manager",
+      phone: "+79000000001",
     });
 
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: "chromium" });
     await resetPoolForTests();
     const { createApp } = await import("../../src/server");
     server = http.createServer(createApp());
@@ -87,17 +81,6 @@ describe("tanbot max profile link browser smoke", { concurrency: false, skip: !R
     const app = createApp();
     const context = await browser.newContext({ baseURL: baseUrl });
     const page = await context.newPage();
-    let startToken: string | null = null;
-    page.on("response", async (res) => {
-      if (
-        res.url().includes("/api/profile/tanbot/max/link/start") &&
-        res.request().method() === "POST" &&
-        res.status() === 200
-      ) {
-        const body = (await res.json()) as { deepLink?: string };
-        if (body.deepLink) startToken = new URL(body.deepLink).searchParams.get("start");
-      }
-    });
 
     await page.goto("/login");
     await page.fill("#email", "tanbot-max-browser@test.local");
@@ -105,12 +88,13 @@ describe("tanbot max profile link browser smoke", { concurrency: false, skip: !R
     await page.click("#login-button");
     await page.waitForURL(/\/(clients|profile)(\/|\?|$)/, { timeout: 20000 });
     await page.goto("/profile");
-    await page.waitForSelector("#tanbot-max-section:not([hidden])", { timeout: 15000 });
+    await page.waitForSelector("#messenger-accounts:not([hidden])", { timeout: 15000 });
+    await page.getByRole("button", { name: "Подключить MAX", exact: true }).waitFor();
     await assertMaxNotificationControls(page, false);
-    await page.click("button:text('Подключить MAX')");
-    for (let i = 0; i < 30 && !startToken; i += 1) {
-      await page.waitForTimeout(100);
-    }
+    await page.getByRole("button", { name: "Подключить MAX", exact: true }).click();
+    await page.getByRole("button", { name: "Получить ссылку" }).click();
+    await page.getByRole("link", { name: "Открыть MAX", exact: true }).waitFor();
+    const startToken = new URL((await page.getByRole("link", { name: "Открыть MAX", exact: true }).getAttribute("href"))!).searchParams.get("start");
     assert.ok(startToken);
 
     await request(app)
@@ -128,7 +112,7 @@ describe("tanbot max profile link browser smoke", { concurrency: false, skip: !R
       window.dispatchEvent(new Event("pageshow"));
       window.dispatchEvent(new Event("focus"));
     });
-    await page.waitForSelector("button:text('Отключить MAX')", { timeout: 10000 });
+    await page.locator('#messenger-accounts [data-testid^="ma-max-"]').getByRole("button", { name: "Отключить", exact: true }).waitFor();
     await assertMaxNotificationControls(page, true);
     await context.close();
   });

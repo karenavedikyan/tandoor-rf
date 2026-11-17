@@ -85,6 +85,7 @@
     statusInput.value = STATUS_LABELS[user.status] || user.status || "";
     form.hidden = false;
     setupTanTrackerProfileSections(user);
+    if (window.TandoorMessengerAccounts) window.TandoorMessengerAccounts.setUser(user);
   }
 
   function setupTanTrackerProfileSections(user) {
@@ -329,10 +330,16 @@
     if (!tanbotSection || !api.apiRequest) return;
     return api.apiRequest("/api/profile/tanbot/telegram").then(function (result) {
       if (result.response.status !== 200 || !result.data) {
+        if (window.TandoorMessengerAccounts) window.TandoorMessengerAccounts.fail("telegram");
         tanbotSection.hidden = true;
         return;
       }
       var d = result.data;
+      if (Array.isArray(d.accounts) && window.TandoorMessengerAccounts) {
+        tanbotSection.hidden = true;
+        window.TandoorMessengerAccounts.update("telegram", d);
+        return;
+      }
       if (!d.integrationEnabled) {
         tanbotSection.hidden = true;
         return;
@@ -367,6 +374,9 @@
         discBtn.addEventListener("click", disconnectTanbot);
         tanbotActions.appendChild(discBtn);
       }
+    }).catch(function () {
+      if (window.TandoorMessengerAccounts) window.TandoorMessengerAccounts.fail("telegram");
+      tanbotSection.hidden = true;
     });
   }
 
@@ -393,10 +403,16 @@
     if (!tanbotMaxSection || !api.apiRequest) return;
     return api.apiRequest("/api/profile/tanbot/max").then(function (result) {
       if (result.response.status !== 200 || !result.data) {
+        if (window.TandoorMessengerAccounts) window.TandoorMessengerAccounts.fail("max");
         tanbotMaxSection.hidden = true;
         return;
       }
       var d = result.data;
+      if (Array.isArray(d.accounts) && window.TandoorMessengerAccounts) {
+        tanbotMaxSection.hidden = true;
+        window.TandoorMessengerAccounts.update("max", d);
+        return;
+      }
       if (!d.integrationEnabled) {
         tanbotMaxSection.hidden = true;
         return;
@@ -431,6 +447,9 @@
         discBtn.addEventListener("click", disconnectTanbotMax);
         tanbotMaxActions.appendChild(discBtn);
       }
+    }).catch(function () {
+      if (window.TandoorMessengerAccounts) window.TandoorMessengerAccounts.fail("max");
+      tanbotMaxSection.hidden = true;
     });
   }
 

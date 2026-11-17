@@ -46,16 +46,16 @@ export async function assertNativeCreateContext(client: PoolClient, ctx: NativeC
     let boundChat: string | undefined;
     if (ctx.channel === "telegram") {
       const bind = await client.query<{ telegram_chat_id: string }>(
-        `SELECT telegram_chat_id FROM tanbot_telegram_accounts
-         WHERE user_id = $1::uuid AND stopped_at IS NULL`,
-        [ctx.staffUserId],
+        `SELECT telegram_chat_id FROM tanbot_telegram_all_accounts
+         WHERE user_id = $1::uuid AND telegram_user_id=$2 AND telegram_chat_id=$3 AND stopped_at IS NULL`,
+        [ctx.staffUserId,ctx.messengerUserId.toString(),ctx.messengerChatId],
       );
       boundChat = bind.rows[0]?.telegram_chat_id;
     } else {
       const bind = await client.query<{ max_chat_id: string }>(
-        `SELECT max_chat_id FROM tanbot_max_accounts
-         WHERE user_id = $1::uuid AND stopped_at IS NULL`,
-        [ctx.staffUserId],
+        `SELECT max_chat_id FROM tanbot_max_all_accounts
+         WHERE user_id = $1::uuid AND max_user_id=$2 AND max_chat_id=$3 AND stopped_at IS NULL`,
+        [ctx.staffUserId,ctx.messengerUserId.toString(),ctx.messengerChatId],
       );
       boundChat = bind.rows[0]?.max_chat_id;
     }

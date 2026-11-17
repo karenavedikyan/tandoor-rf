@@ -314,7 +314,7 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
       assert.deepEqual(await identitySnapshot(), before, "only a binding/audit may change, not auth data or business identities");
     });
     for (const problem of ["duplicate-staff", "disabled", "invited", "stale-alias", "null-phone-alias",
-      "external-party", "other-active-binding", "other-stopped-binding", "reserved-stopped-messenger",
+      "external-party", "reserved-stopped-messenger",
       "different-chat"] as const) {
       it(`${channel}: ${problem} cannot silently select, replace or merge an identity`, async () => {
         const { a, phone, user } = await unlinkedStaff(channel,
@@ -332,11 +332,10 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
           await p().query(`INSERT INTO tt_parties(kind,display_name,phone_e164)
             VALUES('external','Synthetic conflicting identity',$1)`, [phone]);
         }
-        if (["other-active-binding", "other-stopped-binding", "different-chat"].includes(problem)) {
+        if (problem === "different-chat") {
           await p().query(`INSERT INTO tanbot_${channel}_accounts
             (user_id,${channel}_user_id,${channel}_chat_id,notifications_enabled,stopped_at)
-            VALUES($1,$2,$3,FALSE,$4)`, [user, String(problem === "different-chat" ? a.id : a.id + 10000000),
-            String(a.chat + 10000000), problem === "other-stopped-binding" ? new Date() : null]);
+            VALUES($1,$2,$3,FALSE,NULL)`, [user, String(a.id), String(a.chat + 10000000)]);
         }
         if (problem === "reserved-stopped-messenger") {
           const owner = await unlinkedStaff(channel);
@@ -359,6 +358,25 @@ describe("native receipt confirmation via actual MAX and Telegram webhooks", { c
             assert.ok(!result.text.includes(privateValue), "rejection cannot disclose identity details");
           }
         }
+      });
+    }
+    for (const stopped of [false,true]) {
+      it(`${channel}: own contact adds a separate account without replacing an ${stopped ? "stopped" : "active"} legacy binding`, async () => {
+        const { a,phone,user } = await unlinkedStaff(channel);
+        await p().query(`INSERT INTO tanbot_${channel}_accounts
+          (user_id,${channel}_user_id,${channel}_chat_id,notifications_enabled,stopped_at)
+          VALUES($1,$2,$3,FALSE,$4)`, [user,String(a.id+10000000),String(a.chat+10000000),stopped ? new Date() : null]);
+        const primary = (await p().query(`SELECT * FROM tanbot_${channel}_accounts WHERE user_id=$1`, [user])).rows[0];
+        const before = await identitySnapshot();
+        await send(a,"",undefined,undefined,true,{ phone });
+        assert.deepEqual(await identitySnapshot(),before);
+        assert.deepEqual((await p().query(`SELECT * FROM tanbot_${channel}_accounts WHERE user_id=$1`, [user])).rows[0],primary);
+        assert.equal((await ownContactLink(a,phone)).kind,"staff");
+        const additional = (await p().query(`SELECT * FROM tanbot_${channel}_additional_accounts WHERE user_id=$1`, [user])).rows;
+        assert.equal(additional.length,1);
+        assert.equal(String(additional[0][`${channel}_user_id`]),String(a.id));
+        assert.equal(additional[0].phone_e164,phone);
+        assert.equal(additional[0].notifications_enabled,true);
       });
     }
     it(`${channel}: confirmation cancels stale LK tokens, is replay-safe and preserves active notification preferences`, async () => {

@@ -25,16 +25,9 @@ const SYNTH_TOKEN = "123456789:SYNTH_HTTP_TANBOT_TOKEN_MARKER_abcdefghijklmnopqr
 async function assertTelegramNotificationControls(page: Page, linked: boolean): Promise<void> {
   assert.equal(await page.locator("#tanbot-confirm-notifications").count(), 0);
   assert.equal(await page.locator("#tanbot-confirm-notifications-wrap").count(), 0);
-  const checkboxes = page.locator("#tanbot-telegram-section input[type='checkbox']");
-  assert.equal(await checkboxes.count(), 1, "exactly one preference checkbox in Telegram section");
-  const wrap = page.locator("#tanbot-notifications-toggle-wrap");
-  if (linked) {
-    assert.equal(await wrap.isVisible(), true);
-    assert.equal(await page.locator("#tanbot-notifications-toggle").isVisible(), true);
-  } else {
-    assert.equal(await wrap.isHidden(), true);
-    assert.equal(await page.locator("#tanbot-notifications-toggle").isHidden(), true);
-  }
+  const row = page.locator('#messenger-accounts [data-testid^="ma-telegram-"]');
+  assert.equal(await row.getByRole("checkbox").count(), linked ? 1 : 0);
+  assert.equal(await row.getByRole("button", { name: linked ? "Отключить" : "Подключить Telegram", exact: true }).isVisible(), true);
 }
 
 describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }, () => {
@@ -61,9 +54,10 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
       password: PASSWORD,
       fullName: "Browser Tanbot",
       role: "manager",
+      phone: "+79000000001",
     });
 
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: "chromium" });
     await resetPoolForTests();
     const { createApp } = await import("../../src/server");
     server = http.createServer(createApp());
@@ -87,17 +81,6 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
     const app = createApp();
     const context = await browser.newContext({ baseURL: baseUrl });
     const page = await context.newPage();
-    let startToken: string | null = null;
-    page.on("response", async (res) => {
-      if (
-        res.url().includes("/api/profile/tanbot/telegram/link/start") &&
-        res.request().method() === "POST" &&
-        res.status() === 200
-      ) {
-        const body = (await res.json()) as { deepLink?: string };
-        if (body.deepLink) startToken = new URL(body.deepLink).searchParams.get("start");
-      }
-    });
 
     await page.goto("/login");
     await page.fill("#email", "tanbot-browser@test.local");
@@ -105,12 +88,13 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
     await page.click("#login-button");
     await page.waitForURL(/\/(clients|profile)(\/|\?|$)/, { timeout: 20000 });
     await page.goto("/profile");
-    await page.waitForSelector("#tanbot-telegram-section:not([hidden])", { timeout: 15000 });
+    await page.waitForSelector("#messenger-accounts:not([hidden])", { timeout: 15000 });
+    await page.getByRole("button", { name: "Подключить Telegram", exact: true }).waitFor();
     await assertTelegramNotificationControls(page, false);
-    await page.click("button:text('Подключить Telegram')");
-    for (let i = 0; i < 30 && !startToken; i += 1) {
-      await page.waitForTimeout(100);
-    }
+    await page.getByRole("button", { name: "Подключить Telegram", exact: true }).click();
+    await page.getByRole("button", { name: "Получить ссылку" }).click();
+    await page.getByRole("link", { name: "Открыть Telegram", exact: true }).waitFor();
+    const startToken = new URL((await page.getByRole("link", { name: "Открыть Telegram", exact: true }).getAttribute("href"))!).searchParams.get("start");
     assert.ok(startToken, "UI start must produce link/start token");
 
     await request(app)
@@ -132,34 +116,24 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
       window.dispatchEvent(new Event("focus"));
       window.dispatchEvent(new Event("pageshow"));
     });
-    await page.waitForSelector("button:text('Отключить Telegram')", { timeout: 10000 });
+    await page.locator('#messenger-accounts [data-testid^="ma-telegram-"]').getByRole("button", { name: "Отключить", exact: true }).waitFor();
     await assertTelegramNotificationControls(page, true);
     await context.close();
   });
 
-  it("shows copyable link when popup is blocked and keeps notification opt-out", async () => {
+  it("shows a copyable link and keeps notification opt-out after webhook replay", async () => {
     await createTestUser({
       databaseUrl,
       email: "tanbot-browser2@test.local",
       password: PASSWORD,
       fullName: "Browser Tanbot Two",
       role: "manager",
+      phone: "+79000000002",
     });
     const { createApp } = await import("../../src/server");
     const app = createApp();
     const context = await browser.newContext({ baseURL: baseUrl });
     const page = await context.newPage();
-    let startToken: string | null = null;
-    page.on("response", async (res) => {
-      if (
-        res.url().includes("/api/profile/tanbot/telegram/link/start") &&
-        res.request().method() === "POST" &&
-        res.status() === 200
-      ) {
-        const body = (await res.json()) as { deepLink?: string };
-        if (body.deepLink) startToken = new URL(body.deepLink).searchParams.get("start");
-      }
-    });
 
     await page.goto("/login");
     await page.fill("#email", "tanbot-browser2@test.local");
@@ -167,19 +141,19 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
     await page.click("#login-button");
     await page.waitForURL(/\/(clients|profile)(\/|\?|$)/, { timeout: 20000 });
     await page.goto("/profile");
-    await page.waitForSelector("#tanbot-telegram-section:not([hidden])", { timeout: 15000 });
+    await page.waitForSelector("#messenger-accounts:not([hidden])", { timeout: 15000 });
+    await page.getByRole("button", { name: "Подключить Telegram", exact: true }).waitFor();
     await assertTelegramNotificationControls(page, false);
 
     await page.evaluate(() => {
       window.open = () => null;
     });
-    await page.click("button:text('Подключить Telegram')");
-    for (let i = 0; i < 30 && !startToken; i += 1) {
-      await page.waitForTimeout(100);
-    }
+    await page.getByRole("button", { name: "Подключить Telegram", exact: true }).click();
+    await page.getByRole("button", { name: "Получить ссылку" }).click();
+    await page.getByRole("link", { name: "Открыть Telegram", exact: true }).waitFor();
+    const startToken = new URL((await page.getByRole("link", { name: "Открыть Telegram", exact: true }).getAttribute("href"))!).searchParams.get("start");
     assert.ok(startToken);
-    await page.waitForSelector("#tanbot-telegram-link-fallback:not([hidden])", { timeout: 5000 });
-    const fallbackUrl = await page.inputValue("#tanbot-telegram-link-url");
+    const fallbackUrl = await page.getByLabel("Ссылка подключения").inputValue();
     assert.match(fallbackUrl, /start=/);
 
     await request(app)
@@ -199,10 +173,11 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
     await page.evaluate(() => {
       window.dispatchEvent(new Event("focus"));
     });
-    await page.waitForSelector("#tanbot-notifications-toggle", { timeout: 10000 });
+    const toggle = page.locator('#messenger-accounts [data-testid^="ma-telegram-"]').getByRole("checkbox");
+    await toggle.waitFor();
     await assertTelegramNotificationControls(page, true);
-    await page.uncheck("#tanbot-notifications-toggle");
-    await page.waitForTimeout(300);
+    await toggle.uncheck();
+    await page.getByText("Настройка этого аккаунта сохранена.", { exact: true }).waitFor();
 
     await request(app)
       .post("/api/tanbot-telegram/webhook")
@@ -218,7 +193,9 @@ describe("tanbot profile link browser smoke", { concurrency: false, skip: !RUN }
         },
       });
 
-    const notifChecked = await page.isChecked("#tanbot-notifications-toggle");
+    await page.reload();
+    await toggle.waitFor();
+    const notifChecked = await toggle.isChecked();
     assert.equal(notifChecked, false);
     await context.close();
   });
