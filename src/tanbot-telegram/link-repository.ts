@@ -127,9 +127,9 @@ export async function attachTelegramToLinkAttempt(
 export async function findAccountByTelegramUserId(
   client: PoolClient,
   telegramUserId: bigint,
-): Promise<{ user_id: string; notifications_enabled: boolean } | null> {
-  const row = await client.query<{ user_id: string; notifications_enabled: boolean }>(
-    `SELECT user_id::text, notifications_enabled FROM tanbot_telegram_all_accounts
+): Promise<{ user_id: string; notifications_enabled: boolean; phone_e164: string | null } | null> {
+  const row = await client.query<{ user_id: string; notifications_enabled: boolean; phone_e164: string | null }>(
+    `SELECT user_id::text, notifications_enabled, phone_e164 FROM tanbot_telegram_all_accounts
      WHERE telegram_user_id = $1 AND stopped_at IS NULL`,
     [telegramUserId.toString()],
   );

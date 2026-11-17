@@ -148,15 +148,19 @@
         var link = new URL(result.deepLink);
         if (link.protocol !== "https:" || link.hostname !== (action.channel === "max" ? "max.ru" : "t.me") ||
           link.username || link.password || link.port) throw new Error("Получена некорректная ссылка подключения.");
+        var startToken = link.searchParams.get("start");
+        if (!startToken || !/^[A-Za-z0-9_-]{1,128}$/.test(startToken)) throw new Error("Получена некорректная ссылка подключения.");
         action.expiresAt = new Date(result.expiresAt).getTime();
         // No request is made to the messenger by the page; user follows the short-lived link.
         showDialog('<h2 id="ma-dialog-title">Подтверждение в ' + names[action.channel] +
           '</h2><p>Номер в ЛК: <strong>' + esc(action.phone) +
-          '</strong></p><p>Откройте бота и нажмите Start. После подключения статус здесь обновится.</p>' +
+          '</strong></p><p>Откройте бота и нажмите «Начать» (Start). После подключения статус здесь обновится.</p>' +
           '<a class="primary-button ma-open" href="' + esc(result.deepLink) +
           '" target="_blank" rel="noopener noreferrer">Открыть ' + names[action.channel] +
           '</a><label class="field ma-copy-field"><span>Если мессенджер на другом устройстве, скопируйте ссылку</span>' +
           '<input class="field__input" readonly value="' + esc(result.deepLink) + '" aria-label="Ссылка подключения"></label>' +
+          '<label class="field ma-copy-field"><span>Если после «Начать» нет подтверждения с номером, скопируйте и отправьте эту команду в тот же чат бота. Никому её не пересылайте.</span>' +
+          '<input class="field__input" readonly value="/start ' + esc(startToken) + '" aria-label="Команда подключения"></label>' +
           '<div class="button-row"><button type="button" class="secondary-button" data-ma="refresh">Проверить подключение</button>' +
           '<button type="button" class="secondary-button" data-ma="close">Закрыть</button></div>');
         poll();
