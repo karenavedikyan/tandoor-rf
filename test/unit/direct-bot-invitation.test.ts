@@ -26,8 +26,25 @@ it("both direct bot links carry the same opaque token, no website, phone or OTP"
     item: "Item", portalUrl: legacy, botLinks: links,
   });
   assert.doesNotMatch(text, /lk\.tandoor|\/tan-tracker/);
-  assert.match(text, /Сайт и вход в личный кабинет не нужны/);
+  assert.match(text, /^Отправителю: перешлите это сообщение получателю целиком/u);
+  assert.match(text, /Получателю: откройте одну из ссылок ниже и подтвердите свой номер кнопкой в чате\. Бот выдаст код\. Вход в личный кабинет не нужен/u);
   assert.deepEqual(invitationTokenFromText(text, env), { kind: "token", token });
+});
+it("a single available bot has a singular instruction and no link to the other channel", () => {
+  for (const channel of ["max", "telegram"] as const) {
+    const botLinks = recipientBotLinks(token, { ...env,
+      TANBOT_MAX_ENABLED: String(channel === "max"),
+      TANBOT_TELEGRAM_ENABLED: String(channel === "telegram"),
+    });
+    const text = formatForwardableRecipientInvitation({
+      publicCode: "TT-SYNTHETIC-1", senderName: "Sender", recipientName: "Recipient",
+      item: "Item", portalUrl: legacy, botLinks,
+    });
+    assert.match(text, /Получателю: откройте ссылку ниже/u);
+    assert.match(text, channel === "max" ? /Получить код в MAX:/u : /Получить код в Telegram:/u);
+    assert.doesNotMatch(text, channel === "max" ? /Получить код в Telegram:/u : /Получить код в MAX:/u);
+    assert.deepEqual(invitationTokenFromText(text, env), { kind: "token", token });
+  }
 });
 it("unavailable or malformed channel configuration is not advertised", () => {
   assert.equal(recipientBotLinks(token, { ...env, TANBOT_MAX_ENABLED: "false" }).max, null);
