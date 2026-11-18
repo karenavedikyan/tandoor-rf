@@ -10,11 +10,14 @@ const invitation = formatForwardableRecipientInvitation({
   recipientName: "Синтетический получатель", item: "Договор",
   portalUrl: "https://example.test/tan-tracker/recipient?mst=synthetic-token",
 });
-it("invitation has one universal recipient link, context and recipient-only code instructions", () => {
+it("invitation is self-contained with a sender instruction, recipient steps and one universal link", () => {
+  assert.equal(invitation.split("\n")[0],
+    "Отправителю: перешлите это сообщение получателю целиком, чтобы он мог получить код.");
   assert.equal((invitation.match(/https?:\/\//g) ?? []).length, 1);
   for (const text of ["TT-2026-123", "Отправитель: Синтетический отправитель",
     "Получатель: Синтетический получатель", "Предмет: Договор",
-    "получите код приёма", "Сообщите код отправителю", "Вход в личный кабинет не нужен"]) {
+    "Получателю: откройте ссылку ниже", "получите код приёма", "Сообщите код отправителю",
+    "Вход в личный кабинет не нужен"]) {
     assert.ok(invitation.includes(text), text);
   }
   assert.doesNotMatch(invitation, /Или веб|t\.me|max\.ru|Ваш следующий шаг|Ввести код|Мои передачи/u);

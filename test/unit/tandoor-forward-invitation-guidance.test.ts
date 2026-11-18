@@ -13,7 +13,7 @@ describe("sender forward-invitation guidance", () => {
   it("leads with getting the recipient code, then explains forwarding the next message concisely", () => {
     const text = buildForwardInvitationGuidance("TT-2026-015");
     assert.equal(text.split("\n")[0], "ПОЛУЧИТЕ КОД У ПОЛУЧАТЕЛЯ!");
-    assert.match(text, /Перешлите следующее сообщение со ссылкой получателю/u);
+    assert.match(text, /Перешлите следующее сообщение со ссылкой получателю целиком/u);
     assert.match(text, /Он сообщит вам код из MAX или Telegram/u);
     assert.match(text, /Нажмите «Ввести код» и введите его/u);
     assert.match(text, /Передача создана: TT-2026-015\./u);

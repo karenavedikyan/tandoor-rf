@@ -26,7 +26,10 @@ export function formatForwardableRecipientInvitation(input: {
   botLinks?: RecipientBotLinks;
 }): string {
   const line = (value: string, limit = 160) => value.replace(/\s+/gu, " ").trim().slice(0, limit);
+  const botLinks = [input.botLinks?.max, input.botLinks?.telegram].filter(Boolean).length;
   return [
+    "Отправителю: перешлите это сообщение получателю целиком, чтобы он мог получить код.",
+    "",
     "Тандор · Вам передают предмет",
     "",
     `Передача: ${line(input.publicCode)}`,
@@ -36,10 +39,10 @@ export function formatForwardableRecipientInvitation(input: {
     "",
     formatNotificationTransferState({ phase: "waiting", holderName: input.senderName, pendingName: input.recipientName }),
     "",
-    input.botLinks?.max || input.botLinks?.telegram
-      ? "Получите код прямо в удобном боте. Подтвердите свой номер кнопкой в чате. Сайт и вход в личный кабинет не нужны."
-      : "Откройте ссылку, посмотрите детали и получите код приёма. Вход в личный кабинет не нужен.",
-    "Сообщите код отправителю при получении посылки. Отправитель введёт его, чтобы подтвердить передачу.",
+    botLinks > 0
+      ? `Получателю: откройте ${botLinks > 1 ? "одну из ссылок" : "ссылку"} ниже и подтвердите свой номер кнопкой в чате. Бот выдаст код. Вход в личный кабинет не нужен.`
+      : "Получателю: откройте ссылку ниже, посмотрите детали и получите код приёма. Вход в личный кабинет не нужен.",
+    "Сообщите код отправителю при получении предмета. Отправитель введёт его, чтобы подтвердить передачу.",
     "",
     ...(input.botLinks?.max || input.botLinks?.telegram ? [
       ...(input.botLinks.max ? [`Получить код в MAX: ${input.botLinks.max}`] : []),
