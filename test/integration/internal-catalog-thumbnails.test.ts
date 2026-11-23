@@ -8,12 +8,15 @@ import { Pool } from "pg";
 import request from "supertest";
 import sharp from "sharp";
 import { closePool, resetPoolForTests } from "../../src/db/pool";
-import { importSnapshot } from "../../src/internal-catalog/repository";
+import { importSnapshot, loadSnapshot } from "../../src/internal-catalog/repository";
 import { parseProductsJson } from "../../src/internal-catalog/model";
 import { prepareThumbnails } from "../../src/internal-catalog/prepare-thumbnails";
-import { readThumbnail, thumbnailStatus } from "../../src/internal-catalog/thumbnails";
+import { readThumbnail, thumbnailStatus, THUMBNAIL_RECIPE } from "../../src/internal-catalog/thumbnails";
 import { catalogueFixture, fixtureGuid } from "../helpers/internal-catalog-fixtures";
 import { CatalogImageDeferred } from "../../src/catalog/image-deferred";
+import { prepareManualBundle } from "../../src/onec-manual/model";
+import { runManualUpdate } from "../../src/onec-manual/run-update";
+import { manualFixture } from "../helpers/onec-manual-fixtures";
 import { createTestUser, getIntegrationDatabaseUrl, prepareDatabase, setIntegrationEnv } from "../helpers/test-db";
 
 describe("durable catalogue thumbnails (isolated synthetic PostgreSQL)", { concurrency: false }, () => {
@@ -232,6 +235,57 @@ describe("durable catalogue thumbnails (isolated synthetic PostgreSQL)", { concu
       await pool.query("UPDATE internal_catalog_thumbnails SET list_bytes=$1 WHERE source_path=$2",
         [saved, "20240626/photo.jpg"]);
       access.mock.restore();
+      for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
+      Object.assign(process.env, env);
+    }
+  });
+  it("keeps LK photos through two actual 1C exchange publications without inheriting changed or unavailable files", async () => {
+    const env = { ...process.env };
+    delete process.env.INTERNAL_CATALOG_IMAGE_BACKEND;
+    delete process.env.INTERNAL_CATALOG_IMAGE_SOURCE_DIR;
+    const records = structuredClone(products);
+    records[1].files[0].guid = fixtureGuid(441);
+    records[3].files[0].path = "second.jpg"; // A former photo of a different SKU is not reusable.
+    const before = await rows();
+    const databaseUrl = getIntegrationDatabaseUrl();
+    try {
+      let previous = snapshot;
+      for (const generation of [1, 2]) {
+        records[0].name = `New product title from 1C ${generation}`;
+        const files = manualFixture({ products: records });
+        const outcome = await runManualUpdate({
+          env: { ...process.env, DATABASE_URL: databaseUrl, TEST_DATABASE_URL: databaseUrl },
+          manualFiles: files,
+          argv: ["--apply", "--expected-fingerprint", prepareManualBundle(files).fingerprint],
+        });
+        assert.equal(outcome.status, "SUCCESS", JSON.stringify(outcome));
+        const active = await loadSnapshot(pool);
+        assert.ok(active);
+        const current = active.id;
+        assert.notEqual(current, previous);
+        assert.equal(active.sourceName, "Обновление 1С: products.json");
+        previous = current;
+        await pool.query(`INSERT INTO internal_catalog_thumbnails(snapshot_id,source_path,recipe,status)
+          VALUES($1,'missing.jpg',$2,'unavailable')`, [current, THUMBNAIL_RECIPE]);
+        const meta = await request(app).get("/api/internal-catalog/meta").set("Cookie", cookie);
+        assert.equal(meta.status, 200);
+        assert.equal(meta.body.snapshot.id, current);
+        assert.equal(meta.body.imagesConfigured, true);
+        assert.equal(meta.body.thumbnailsReady, false);
+        for (const size of ["small", "list", "full"]) {
+          const url = path(1, 300, size).replace(snapshot, current).replace(/&preview=full$/, "");
+          assert.equal((await request(app).get(url)).status, 401);
+          const result = await request(app).get(url).set("Cookie", cookie);
+          assert.equal(result.status, 200);
+          assert.equal((await sharp(result.body).metadata()).height, size === "small" ? 240 : 640);
+        }
+        for (const [sku, file] of [[2, 441], [3, 302], [4, 303]]) {
+          assert.equal((await request(app).get(path(sku, file).replace(snapshot, current))
+            .set("Cookie", cookie)).status, 404);
+        }
+      }
+      assert.equal(await rows(), before + 2);
+    } finally {
       for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
       Object.assign(process.env, env);
     }

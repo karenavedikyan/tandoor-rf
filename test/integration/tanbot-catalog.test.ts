@@ -230,7 +230,7 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
       const family = view.products.filter(p => p.properties.some(x => x.value === "Амулет"));
       assert.equal(family.length, 4);
       assert.equal(family.flatMap(p => p.files).length, 8, "all source references are preserved");
-      assert.equal(new Set(family.flatMap(p => p.files.map(f => view.photoHashes?.get(f.path)))).size, 2);
+      assert.equal(new Set(family.flatMap(p => p.files.map(f => view.photoHashes?.get(`${p.guid}:${f.guid}`)))).size, 2);
       const { buildCatalogBotReply, readCatalogGallery, readCatalogPhoto } = await import("../../src/tanbot/catalog");
       for (const channel of ["max", "telegram"] as const) {
         const r = buildCatalogBotReply(channel, view, catalogCallback("p", snapshot, products[3].guid));
@@ -593,12 +593,60 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
       }
     }
   });
-  it("a new snapshot invalidates old buttons and queued photo delivery, without fallback to another source", async () => {
+  it("new daily snapshots keep matching photos without reviving old queued replies or changed files", async () => {
     const old = await handleTanbotTelegramUpdate(pool(), tg.config,
       telegramRaw({ callback: catalogCallback("p", snapshot, id(3)) }));
     assert.ok(old.reply); assert.ok(old.updateId);
-    const parsed = parseProductsJson(Buffer.from(JSON.stringify([{ ...products[0], name: "Новый снимок" }])));
-    await importSnapshot(pool(), parsed, "new-synthetic.json", parsed.sha256);
+    const changed = [
+      { ...products[0], name: "Новый снимок",
+        files: [products[0].files[0], { ...products[0].files[1], path: "updated-second.jpg" }] },
+      { ...products[1], files: [{ ...products[1].files[0], guid: id(6001) }] },
+      { ...products[2], guid: id(6002) },
+      products[3],
+      products[4],
+    ];
+    const parsed = parseProductsJson(Buffer.from(JSON.stringify(changed)));
+    const intermediate = (await importSnapshot(pool(), parsed, "new-synthetic.json", parsed.sha256)).snapshotId;
+    const daily = parseProductsJson(Buffer.from(JSON.stringify(changed.map((p, i) =>
+      i === 0 ? { ...p, name: "Ежедневное обновление" } : p))));
+    const latest = (await importSnapshot(pool(), daily, "second-daily-synthetic.json", daily.sha256)).snapshotId;
+    const selected = { snapshotId: latest, productGuid: id(1), fileGuid: id(1000) };
+    assert.deepEqual(await catalogPhotoBytes(pool(), selected), bytes);
+    assert.equal(await catalogPhotoBytes(pool(), { ...selected, fileGuid: id(2000) }), null);
+    assert.equal(await catalogPhotoBytes(pool(), { ...selected, productGuid: id(2), fileGuid: id(6001) }), null);
+    assert.equal(await catalogPhotoBytes(pool(), { ...selected, productGuid: id(6002), fileGuid: id(1002) }), null);
+    const current = await loadCatalogBotView(pool());
+    assert.equal(current?.snapshotId, latest);
+    assert.equal(current?.products.length, 3);
+    assert.equal(current?.products[0].name, "Ежедневное обновление");
+    assert.deepEqual(current?.products[0].files.map(f => f.guid), [id(1000)]);
+    for (const channel of ["telegram", "max"] as const) {
+      const cb = catalogCallback("p", latest, id(1));
+      const result = channel === "telegram"
+        ? await handleTanbotTelegramUpdate(pool(), tg.config, telegramRaw({ callback: cb }))
+        : await handleTanbotMaxUpdate(pool(), max.config, maxRaw({ callback: cb }));
+      assert.deepEqual(result.reply?.replyExtra?.catalogPhoto, selected);
+    }
+    await pool().query(`INSERT INTO internal_catalog_thumbnails
+      (snapshot_id,source_path,recipe,status,small_bytes,small_sha256,list_bytes,list_sha256)
+      SELECT $1::uuid,'1.jpg',recipe,status,small_bytes,small_sha256,list_bytes,list_sha256
+      FROM internal_catalog_thumbnails WHERE snapshot_id=$2 AND source_path='second.jpg'`,
+    [latest, snapshot]);
+    await pool().query(`INSERT INTO internal_catalog_thumbnails(snapshot_id,source_path,recipe,status)
+      VALUES($1,'4.jpg',$2,'unavailable'),($3,'5.jpg',$2,'unavailable')`, [latest, THUMBNAIL_RECIPE, intermediate]);
+    const newBytes = await catalogPhotoBytes(pool(), selected);
+    assert.ok(newBytes);
+    assert.notDeepEqual(newBytes, bytes);
+    assert.equal(await catalogPhotoBytes(pool(), { ...selected, productGuid: id(4), fileGuid: id(1003) }), null);
+    assert.deepEqual(await catalogPhotoBytes(pool(), { ...selected, productGuid: id(5), fileGuid: id(1004) }), bytes);
+    assert.deepEqual((await loadCatalogBotView(pool()))?.products.map(p => p.guid), [id(1), id(5)]);
+    await pool().query(`INSERT INTO internal_catalog_thumbnails
+      (snapshot_id,source_path,recipe,status,small_bytes,small_sha256,list_bytes,list_sha256)
+      SELECT $1::uuid,'updated-second.jpg',recipe,status,small_bytes,small_sha256,list_bytes,list_sha256
+      FROM internal_catalog_thumbnails WHERE snapshot_id=$2 AND source_path='1.jpg'`,
+    [latest, snapshot]);
+    assert.deepEqual(await catalogPhotoBytes(pool(), { ...selected, fileGuid: id(2000) }), bytes);
+    assert.deepEqual((await loadCatalogBotView(pool()))?.products[0].files.map(f => f.guid), [id(1000), id(2000)]);
     const calls: string[] = [];
     await deliverTelegramWebhookReply(pool(), tg.config, async p => {
       calls.push(p.method);
@@ -609,6 +657,7 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     assert.ok(!calls.includes("sendPhoto"));
     assert.equal(await catalogPhotoBytes(pool(), { snapshotId: snapshot, productGuid: id(1), fileGuid: id(1000) }), null);
     // After cleanup only compare the original snapshot's records.
+    await pool().query("DELETE FROM internal_catalog_thumbnails WHERE snapshot_id<>$1", [snapshot]);
     await pool().query("DELETE FROM internal_catalog_products WHERE snapshot_id<>$1", [snapshot]);
     await pool().query("DELETE FROM internal_catalog_snapshots WHERE id<>$1", [snapshot]);
   });

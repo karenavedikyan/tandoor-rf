@@ -30,7 +30,8 @@ export function safeImagePath(value: string): string | null {
   if (!value || value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value) ||
       /^[\\/]/.test(value) || /^[a-z][a-z0-9+.-]*:/i.test(value)) return null;
   const parts = value.replace(/\\/g, "/").split("/");
-  if (parts.some(x => !x || x === "." || x === "..") || !/\.(?:jpg|jpeg|png)$/i.test(value)) return null;
+  // The decoder independently validates bytes, dimensions and actual format.
+  if (parts.some(x => !x || x === "." || x === "..") || !/\.(?:jpg|jpeg|jfif|png|webp)$/i.test(value)) return null;
   return parts.join("/");
 }
 function object(value: unknown): Record<string, unknown> {

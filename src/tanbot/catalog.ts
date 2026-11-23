@@ -3,7 +3,7 @@ import { loadSnapshot } from "../internal-catalog/repository";
 import { GUID, safeImagePath, normalizeSearch, type Product } from "../internal-catalog/model";
 import { buildCatalogContext, groupDescendants, type CatalogContext, type Group, type SourceRow } from "../internal-catalog/presentation";
 import { catalogModels } from "./catalog-models";
-import { readThumbnail, THUMBNAIL_RECIPE } from "../internal-catalog/thumbnails";
+import { readCatalogThumbnail, resolveCatalogThumbnails, THUMBNAIL_RECIPE } from "../internal-catalog/thumbnails";
 import { buildNativeCreateCallback } from "./native-create/callback-codec";
 import { NATIVE_MENU_DRAFT_HEX } from "./native-create/menu-sentinel";
 import type { MaxInlineButton } from "../tanbot-max/delivery-transport";
@@ -117,6 +117,8 @@ export function parseCatalogCallback(value: string) {
     id: match[3] === ROOT ? ROOT : expand(match[3]), page: Number(match[4]) } : null;
 }
 
+const photoHashKey = (product: string, file: string) => `${product}:${file}`;
+
 /** Only persisted, bounded, checksum-verified images qualify. No FTP, image
  * processing, imports, jobs or writes are initiated while browsing the bot.
  * Partial thumbnail preparation is useful here, without changing the LK switch.
@@ -131,16 +133,12 @@ export async function loadCatalogBotView(db: Db): Promise<CatalogView | null> {
   if (!schema.rows[0]?.media_table) {
     return { snapshotId: snapshot.id, products: [], context: { groups: [], commerce: new Map(), priceTypes: [] } };
   }
-  const products = await db.query<{ record: Product; photo_hashes: Record<string, string> }>(`
-      SELECT jsonb_set(p.record,'{files}',jsonb_agg(f ORDER BY ord)) AS record,
-        jsonb_object_agg(replace(f->>'path',chr(92),'/'),t.list_sha256) AS photo_hashes
-      FROM internal_catalog_products p
-      CROSS JOIN LATERAL jsonb_array_elements(p.record->'files') WITH ORDINALITY AS files(f,ord)
-      JOIN internal_catalog_thumbnails t ON t.snapshot_id=p.snapshot_id
-        AND t.source_path=replace(f->>'path',chr(92),'/') AND t.recipe=$2
-        AND t.status='ready' AND octet_length(t.list_bytes) BETWEEN 1 AND 131072
-        AND encode(sha256(t.list_bytes),'hex')=t.list_sha256
-      WHERE p.snapshot_id=$1::uuid GROUP BY p.snapshot_id,p.guid ORDER BY p.guid`,
+  const products = await db.query<{ record: Product; photo_hashes: Record<string, string> }>(`${resolveCatalogThumbnails(false)}
+      SELECT jsonb_set(p.record,'{files}',jsonb_agg(r.f ORDER BY r.ord)) AS record,
+        jsonb_object_agg(p.guid::text || ':' || (r.f->>'guid'),r.media_hash) AS photo_hashes
+      FROM resolved r
+      JOIN internal_catalog_products p ON p.snapshot_id=$1::uuid AND p.guid=r.guid
+      GROUP BY p.snapshot_id,p.guid ORDER BY p.guid`,
     [snapshot.id, THUMBNAIL_RECIPE]);
   const context = await loadBotCatalogGroups(db);
   return restrictCatalogBotView({ snapshotId: snapshot.id, products: products.rows.map(r => r.record), context,
@@ -264,9 +262,9 @@ function buildCatalogBotContent(channel: Channel, view: CatalogView | null, call
   // Compare verified preview content, not file names, dimensions or colours.
   // Keep every distinct panel; absent hashes conservatively retain source paths.
   const seenPhotos = new Set<string>();
-  const galleryPhotos = autoGallery ? family.photos.filter(({ file }) => {
+  const galleryPhotos = autoGallery ? family.photos.filter(({ product: p, file }) => {
     const path = file.path.replace(/\\/g, "/");
-    const hash = view.photoHashes?.get(path);
+    const hash = view.photoHashes?.get(photoHashKey(p.guid, file.guid));
     const key = hash ? `sha256:${hash}` : `path:${path}`;
     if (seenPhotos.has(key)) return false;
     seenPhotos.add(key); return true;
@@ -319,5 +317,5 @@ export async function catalogPhotoBytes(db: Db, photo: CatalogPhoto): Promise<Bu
   const file = row.rows[0]?.record.files.find(f => f.guid === photo.fileGuid);
   if (!file || !safeImagePath(file.path)) return null;
   if (!catalogSection(row.rows[0].record, new Map((await loadBotCatalogGroups(db)).groups.map(g => [g.guid, g])))) return null;
-  return readThumbnail(db, photo.snapshotId, file.path, "list");
+  return readCatalogThumbnail(db, photo.snapshotId, photo.productGuid, photo.fileGuid, "list");
 }

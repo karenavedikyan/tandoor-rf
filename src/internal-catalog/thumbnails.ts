@@ -46,6 +46,69 @@ export async function readThumbnail(db: Database, snapshotId: string, sourcePath
     hash(row.bytes) === row.sha256 ? row.bytes : null;
 }
 
+/** Shared LK/bot lookup: the requested snapshot owns SKU and file membership.
+ * History can supply bytes, never links. A current result, including an
+ * unavailable or corrupt result, blocks fallback for that exact path. */
+export function resolveCatalogThumbnails(single: boolean, size: ThumbnailSize = "list"): string {
+  const column = size === "small" ? "small" : "list";
+  const limit = size === "small" ? 32768 : 131072;
+  return `WITH requested AS MATERIALIZED (
+    SELECT p.guid, f, ord, replace(f->>'path',chr(92),'/') AS path
+    FROM internal_catalog_products p
+    CROSS JOIN LATERAL jsonb_array_elements(p.record->'files') WITH ORDINALITY AS files(f,ord)
+    WHERE p.snapshot_id=$1::uuid ${single ? "AND p.guid=$3::uuid AND f->>'guid'=$4" : ""}
+  ), verified AS MATERIALIZED (
+    SELECT t.snapshot_id, t.source_path, t.prepared_at, t.${column}_sha256 AS media_hash
+    FROM (SELECT DISTINCT path FROM requested) r
+    JOIN internal_catalog_thumbnails t ON t.source_path=r.path AND t.recipe=$2
+    WHERE t.status='ready' AND octet_length(t.${column}_bytes) BETWEEN 1 AND ${limit}
+      AND encode(sha256(t.${column}_bytes),'hex')=t.${column}_sha256
+  ), resolved AS (
+    SELECT DISTINCT ON (r.guid,r.ord) r.*, t.snapshot_id AS media_snapshot,t.media_hash
+    FROM requested r
+    JOIN verified t ON t.source_path=r.path
+    LEFT JOIN internal_catalog_thumbnails current_media ON current_media.snapshot_id=$1::uuid
+      AND current_media.source_path=r.path AND current_media.recipe=$2
+    WHERE t.snapshot_id=$1::uuid OR (
+      current_media.snapshot_id IS NULL AND EXISTS (
+        SELECT 1 FROM internal_catalog_products previous
+        JOIN internal_catalog_snapshots old_snapshot ON old_snapshot.id=previous.snapshot_id
+        JOIN internal_catalog_snapshots wanted_snapshot ON wanted_snapshot.id=$1::uuid
+        WHERE previous.snapshot_id=t.snapshot_id AND previous.guid=r.guid
+          AND old_snapshot.imported_at <= wanted_snapshot.imported_at
+          AND EXISTS (
+            SELECT 1 FROM jsonb_array_elements(previous.record->'files') AS old(f)
+            WHERE old.f->>'guid'=r.f->>'guid' AND replace(old.f->>'path',chr(92),'/')=r.path
+          )
+      )
+    )
+    ORDER BY r.guid,r.ord,(t.snapshot_id=$1::uuid) DESC,t.prepared_at DESC,t.snapshot_id DESC
+  )`;
+}
+
+export async function readCatalogThumbnail(
+  db: Database, snapshotId: string, productGuid: string, fileGuid: string, size: ThumbnailSize,
+) {
+  const column = size === "small" ? "small" : "list";
+  const media = await db.query<{ bytes: Buffer }>(`${resolveCatalogThumbnails(true, size)}
+    SELECT t.${column}_bytes AS bytes FROM resolved r JOIN internal_catalog_thumbnails t
+      ON t.snapshot_id=r.media_snapshot AND t.source_path=r.path AND t.recipe=$2
+    ORDER BY r.ord LIMIT 1`,
+  [snapshotId, THUMBNAIL_RECIPE, productGuid, fileGuid]);
+  return media.rows[0]?.bytes ?? null;
+}
+
+export async function catalogHasPreparedPhotos(db: Database, snapshotId: string) {
+  try {
+    const result = await db.query(`${resolveCatalogThumbnails(false)} SELECT 1 FROM resolved LIMIT 1`,
+      [snapshotId, THUMBNAIL_RECIPE]);
+    return result.rows.length > 0;
+  } catch (error) {
+    if ((error as { code?: string }).code !== "42P01") throw error;
+    return false;
+  }
+}
+
 export async function thumbnailStatus(db: Database, snapshotId: string) {
   try {
     const { rows } = await db.query<{ total: number; ready: number; unavailable: number; bytes: string }>(

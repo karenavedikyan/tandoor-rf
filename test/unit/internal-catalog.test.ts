@@ -22,12 +22,22 @@ describe("isolated internal JSON catalogue", () => {
     assert.match(searchText(catalogueFixture()[0]), /art-1/);
   });
   it("rejects unsafe paths and external URLs, accepts relative Windows paths", () => {
-    for (const value of ["../a.jpg", "/a.jpg", "C:\\a.jpg", "https://x/a.jpg", "a\\..\\b.jpg", "a//b.png", "a\0.jpg", "a.svg", "a.jpg "]) {
+    for (const value of ["../a.jpg", "/a.jpg", "C:\\a.jpg", "https://x/a.jpg", "a\\..\\b.jpg", "a//b.png", "a\0.jpg", "a.svg", "a.jpg ", "../a.jfif", "https://x/a.webp"]) {
       assert.equal(safeImagePath(value), null, value);
     }
     assert.equal(safeImagePath("20240626\\Товар.JPG"), "20240626/Товар.JPG");
     const products = catalogueFixture(1); products[0].files[0].path = "../x.jpg";
     assert.throws(() => parse(products), /UNSAFE_IMAGE_PATH/);
+  });
+  it("accepts JFIF and WebP references from 1C without changing their identity", () => {
+    const products = catalogueFixture(1);
+    const original = products[0].files[0];
+    products[0].files = [
+      { ...original, path: "20240626\\file.JFIF" },
+      { ...original, guid: fixtureGuid(323), path: "20240626/other.webp" },
+    ];
+    assert.deepEqual(parse(products).products[0].files, products[0].files);
+    assert.equal(safeImagePath(products[0].files[0].path), "20240626/file.JFIF");
   });
   it("rejects empty/malformed files, duplicate identities and conflicting dictionaries", () => {
     assert.throws(() => parse([]), /EMPTY_SNAPSHOT/);

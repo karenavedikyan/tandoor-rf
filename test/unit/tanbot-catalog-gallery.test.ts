@@ -32,7 +32,7 @@ describe("automatic complete model galleries", () => {
           name: side ? "2_амулет" : "1_амулет", path: `private\\copy-${i}\\${side}.jpg` })),
       }));
       v.photoHashes = new Map(v.products.flatMap(p => p.files.map((f, side) =>
-        [f.path.replace(/\\/g, "/"), (side ? "b" : "a").repeat(64)])));
+        [`${p.guid}:${f.guid}`, (side ? "b" : "a").repeat(64)])));
       const before = JSON.stringify(v.products);
       const hashes = [...v.photoHashes];
       for (const products of [v.products, [...v.products].reverse()]) {
@@ -51,8 +51,8 @@ describe("automatic complete model galleries", () => {
       v.products[1].files[0].path = "private/another-exterior.jpg";
       v.products[0].files[1].name = v.products[1].files[1].name = "interior";
       v.photoHashes = new Map([
-        ["private/external.jpg", "a".repeat(64)], ["private/another-exterior.jpg", "a".repeat(64)],
-        ["private/panel-0.jpg", "b".repeat(64)], ["private/panel-1.jpg", "c".repeat(64)],
+        [`${id(1)}:${id(700)}`, "a".repeat(64)], [`${id(2)}:${id(702)}`, "a".repeat(64)],
+        [`${id(1)}:${id(701)}`, "b".repeat(64)], [`${id(2)}:${id(703)}`, "c".repeat(64)],
       ]);
       let r = buildCatalogBrowseReply(channel, v, { state: null, text: null,
         callback: catalogCallback("g", v.snapshotId, CATALOG_BOT_SECTIONS[0].guid) });
@@ -67,13 +67,13 @@ describe("automatic complete model galleries", () => {
     it(`${channel}: missing hashes retain distinct paths, even when filenames match`, () => {
       const v = fixture();
       v.products[1].files[0].path = "private/another-exterior.jpg";
-      v.photoHashes = new Map([["private/external.jpg", "a".repeat(64)]]);
+      v.photoHashes = new Map([[`${id(1)}:${id(700)}`, "a".repeat(64)]]);
       const r = buildCatalogBotReply(channel, v, catalogCallback("p", v.snapshotId, id(1)));
       assert.equal(readCatalogGallery(r.replyExtra)?.length, 4);
     });
     it(`${channel}: legacy photo page still addresses the original source image`, () => {
       const v = fixture();
-      v.photoHashes = new Map(v.products.flatMap(p => p.files.map(f => [f.path, "a".repeat(64)])));
+      v.photoHashes = new Map(v.products.flatMap(p => p.files.map(f => [`${p.guid}:${f.guid}`, "a".repeat(64)])));
       const r = buildCatalogBotReply(channel, v, catalogCallback("p", v.snapshotId, id(1), 2));
       assert.equal(readCatalogGallery(r.replyExtra), null);
       assert.equal(readCatalogPhoto(r.replyExtra)?.fileGuid, id(703));
