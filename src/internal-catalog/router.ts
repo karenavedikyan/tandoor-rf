@@ -4,12 +4,12 @@ import { query } from "../db/pool";
 import { csrfOriginProtection } from "../middleware/csrf";
 import { requirePool } from "../db/pool";
 import { internalCatalogAccess } from "./access";
-import { GUID, normalizeSearch, MAX_JSON_BYTES, parseProductsJson } from "./model";
+import { GUID, normalizeSearch, MAX_JSON_BYTES, parseProductsJson, safeImagePath } from "./model";
 import { auditSnapshot, importSnapshot, loadProduct, loadProductVariants, loadSnapshot, searchProducts } from "./repository";
 import { internalCatalogImagesConfigured, readInternalCatalogImage } from "./images";
 import { loadCatalogContext, loadCatalogFacets } from "./context";
 import { CATALOG_FACETS, commerceFor } from "./presentation";
-import { readThumbnail, thumbnailStatus } from "./thumbnails";
+import { catalogHasPreparedPhotos, readCatalogThumbnail, thumbnailStatus, type ThumbnailSize } from "./thumbnails";
 import { CatalogImageDeferred } from "../catalog/image-deferred";
 
 export function createInternalCatalogRouter(): express.Router {
@@ -68,7 +68,9 @@ export function createInternalCatalogRouter(): express.Router {
       db.query<{ guid: string; count: string }>(`SELECT record->>'guid_group' AS guid,count(*) AS count
         FROM internal_catalog_products WHERE snapshot_id=$1 GROUP BY record->>'guid_group'`, [current.id])]);
     const thumbnails = await thumbnailStatus(db, current.id);
-    res.json({ snapshot: current, imagesConfigured: internalCatalogImagesConfigured() || thumbnails.enabled,
+    const imagesConfigured = internalCatalogImagesConfigured() || thumbnails.enabled ||
+      await catalogHasPreparedPhotos(db, current.id);
+    res.json({ snapshot: current, imagesConfigured,
       thumbnailsReady: thumbnails.enabled,
       groups: context.groups, groupCounts: counts.rows, facets, priceTypes: context.priceTypes });
   }));
@@ -157,10 +159,20 @@ export function createInternalCatalogRouter(): express.Router {
     if (current === undefined) return;
     const product = current ? await loadProduct(requirePool(), current.id, guid) : null;
     const file = product?.files.find(item => item.guid === fileGuid.toLowerCase());
+    async function prepared(size: ThumbnailSize) {
+      if (!file || !current || !safeImagePath(file.path)) return null;
+      try {
+        return await readCatalogThumbnail(requirePool(), current.id, guid, fileGuid.toLowerCase(), size);
+      } catch (error) {
+        // Keep the existing source path working without the additive schema.
+        if ((error as { code?: string }).code !== "42P01") throw error;
+        return null;
+      }
+    }
     let bytes: Buffer | null = null;
     let deferred = false;
     try {
-      bytes = file ? preview ? await readThumbnail(requirePool(), current!.id, file.path, preview) :
+      bytes = file ? preview ? await prepared(preview) :
         await readInternalCatalogImage(file, requirePool(), current!.id) : null;
     } catch (error) {
       if (!(error instanceof CatalogImageDeferred)) throw error;
@@ -170,11 +182,7 @@ export function createInternalCatalogRouter(): express.Router {
     // gallery when the full source is unavailable or its decoder is deferred.
     // Authorization and snapshot/product/file binding above still apply.
     if (!bytes && !preview && file && current) {
-      try { bytes = await readThumbnail(requirePool(), current.id, file.path, "list"); }
-      catch (error) {
-        // Preserve the old route while the additive thumbnail schema is absent.
-        if ((error as { code?: string }).code !== "42P01") throw error;
-      }
+      bytes = await prepared("list");
       if (bytes) res.set("X-Catalog-Image-Preview", "list");
     }
     if (!bytes && deferred) {
