@@ -376,6 +376,70 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
       else process.env.TANBOT_MAX_DELIVERY_ENABLED = savedEnabled;
     }
   });
+  it("Telegram acknowledges a photo click before the catalog read and sends the gallery without waiting for the acknowledgement", { timeout: 10000 }, async () => {
+    const savedFetch = globalThis.fetch;
+    const savedEnabled = process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED;
+    const client = await pool().connect();
+    let finishAck: (() => void) | undefined;
+    let pendingRequest: Promise<request.Response> | undefined;
+    const events: string[] = [];
+    const post = () => request(app).post("/api/tanbot-telegram/webhook")
+      .set("X-Telegram-Bot-Api-Secret-Token", tg.config.webhookSecret!);
+    const raw = telegramRaw({ callback: catalogCallback("p", snapshot, id(1)) });
+    let markAckStarted!: () => void;
+    const ackStarted = new Promise<void>(resolve => { markAckStarted = resolve; });
+    process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = "true";
+    try {
+      globalThis.fetch = async (url, init) => {
+        const method = new URL(String(url)).pathname.split("/").at(-1)!;
+        events.push(method);
+        if (method === "answerCallbackQuery") {
+          assert.deepEqual(JSON.parse(String(init?.body)), { callback_query_id: `cat-${raw.update_id}` });
+          return new Promise<Response>((resolve) => {
+            finishAck = () => resolve(Response.json({ ok: true, result: true }));
+            init?.signal?.addEventListener("abort", () => {
+              events.push("ack-timeout");
+              finishAck?.();
+            }, { once: true });
+            markAckStarted();
+          });
+        }
+        assert.equal(method, "sendPhoto");
+        assert.ok(init?.body instanceof FormData && init.body.get("photo") instanceof Blob);
+        finishAck?.();
+        return Response.json({ ok: true, result: { message_id: 1 } });
+      };
+      assert.equal((await request(app).post("/api/tanbot-telegram/webhook").send(raw)).status, 403);
+      assert.equal((await post().send(telegramRaw({ callback: "cat:root", group: true }))).status, 200);
+      assert.deepEqual(events, []);
+      await client.query("BEGIN");
+      await client.query("LOCK TABLE internal_catalog_snapshots IN ACCESS EXCLUSIVE MODE");
+      pendingRequest = post().send(raw).timeout({ deadline: 4000 }).then(result => result);
+      await Promise.race([ackStarted, pendingRequest.then(() => assert.fail("webhook finished without acknowledging"))]);
+      assert.deepEqual(events, ["answerCallbackQuery"]);
+      await client.query("ROLLBACK");
+      assert.equal((await pendingRequest).status, 200);
+      assert.deepEqual(events, ["answerCallbackQuery", "sendPhoto", "sendPhoto"]);
+
+      events.length = 0;
+      globalThis.fetch = async (url) => {
+        const method = new URL(String(url)).pathname.split("/").at(-1)!;
+        events.push(method);
+        return method === "answerCallbackQuery" ? Response.json({}, { status: 503 })
+          : Response.json({ ok: true, result: { message_id: 2 } });
+      };
+      assert.equal((await post().send(telegramRaw({ callback: "cat:root" }))).status, 200);
+      assert.deepEqual(events, ["answerCallbackQuery", "sendMessage", "sendMessage"]);
+    } finally {
+      finishAck?.();
+      await client.query("ROLLBACK");
+      client.release();
+      await pendingRequest?.catch(() => {});
+      globalThis.fetch = savedFetch;
+      if (savedEnabled === undefined) delete process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED;
+      else process.env.TANBOT_TELEGRAM_DELIVERY_ENABLED = savedEnabled;
+    }
+  });
   it("photo read rechecks file/SKU/snapshot ownership, not only a caller-supplied path", async () => {
     const input = { snapshotId: snapshot, productGuid: id(1), fileGuid: id(1000) };
     assert.deepEqual(await catalogPhotoBytes(pool(), input), bytes);
