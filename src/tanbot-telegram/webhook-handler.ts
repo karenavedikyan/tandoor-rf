@@ -33,7 +33,7 @@ import {
 } from "../tanbot/external-person/telegram-bot-flow";
 import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
 import { menuReplyKeyboard } from "../tanbot/native-create/keyboards";
-import { loadCatalogBotView } from "../tanbot/catalog";
+import { isCatalogRequest, loadCatalogBotView } from "../tanbot/catalog";
 import { readCatalogBrowseInput, buildCatalogBrowseReply } from "../tanbot/catalog-browse";
 
 export type WebhookReply = {
@@ -60,6 +60,7 @@ async function processParsedUpdate(
   pool: Pool,
   config: TanbotTelegramStage2Config,
   parsed: ParsedTelegramWebhookUpdate,
+  earlyCatalogCallbackId?: string,
 ): Promise<WebhookReply> {
   const catalogInput = (parsed.kind === "message" || parsed.kind === "callback")
     ? await readCatalogBrowseInput(client, "telegram", parsed.update.chatId, parsed.update.telegramUserId,
@@ -71,7 +72,8 @@ async function processParsedUpdate(
     if (claim.kind === "ignore") return null;
     if (claim.kind === "resend") return claim.reply;
     try {
-      const answerCallbackQueryId = parsed.kind === "callback" ? parsed.update.callbackQueryId : undefined;
+      const answerCallbackQueryId = parsed.kind === "callback" && parsed.update.callbackQueryId !== earlyCatalogCallbackId
+        ? parsed.update.callbackQueryId : undefined;
       const catalog = buildCatalogBrowseReply("telegram", await loadCatalogBotView(client), catalogInput);
       const reply: WebhookReply = { chatId: update.chatId, text: catalog.text, replyMarkup: catalog.replyMarkup,
         answerCallbackQueryId, replyExtra: { ...catalog.replyExtra, ...(answerCallbackQueryId ? { answerCallbackQueryId } : {}) } };
@@ -542,15 +544,42 @@ export async function handleTanbotTelegramUpdate(
   pool: Pool,
   config: TanbotTelegramStage2Config,
   raw: unknown,
+  earlyCatalogCallbackId?: string,
 ): Promise<{ reply: WebhookReply; updateId: number | null }> {
   const parsed = parseTelegramWebhookUpdate(raw);
   if (!parsed.ok) {
     return { reply: null, updateId: null };
   }
-  const reply = await withTransaction((client) => processParsedUpdate(client, pool, config, parsed.parsed));
-  const updateId =
-    parsed.parsed.kind === "message" ? parsed.parsed.update.updateId : parsed.parsed.update.updateId;
-  return { reply, updateId };
+  const reply = await withTransaction((client) =>
+    processParsedUpdate(client, pool, config, parsed.parsed, earlyCatalogCallbackId));
+  // A retry may load a reply persisted before this release with a late acknowledgement.
+  const deliveryReply = reply && earlyCatalogCallbackId && reply.answerCallbackQueryId === earlyCatalogCallbackId
+    ? { ...reply, answerCallbackQueryId: undefined } : reply;
+  return { reply: deliveryReply, updateId: parsed.parsed.update.updateId };
+}
+
+/** Start after webhook authentication but before any DB work. A UX-only
+ * acknowledgement must never gate catalog loading or persisted reply delivery. */
+export function startTelegramCatalogAcknowledgement(
+  config: TanbotTelegramStage2Config, transport: TelegramDeliveryTransport | null, raw: unknown,
+): { callbackId: string; pending: Promise<void> } | null {
+  if (!config.deliveryEnabled || !transport) return null;
+  const parsed = parseTelegramWebhookUpdate(raw);
+  if (!parsed.ok || parsed.parsed.kind !== "callback") return null;
+  const { callbackQueryId, callbackData } = parsed.parsed.update;
+  if (!callbackQueryId.trim() || callbackQueryId.length > 512 || !isCatalogRequest(null, callbackData)) return null;
+  const pending = (async () => {
+    try {
+      await transport({
+        method: "answerCallbackQuery", token: config.botToken,
+        body: { callback_query_id: callbackQueryId },
+        timeoutMs: Math.min(config.requestTimeoutMs, 1200), maxResponseBytes: config.maxResponseBytes,
+      });
+    } catch {
+      // The reply still goes through the usual persisted delivery path.
+    }
+  })();
+  return { callbackId: callbackQueryId, pending };
 }
 
 export async function maybeSendWebhookReply(

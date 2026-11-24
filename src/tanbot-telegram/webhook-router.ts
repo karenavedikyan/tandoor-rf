@@ -6,7 +6,7 @@ import {
   loadTanbotTelegramStage2Config,
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
 } from "./stage2-config";
-import { handleTanbotTelegramUpdate, maybeSendWebhookReply } from "./webhook-handler";
+import { handleTanbotTelegramUpdate, maybeSendWebhookReply, startTelegramCatalogAcknowledgement } from "./webhook-handler";
 import { createDefaultTelegramDeliveryTransport } from "./delivery-transport";
 
 function constantTimeEqual(a: string, b: string): boolean {
@@ -63,9 +63,14 @@ export function createTanbotTelegramWebhookRouter(): express.Router {
       }
 
       const transport = loaded.config.deliveryEnabled ? createDefaultTelegramDeliveryTransport() : null;
-      const { reply, updateId } = await handleTanbotTelegramUpdate(pool, loaded.config, raw);
-      await maybeSendWebhookReply(pool, loaded.config, transport, updateId, reply);
-      res.status(200).json({ ok: true });
+      const ack = startTelegramCatalogAcknowledgement(loaded.config, transport, raw);
+      try {
+        const { reply, updateId } = await handleTanbotTelegramUpdate(pool, loaded.config, raw, ack?.callbackId);
+        await maybeSendWebhookReply(pool, loaded.config, transport, updateId, reply);
+        res.status(200).json({ ok: true });
+      } finally {
+        await ack?.pending;
+      }
     })().catch(next);
   });
 
