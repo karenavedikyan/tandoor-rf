@@ -33,7 +33,8 @@ import {
 } from "../tanbot/external-person/telegram-bot-flow";
 import { isExternalMessengerFeatureEnabled } from "../tan-tracker/external-messenger/config";
 import { menuReplyKeyboard } from "../tanbot/native-create/keyboards";
-import { isCatalogRequest, loadCatalogBotView } from "../tanbot/catalog";
+import { isCatalogRequest } from "../tanbot/catalog";
+import { loadCachedCatalogBotView } from "../tanbot/catalog-view-cache";
 import { readCatalogBrowseInput, buildCatalogBrowseReply } from "../tanbot/catalog-browse";
 
 export type WebhookReply = {
@@ -74,7 +75,7 @@ async function processParsedUpdate(
     try {
       const answerCallbackQueryId = parsed.kind === "callback" && parsed.update.callbackQueryId !== earlyCatalogCallbackId
         ? parsed.update.callbackQueryId : undefined;
-      const catalog = buildCatalogBrowseReply("telegram", await loadCatalogBotView(client), catalogInput);
+      const catalog = buildCatalogBrowseReply("telegram", await loadCachedCatalogBotView(pool, client), catalogInput);
       const reply: WebhookReply = { chatId: update.chatId, text: catalog.text, replyMarkup: catalog.replyMarkup,
         answerCallbackQueryId, replyExtra: { ...catalog.replyExtra, ...(answerCallbackQueryId ? { answerCallbackQueryId } : {}) } };
       await commitTelegramUpdateReply(client, update.updateId, reply);

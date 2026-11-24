@@ -33,7 +33,8 @@ import {
   markMaxUpdateFailed,
 } from "./webhook-inbox";
 import { deliverMaxWebhookReply } from "./webhook-reply-delivery";
-import { isCatalogRequest, loadCatalogBotView } from "../tanbot/catalog";
+import { isCatalogRequest } from "../tanbot/catalog";
+import { loadCachedCatalogBotView } from "../tanbot/catalog-view-cache";
 import { readCatalogBrowseInput, buildCatalogBrowseReply } from "../tanbot/catalog-browse";
 
 export type WebhookReply = {
@@ -107,7 +108,7 @@ async function processUpdateInTransaction(
         reply = { userId: update.maxUserId, chatId: update.chatId,
           text: "Каталог доступен в личном диалоге с ботом." };
       } else {
-        const catalog = buildCatalogBrowseReply("max", await loadCatalogBotView(client), catalogInput!);
+        const catalog = buildCatalogBrowseReply("max", await loadCachedCatalogBotView(pool, client), catalogInput!);
         reply = { userId: update.maxUserId, chatId: update.chatId, ...catalog };
       }
       await commitMaxUpdateReply(client, update.dedupKey, reply);

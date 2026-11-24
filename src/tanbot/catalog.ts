@@ -146,7 +146,7 @@ export async function loadCatalogBotView(db: Db): Promise<CatalogView | null> {
 }
 
 /** No prices/stocks/commerce needed for a public name-and-photo catalogue.
- * Keep group conflicts current; no cross-request cache or new memory pressure. */
+ * Read group conflicts from the same revision-checked sources as the view. */
 async function loadBotCatalogGroups(db: Db): Promise<CatalogContext> {
   const rows = await db.query<SourceRow>(`SELECT r.file_key,r.record,b.imported_at
     FROM onec_manual_object_versions v JOIN onec_manual_records r

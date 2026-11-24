@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it, mock } from "node:test";
 import { createHash } from "node:crypto";
 import { Client as FtpClient } from "basic-ftp";
+import type { PoolClient } from "pg";
 import sharp from "sharp";
 import request from "supertest";
 import { closePool, getPool, resetPoolForTests } from "../../src/db/pool";
@@ -12,6 +13,7 @@ import { importSnapshot } from "../../src/internal-catalog/repository";
 import { makeThumbnails, THUMBNAIL_RECIPE } from "../../src/internal-catalog/thumbnails";
 import { loadCatalogBotView, catalogPhotoBytes, catalogCallback, CATALOG_BOT_SECTIONS } from "../../src/tanbot/catalog";
 import type { CatalogBotReply } from "../../src/tanbot/catalog";
+import { loadCachedCatalogBotView } from "../../src/tanbot/catalog-view-cache";
 import { readCatalogBrowseInput, filteredCatalogView } from "../../src/tanbot/catalog-browse";
 import { handleTanbotTelegramUpdate } from "../../src/tanbot-telegram/webhook-handler";
 import { handleTanbotMaxUpdate } from "../../src/tanbot-max/webhook-handler";
@@ -113,6 +115,115 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     ? r.inlineButtons.flat().map(b => ({ text: b.text, data: "payload" in b ? b.payload : "" }))
     : (r.replyMarkup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard
       .flat().map(b => ({ text: b.text, data: b.callback_data }));
+  const cachedView = async () => {
+    const db = await pool().connect();
+    try { return await loadCachedCatalogBotView(pool(), db); } finally { db.release(); }
+  };
+  function observeQueries(client: PoolClient, observe: (sql: string, run: () => Promise<unknown>) => Promise<unknown>) {
+    return new Proxy(client, { get(target, property, receiver) {
+      if (property === "query") {
+        return (sql: string, args?: unknown[]) => observe(sql, () => target.query(sql, args));
+      }
+      return Reflect.get(target, property, receiver);
+    } });
+  }
+  const projectionQuery = (sql: string) => sql.includes("jsonb_agg(r.f");
+  it("shares one cold build and performs no projection SQL on warm menu and photo requests", { timeout: 10000 }, async () => {
+    const c1 = await pool().connect(), c2 = await pool().connect();
+    let enterBuild!: () => void, releaseBuild!: () => void;
+    const started = new Promise<void>(resolve => { enterBuild = resolve; });
+    const mayFinish = new Promise<void>(resolve => { releaseBuild = resolve; });
+    let scans = 0;
+    const db1 = observeQueries(c1, async (sql, run) => {
+      if (projectionQuery(sql)) { scans++; enterBuild(); await mayFinish; }
+      return run();
+    });
+    let signalSecond!: () => void;
+    const secondCheckedRevision = new Promise<void>(resolve => { signalSecond = resolve; });
+    const db2 = observeQueries(c2, async (sql, run) => {
+      if (projectionQuery(sql)) scans++;
+      const result = await run();
+      if (sql.includes("string_agg(revision")) signalSecond();
+      return result;
+    });
+    let first: ReturnType<typeof cachedView> | undefined, second: typeof first;
+    try {
+      await pool().query("UPDATE internal_catalog_snapshots SET imported_at=imported_at WHERE id=$1", [snapshot]);
+      first = loadCachedCatalogBotView(pool(), db1);
+      await Promise.race([started, first.then(() => assert.fail("cold projection was skipped"))]);
+      second = loadCachedCatalogBotView(pool(), db2);
+      await secondCheckedRevision;
+      releaseBuild();
+      const [view, reused] = await Promise.all([first, second]);
+      assert.ok(view);
+      assert.equal(reused, view);
+      assert.equal(await loadCachedCatalogBotView(pool(), db2), view);
+      assert.equal(scans, 1);
+      const menu = await handleTanbotTelegramUpdate(pool(), tg.config, telegramRaw({ callback: "cat:root" }));
+      const photo = await handleTanbotMaxUpdate(pool(), max.config,
+        maxRaw({ callback: catalogCallback("p", snapshot, id(1)) }));
+      assert.match(menu.reply?.text ?? "", /Категории/);
+      assert.ok(photo.reply?.replyExtra?.catalogPhoto);
+    } finally {
+      releaseBuild();
+      await Promise.allSettled([first, second]);
+      c1.release(); c2.release();
+    }
+  });
+  it("ignores rolled-back changes, but rebuilds when an exact thumbnail is changed during a cold load", async () => {
+    const reader = await pool().connect(), writer = await pool().connect();
+    const fingerprint = (view: Awaited<ReturnType<typeof cachedView>>) => view?.photoHashes?.get(`${id(1)}:${id(1000)}`);
+    const setValid = `UPDATE internal_catalog_thumbnails SET list_sha256=$4
+      WHERE snapshot_id=$1 AND source_path=$2 AND recipe=$3`;
+    const key = [snapshot, "1.jpg", THUMBNAIL_RECIPE];
+    try {
+      const warm = await cachedView();
+      assert.equal(fingerprint(warm), hash(bytes));
+      await writer.query("BEGIN");
+      await writer.query(setValid, [...key, "0".repeat(64)]);
+      assert.equal(await cachedView(), warm);
+      await writer.query("ROLLBACK");
+      assert.equal(await cachedView(), warm);
+
+      await writer.query("UPDATE internal_catalog_snapshots SET imported_at=imported_at WHERE id=$1", [snapshot]);
+      let scans = 0;
+      const db = observeQueries(reader, async (sql, run) => {
+        const result = await run();
+        if (projectionQuery(sql) && ++scans === 1) await writer.query(setValid, [...key, "0".repeat(64)]);
+        return result;
+      });
+      const refreshed = await loadCachedCatalogBotView(pool(), db);
+      assert.equal(scans, 2);
+      assert.equal(fingerprint(refreshed), undefined);
+      assert.equal(await loadCachedCatalogBotView(pool(), db), refreshed);
+      assert.equal(scans, 2);
+      assert.equal(await catalogPhotoBytes(pool(), { snapshotId: snapshot, productGuid: id(1), fileGuid: id(1000) }), null);
+    } finally {
+      await writer.query("ROLLBACK");
+      await writer.query(setValid, [...key, hash(bytes)]);
+      reader.release(); writer.release();
+    }
+    assert.equal(fingerprint(await cachedView()), hash(bytes));
+  });
+  it("works uncached inside the webhook transaction if the revision migration is not installed", async () => {
+    const db = await pool().connect();
+    try {
+      await db.query("BEGIN");
+      await db.query("ALTER TABLE tanbot_catalog_source_revisions RENAME TO synthetic_hidden_revisions");
+      let scans = 0;
+      const observed = observeQueries(db, async (sql, run) => {
+        if (projectionQuery(sql)) scans++;
+        return run();
+      });
+      assert.ok((await loadCachedCatalogBotView(pool(), observed))?.products.length);
+      assert.ok((await loadCachedCatalogBotView(pool(), observed))?.products.length);
+      assert.equal(scans, 2);
+      assert.equal((await db.query("SELECT 1 AS ok")).rows[0].ok, 1);
+    } finally {
+      await db.query("ROLLBACK");
+      db.release();
+    }
+  });
   for (const channel of ["telegram", "max"] as const) {
     it(`${channel}: filters + search + photo through webhooks, retry and foreign/stale button isolation`, async () => {
       const send = async (input: { text?: string; callback?: string; userId?: number; chatId?: number }) => {
@@ -679,7 +790,7 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     assert.equal(await catalogPhotoBytes(pool(), { ...selected, fileGuid: id(2000) }), null);
     assert.equal(await catalogPhotoBytes(pool(), { ...selected, productGuid: id(2), fileGuid: id(6001) }), null);
     assert.equal(await catalogPhotoBytes(pool(), { ...selected, productGuid: id(6002), fileGuid: id(1002) }), null);
-    const current = await loadCatalogBotView(pool());
+    const current = await cachedView();
     assert.equal(current?.snapshotId, latest);
     assert.equal(current?.products.length, 3);
     assert.equal(current?.products[0].name, "Ежедневное обновление");
@@ -703,14 +814,14 @@ describe("catalogue bots: isolated PostgreSQL / fake messengers", { concurrency:
     assert.notDeepEqual(newBytes, bytes);
     assert.equal(await catalogPhotoBytes(pool(), { ...selected, productGuid: id(4), fileGuid: id(1003) }), null);
     assert.deepEqual(await catalogPhotoBytes(pool(), { ...selected, productGuid: id(5), fileGuid: id(1004) }), bytes);
-    assert.deepEqual((await loadCatalogBotView(pool()))?.products.map(p => p.guid), [id(1), id(5)]);
+    assert.deepEqual((await cachedView())?.products.map(p => p.guid), [id(1), id(5)]);
     await pool().query(`INSERT INTO internal_catalog_thumbnails
       (snapshot_id,source_path,recipe,status,small_bytes,small_sha256,list_bytes,list_sha256)
       SELECT $1::uuid,'updated-second.jpg',recipe,status,small_bytes,small_sha256,list_bytes,list_sha256
       FROM internal_catalog_thumbnails WHERE snapshot_id=$2 AND source_path='1.jpg'`,
     [latest, snapshot]);
     assert.deepEqual(await catalogPhotoBytes(pool(), { ...selected, fileGuid: id(2000) }), bytes);
-    assert.deepEqual((await loadCatalogBotView(pool()))?.products[0].files.map(f => f.guid), [id(1000), id(2000)]);
+    assert.deepEqual((await cachedView())?.products[0].files.map(f => f.guid), [id(1000), id(2000)]);
     const calls: string[] = [];
     await deliverTelegramWebhookReply(pool(), tg.config, async p => {
       calls.push(p.method);
