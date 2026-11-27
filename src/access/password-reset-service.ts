@@ -75,7 +75,8 @@ async function liveSession(c: PoolClient, sessionId: string, userId: string): Pr
   )).rowCount;
 }
 
-/** Public employees route to the configured admin; admin self-recovery routes to their own bot. */
+/** Public requests route to the configured admin, including other administrators.
+ * Only that admin's own request stays on their bot. Client input cannot choose the recipient. */
 export async function requestPasswordRecovery(
   pool: Pool, input: { email: string; channel: RecoveryChannel; admin?: AdminResetProof }, deliver: RecoveryDelivery,
 ): Promise<boolean> {
@@ -105,9 +106,17 @@ export async function requestPasswordRecovery(
       if (!target || target.role === "admin" || target.id === recipient.id || target.status !== "active") {
         throw new RecoveryError(400, "INVALID_TARGET", "Выберите активного сотрудника без роли администратора.");
       }
-    } else if (target && target.role !== "admin") {
-      recipient = r.rows.find(u => u.id === configuredAdminId);
-      if (!recipient || recipient.role !== "admin" || recipient.status !== "active" || recipient.password_must_change) return false;
+    } else if (target) {
+      const pinned = r.rows.find(u => u.id === configuredAdminId);
+      const pinnedOk = !!pinned && pinned.role === "admin" && pinned.status === "active" && !pinned.password_must_change;
+      if (target.id === configuredAdminId && pinnedOk) {
+        recipient = target;
+      } else if (target.role !== "admin" || pinnedOk) {
+        // A valid pin receives every other account, including administrators.
+        // Without one, another administrator keeps the own-bot path; employees fail closed.
+        recipient = pinned;
+        if (!pinnedOk) return false;
+      }
     }
     if (!target || target.status !== "active" || !recipient) return false;
     const route = await destination(c, input.channel, recipient.id);
@@ -151,7 +160,7 @@ export async function requestPasswordRecovery(
           `Временный код: ${code}\nДействует 10 минут, только для одного входа с обязательной сменой пароля.\n` +
           (input.admin ? "Вы запросили код как администратор. Передайте его только указанному сотруднику лично."
             : publicEmployeeRequest
-              ? "В форме «Забыли пароль» указан этот логин. ФИО относится к аккаунту, а не к подтверждённой личности отправителя. Передайте код только указанному сотруднику лично после проверки его личности. Если запрос не подтверждён, проигнорируйте сообщение."
+              ? "В форме «Забыли пароль» указан этот логин. ФИО относится к аккаунту, а не к подтверждённой личности отправителя. Передайте код только указанному пользователю лично после проверки его личности. Если запрос не подтверждён, проигнорируйте сообщение."
               : "Никому не сообщайте код. Если вы не запрашивали восстановление, проигнорируйте сообщение."),
       });
     } catch { /* Never expose provider errors, token URLs or message bodies. */ }
@@ -186,9 +195,9 @@ export async function loginWithRecoveryCode(pool: Pool, emailRaw: string, code: 
         credentialFingerprint(target.password_hash) !== row.credential_fingerprint ||
         credentialFingerprint(recipient.password_hash) !== row.recipient_fingerprint) return null;
     if (target.id !== recipient.id) {
-      if (recipient.role !== "admin" || recipient.password_must_change || target.role === "admin") return null;
+      if (recipient.role !== "admin" || recipient.password_must_change) return null;
       if (row.request_kind === "admin-issued") {
-        if (!row.initiated_session_id || !await liveSession(c, row.initiated_session_id, recipient.id)) return null;
+        if (target.role === "admin" || !row.initiated_session_id || !await liveSession(c, row.initiated_session_id, recipient.id)) return null;
       } else if (row.request_kind !== "employee-requested" || recipient.id !== await resolveRecoveryAdminUserId(c)) return null;
     } else if (row.request_kind !== "admin-self" || target.role !== "admin") return null;
     const route = await destination(c, row.channel, recipient.id);
