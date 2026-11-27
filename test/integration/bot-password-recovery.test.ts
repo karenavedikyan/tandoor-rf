@@ -224,7 +224,29 @@ describe("bot password recovery", { concurrency: false }, () => {
     delete process.env.PASSWORD_RECOVERY_ADMIN_USER_ID;
     assert.equal(await loginWithRecoveryCode(pool, EMPLOYEE, codeFromMessage(messages[0]!)), null);
   });
-  it("public requests cannot target administrators through employee routing or forge authenticated attribution", async () => {
+  it("another administrator's public reset goes only to the pinned administrator, who can relay the code", async () => {
+    const other = (await pool.query(
+      `INSERT INTO users(email,full_name,password_hash,role,status)
+       VALUES('other-admin@example.test','Другой Администратор',$1,'admin','active') RETURNING id`,
+      [originalHash],
+    )).rows[0].id as string;
+    await pool.query("INSERT INTO tanbot_max_accounts(user_id,max_user_id,max_chat_id) VALUES($1,55005,55005)", [other]);
+    const response = await post("/api/auth/recover-password", {
+      email: "other-admin@example.test", channel: "max", recipientUserId: other,
+    });
+    assert.equal(response.status, 202);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0]!.userId, "33003");
+    assert.match(messages[0]!.text, /Для кого: Другой Администратор/);
+    assert.match(messages[0]!.text, /указанному пользователю лично/);
+    assert.doesNotMatch(messages[0]!.text, /Запросил администратор:/);
+    const stored = (await pool.query("SELECT request_kind,user_id,recipient_user_id FROM password_recovery_challenges")).rows[0];
+    assert.equal(stored.request_kind, "employee-requested");
+    assert.equal(stored.user_id, other);
+    assert.equal(stored.recipient_user_id, fixture.adminId);
+    assert.ok(await loginWithRecoveryCode(pool, "other-admin@example.test", codeFromMessage(messages[0]!)));
+  });
+  it("public requests cannot redirect the pinned administrator or forge authenticated attribution", async () => {
     const response = await post("/api/auth/recover-password", { email: ADMIN, channel: "max", mode: "employee", recipientUserId: fixture.employeeId });
     assert.equal(response.status, 202); assert.equal(messages[0]!.userId, "33003");
     assert.match(messages[0]!.text, /Для кого: Тестовый Администратор/);

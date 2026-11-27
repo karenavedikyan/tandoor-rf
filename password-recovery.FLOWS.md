@@ -18,8 +18,8 @@ No production migration, publication, real messages or deployment without separa
 
 ## Self-service recovery and restricted login
 - Login: Забыли пароль?, own login, MAX/Telegram, Восстановить пароль через бота.
-- Employee requests deliver only to the server-configured administrator's confirmed bot; no employee bot is required.
-- Administrator self-recovery delivers only to that administrator's own confirmed bot.
+- Every public request except the pinned administrator's own delivers only to that administrator's confirmed bot; no requester bot is required.
+- The pinned administrator's own recovery delivers only to that administrator's confirmed bot.
 - Missing/invalid recipient configuration fails closed; HTTP input cannot choose or override the recipient.
 - No password/session changes occur until the administrator personally verifies the employee and shares the code.
 - Public response is generic across unknown accounts, unavailable bots and successful requests.
